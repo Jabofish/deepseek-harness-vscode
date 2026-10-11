@@ -14,6 +14,7 @@ import type { PresentationTranslate } from './tool-presentation.js'
 
 export interface ToolRendererProps {
   readonly tool: ToolCallView
+  readonly focused?: boolean
   readonly expanded?: boolean
   readonly onToggle?: () => void
   readonly onOpenLink?: (href: string) => void

@@ -1,35 +1,20 @@
 import { translate } from '../../i18n.js'
-import type { AgentConfiguration } from '@dsh-vscode/domain'
+import type { PresetSessionSyncTarget } from './session-configuration-controller.js'
+export type { PresetSessionSyncTarget } from './session-configuration-controller.js'
 import type { ProtocolClient } from '../protocol-client.js'
 import { requestId } from './ids.js'
 import { parsePresetRoster } from './agent-config.js'
-import {
-  parseExtensionSettings,
-  parseDshSettingsSnapshot,
-  refreshProvidersAndModels,
-} from './host-settings.js'
+import { parseExtensionSettings, parseDshSettingsSnapshot } from './host-settings.js'
 import { arraysEqual } from './list-equality.js'
 import { parseCustomProviderCreateResult, parseDiscoveredModels } from './model-catalog.js'
 import { withPresetSelectionEnabled } from './host-message-reducers.js'
 import { object } from './unknown-record.js'
 import type { AppActions, StateSetter } from './types.js'
 
-export type PresetSessionSyncTarget =
-  | {
-      readonly kind: 'active'
-      readonly sessionId: string
-      readonly configuration: AgentConfiguration
-    }
-  | {
-      readonly kind: 'pending'
-      readonly revision: number
-      readonly createdSessionId?: string
-      readonly configuration: AgentConfiguration
-    }
-
 export interface SettingsActionHost {
   readonly client: ProtocolClient
   readonly setState: StateSetter
+  readonly refreshModelCatalog: () => Promise<void>
   readonly applyBusyEnter: (values: Readonly<Record<string, unknown>>) => void
   readonly capturePresetSessionTarget: () => PresetSessionSyncTarget | undefined
   readonly nextPresetRosterGeneration: () => number
@@ -160,9 +145,7 @@ export function createSettingsActions(host: SettingsActionHost): SettingsActionM
         payload: { ref },
       })
     },
-    refreshModelCatalog: async () => {
-      await refreshProvidersAndModels(client, setState)
-    },
+    refreshModelCatalog: host.refreshModelCatalog,
     discoverModels: async (input) => {
       const value = await client.request<unknown>({
         type: 'models.discover',

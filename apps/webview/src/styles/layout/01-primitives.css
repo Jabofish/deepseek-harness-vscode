@@ -1,0 +1,179 @@
+/*
+ * DSH conversation layout contract
+ *
+ * This file is the final owner of the shared shell geometry. Feature styles
+ * may skin a control, but they must not change the ownership rules below:
+ * compact chrome, one flexible timeline, one intrinsic composer, and one
+ * viewport-bounded actions surface for low-frequency controls.
+ */
+
+/* Shared layout primitives ------------------------------------------------ */
+
+.dsh-layout-surface,
+.dsh-layout-stack,
+.dsh-layout-inline {
+  min-width: 0;
+}
+
+.dsh-layout-stack {
+  display: flex;
+  flex-direction: column;
+}
+
+.dsh-layout-inline {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+}
+
+.dsh-layout-inline--wrap {
+  flex-wrap: wrap;
+}
+
+.dsh-layout-stack--none,
+.dsh-layout-inline--none {
+  gap: 0;
+}
+
+.dsh-layout-stack--xs,
+.dsh-layout-inline--xs {
+  gap: var(--dsh-space-1);
+}
+
+.dsh-layout-stack--sm,
+.dsh-layout-inline--sm {
+  gap: var(--dsh-space-2);
+}
+
+.dsh-layout-stack--md,
+.dsh-layout-inline--md {
+  gap: var(--dsh-space-3);
+}
+
+.dsh-layout-stack--lg,
+.dsh-layout-inline--lg {
+  gap: var(--dsh-space-4);
+}
+
+/* App frame ---------------------------------------------------------------- */
+
+.dsh-app {
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-frame-inset);
+}
+
+.dsh-app__body {
+  flex: 1 1 0%;
+  gap: 0;
+}
+
+.dsh-conversation {
+  position: relative;
+  flex: 1 1 0%;
+  gap: var(--dsh-space-2);
+}
+
+/* The topbar is a single compact line. Low-frequency actions live in a
+ * viewport-bounded surface, so the timeline never loses height to a wrapped
+ * toolbar. */
+.dsh-conversation__topbar {
+  position: relative;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: 2.25rem;
+  gap: var(--dsh-space-2);
+  flex-wrap: nowrap;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+.dsh-conversation__views {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: 0;
+  gap: 0;
+  padding: 2px;
+}
+
+.dsh-conversation__views .dsh-conversation__view-tab {
+  min-width: 0;
+  padding-inline: var(--dsh-space-3);
+}
+
+.dsh-conversation__utility {
+  display: inline-flex;
+  align-items: center;
+  margin-inline-start: auto;
+  flex: 0 0 auto;
+  min-width: 0;
+  gap: 2px;
+}
+
+.dsh-conversation__utility-session,
+.dsh-conversation__utility .dsh-session-header,
+.dsh-conversation__utility .dsh-session-header__switcher {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.dsh-conversation__utility .dsh-session-header {
+  border: 0;
+  background: transparent;
+}
+
+.dsh-conversation__utility .dsh-session-header__switcher {
+  width: var(--dsh-control-height);
+  max-width: var(--dsh-control-height);
+}
+
+.dsh-conversation__utility .dsh-session-switcher__trigger {
+  width: var(--dsh-control-height);
+  min-width: var(--dsh-control-height);
+  justify-content: center;
+  padding: var(--dsh-space-1);
+  border-color: transparent;
+  border-radius: var(--dsh-radius-sm);
+  background: transparent;
+}
+
+.dsh-conversation__utility .dsh-session-switcher__trigger-label,
+.dsh-conversation__utility .dsh-session-switcher__chevron {
+  display: none;
+}
+
+.dsh-conversation__utility .dsh-session-header__create {
+  width: var(--dsh-control-height);
+  min-width: var(--dsh-control-height);
+  padding: var(--dsh-space-1);
+  border-color: transparent;
+  border-radius: var(--dsh-radius-sm);
+}
+
+.dsh-conversation__utility .dsh-runtime-status {
+  width: auto;
+  height: auto;
+}
+
+.dsh-conversation__utility > .dsh-icon-button {
+  width: var(--dsh-control-height);
+  min-width: var(--dsh-control-height);
+}
+
+/* The primary picker is anchored in the bottom composer. Its menu opens
+ * upward so the last row of the webview never becomes an unreachable popup. */
+.dsh-unified-composer > .dsh-composer__toolbar > .dsh-composer__toolbar-controls .dsh-select-menu__menu {
+  top: auto;
+  right: 0;
+  bottom: calc(100% + var(--dsh-space-2));
+  left: auto;
+  width: min(18rem, calc(100vw - var(--dsh-space-4)));
+  min-width: min(14rem, calc(100vw - var(--dsh-space-4)));
+  max-width: min(32rem, calc(100vw - var(--dsh-space-4)));
+}

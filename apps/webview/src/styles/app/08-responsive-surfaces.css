@@ -1,0 +1,450 @@
+.dsh-message-images {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
+  gap: var(--dsh-space-2);
+  min-width: 0;
+}
+
+.dsh-message-images__thumb {
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  border: var(--dsh-border);
+  border-radius: var(--dsh-radius-md);
+  background: var(--dsh-surface-soft);
+}
+
+.dsh-message-images__thumb img,
+.dsh-message-images__placeholder {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+}
+
+.dsh-message-images__placeholder {
+  display: grid;
+  place-items: center;
+  padding: var(--dsh-space-3);
+  color: var(--dsh-muted);
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.dsh-message-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--dsh-space-1);
+  margin-top: var(--dsh-space-2);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .dsh-message-actions {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .dsh-timeline__message-stack:hover .dsh-message-actions,
+  .dsh-timeline__message-stack:focus-within .dsh-message-actions,
+  .dsh-message-actions:focus-within {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+.dsh-message-actions__feedback-status {
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+}
+
+.dsh-todo-list {
+  min-width: 0;
+  padding: var(--dsh-space-3);
+  border: var(--dsh-border);
+  border-radius: var(--dsh-radius-md);
+  background: var(--dsh-surface-raised);
+}
+
+.dsh-todo-list__summary,
+.dsh-todo-list__heading,
+.dsh-todo-list__progress,
+.dsh-todo-list__item {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+}
+
+.dsh-todo-list__summary {
+  justify-content: space-between;
+}
+
+.dsh-todo-list__heading,
+.dsh-todo-list__item {
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+/* The strip is a one-line dock: the fixed short label must never spend its flex
+ * room on a per-character vertical stack at sidebar widths. The live task text
+ * and the progress counter are the shrinking parts. */
+.dsh-todo-list__heading,
+.dsh-goal-strip__heading {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.dsh-todo-list__items {
+  display: grid;
+  gap: var(--dsh-space-2);
+  margin: var(--dsh-space-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dsh-todo-list__item--completed {
+  color: var(--dsh-muted);
+  text-decoration: line-through;
+}
+
+.dsh-todo-list__pending-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--dsh-muted);
+}
+
+.dsh-todo-list__state-icon--completed {
+  color: var(--dsh-success);
+}
+
+.dsh-todo-list__state-icon--in-progress {
+  color: var(--dsh-info);
+}
+
+@media (max-width: 52rem) {
+  .dsh-app {
+    gap: var(--dsh-space-3);
+    padding: var(--dsh-space-3);
+  }
+
+  .dsh-conversation__topbar {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .dsh-settings__layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .dsh-settings__tabs {
+    display: flex;
+    overflow-x: auto;
+    border-inline-end: 0;
+    border-bottom: var(--dsh-border);
+  }
+
+  .dsh-settings__tab {
+    width: auto;
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 38rem) {
+  .dsh-app {
+    padding: var(--dsh-space-2);
+  }
+  .dsh-composer__toolbar {
+    grid-template-columns: 1fr;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .dsh-composer__toolbar-start,
+  .dsh-composer__toolbar-controls,
+  .dsh-session-controls__selectors {
+    justify-content: flex-start;
+  }
+
+  .dsh-composer__toolbar-controls,
+  .dsh-composer__toolbar-controls > .dsh-session-controls {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .dsh-composer__toolbar-controls > .dsh-session-controls {
+    align-items: flex-start;
+  }
+
+  .dsh-session-controls__selectors {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .dsh-session-controls__metrics {
+    flex: 0 0 auto;
+    margin-inline-start: auto;
+  }
+
+  .dsh-composer__toolbar {
+    display: flex;
+  }
+
+  .dsh-composer__submit {
+    align-self: flex-end;
+  }
+
+  .dsh-runtime-missing,
+  .dsh-error-boundary,
+  .dsh-diagnostics {
+    padding: var(--dsh-space-4);
+  }
+}
+
+.dsh-settings__connection-options {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.dsh-settings__connection-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+  text-align: start;
+}
+
+.dsh-settings__connection-option input {
+  margin: 0.2rem 0 0;
+}
+
+.dsh-settings__connection-option > span {
+  display: grid;
+  min-width: 0;
+  gap: var(--dsh-space-1);
+  text-align: start;
+}
+
+.dsh-settings__connection-option strong,
+.dsh-settings__connection-option small {
+  text-align: start;
+}
+
+.dsh-settings__connection-option small {
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+  line-height: 1.4;
+}
+
+.dsh-settings__segment {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--dsh-space-1);
+  min-width: 0;
+}
+
+.dsh-settings__provider {
+  border-color: var(--dsh-border-color);
+  border-radius: var(--dsh-radius-md);
+  background: var(--dsh-surface-raised);
+}
+
+.dsh-settings__provider-editor {
+  display: grid;
+  min-width: 0;
+  gap: var(--dsh-space-3);
+  margin-top: var(--dsh-space-3);
+  padding-top: var(--dsh-space-3);
+  border-top: 1px solid var(--dsh-border-color);
+  text-align: start;
+}
+
+.dsh-settings__provider-editor-head,
+.dsh-settings__provider-editor-head > div,
+.dsh-settings__provider-editor-actions {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+}
+
+.dsh-settings__provider-editor-head {
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.dsh-settings__provider-editor-head > div {
+  align-items: baseline;
+  overflow: hidden;
+}
+
+.dsh-settings__provider-editor-head code,
+.dsh-settings__provider-editor-scope {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-2xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-settings__provider-editor-scope {
+  flex: 0 0 auto;
+}
+
+.dsh-settings__advanced-hint {
+  margin: 0;
+  color: var(--dsh-muted);
+  line-height: 1.45;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.dsh-settings__provider-editor-actions {
+  justify-content: flex-end;
+  padding-top: var(--dsh-space-1);
+}
+
+.dsh-settings__provider-editor-customized {
+  display: grid;
+  gap: var(--dsh-space-2);
+  padding-top: var(--dsh-space-1);
+}
+
+.dsh-settings__provider-editor-customized > summary {
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+  cursor: pointer;
+}
+
+.dsh-settings__provider-remove {
+  color: var(--dsh-secondary-text) !important;
+  border-color: var(--dsh-border-color) !important;
+  background: var(--dsh-secondary) !important;
+}
+
+.dsh-settings__provider-remove:hover:not(:disabled),
+.dsh-settings__provider-remove:focus-visible {
+  color: var(--dsh-text) !important;
+  background: var(--dsh-secondary-hover) !important;
+}
+
+.dsh-settings__provider-add-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--dsh-space-3);
+}
+
+.dsh-settings__provider-add-card {
+  display: grid;
+  min-width: 0;
+  gap: var(--dsh-space-3);
+  margin-top: var(--dsh-space-3);
+  padding: var(--dsh-space-3);
+  border: var(--dsh-border);
+  border-radius: var(--dsh-radius-md);
+  background: var(--dsh-surface-soft);
+}
+
+.dsh-settings__provider-add-select {
+  display: grid;
+  min-width: 0;
+  gap: var(--dsh-space-1);
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+}
+
+.dsh-settings__provider-add-picker,
+.dsh-settings__provider-add-picker .dsh-select-menu__trigger {
+  width: 100%;
+  min-width: 0;
+}
+
+.dsh-settings__provider-api-select,
+.dsh-settings__provider-api-select .dsh-select-menu__trigger {
+  width: 100%;
+  min-width: 0;
+}
+
+.dsh-settings__provider-api-select .dsh-select-menu__trigger {
+  box-sizing: border-box;
+  border-color: var(--dsh-control-border);
+  color: var(--dsh-control-foreground);
+  background: var(--dsh-control-background);
+  font-size: var(--dsh-font-size-xs);
+}
+
+.dsh-settings__provider-api-select .dsh-select-menu__trigger:hover:not(:disabled),
+.dsh-settings__provider-api-select.dsh-select-menu--open .dsh-select-menu__trigger {
+  color: var(--dsh-control-foreground);
+  background: var(--dsh-control-hover);
+}
+
+.dsh-settings__custom-provider {
+  gap: var(--dsh-space-3);
+  padding: var(--dsh-space-3);
+  border: var(--dsh-border);
+  border-color: color-mix(in srgb, var(--dsh-accent-line) 48%, var(--dsh-border-color));
+  border-radius: var(--dsh-radius-md);
+  background: var(--dsh-surface-soft);
+  transition: border-color var(--dsh-motion-duration-fast) var(--dsh-motion-ease-standard);
+  animation: dsh-surface-enter var(--dsh-motion-duration-standard) var(--dsh-motion-ease-standard) both;
+}
+
+.dsh-settings__custom-provider:hover,
+.dsh-settings__custom-provider:focus-within {
+  border-color: var(--dsh-focus-ring);
+}
+
+.dsh-settings__custom-provider-head {
+  align-items: center;
+  gap: var(--dsh-space-3);
+  color: var(--dsh-text);
+}
+
+.dsh-settings__custom-provider-head > div {
+  min-width: 0;
+}
+
+.dsh-settings__custom-provider-head strong {
+  font-size: var(--dsh-font-size-sm);
+}
+
+.dsh-settings__custom-provider-head p {
+  margin: var(--dsh-space-1) 0 0;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+}
+
+.dsh-settings__custom-provider-head .dsh-icon-button {
+  margin-inline-start: auto;
+}
+
+.dsh-settings__provider-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--dsh-control-height-compact);
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-2) var(--dsh-space-3);
+  border: 1px dashed var(--dsh-border-color);
+  border-radius: var(--dsh-radius-md);
+  color: var(--dsh-muted);
+  background: transparent;
+  text-align: center;
+}
+
+.dsh-settings__provider-add:not(:disabled) {
+  color: var(--dsh-text);
+}
+
+.dsh-settings__provider-add:hover:not(:disabled),
+.dsh-settings__provider-add:focus-visible {
+  border-color: var(--dsh-focus);
+  color: var(--dsh-text);
+  background: var(--dsh-surface-hover);
+}

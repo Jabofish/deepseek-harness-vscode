@@ -4,6 +4,7 @@ import type {
   BackendEndpoint,
   PresetRepository,
 } from '@dsh-vscode/domain'
+import { AppError } from '@dsh-vscode/domain'
 
 import { isMalformedDshVersionHint, normalizeDshVersion } from '../../contracts.js'
 import { withExactAdapterCapabilities } from '../../compatibility.js'
@@ -83,6 +84,11 @@ export class Alpha171VersionAdapter extends Alpha162VersionAdapter {
       )
     } catch (error) {
       if (signal?.aborted === true) throw error
+      if (
+        error instanceof AppError &&
+        ['AUTH_REQUIRED', 'PERMISSION_DENIED', 'INVALID_ENDPOINT'].includes(error.code)
+      )
+        throw error
       return undefined
     } finally {
       await transport.close()

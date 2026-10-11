@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeLoopbackUrl, VsCodeConfigurationSource } from './configuration-source.js'
+import { normalizeServerUrl, VsCodeConfigurationSource } from './configuration-source.js'
 
 describe('DSH connection configuration', () => {
-  it('reads custom mode and normalizes a loopback endpoint', () => {
+  it('reads custom mode and normalizes a server endpoint', () => {
     const source = new VsCodeConfigurationSource({
       getConfiguration: () => ({
         get: (key: string, fallback: unknown) =>
@@ -20,14 +20,23 @@ describe('DSH connection configuration', () => {
     })
   })
 
-  it('rejects non-loopback or non-http endpoints', () => {
-    expect(() => normalizeLoopbackUrl('https://127.0.0.1:4310')).toThrowError(
+  it('accepts remote and https endpoints and derives default ports', () => {
+    expect(normalizeServerUrl('http://192.168.1.10:4310')).toBe('http://192.168.1.10:4310')
+    expect(normalizeServerUrl('https://dsh.example.com')).toBe('https://dsh.example.com:443')
+    expect(normalizeServerUrl('http://dsh.example.com/')).toBe('http://dsh.example.com:80')
+  })
+
+  it('rejects non-http(s) URLs and URLs with paths, credentials, or queries', () => {
+    expect(() => normalizeServerUrl('ftp://127.0.0.1:4310')).toThrowError(
       'Invalid DSH setting connection.serverUrl',
     )
-    expect(() => normalizeLoopbackUrl('http://192.168.1.10:4310')).toThrowError(
+    expect(() => normalizeServerUrl('http://127.0.0.1:4310/v1')).toThrowError(
       'Invalid DSH setting connection.serverUrl',
     )
-    expect(() => normalizeLoopbackUrl('http://127.0.0.1:4310/v1')).toThrowError(
+    expect(() => normalizeServerUrl('http://127.0.0.1:99999')).toThrowError(
+      'Invalid DSH setting connection.serverUrl',
+    )
+    expect(() => normalizeServerUrl('http://127.0.0.1:4310?token=x')).toThrowError(
       'Invalid DSH setting connection.serverUrl',
     )
   })

@@ -32,7 +32,19 @@ export class PluginBundleUseCases {
       repository.listPlugins(signal),
     ])
     signal?.throwIfAborted()
-    return { available: true, bundles, plugins }
+    return {
+      available: true,
+      bundles: bundles.map((bundle) => {
+        const { installTarget, ...publicBundle } = bundle
+        return {
+          ...publicBundle,
+          ...(installTarget === undefined
+            ? {}
+            : { installable: bundle.availability === 'missing', targetVersion: installTarget.version }),
+        }
+      }),
+      plugins,
+    }
   }
 
   public async registries(signal?: AbortSignal): Promise<PluginRegistryCatalog | undefined> {
@@ -113,10 +125,24 @@ export class PluginBundleUseCases {
     confirmInstall?: PluginInstallConfirmation,
     confirmBuilds?: PluginBuildApprovalConfirmation,
     cancelInstallRemote?: PluginInstallCancellationRemote,
+    officialBundle = false,
   ): Promise<PluginBundleChangeResult> {
     let repository: NonNullable<DshBackend['pluginBundles']>
     try {
       repository = await this.availableRepository(signal, true)
+      if (officialBundle) {
+        const catalog = await repository.listBundles(signal)
+        signal.throwIfAborted()
+        const selected = catalog.find((bundle) => bundle.name === spec)
+        if (
+          selected?.official !== true ||
+          selected.installTarget === undefined ||
+          selected.availability !== 'missing' ||
+          selected.readOnlyReason !== undefined
+        )
+          throw unavailable('The official bundle is no longer available to install.')
+        spec = selected.installTarget.spec
+      }
       const inspection = await repository.inspect(spec, registry, signal)
       signal.throwIfAborted()
       if (inspection.status === 'refused') throw inspectionFailure(inspection.problem)
@@ -164,6 +190,7 @@ export class PluginBundleUseCases {
         spec,
         {
           requestId,
+          ...(officialBundle ? { saveExact: true } : {}),
           ...(registry === undefined ? {} : { registry }),
           ...(approvedBuilds === undefined ? {} : { approvedBuilds }),
         },

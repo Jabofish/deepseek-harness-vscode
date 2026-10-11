@@ -1,12 +1,6 @@
-import { type BackendEvent, type TokenUsage } from '@dsh-vscode/domain'
+import { type BackendEvent } from '@dsh-vscode/domain'
 
-import type {
-  AssistantTiming,
-  ModelRetryNode,
-  TimelineNode,
-  TimelineState,
-  TurnUsageTracking,
-} from './nodes.js'
+import type { ModelRetryNode, TimelineNode, TimelineState } from './nodes.js'
 import { addTokenUsage } from './usage.js'
 import {
   conversationNodeIndex,
@@ -17,17 +11,18 @@ import {
   settleAssistantNode,
   sameUserMessagePreview,
   upsert,
+  type TimelineNodeLookup,
 } from './node-lookup.js'
+import { createReplayNodeIndex } from './replay-node-index.js'
+import { retireToolPreviews } from './tool-preview-lifecycle.js'
+import { createTurnTracking } from './turn-tracking.js'
 import { mergeCompaction, mergeTool, teamActivityNode } from './node-merge.js'
 import { completeTiming, noteFirstToken, timingKey } from './step-timings.js'
 import { closeLateTool, closeTurn, hasTurnFailureWithText, invalidateTurnTail } from './turn-closure.js'
 import { completeTurnUsage } from './usage-tracking.js'
 import { addWorkflowMember, settleWorkflowMember, updateWorkflow } from './workflow-projection.js'
 
-const EMPTY_STEP_TIMINGS: Readonly<Record<string, AssistantTiming>> = Object.freeze({})
 const EMPTY_COMMAND_MODES: Readonly<Record<string, 'plan' | 'permission'>> = Object.freeze({})
-const EMPTY_CLOSED_TURNS: ReadonlySet<number> = new Set()
-const EMPTY_TURN_USAGE_TRACKING: Readonly<Record<string, TurnUsageTracking>> = Object.freeze({})
 
 type TransientDeltaEvent = Extract<BackendEvent, { readonly type: 'message.delta' | 'reasoning.delta' }>
 type LiveTimelineNode = Extract<TimelineNode, { readonly kind: 'assistant-message' | 'reasoning' }>
@@ -91,6 +86,7 @@ interface ReduceTimelineOptions {
    * and never exposes an intermediate reducer state to consumers.
    */
   readonly mutableNodes?: () => TimelineNode[]
+  readonly nodeLookup?: () => TimelineNodeLookup
 }
 
 export function reduceTimeline(
@@ -109,188 +105,55 @@ export function reduceTimeline(
     return state
   const nodesMayChange = eventMayChangeTimelineNodes(event, state)
   const nodes = nodesMayChange ? (options.mutableNodes?.() ?? [...state.nodes]) : []
-  let stepTimings: Record<string, AssistantTiming> | undefined
+  const nodeLookup = nodesMayChange ? options.nodeLookup?.() : undefined
+
+  const turnTracking = createTurnTracking(state)
+  const {
+    readStepTimings,
+    hasClosedTurn,
+    readTurnUsage,
+    trackTurnStart,
+    trackStepStart,
+    settleUsageAttempt,
+    scheduleUsageRetry,
+    startUsageRetry,
+    closeUsageStep,
+    noteStepActivity,
+    invalidateTurnUsage,
+    commitTiming,
+    deleteStepTiming,
+    deleteStepTimingsForTurn,
+    openTurn,
+    reopenTurn,
+    recordClosedTurn,
+    forgetTurnUsage,
+  } = turnTracking
   let commandModes: Record<string, 'plan' | 'permission'> | undefined
-  let turnUsageTracking: Record<string, TurnUsageTracking> | undefined
-  let activeTurn = state.activeTurn
-  let closedTurns: Set<number> | undefined
+
   let eventCount = state.eventCount
   let nodeChangeStart: number | undefined = nodesMayChange ? undefined : state.nodeChangeStart
-  const readStepTimings = (): Readonly<Record<string, AssistantTiming>> =>
-    stepTimings ?? state.stepTimings ?? EMPTY_STEP_TIMINGS
-  const ensureStepTimings = (): Record<string, AssistantTiming> => {
-    if (stepTimings === undefined) stepTimings = { ...(state.stepTimings ?? EMPTY_STEP_TIMINGS) }
-    return stepTimings
-  }
+
   const readCommandModes = (): Readonly<Record<string, 'plan' | 'permission'>> =>
     commandModes ?? state.commandModes ?? EMPTY_COMMAND_MODES
   const ensureCommandModes = (): Record<string, 'plan' | 'permission'> => {
     if (commandModes === undefined) commandModes = { ...(state.commandModes ?? EMPTY_COMMAND_MODES) }
     return commandModes
   }
-  const hasClosedTurn = (turn: number): boolean =>
-    closedTurns?.has(turn) ?? state.closedTurns?.includes(turn) ?? false
-  const ensureClosedTurns = (): Set<number> => {
-    if (closedTurns === undefined) closedTurns = new Set(state.closedTurns ?? EMPTY_CLOSED_TURNS)
-    return closedTurns
-  }
-  const readTurnUsageTracking = (): Readonly<Record<string, TurnUsageTracking>> =>
-    turnUsageTracking ?? state.turnUsageTracking ?? EMPTY_TURN_USAGE_TRACKING
-  const readTurnUsage = (turn: number): TurnUsageTracking | undefined => readTurnUsageTracking()[String(turn)]
-  const writeTurnUsage = (turn: number, tracking: TurnUsageTracking | undefined): void => {
-    if (turnUsageTracking === undefined) turnUsageTracking = { ...readTurnUsageTracking() }
-    const key = String(turn)
-    if (tracking === undefined) delete turnUsageTracking[key]
-    else turnUsageTracking[key] = tracking
-  }
-  const trackTurnStart = (turn: number, duplicate: boolean): void => {
-    const previous = readTurnUsage(turn)
-    writeTurnUsage(turn, {
-      turnStarted: true,
-      invalid: duplicate || previous !== undefined,
-      attempts: previous?.attempts ?? [],
-      ...(previous?.active === undefined ? {} : { active: previous.active }),
-    })
-  }
-  const trackStepStart = (turn: number, step: number): void => {
-    const tracking = readTurnUsage(turn) ?? { turnStarted: false, invalid: false, attempts: [] }
-    writeTurnUsage(turn, {
-      ...tracking,
-      invalid: tracking.invalid || tracking.active !== undefined,
-      active: { step, state: 'open' },
-    })
-  }
-  const settleUsageAttempt = (
-    turn: number,
-    step: number | undefined,
-    usage: TokenUsage | undefined,
-    settlement: 'attempt-settled' | 'message-settled',
-  ): void => {
-    const tracking = readTurnUsage(turn)
-    if (tracking === undefined) return
-    const active = tracking.active
-    if (step === undefined || active === undefined || active.step !== step || active.state !== 'open') {
-      writeTurnUsage(turn, { ...tracking, invalid: true })
-      return
-    }
-    writeTurnUsage(turn, {
-      ...tracking,
-      invalid: tracking.invalid || usage === undefined,
-      attempts: usage === undefined ? tracking.attempts : [...tracking.attempts, usage],
-      active: { step, state: settlement },
-    })
-  }
-  const scheduleUsageRetry = (turn: number, step: number, id: string, attempt: number): void => {
-    const tracking = readTurnUsage(turn)
-    if (tracking === undefined) return
-    const active = tracking.active
-    if (active === undefined || active.step !== step || active.state !== 'attempt-settled') {
-      writeTurnUsage(turn, { ...tracking, invalid: true })
-      return
-    }
-    writeTurnUsage(turn, {
-      ...tracking,
-      active: { step, state: 'retry-scheduled', retry: { id, attempt } },
-    })
-  }
-  const startUsageRetry = (turn: number, step: number, id: string, attempt: number): void => {
-    const tracking = readTurnUsage(turn)
-    if (tracking === undefined) return
-    const active = tracking.active
-    if (
-      active === undefined ||
-      active.step !== step ||
-      active.state !== 'retry-scheduled' ||
-      active.retry?.id !== id ||
-      active.retry.attempt !== attempt
-    ) {
-      writeTurnUsage(turn, { ...tracking, invalid: true })
-      return
-    }
-    writeTurnUsage(turn, { ...tracking, active: { step, state: 'open' } })
-  }
-  const closeUsageStep = (turn: number, step: number): void => {
-    const tracking = readTurnUsage(turn)
-    if (tracking === undefined) return
-    const { active, ...rest } = tracking
-    if (
-      active === undefined ||
-      active.step !== step ||
-      (active.state !== 'attempt-settled' &&
-        active.state !== 'retry-scheduled' &&
-        active.state !== 'message-settled')
-    ) {
-      writeTurnUsage(turn, { ...tracking, invalid: true })
-      return
-    }
-    writeTurnUsage(turn, rest)
-  }
-  const noteStepActivity = (turn: number, step: number | undefined): void => {
-    const tracking = readTurnUsage(turn)
-    if (tracking === undefined) return
-    if (step === undefined) {
-      writeTurnUsage(turn, { ...tracking, invalid: true })
-      return
-    }
-    const active = tracking.active
-    if (active?.step !== step || active.state !== 'open') writeTurnUsage(turn, { ...tracking, invalid: true })
-  }
-  const invalidateTurnUsage = (turn: number | undefined): void => {
-    if (turn === undefined) return
-    const tracking = readTurnUsage(turn)
-    if (tracking !== undefined) writeTurnUsage(turn, { ...tracking, invalid: true })
-  }
-  const commitTiming = (key: string | undefined, timing: AssistantTiming | undefined): void => {
-    if (key === undefined || timing === undefined || timing === readStepTimings()[key]) return
-    ensureStepTimings()[key] = timing
-  }
-  const deleteStepTiming = (key: string | undefined): void => {
-    if (key === undefined || !Object.prototype.hasOwnProperty.call(readStepTimings(), key)) return
-    delete ensureStepTimings()[key]
-  }
-  const deleteStepTimingsForTurn = (turn: number): void => {
-    const prefix = `${turn}:`
-    for (const key of Object.keys(readStepTimings())) if (key.startsWith(prefix)) deleteStepTiming(key)
-  }
-  const openTurn = (turn: number): void => {
-    if (!hasClosedTurn(turn)) activeTurn = turn
-  }
-  // Transient previews never become failed/cancelled executions when an attempt ends.
-  for (let index = nodes.length - 1; index >= 0; index -= 1) {
-    const node = nodes[index]
-    if (node?.kind !== 'tool' || node.tool.preparation === undefined) continue
-    const sameStep =
-      'turn' in event && event.turn === node.tool.turn && 'step' in event && event.step === node.tool.step
-    const remove =
-      (event.type === 'session.subscribed' && event.controlBaseline === false) ||
-      event.type === 'connection.lost' ||
-      (event.type === 'turn.ended' && event.turn === node.tool.turn) ||
-      (event.type === 'model.retry' &&
-        event.retry.turn === node.tool.turn &&
-        event.retry.step === node.tool.step) ||
-      (sameStep &&
-        (event.type === 'step.ended' ||
-          event.type === 'assistant.attempt' ||
-          (event.type === 'message.completed' && event.interrupted === true))) ||
-      (sameStep && event.type === 'tool.preparing' && node.tool.preparation.attemptId !== event.attemptId) ||
-      (sameStep &&
-        (event.type === 'message.delta' || event.type === 'reasoning.delta') &&
-        event.transientAttemptId !== undefined &&
-        event.transientAttemptId !== node.tool.preparation.attemptId)
-    if (remove) {
-      nodes.splice(index, 1)
-      nodeChangeStart = Math.min(nodeChangeStart ?? index, index)
-    }
+
+  const previewChangeStart = retireToolPreviews(nodes, event)
+  if (previewChangeStart !== undefined) {
+    nodeChangeStart = previewChangeStart
+    nodeLookup?.synchronize(previewChangeStart)
   }
   switch (event.type) {
     case 'turn.started':
       {
         const wasClosed = hasClosedTurn(event.turn)
-        if (wasClosed) ensureClosedTurns().delete(event.turn)
+        if (wasClosed) reopenTurn(event.turn)
         invalidateTurnTail(nodes, event.turn)
         trackTurnStart(event.turn, wasClosed)
       }
-      activeTurn = event.turn
+      turnTracking.activeTurn = event.turn
       break
     case 'turn.ended':
       closeTurn(
@@ -301,25 +164,28 @@ export function reduceTimeline(
         input.sequence,
         event.reason === 'completed' ? completeTurnUsage(readTurnUsage(event.turn)) : undefined,
       )
-      writeTurnUsage(event.turn, undefined)
-      if (activeTurn === event.turn) activeTurn = undefined
-      if (!hasClosedTurn(event.turn)) ensureClosedTurns().add(event.turn)
+      forgetTurnUsage(event.turn)
+      if (turnTracking.activeTurn === event.turn) turnTracking.activeTurn = undefined
+      if (!hasClosedTurn(event.turn)) recordClosedTurn(event.turn)
       deleteStepTimingsForTurn(event.turn)
       break
     case 'message.user':
       {
-        const optimisticIndex = nodes.findIndex(
-          (node) =>
-            node.kind === 'user-message' &&
-            node.id.startsWith('optimistic:user:') &&
-            // The DSH rpcId is the event-stream frame id, not the Webview
-            // request id used to create the optimistic preview. Match the
-            // preview text as the transport-independent fallback; ordered
-            // session events keep repeated submissions FIFO.
-            ((event.rpcId !== undefined && node.rpcId === event.rpcId) ||
-              sameUserMessagePreview(node, event)),
-        )
-        if (optimisticIndex >= 0)
+        const optimisticIndex =
+          nodeLookup?.optimisticUser(event) ??
+          nodes.findIndex(
+            (node) =>
+              node.kind === 'user-message' &&
+              node.id.startsWith('optimistic:user:') &&
+              // The DSH rpcId is the event-stream frame id, not the Webview
+              // request id used to create the optimistic preview. Match the
+              // preview text as the transport-independent fallback; ordered
+              // session events keep repeated submissions FIFO.
+              ((event.rpcId !== undefined && node.rpcId === event.rpcId) ||
+                sameUserMessagePreview(node, event)),
+          )
+        if (optimisticIndex >= 0) {
+          nodeChangeStart = Math.min(nodeChangeStart ?? optimisticIndex, optimisticIndex)
           nodes[optimisticIndex] = {
             kind: 'user-message',
             id: event.messageId,
@@ -335,22 +201,28 @@ export function reduceTimeline(
               ? {}
               : { sessionReferenceLabels: event.sessionReferenceLabels }),
           }
-        else
-          upsert(nodes, {
-            kind: 'user-message',
-            id: event.messageId,
-            markdown: event.markdown,
-            ...(event.attachments === undefined ? {} : { attachments: event.attachments }),
-            ...(event.images === undefined ? {} : { images: event.images }),
-            ...(event.rpcId === undefined ? {} : { rpcId: event.rpcId }),
-            ...(event.source === undefined ? {} : { source: event.source }),
-            ...(event.sourceForm === undefined ? {} : { sourceForm: event.sourceForm }),
-            ...(event.sourceSummary === undefined ? {} : { sourceSummary: event.sourceSummary }),
-            ...(event.questionReply === undefined ? {} : { questionReply: event.questionReply }),
-            ...(event.sessionReferenceLabels === undefined
-              ? {}
-              : { sessionReferenceLabels: event.sessionReferenceLabels }),
-          })
+        } else {
+          const index = upsert(
+            nodes,
+            {
+              kind: 'user-message',
+              id: event.messageId,
+              markdown: event.markdown,
+              ...(event.attachments === undefined ? {} : { attachments: event.attachments }),
+              ...(event.images === undefined ? {} : { images: event.images }),
+              ...(event.rpcId === undefined ? {} : { rpcId: event.rpcId }),
+              ...(event.source === undefined ? {} : { source: event.source }),
+              ...(event.sourceForm === undefined ? {} : { sourceForm: event.sourceForm }),
+              ...(event.sourceSummary === undefined ? {} : { sourceSummary: event.sourceSummary }),
+              ...(event.questionReply === undefined ? {} : { questionReply: event.questionReply }),
+              ...(event.sessionReferenceLabels === undefined
+                ? {}
+                : { sessionReferenceLabels: event.sessionReferenceLabels }),
+            },
+            nodeLookup,
+          )
+          nodeChangeStart = Math.min(nodeChangeStart ?? index, index)
+        }
       }
       break
     case 'step.started': {
@@ -360,17 +232,17 @@ export function reduceTimeline(
       const key = timingKey(event.turn, event.step)
       if (key !== undefined && event.time !== undefined) {
         const previous = readStepTimings()[key]
-        ensureStepTimings()[key] = {
+        commitTiming(key, {
           stepStartTime: event.time,
           firstTokenTime: previous?.firstTokenTime ?? null,
           completedTime: previous?.completedTime ?? null,
-        }
+        })
       }
       break
     }
     case 'message.delta': {
       if (event.turn !== undefined) openTurn(event.turn)
-      if (event.turn === undefined) invalidateTurnUsage(activeTurn)
+      if (event.turn === undefined) invalidateTurnUsage(turnTracking.activeTurn)
       else noteStepActivity(event.turn, event.step)
       const turnClosed = event.turn !== undefined && hasClosedTurn(event.turn)
       if (turnClosed && event.turn !== undefined) {
@@ -382,7 +254,14 @@ export function reduceTimeline(
       const timing = noteFirstToken(readStepTimings(), event.turn, event.step, event.time)
       commitTiming(timingKeyValue, timing)
       const transient = event.transientAttemptId !== undefined && event.transientIndex !== undefined
-      const index = conversationNodeIndex(nodes, event.messageId, event.turn, event.step, transient)
+      const index = conversationNodeIndex(
+        nodes,
+        event.messageId,
+        event.turn,
+        event.step,
+        transient,
+        nodeLookup,
+      )
       nodeChangeStart = Math.min(
         nodeChangeStart ?? (index < 0 ? nodes.length : index),
         index < 0 ? nodes.length : index,
@@ -461,7 +340,7 @@ export function reduceTimeline(
     }
     case 'reasoning.delta': {
       if (event.turn !== undefined) openTurn(event.turn)
-      if (event.turn === undefined) invalidateTurnUsage(activeTurn)
+      if (event.turn === undefined) invalidateTurnUsage(turnTracking.activeTurn)
       else noteStepActivity(event.turn, event.step)
       const turnClosed = event.turn !== undefined && hasClosedTurn(event.turn)
       if (turnClosed && event.turn !== undefined) {
@@ -470,7 +349,14 @@ export function reduceTimeline(
       }
       if (event.delta === '') break
       const transient = event.transientAttemptId !== undefined && event.transientIndex !== undefined
-      const index = conversationNodeIndex(nodes, event.messageId, event.turn, event.step, transient)
+      const index = conversationNodeIndex(
+        nodes,
+        event.messageId,
+        event.turn,
+        event.step,
+        transient,
+        nodeLookup,
+      )
       nodeChangeStart = Math.min(
         nodeChangeStart ?? (index < 0 ? nodes.length : index),
         index < 0 ? nodes.length : index,
@@ -554,7 +440,7 @@ export function reduceTimeline(
     }
     case 'message.completed': {
       if (event.turn !== undefined) openTurn(event.turn)
-      if (event.turn === undefined) invalidateTurnUsage(activeTurn)
+      if (event.turn === undefined) invalidateTurnUsage(turnTracking.activeTurn)
       else settleUsageAttempt(event.turn, event.step, event.usage, 'message-settled')
       const turnClosed = event.turn !== undefined && hasClosedTurn(event.turn)
       if (turnClosed && event.turn !== undefined) {
@@ -564,7 +450,7 @@ export function reduceTimeline(
       const timingKeyValue = timingKey(event.turn, event.step)
       const timing = completeTiming(readStepTimings(), event.turn, event.step, event.time)
       commitTiming(timingKeyValue, timing)
-      const index = conversationNodeIndex(nodes, event.messageId, event.turn, event.step)
+      const index = conversationNodeIndex(nodes, event.messageId, event.turn, event.step, false, nodeLookup)
       nodeChangeStart = Math.min(
         nodeChangeStart ?? (index < 0 ? nodes.length : index),
         index < 0 ? nodes.length : index,
@@ -927,7 +813,7 @@ export function reduceTimeline(
     case 'question.requested':
       break
     case 'connection.lost':
-      activeTurn = undefined
+      turnTracking.activeTurn = undefined
       // Host-only rows are outside the durable cursor, so the Webview's own
       // replay paths (advisory snapshots, a re-open) can hand the same row to
       // the reducer twice. Key them by identity: a redelivery refreshes the
@@ -1032,9 +918,6 @@ export function reduceTimeline(
       ? addTokenUsage(state.tokenUsage, event.usage)
       : state.tokenUsage
   const nextCommandModes = commandModes ?? state.commandModes
-  const nextStepTimings = stepTimings ?? state.stepTimings
-  const nextTurnUsageTracking = turnUsageTracking ?? state.turnUsageTracking
-  const nextClosedTurns = closedTurns === undefined ? state.closedTurns : [...closedTurns]
   const nextEventCount = eventCount
   const nextNodeChangeBase = nodesMayChange ? state.nodes : state.nodeChangeBase
   if (nodesMayChange && nodeChangeStart === undefined) nodeChangeStart = 0
@@ -1052,17 +935,8 @@ export function reduceTimeline(
     ...(nextCommandModes === undefined || Object.keys(nextCommandModes).length === 0
       ? {}
       : { commandModes: nextCommandModes }),
-    ...(nextStepTimings === undefined || Object.keys(nextStepTimings).length === 0
-      ? {}
-      : { stepTimings: nextStepTimings }),
-    ...(nextTurnUsageTracking === undefined || Object.keys(nextTurnUsageTracking).length === 0
-      ? {}
-      : { turnUsageTracking: nextTurnUsageTracking }),
+    ...turnTracking.snapshot(),
     ...(tokenUsage === undefined ? {} : { tokenUsage }),
-    ...(activeTurn === undefined ? {} : { activeTurn }),
-    ...(nextClosedTurns === undefined || nextClosedTurns.length === 0
-      ? {}
-      : { closedTurns: nextClosedTurns }),
   }
 }
 
@@ -1080,8 +954,21 @@ export function reduceTimelineBatch(
 
   let next = state
   let mutableNodes: TimelineNode[] | undefined
+  let nodeIndex: TimelineNodeLookup | undefined
+  const indexAccess = { used: false }
   const ensureMutableNodes = (): TimelineNode[] => (mutableNodes ??= [...next.nodes])
-  for (const input of inputs) next = reduceTimeline(next, input, { mutableNodes: ensureMutableNodes })
+  const options: ReduceTimelineOptions = {
+    mutableNodes: ensureMutableNodes,
+    nodeLookup: () => {
+      indexAccess.used = true
+      return (nodeIndex ??= createReplayNodeIndex(ensureMutableNodes()))
+    },
+  }
+  for (const input of inputs) {
+    indexAccess.used = false
+    next = reduceTimeline(next, input, options)
+    if (indexAccess.used) nodeIndex?.synchronize(next.nodeChangeStart ?? 0)
+  }
   return next
 }
 

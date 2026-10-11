@@ -1,5 +1,7 @@
 import {
   AppError,
+  isCanonicalEndpoint,
+  isLoopbackEndpoint,
   type BackendCandidate,
   type BackendEndpoint,
   type BackendState,
@@ -11,6 +13,7 @@ import {
 import type {
   BackendDiscovery,
   BackendFactory,
+  BackendEndpointPreparation,
   BackendProbe,
   ConnectionRequest,
   ProcessSupervisor,
@@ -24,6 +27,7 @@ export interface ConnectionCoordinatorDependencies {
   readonly probe: BackendProbe
   readonly backendFactory: BackendFactory
   readonly processSupervisor: ProcessSupervisor
+  readonly endpointPreparation?: BackendEndpointPreparation
 }
 
 export interface ConnectionResult {
@@ -37,6 +41,7 @@ export class DshConnectionCoordinator {
   private inFlight: Promise<ConnectionResult> | undefined
   private inFlightRequest: ConnectionRequest | undefined
   private backend: DshBackend | undefined
+  private connectedRequest: ConnectionRequest | undefined
   private readonly orphanedBackends = new Set<DshBackend>()
   private managedProcess: ManagedProcessHandle | undefined
   private operationAbort: AbortController | undefined
@@ -81,7 +86,11 @@ export class DshConnectionCoordinator {
       this.throwIfAborted(signal)
       if (this.disconnectIntent !== disconnectIntent) throw cancelled(signal?.reason)
     }
-    if (this.backend !== undefined && shouldDisconnectForRequest(this.backend.connection.endpoint, request))
+    if (
+      this.backend !== undefined &&
+      (!sameRequest(this.connectedRequest, request) ||
+        shouldDisconnectForRequest(this.backend.connection.endpoint, request))
+    )
       await this.disconnectForReplacement()
     this.throwIfAborted(signal)
     if (this.disconnectIntent !== disconnectIntent) throw cancelled(signal?.reason)
@@ -108,6 +117,7 @@ export class DshConnectionCoordinator {
     this.inFlightRequest = request
     void operation.then(
       () => {
+        if (generation === this.generation && this.backend !== undefined) this.connectedRequest = request
         if (this.inFlight === operation) {
           this.inFlight = undefined
           this.inFlightRequest = undefined
@@ -223,6 +233,7 @@ export class DshConnectionCoordinator {
     this.throwIfAborted(signal)
     if (
       this.backend !== undefined &&
+      sameRequest(this.connectedRequest, request) &&
       !shouldDisconnectForRequest(this.backend.connection.endpoint, request)
     ) {
       const state: Extract<BackendState, { readonly kind: 'connected' }> = {
@@ -290,38 +301,55 @@ export class DshConnectionCoordinator {
           (candidate) =>
             candidate.pid !== undefined && Number.isSafeInteger(candidate.pid) && candidate.pid > 0,
         )
+      // An explicit runtime-version override takes precedence over discovery:
+      // a containerized DSH cannot expose a process manifest, so the only
+      // evidence of its wire version is the user's configured value.
+      const configuredRuntimeVersion =
+        request.runtimeVersion !== undefined && request.runtimeVersion.trim() !== ''
+          ? request.runtimeVersion.trim()
+          : undefined
+      const discoveredRuntimeVersion = [...runtimeVersions][0]
       const candidate: BackendCandidate = {
         endpoint,
         source: 'configured',
         confidence: 120,
-        ...(hasVerifiedRuntimeIdentity
-          ? {
-              runtimeVersion: [...runtimeVersions][0],
-              runtimeVersionEvidence: 'process-manifest' as const,
-            }
-          : {}),
+        ...(configuredRuntimeVersion !== undefined
+          ? { runtimeVersion: configuredRuntimeVersion }
+          : hasVerifiedRuntimeIdentity && discoveredRuntimeVersion !== undefined
+            ? {
+                runtimeVersion: discoveredRuntimeVersion,
+                runtimeVersionEvidence: 'process-manifest' as const,
+              }
+            : {}),
         ...(hasVerifiedRuntimeIdentity && uniquePid !== undefined ? { pid: uniquePid } : {}),
       }
       this.publish({ kind: 'connecting', candidate })
       try {
+        await this.dependencies.endpointPreparation?.prepare(endpoint, signal ?? new AbortController().signal)
+        this.throwIfAborted(signal)
         const verified = await this.dependencies.probe.probe(candidate, signal)
         this.throwIfAborted(signal)
         if (verified !== undefined) return this.attach(verified, undefined, signal, generation)
       } catch (error) {
+        await this.dependencies.endpointPreparation?.release?.(endpoint)
         if (isCancellation(error, signal)) throw cancelled(error)
         // The user explicitly selected this endpoint, so a definitive
         // DSH-incompatible classification from the probe chain must reach the
         // caller instead of degrading into a generic unreachable error.
-        if (error instanceof AppError && error.code === 'DSH_INCOMPATIBLE') {
+        if (
+          error instanceof AppError &&
+          ['DSH_INCOMPATIBLE', 'AUTH_REQUIRED', 'PERMISSION_DENIED', 'INVALID_ENDPOINT'].includes(error.code)
+        ) {
           this.publish({ kind: 'failed', message: error.message, retryable: error.retryable })
           throw error
         }
       }
       const error = new AppError({
         code: 'BACKEND_UNREACHABLE',
-        message: 'The configured DSH endpoint did not respond as a compatible local DSH service.',
+        message: 'The configured DSH endpoint did not respond as a compatible DSH service.',
         retryable: true,
       })
+      await this.dependencies.endpointPreparation?.release?.(endpoint)
       this.publish({ kind: 'failed', message: error.message, retryable: error.retryable })
       throw error
     }
@@ -649,20 +677,21 @@ function sameRequest(left: ConnectionRequest | undefined, right: ConnectionReque
   return (
     left?.mode === right.mode &&
     left.autoStart === right.autoStart &&
+    left.runtimeVersion === right.runtimeVersion &&
+    left.credentialRevision === right.credentialRevision &&
     left.endpoint?.baseUrl === right.endpoint?.baseUrl
   )
 }
 
 function matchesCustomEndpoint(candidate: BackendCandidate, selected: BackendEndpoint): boolean {
   const discovered = candidate.endpoint
-  if (!isCanonicalLoopbackEndpoint(discovered) || !isCanonicalLoopbackEndpoint(selected)) return false
+  if (!isCanonicalEndpoint(discovered) || !isCanonicalEndpoint(selected)) return false
+  if (!isLoopbackEndpoint(discovered) || !isLoopbackEndpoint(selected)) return false
   if (discovered.port !== selected.port) return false
   if (discovered.host === selected.host) return discovered.baseUrl === selected.baseUrl
-  const loopbackAlias =
-    (discovered.host === '127.0.0.1' && selected.host === 'localhost') ||
-    (discovered.host === 'localhost' && selected.host === '127.0.0.1')
   return (
-    loopbackAlias &&
+    isLoopbackEndpoint(discovered) &&
+    isLoopbackEndpoint(selected) &&
     candidate.pid !== undefined &&
     Number.isSafeInteger(candidate.pid) &&
     candidate.pid > 0 &&
@@ -673,10 +702,6 @@ function matchesCustomEndpoint(candidate: BackendCandidate, selected: BackendEnd
 
 function candidateEndpointKey(candidate: BackendCandidate): string {
   return `${candidate.endpoint.host}:${candidate.endpoint.port}`
-}
-
-function isCanonicalLoopbackEndpoint(endpoint: BackendEndpoint): boolean {
-  return endpoint.baseUrl === `http://${endpoint.host}:${endpoint.port}`
 }
 
 function isDshRuntimeVersion(value: string): boolean {

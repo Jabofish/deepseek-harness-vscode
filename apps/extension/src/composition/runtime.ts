@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { spawn } from 'node:child_process'
 import path from 'node:path'
-import { AppError, type BackendEndpoint } from '@dsh-vscode/domain'
+import { AppError, parseServerOrigin, type BackendEndpoint } from '@dsh-vscode/domain'
 import { runtimePathEntries } from '../backend/runtime-paths.js'
 import type { SpawnedChild } from '../backend/process-supervisor.js'
 import { resolveWindowsShim } from '../backend/windows-shim.js'
@@ -14,22 +14,9 @@ export function platform(): 'windows' | 'linux' | 'macos' {
 
 export function endpointFromServerUrl(serverUrl: string | undefined): BackendEndpoint | undefined {
   if (serverUrl === undefined) return undefined
-  try {
-    const parsed = new URL(serverUrl)
-    const host = parsed.hostname
-    const port = Number(parsed.port)
-    if (
-      parsed.protocol !== 'http:' ||
-      (host !== '127.0.0.1' && host !== 'localhost') ||
-      !Number.isInteger(port) ||
-      port < 1 ||
-      port > 65_535
-    )
-      return undefined
-    return { host, port, baseUrl: `http://${host}:${port}` }
-  } catch {
-    return undefined
-  }
+  const origin = parseServerOrigin(serverUrl)
+  if (origin === undefined) return undefined
+  return { host: origin.host, port: origin.port, baseUrl: origin.baseUrl }
 }
 
 export function runtimeEnvironment(overrides?: NodeJS.ProcessEnv, executable?: string): NodeJS.ProcessEnv {

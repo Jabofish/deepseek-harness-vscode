@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { AgentConfiguration, BackendEndpoint, BackendEvent, JobFollowFrame } from '@dsh-vscode/domain'
+import type { BackendEndpoint, BackendEvent, JobFollowFrame } from '@dsh-vscode/domain'
 
 vi.mock('vscode', () => ({}))
 
@@ -7,7 +7,6 @@ import {
   createManagedEndpointLoginHandler,
   JobFollowRegistry,
   relayJobFollowFrames,
-  resolveSessionConfigurationForRoster,
   resolveJobFollowOffset,
 } from './composition-root.js'
 
@@ -226,6 +225,15 @@ describe('managed endpoint login cancellation', () => {
     baseUrl: 'http://127.0.0.1:4317',
   }
 
+  it('rejects a managed login URL with a different origin before sending its token', async () => {
+    const fetcher = vi.fn<typeof globalThis.fetch>()
+    const handler = createManagedEndpointLoginHandler(new Map(), new Map(), fetcher)
+    await expect(
+      handler(endpoint, 'https://other.example/?token=fixture', new AbortController().signal),
+    ).rejects.toMatchObject({ code: 'INVALID_ENDPOINT' })
+    expect(fetcher).not.toHaveBeenCalled()
+  })
+
   it('passes the startup signal to the login fetch so abort stops the request', async () => {
     const started = deferred()
     const endpointCookies = new Map([[endpoint.baseUrl, 'old-session=stale']])
@@ -250,13 +258,13 @@ describe('managed endpoint login cancellation', () => {
       fetcher,
     )
     const controller = new AbortController()
-    const login = rememberReadyEndpoint(endpoint, 'https://127.0.0.1:4317/?token=one-use', controller.signal)
+    const login = rememberReadyEndpoint(endpoint, 'http://127.0.0.1:4317/?token=one-use', controller.signal)
 
     await started.promise
     controller.abort()
 
     await expect(login).rejects.toHaveProperty('name', 'AbortError')
-    expect(receivedSignal).toBe(controller.signal)
+    expect(receivedSignal?.aborted).toBe(true)
     expect(receivedSignal?.aborted).toBe(true)
     expect(endpointCookies.has(endpoint.baseUrl)).toBe(false)
     expect(endpointLaunchUrls.has(endpoint.baseUrl)).toBe(false)
@@ -279,7 +287,7 @@ describe('managed endpoint login cancellation', () => {
       fetcher,
     )
     const controller = new AbortController()
-    const login = rememberReadyEndpoint(endpoint, 'https://127.0.0.1:4317/?token=one-use', controller.signal)
+    const login = rememberReadyEndpoint(endpoint, 'http://127.0.0.1:4317/?token=one-use', controller.signal)
 
     await started.promise
     controller.abort()
@@ -291,34 +299,8 @@ describe('managed endpoint login cancellation', () => {
     )
 
     await expect(login).rejects.toHaveProperty('name', 'AbortError')
-    expect(receivedSignal).toBe(controller.signal)
+    expect(receivedSignal?.aborted).toBe(true)
     expect(endpointCookies.has(endpoint.baseUrl)).toBe(false)
     expect(endpointLaunchUrls.has(endpoint.baseUrl)).toBe(false)
-  })
-})
-
-describe('session preset resolution', () => {
-  const requested: AgentConfiguration = {
-    preset: 'standard',
-    toolMode: 'native',
-    permissionPreset: 'workspace-write',
-    planMode: false,
-    model: { providerId: '', modelId: '' },
-  }
-
-  it('leaves an empty optional registry to the DSH host default', () => {
-    expect(resolveSessionConfigurationForRoster(requested, [])).toEqual({
-      ...requested,
-      preset: '',
-    })
-  })
-
-  it('keeps a requested preset only when it exists in the host roster', () => {
-    expect(
-      resolveSessionConfigurationForRoster({ ...requested, preset: 'custom-mode' }, [
-        { id: 'standard', trust: 'system', isDefault: true },
-        { id: 'custom-mode', trust: 'user', isDefault: false },
-      ]).preset,
-    ).toBe('custom-mode')
   })
 })

@@ -1,0 +1,554 @@
+.dsh-session-switcher--headless .dsh-session-switcher__panel {
+  top: 0 !important;
+  right: 0 !important;
+  bottom: auto !important;
+  left: 0 !important;
+  inset-inline: 0 !important;
+  inset-inline-start: 0 !important;
+  inset-inline-end: 0 !important;
+  width: auto !important;
+  max-width: none !important;
+  pointer-events: auto;
+}
+
+/* Compact, Codex-like session surface: the panel is an overlay, so its own
+   chrome should not consume more space than the session rows it controls. */
+.dsh-session-switcher--headless .dsh-session-switcher__panel {
+  gap: 5px;
+  padding: 6px;
+  border-radius: 8px;
+}
+
+.dsh-session-switcher--headless .dsh-session-switcher__panel-header {
+  gap: 6px;
+  padding: 0 1px 5px;
+}
+
+.dsh-session-switcher--headless .dsh-session-switcher__panel-title {
+  font-size: var(--dsh-font-size-2xs);
+}
+
+.dsh-session-switcher--headless .dsh-session-switcher__panel-header .dsh-button {
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
+  flex: 0 0 30px;
+  padding: 0;
+  border-radius: 7px;
+}
+
+.dsh-session-switcher--headless .dsh-session-switcher__panel-header .dsh-button .dsh-icon {
+  width: 14px;
+  height: 14px;
+  flex-basis: 14px;
+}
+
+.dsh-session-switcher--headless .dsh-session-switcher__list {
+  gap: 1px;
+}
+
+.dsh-session-switcher--headless .dsh-session-switcher__list > li {
+  grid-template-columns: minmax(0, 1fr) 26px;
+  gap: 1px;
+}
+
+.dsh-session-switcher--headless .dsh-session-switcher__list .dsh-session-item__button {
+  min-height: 34px;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 6px;
+  padding: 5px 6px;
+  border-radius: 6px;
+}
+
+.dsh-session-switcher--headless .dsh-session-item__icon {
+  width: 18px;
+  height: 18px;
+}
+
+.dsh-session-switcher--headless .dsh-session-item__icon .dsh-icon {
+  width: var(--dsh-icon-size-sm);
+  height: var(--dsh-icon-size-sm);
+  flex-basis: var(--dsh-icon-size-sm);
+}
+
+.dsh-session-switcher--headless .dsh-session-item__copy strong {
+  font-size: var(--dsh-font-size-sm);
+  line-height: 1.2;
+}
+
+.dsh-session-switcher--headless .dsh-session-item__remove {
+  width: 26px;
+  min-width: 26px;
+  height: 28px;
+  min-height: 28px;
+  opacity: 0.68;
+}
+
+.dsh-session-switcher--headless .dsh-session-switcher__empty {
+  padding: 6px 2px;
+  font-size: var(--dsh-font-size-xs);
+}
+.dsh-session-dialog__actions {
+  flex-wrap: wrap;
+}
+
+.dsh-approval__takeover {
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.dsh-approval__takeover > span,
+.dsh-approval__takeover > code {
+  min-width: 0;
+}
+
+.dsh-approval__takeover > code {
+  flex: 1 1 12ch;
+  overflow-wrap: anywhere;
+}
+
+/* Conversation view tab ring (chat / trajectory), mirroring the official
+   conversation.view slot ring. */
+.dsh-conversation__views {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 2px;
+  min-width: 0;
+  padding: 0;
+  border-bottom: 0;
+}
+
+.dsh-session-controls__mode,
+.dsh-model-picker {
+  min-width: 0;
+}
+
+.dsh-session-controls__mode {
+  flex: 0 1 112px;
+  max-width: 112px;
+}
+
+/* Session picker and risk-surface compatibility: these rules complete the
+   shared row contract for headless and regular picker variants. */
+.dsh-session-switcher--headless .dsh-session-switcher__list > li {
+  grid-template-columns: minmax(0, 1fr) max-content;
+}
+
+.dsh-session-switcher--headless .dsh-session-switcher__list .dsh-session-item__button {
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+}
+
+.dsh-session-switcher--headless .dsh-session-item__status {
+  grid-column: auto;
+  grid-row: auto;
+  min-width: max-content;
+  white-space: nowrap;
+  writing-mode: horizontal-tb;
+}
+
+.dsh-session-switcher--headless .dsh-session-item__actions {
+  min-width: max-content;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow: visible;
+}
+
+.dsh-session-switcher--headless .dsh-session-item__actions .dsh-icon-button {
+  flex: 0 0 26px;
+  width: 26px;
+  min-width: 26px;
+  height: 28px;
+  min-height: 28px;
+}
+
+.dsh-session-switcher--headless .dsh-session-dialog__backdrop {
+  position: fixed;
+  z-index: 3000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: auto;
+}
+
+.dsh-session-switcher--headless .dsh-session-dialog {
+  position: relative;
+  z-index: 1;
+  box-sizing: border-box;
+  max-width: calc(100vw - 32px);
+  pointer-events: auto;
+}
+
+/* The context details popover is positioned above its trigger. The generic
+   metric-cell ellipsis must not clip that popover, while other metric cells
+   keep their existing overflow behavior. */
+.dsh-session-controls__metrics > div > .dsh-session-controls__context-cell {
+  overflow: visible;
+}
+
+.dsh-settings__editable-model {
+  display: grid;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, var(--dsh-control-border) 78%, transparent);
+  border-radius: var(--dsh-radius-sm);
+}
+
+.dsh-settings__editable-model-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 5px;
+}
+
+.dsh-settings__editable-model-row label {
+  min-width: 0;
+}
+
+.dsh-settings__editable-model-row input {
+  margin: 0;
+}
+
+.dsh-settings__model-disclosure {
+  transition: transform var(--dsh-motion-duration-fast) var(--dsh-motion-ease-standard);
+}
+
+.dsh-settings__model-disclosure[aria-expanded='true'] {
+  transform: rotate(90deg);
+}
+
+.dsh-settings__model-advanced {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.dsh-settings__model-input-types {
+  grid-column: 1 / -1;
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  margin: 0;
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, var(--dsh-control-border) 78%, transparent);
+  border-radius: var(--dsh-radius-sm);
+}
+
+.dsh-settings__model-input-types legend,
+.dsh-settings__model-input-inherited {
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+}
+
+.dsh-settings__model-input-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+
+.dsh-settings__model-input-options label {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 5px;
+}
+
+.dsh-settings__model-input-options input[type='checkbox'] {
+  width: auto;
+  min-width: 0;
+  margin: 0;
+}
+
+.dsh-settings__visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.dsh-settings__model-picker-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.dsh-presets__modal-backdrop {
+  position: fixed;
+  z-index: 4000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: color-mix(in srgb, var(--dsh-text) 42%, transparent);
+  pointer-events: auto;
+}
+
+.dsh-presets__modal-backdrop > .dsh-presets__dialog {
+  width: min(540px, calc(100vw - 32px));
+  max-height: min(78vh, 620px);
+  box-sizing: border-box;
+  overflow: auto;
+  box-shadow: var(--dsh-shadow, 0 12px 36px color-mix(in srgb, var(--dsh-bg) 78%, transparent));
+}
+
+.dsh-presets__modal-backdrop > .dsh-presets__dialog--composition {
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.dsh-presets__dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--dsh-space-2);
+  min-width: 0;
+}
+
+.dsh-presets__dialog-head h3 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.dsh-presets__dialog--composition .dsh-presets__code {
+  min-height: 0;
+  margin: 0;
+  overflow: auto;
+}
+
+.dsh-session-controls__context-cell,
+.dsh-session-controls__context-cell .dsh-context-meter,
+.dsh-context-meter__trigger {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.dsh-context-meter__trigger > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dsh-open-file-picker,
+.dsh-jobs-popover__menu,
+.dsh-session-dialog,
+.dsh-tool-error-modal,
+.dsh-settings__model-picker {
+  box-sizing: border-box;
+}
+
+.dsh-jobs-popover__menu {
+  width: min(420px, calc(100vw - 16px));
+  min-width: 0;
+  max-width: calc(100vw - 16px);
+}
+
+.dsh-session-switcher__panel,
+.dsh-settings[role='dialog'],
+.dsh-presets__dialog {
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+.dsh-settings__toolbar,
+.dsh-settings__risk-actions,
+.dsh-presets__dialog-actions {
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.dsh-settings__toolbar > *,
+.dsh-settings__risk-actions > *,
+.dsh-presets__dialog-actions > * {
+  min-width: 0;
+}
+
+.dsh-settings__runtime-update-head > *,
+.dsh-settings__provider-editor-head > div,
+.dsh-settings__provider-editor-scope,
+.dsh-settings__model-picker h3,
+.dsh-settings__model-picker li label > span {
+  min-width: 0;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.dsh-settings__note,
+.dsh-settings__empty,
+.dsh-settings__error,
+.dsh-settings__model-editor-note,
+.dsh-settings__summary,
+.dsh-settings__provider-editor-head code,
+.dsh-settings__custom-provider-head p,
+.dsh-presets__dialog-error,
+.dsh-app__connection-alert,
+.dsh-app__error,
+.dsh-interaction__risk {
+  min-width: 0;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.dsh-settings__model-picker h3,
+.dsh-settings__model-picker li label > span,
+.dsh-settings__model-picker li label > code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dsh-settings__model-picker li label > code {
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+.dsh-settings__header,
+.dsh-settings__model-picker header,
+.dsh-settings__model-picker footer {
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.dsh-settings__header h2,
+.dsh-settings__model-picker header h3 {
+  min-width: 0;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.dsh-settings__field-state {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.dsh-settings__provider-add,
+.dsh-settings__provider-add-actions .dsh-button {
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.dsh-settings__custom-provider-head > *,
+.dsh-settings__provider-editor-head > * {
+  min-width: 0;
+}
+
+.dsh-subagent-tree__menu {
+  box-sizing: border-box;
+  width: min(360px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
+  max-height: min(300px, calc(100vh - 24px));
+}
+
+.dsh-lightbox {
+  max-width: min(860px, calc(92vw), calc(100vw - 48px));
+  max-height: min(88vh, calc(100vh - 48px));
+}
+
+.dsh-lightbox__placeholder {
+  min-width: 0;
+  width: min(220px, 100%);
+  max-width: 100%;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.dsh-session-switcher__panel-title,
+.dsh-session-switcher__group-header strong {
+  min-width: 0;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.dsh-jobs-popover__menu {
+  width: min(420px, 100%, calc(100vw - 24px));
+  max-width: 100%;
+}
+
+.dsh-session-switcher--headless .dsh-session-switcher__list > li {
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+}
+
+.dsh-session-switcher--headless .dsh-session-item__status,
+.dsh-session-switcher--headless .dsh-session-item__actions,
+.dsh-session-switcher__workspace-actions {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.dsh-session-switcher--headless .dsh-session-item__status {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dsh-settings__provider-remove-dialog {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+/* rc.1 question parity: the mirror owns growth and the textarea owns the
+   scrollport after six 24px text lines. This is intentionally appended so
+   older question-card geometry remains unchanged outside the new field. */
+.dsh-question__field {
+  min-width: 0;
+  display: grid;
+}
+
+.dsh-question__field > * {
+  grid-area: 1 / 1;
+  min-width: 0;
+  padding: var(--dsh-question-field-padding);
+  font: inherit;
+  line-height: 24px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.dsh-question__field-mirror {
+  box-sizing: content-box;
+  max-height: 144px;
+  overflow: hidden;
+  visibility: hidden;
+}
+
+.dsh-question__field .dsh-question__textarea {
+  height: 100%;
+  min-height: 24px;
+  max-height: 144px;
+  resize: none;
+  overflow-y: auto;
+}
+
+/* rc.1 subagent parity: keep the parent breadcrumb compact in the header;
+   known long titles must shrink and ellipsize instead of pushing actions out
+   of the Webview. */
+.dsh-session-lineage {
+  display: inline-flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+  line-height: 18px;
+}
+
+.dsh-session-lineage__segment {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+}

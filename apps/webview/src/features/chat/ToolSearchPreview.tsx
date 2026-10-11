@@ -77,7 +77,7 @@ export function ToolSearchPreview(props: ToolSearchRenderProps): ReactElement {
       {empty ? (
         <div className="dsh-tool-search-preview__empty">{translate('toolrow.presentation.noResults')}</div>
       ) : (
-        <div className="dsh-tool-search-preview__body">
+        <div className="dsh-tool-search-preview__body" tabIndex={0}>
           {head.map((row) => (
             <div key={rowKey(row)}>{renderRow(row, toggleFile)}</div>
           ))}

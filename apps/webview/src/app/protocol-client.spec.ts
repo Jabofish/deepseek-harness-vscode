@@ -23,6 +23,90 @@ beforeEach(() => {
 afterEach(() => listeners.clear())
 
 describe('ProtocolClient', () => {
+  it('matches the response family as well as the request id', async () => {
+    const client = new ProtocolClient({
+      postMessage: () => undefined,
+      getState: () => undefined,
+      setState: () => undefined,
+    })
+    try {
+      const resolved = vi.fn<(value: unknown) => void>()
+      const legacy = client.request({ type: 'app.ready', requestId: 'legacy' }).then(resolved)
+      const feature = client
+        .featureRequest({
+          type: 'feature.request.cancel',
+          requestId: 'feature',
+          payload: { targetRequestId: 'target' },
+        })
+        .then(resolved)
+      void legacy.catch(() => undefined)
+      void feature.catch(() => undefined)
+      for (const [type, requestId] of [
+        ['feature.response', 'legacy'],
+        ['response', 'feature'],
+      ])
+        client.handle({
+          protocolVersion: PROTOCOL_VERSION,
+          message: { type, requestId, ok: true, payload: { kind: 'empty' } },
+        })
+      await Promise.resolve()
+      expect(resolved).not.toHaveBeenCalled()
+      for (const [type, requestId] of [
+        ['response', 'legacy'],
+        ['feature.response', 'feature'],
+      ])
+        client.handle({
+          protocolVersion: PROTOCOL_VERSION,
+          message: {
+            type,
+            requestId,
+            ok: true,
+            payload: type === 'response' ? { legacy: true } : { kind: 'empty' },
+          },
+        })
+      await Promise.all([legacy, feature])
+      expect(resolved.mock.calls.map(([value]) => value)).toEqual([{ legacy: true }, { kind: 'empty' }])
+    } finally {
+      client.dispose()
+    }
+  })
+
+  it('keeps event subscriptions inert after disposal', () => {
+    const client = new ProtocolClient({
+      postMessage: () => undefined,
+      getState: () => undefined,
+      setState: () => undefined,
+    })
+    client.dispose()
+    const legacy = vi.fn()
+    const feature = vi.fn()
+    const unsubscribe = client.subscribe(legacy)
+    const unsubscribeFeature = client.subscribeFeature(feature)
+    client.handle({
+      protocolVersion: PROTOCOL_VERSION,
+      message: { type: 'event', name: 'safe', sequence: 1, payload: {} },
+    })
+    client.handle({
+      protocolVersion: PROTOCOL_VERSION,
+      message: {
+        type: 'feature.event',
+        name: 'editor.context.changed',
+        identity: {
+          backendInstanceId: 'backend-1',
+          connectionGeneration: 1,
+          stream: 'local',
+          localSeq: 1,
+        },
+        contextRef: 'dsh-context-context-00000001',
+        action: 'updated',
+      },
+    })
+    expect(legacy).not.toHaveBeenCalled()
+    expect(feature).not.toHaveBeenCalled()
+    unsubscribe()
+    unsubscribeFeature()
+  })
+
   it('validates messages before resolving requests or publishing events', async () => {
     const posted: ProtocolEnvelope[] = []
     const client = new ProtocolClient({

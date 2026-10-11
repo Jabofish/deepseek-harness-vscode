@@ -8,6 +8,8 @@ import {
   type BackendState,
   type DshBackend,
   type DshRuntimeUpdateProgress,
+  isLoopbackEndpoint,
+  parseServerOrigin,
 } from '@dsh-vscode/domain'
 import {
   BackendService,
@@ -32,7 +34,7 @@ import { DshRuntimeLocator, readStoredRuntimePath } from '../backend/runtime-loc
 import { resolveNpmExecutable } from '../backend/runtime-paths.js'
 import { resolveWindowsShim } from '../backend/windows-shim.js'
 import type { VsCodeConfigurationSource } from '../config/configuration-source.js'
-import { normalizeLoopbackUrl } from '../config/configuration-source.js'
+import { normalizeServerUrl } from '../config/configuration-source.js'
 import { DSH_PACKAGE } from '../constants.js'
 import { RuntimeInstaller } from '../vscode/install-runtime.js'
 import { DshRuntimeUpdater } from '../vscode/update-runtime.js'
@@ -47,10 +49,12 @@ import {
 } from './runtime.js'
 import { createExportFileSystem } from './export-file-system.js'
 import { sameWorkspacePath } from './workspace-state.js'
+import { EndpointNetwork } from '../backend/endpoint-network.js'
+import { ExternalConnectionAccess } from '../backend/external-connection-access.js'
+import { hasLocalWorkspaceAuthority } from '../view/session-workspace-scope.js'
 
 const execFileAsync = promisify(execFile)
 const RUNTIME_PATH_STATE_KEY = 'dsh.runtime.lastKnownPath'
-
 export interface RuntimeAssemblyDependencies {
   readonly context: vscode.ExtensionContext
   readonly configuration: VsCodeConfigurationSource
@@ -68,6 +72,7 @@ export interface RuntimeAssembly {
   readonly runtimeInstaller: RuntimeInstaller
   readonly runtimeUseCases: RuntimeUseCases
   readonly endpointLaunchUrls: Map<string, string>
+  readonly externalConnection: ExternalConnectionAccess
 }
 
 /** Locate the runtime, discover endpoints, and own the connection machinery. */
@@ -148,6 +153,30 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
     new MacOsProcessDiscoveryProvider(),
   ])
   const endpointCookies = new Map<string, string>()
+  const network = new EndpointNetwork()
+  const externalConnection = new ExternalConnectionAccess({
+    secrets: context.secrets,
+    network,
+    isTrusted: () => vscode.workspace.isTrusted,
+    requestTimeoutMs: () => configuration.read().connection.requestTimeoutMs,
+    confirm: async (endpoint, insecure) => {
+      const action = insecure ? 'Connect using unencrypted HTTP' : 'Authorize connection'
+      const message = insecure
+        ? `Connect to ${endpoint.baseUrl}? HTTP sends credentials and messages without encryption. Use HTTPS on untrusted networks.`
+        : `Authorize DSH at ${endpoint.baseUrl}? This instance will receive the tasks and files you choose to send.`
+      return (await vscode.window.showWarningMessage(message, { modal: true }, action)) === action
+    },
+    inputToken: () =>
+      Promise.resolve(
+        vscode.window.showInputBox({
+          title: 'DSH external connection credentials',
+          prompt:
+            'Enter the DSH launch token. Leave empty for an instance that does not require token login.',
+          password: true,
+          ignoreFocusOut: true,
+        }),
+      ),
+  })
   // Keep the process launch URL in the Extension Host so the browser can
   // perform its own cookie exchange. The URL is never included in Webview
   // state or messages.
@@ -156,14 +185,29 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
   // getters here, and building the composition root must never read settings.
   const adapterOptions = createAdapterOptions({
     requestTimeoutMs: () => configuration.read().connection.requestTimeoutMs,
-    fetch: globalThis.fetch,
+    fetch: network.fetch,
+    webSocket: network.webSocketConstructor(),
     samePath: sameWorkspacePath,
     exportFileSystem: createExportFileSystem(vscode),
-    authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
+    authCookie: (endpoint) =>
+      externalConnection.cookie(endpoint) ??
+      (endpointLaunchUrls.has(endpoint.baseUrl) ? endpointCookies.get(endpoint.baseUrl) : undefined),
+    allowLocalInspector: (endpoint) => {
+      const state = coordinator.getState()
+      return (
+        state.kind === 'connected' &&
+        state.backend.endpoint.baseUrl === endpoint.baseUrl &&
+        hasLocalWorkspaceAuthority(state.backend)
+      )
+    },
   })
-  const rememberReadyEndpoint = createManagedEndpointLoginHandler(endpointCookies, endpointLaunchUrls)
+  const rememberReadyEndpoint = createManagedEndpointLoginHandler(
+    endpointCookies,
+    endpointLaunchUrls,
+    network.fetch,
+  )
   const adapters = createVersionAdapters(adapterOptions)
-  const probe = new VersionedBackendProbe(adapters, { fetch: globalThis.fetch })
+  const probe = new VersionedBackendProbe(adapters, { fetch: network.fetch })
   const factory = new VersionedBackendFactory(adapters)
   const supervisor = new DshProcessSupervisor({
     managedPort: () => configuration.read().connection.managedPort,
@@ -178,6 +222,7 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
     probe,
     backendFactory: factory,
     processSupervisor: supervisor,
+    endpointPreparation: externalConnection,
   })
   const backendService = new BackendService()
   const runtimeInstaller = new RuntimeInstaller({
@@ -254,6 +299,7 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
     runtimeInstaller,
     runtimeUseCases,
     endpointLaunchUrls,
+    externalConnection,
   }
 }
 
@@ -263,6 +309,7 @@ export interface ConnectionLifecycleDependencies {
   readonly coordinator: DshConnectionCoordinator
   readonly currentWorkspaceFolders: () => readonly vscode.WorkspaceFolder[]
   readonly endpointLaunchUrls: Map<string, string>
+  readonly externalConnection?: ExternalConnectionAccess
   readonly attach: (backend: DshBackend) => Promise<void>
   readonly publishState: (state: BackendState) => void
   readonly disposeAccountLifecycleHost: () => Promise<void>
@@ -294,6 +341,7 @@ export function createConnectionLifecycle(deps: ConnectionLifecycleDependencies)
     coordinator,
     currentWorkspaceFolders,
     endpointLaunchUrls,
+    externalConnection,
     attach,
     publishState,
     disposeAccountLifecycleHost,
@@ -306,18 +354,26 @@ export function createConnectionLifecycle(deps: ConnectionLifecycleDependencies)
       current.connection.mode === 'custom' ? endpointFromServerUrl(current.connection.serverUrl) : undefined
     const request: ConnectionRequest = {
       mode: current.connection.mode,
+      ...(current.connection.mode === 'custom'
+        ? { credentialRevision: externalConnection?.revision ?? 0 }
+        : {}),
       ...(customEndpoint === undefined ? {} : { endpoint: customEndpoint }),
+      ...(current.connection.runtimeVersion === undefined || current.connection.runtimeVersion === ''
+        ? {}
+        : { runtimeVersion: current.connection.runtimeVersion }),
       // A workspace that has not been trusted may attach to an existing
-      // loopback host. An empty window is safe to isolate in a temporary
-      // workspace, but an untrusted project folder must never auto-start DSH.
+      // host. An empty window is safe to isolate in a temporary workspace,
+      // but an untrusted project folder must never auto-start DSH.
       autoStart: current.runtime.autoStart && (vscode.workspace.isTrusted || !hasWorkspaceFolder),
     }
     const result = await coordinator.connect(request, signal)
-    await context.workspaceState.update('dsh.lastEndpoint', {
-      // Discovery only needs the validated loopback port. Keep the full
-      // endpoint in the live Host connection, not in durable workspace state.
-      port: result.backend.connection.endpoint.port,
-    })
+    // A remote port must never become a remembered local discovery candidate.
+    await context.workspaceState.update(
+      'dsh.lastEndpoint',
+      isLoopbackEndpoint(result.backend.connection.endpoint)
+        ? { port: result.backend.connection.endpoint.port }
+        : undefined,
+    )
     await attach(result.backend)
     // Commands may connect before the Webview exists. app.ready must always
     // receive a fresh authoritative snapshot even when the initial publish
@@ -333,6 +389,7 @@ export function createConnectionLifecycle(deps: ConnectionLifecycleDependencies)
       detachSessionAdapters()
       endpointLaunchUrls.clear()
       await coordinator.disconnect()
+      await externalConnection?.release()
       return connect(signal)
     })()
     reconnectOperation = operation
@@ -367,11 +424,11 @@ export function createConnectionLifecycle(deps: ConnectionLifecycleDependencies)
   ): Promise<unknown> => {
     let writes: readonly (readonly [string, unknown])[]
     if (mode === 'custom') {
-      const normalized = normalizeLoopbackUrl(endpoint ?? '')
+      const normalized = normalizeServerUrl(endpoint ?? '')
       if (normalized === undefined)
         throw new AppError({
           code: 'INVALID_CONFIGURATION',
-          message: 'Enter an HTTP loopback endpoint such as http://127.0.0.1:3080.',
+          message: 'Enter an HTTP(S) endpoint such as http://127.0.0.1:3080.',
           retryable: false,
         })
       writes = [
@@ -396,6 +453,17 @@ export function createConnectionLifecycle(deps: ConnectionLifecycleDependencies)
       signal?.throwIfAborted()
       configuringTransport = true
       try {
+        if (mode === 'custom' && externalConnection !== undefined) {
+          const selected = endpointFromServerUrl(endpoint)
+          if (selected === undefined)
+            throw new AppError({
+              code: 'INVALID_ENDPOINT',
+              message: 'Enter a valid DSH endpoint.',
+              retryable: false,
+            })
+          await externalConnection.authorize(selected, signal)
+        }
+        signal?.throwIfAborted()
         await writeTransportSettings(vscode.workspace.getConfiguration('dsh'), writes)
         // A reconnect already in flight may have read the previous settings.
         // Its failure must not suppress this new, explicit attempt either.
@@ -427,9 +495,23 @@ export function createManagedEndpointLoginHandler(
     endpointLaunchUrls.delete(endpoint.baseUrl)
     signal.throwIfAborted()
     if (launchUrl === undefined) return
+    const target = new URL(launchUrl)
+    if (
+      !isLoopbackEndpoint(endpoint) ||
+      parseServerOrigin(target.origin)?.baseUrl !== endpoint.baseUrl ||
+      target.username !== '' ||
+      target.password !== ''
+    ) {
+      throw new AppError({
+        code: 'INVALID_ENDPOINT',
+        message: 'The managed launch URL does not match its local endpoint.',
+        retryable: false,
+      })
+    }
+    const loginSignal = AbortSignal.any([signal, AbortSignal.timeout(30_000)])
     let response: Response
     try {
-      response = await fetcher(launchUrl, { method: 'GET', redirect: 'manual', signal })
+      response = await fetcher(launchUrl, { method: 'GET', redirect: 'manual', signal: loginSignal })
     } catch (error) {
       signal.throwIfAborted()
       throw new AppError({
@@ -445,6 +527,7 @@ export function createManagedEndpointLoginHandler(
     const cookie = setCookies
       .map((value) => value.split(';', 1)[0]?.trim() ?? '')
       .find((value) => /^[^=;\s]+=[^;\r\n]+$/u.test(value))
+    await response.body?.cancel().catch(() => undefined)
     if (response.status < 300 || response.status >= 400 || cookie === undefined) {
       throw new AppError({
         code: 'BACKEND_UNREACHABLE',

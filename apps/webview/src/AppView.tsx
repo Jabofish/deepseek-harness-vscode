@@ -26,9 +26,11 @@ import { rememberWelcomeDismissal, rememberRuntimeUpdateDismissal } from './app/
 import type { OpenFileCandidate } from './app/store.js'
 import type { useAppController } from './AppController.js'
 import { CONVERSATION_VIEW_IDS } from './app/conversation-view-ids.js'
+import { useConversationLayout } from './app/ConversationLayoutProvider.js'
 
 const EMPTY_OPEN_FILE_CANDIDATES: readonly OpenFileCandidate[] = []
 export function AppView(props: ReturnType<typeof useAppController>): ReactElement {
+  const layoutPreference = useConversationLayout()
   const {
     acknowledgeAccountBonusFromSettings,
     active,
@@ -58,7 +60,6 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
     composerOnConfigurationChange,
     composerOnExtrasOpenChange,
     composerOnIngestFiles,
-    composerOnModelRetry,
     composerOnPickAttachment,
     composerOnPopupSelect,
     composerOnPreviewEditorContext,
@@ -119,12 +120,6 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
     scheduleOnOpenLinkedSession,
     scheduleOnStartSession,
     sessionControl,
-    sessionModelCurrent,
-    sessionModelDirectoryError,
-    sessionModelDirectoryLoading,
-    sessionModelFailures,
-    sessionModelRoutable,
-    sessionModels,
     setConversationFontSize,
     setConversationView,
     setDismissedConnection,
@@ -169,7 +164,11 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
   }>()
   return (
     <AppErrorBoundary>
-      <main className="dsh-app" data-dsh-theme={themePreference}>
+      <main
+        className="dsh-app"
+        data-dsh-theme={themePreference}
+        data-conversation-layout={layoutPreference?.layout ?? 'classic'}
+      >
         <AppSettingsDrawer
           key={settingsDrawerVersionKey}
           state={state}
@@ -335,12 +334,13 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                   </div>
                   <div className="dsh-compose-area">
                     <ConnectedComposer
+                      store={store}
+                      modelScope="global"
                       key={state.pendingSession.revision}
                       disabled={backend.kind !== 'connected'}
                       running={false}
                       attachments={attachments}
                       configuration={state.pendingSession.configuration}
-                      models={state.models}
                       presets={state.presets}
                       presetMutable
                       {...(newSessionPresetSelectionEnabled === undefined
@@ -404,6 +404,11 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                   {...(conversationFontStyle === undefined ? {} : { style: conversationFontStyle })}
                   aria-label={active.title.trim() === '' ? t('app.conversation') : active.title}
                 >
+                  {layoutPreference?.layout === 'focused' ? (
+                    <h1 className="dsh-conversation__title" title={active.title}>
+                      {active.title.trim() === '' ? t('app.conversation') : active.title}
+                    </h1>
+                  ) : null}
                   <div className="dsh-conversation__topbar">
                     <div
                       className="dsh-conversation__views"
@@ -637,6 +642,8 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                       subagentReadOnlyReason === undefined || activeRunning ? (
                         <>
                           <ConnectedComposer
+                            store={store}
+                            modelScope="session"
                             disabled={backend.kind !== 'connected'}
                             inputDisabled={
                               subagentReadOnlyReason !== undefined ||
@@ -656,19 +663,6 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                                 }
                               : {})}
                             configuration={state.configuration}
-                            models={sessionModels}
-                            modelFailures={sessionModelFailures}
-                            modelLoading={sessionModelDirectoryLoading}
-                            {...(sessionModelCurrent === undefined
-                              ? {}
-                              : { modelCurrent: sessionModelCurrent })}
-                            {...(sessionModelDirectoryError === undefined
-                              ? {}
-                              : { modelError: sessionModelDirectoryError })}
-                            onModelRetry={composerOnModelRetry}
-                            {...(sessionModelRoutable === undefined
-                              ? {}
-                              : { modelRoutable: sessionModelRoutable })}
                             presets={state.presets}
                             {...(newSessionPresetSelectionEnabled === undefined
                               ? {}

@@ -1,0 +1,783 @@
+/* DSH's shared surface and spacing rules adapted to the VS Code view.
+ * Every override belongs to the opt-in workbench; classic keeps its cascade. */
+.dsh-app[data-conversation-layout='focused'] {
+  --dsh-focused-panel-radius: 16px;
+  gap: var(--dsh-space-2);
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-conversation__title {
+  flex: 0 0 auto;
+  min-width: 0;
+  margin: 0;
+  padding: var(--dsh-space-2) var(--dsh-space-3) 0;
+  overflow: hidden;
+  color: var(--dsh-text);
+  font-size: var(--dsh-font-size-md);
+  font-weight: 500;
+  line-height: 1.6;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-conversation__topbar {
+  padding-inline: var(--dsh-space-2);
+  border-bottom: var(--dsh-border);
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-conversation__views {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-conversation__view-tab {
+  position: relative;
+  min-height: 36px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--dsh-muted);
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-conversation__view-tab[aria-selected='true'] {
+  color: var(--dsh-accent-line);
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-conversation__view-tab[aria-selected='true']::after {
+  position: absolute;
+  inset: auto var(--dsh-space-2) -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: currentColor;
+  content: '';
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-unified-composer {
+  gap: 8px;
+  padding: 6px 12px;
+  border-color: var(--dsh-border-color);
+  border-radius: 20px;
+  background: var(--dsh-surface-soft);
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-unified-composer:focus-within {
+  border-color: var(--dsh-focus-ring);
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-composer__textarea {
+  min-height: 42px;
+  max-height: 240px;
+  padding: 4px;
+  line-height: 1.7;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-composer__toolbar {
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-composer__toolbar-start {
+  min-width: 0;
+  gap: 8px;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  :is(.dsh-session-controls--model, .dsh-session-controls--permission),
+.dsh-app[data-conversation-layout='focused']
+  :is(.dsh-session-controls--model, .dsh-session-controls--permission)
+  .dsh-session-controls__selectors {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  min-width: 0;
+  gap: 8px;
+  overflow: visible;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-session-controls--model {
+  justify-content: flex-end;
+  max-width: 100%;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-session-controls--model .dsh-model-picker {
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 0;
+  max-width: min(24rem, 100%);
+}
+
+.dsh-app[data-conversation-layout='focused']
+  .dsh-model-picker
+  > .dsh-select-menu__trigger
+  .dsh-select-menu__trigger-label {
+  color: var(--dsh-text);
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-session-controls--model .dsh-select-menu__trigger-label {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  .dsh-session-controls--permission
+  .dsh-session-controls__access-picker {
+  min-width: 0;
+  max-width: 12rem;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-composer__toolbar .dsh-select-menu__trigger {
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+  border-color: transparent;
+  background: transparent;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  .dsh-composer__toolbar
+  .dsh-select-menu__trigger:hover:not(:disabled) {
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-composer__submit {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 8px;
+  border-radius: 50%;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-composer__send-label {
+  display: none;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-composer__status {
+  border: 0;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-model-picker__menu {
+  width: min(320px, calc(100vw - 24px));
+  padding: 8px;
+  border-radius: 14px;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  :is(.dsh-model-picker__group h3, .dsh-model-picker__group-heading) {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0;
+  padding: 8px;
+  background: var(--dsh-widget-bg);
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-model-picker__groups .dsh-select-menu__option {
+  scroll-margin-block: 2rem;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-model-picker__search-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  margin-block: 4px 0;
+}
+
+/* Secondary actions are menu rows, not three compressed toolbar cells. */
+.dsh-app[data-conversation-layout='focused']
+  .dsh-session-controls--secondary
+  .dsh-session-controls__selectors {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  .dsh-session-controls--secondary
+  :is(.dsh-select-menu__trigger, .dsh-session-controls__plan) {
+  min-height: 32px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--dsh-text);
+}
+
+.dsh-app[data-conversation-layout='focused']
+  .dsh-session-controls--secondary
+  :is(.dsh-select-menu__trigger, .dsh-session-controls__plan):hover:not(:disabled) {
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-app[data-conversation-layout='focused']
+  .dsh-session-controls--secondary
+  .dsh-select-menu__trigger-label {
+  flex: 1 1 auto;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-model-picker__search {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 4px 8px;
+  border-radius: 8px;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  .dsh-model-picker
+  [data-highlighted='true']:not([aria-checked='true']) {
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-model-picker [aria-checked='true'] {
+  background: var(--dsh-selection-bg);
+  color: var(--dsh-selection-text);
+}
+
+.dsh-app[data-conversation-layout='focused']
+  :is(.dsh-popover-card, .dsh-settings, .dsh-session-dialog, .dsh-feedback-dialog) {
+  border-radius: var(--dsh-focused-panel-radius);
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-session-switcher__panel-header {
+  padding: 12px 16px;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-session-switcher__panel--docked.dsh-popover-card {
+  inset: 8px auto 8px 8px;
+  width: 248px;
+  min-width: 0;
+  max-height: none;
+  border: 0;
+  border-radius: 12px;
+  box-shadow: none;
+  background: var(--dsh-surface-soft);
+}
+
+.dsh-app[data-conversation-layout='focused']:has(.dsh-session-switcher__panel--docked) .dsh-conversation {
+  width: calc(100% - 264px);
+  margin-inline-start: 264px;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  .dsh-session-switcher__panel--docked
+  .dsh-session-switcher__panel-header {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px;
+  padding: 10px 12px 4px;
+  border-bottom: 0;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  .dsh-session-switcher__panel--docked
+  .dsh-session-switcher__panel-title {
+  font-size: var(--dsh-font-size-sm);
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-session-switcher__close {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--dsh-muted);
+}
+
+.dsh-app[data-conversation-layout='focused']
+  .dsh-session-switcher__panel--docked
+  .dsh-session-switcher__panel-actions {
+  grid-column: 1 / -1;
+  justify-content: flex-start;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  .dsh-session-switcher__panel--docked
+  .dsh-session-switcher__search {
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 12px 8px;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  .dsh-session-switcher__panel--docked
+  .dsh-session-switcher__search
+  input {
+  flex-basis: 100%;
+  min-height: 32px;
+  height: 32px;
+  padding: 4px 8px;
+  border-radius: 8px;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  .dsh-session-switcher__panel--docked
+  .dsh-session-switcher__archive-filter {
+  flex: 0 1 auto;
+  max-width: none;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  .dsh-session-switcher__panel--docked
+  .dsh-session-switcher__archive-filter
+  .dsh-select-menu__trigger {
+  min-height: 28px;
+  padding: 2px 4px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--dsh-muted);
+}
+
+.dsh-app[data-conversation-layout='focused']
+  .dsh-session-switcher__panel--docked
+  .dsh-session-switcher__results {
+  padding: 8px;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  .dsh-session-switcher__panel--docked
+  .dsh-session-switcher__workspaces {
+  margin-bottom: 4px;
+  border-bottom: 0;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  .dsh-session-switcher__workspace-button
+  > .dsh-session-switcher__workspace-count {
+  min-width: 1rem;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-session-switcher__workspace--active {
+  background: transparent;
+  border-color: transparent;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  .dsh-session-switcher__workspace--active
+  .dsh-session-switcher__workspace-name {
+  font-weight: 600;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  .dsh-session-item__button--active
+  :is(.dsh-session-item__icon, .dsh-session-item__status) {
+  color: inherit;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  .dsh-session-switcher__panel
+  :is(.dsh-session-switcher__workspace-actions, .dsh-session-item__actions)
+  .dsh-icon-button {
+  flex: 0 0 28px;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 4px;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  :is(.dsh-session-item__copy strong, .dsh-session-switcher__workspace-name) {
+  font-weight: 400;
+}
+
+/* Source rows reveal actions on hover. Keep them in the tab order and show
+ * them for keyboard focus as well; touch devices retain persistent actions. */
+@media (hover: hover) and (pointer: fine) {
+  .dsh-app[data-conversation-layout='focused']
+    :is(.dsh-session-switcher__workspace, .dsh-session-switcher__list > li) {
+    position: relative;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dsh-app[data-conversation-layout='focused']
+    :is(.dsh-session-switcher__workspace-actions, .dsh-session-item__actions) {
+    position: absolute;
+    inset-inline-end: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    opacity: 0;
+    pointer-events: none;
+    border-radius: 6px;
+    background: var(--dsh-surface-hover);
+  }
+
+  .dsh-app[data-conversation-layout='focused']
+    :is(.dsh-session-switcher__workspace, .dsh-session-switcher__list > li):is(:hover, :focus-within)
+    > :is(.dsh-session-switcher__workspace-button, .dsh-session-item__button) {
+    padding-inline-end: 64px;
+  }
+
+  .dsh-app[data-conversation-layout='focused']
+    :is(.dsh-session-switcher__workspace, .dsh-session-switcher__list > li):is(:hover, :focus-within)
+    :is(.dsh-session-switcher__workspace-actions, .dsh-session-item__actions) {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-session-switcher__panel-actions {
+  align-items: center;
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  .dsh-session-switcher__panel-actions
+  > :is(.dsh-icon-button, .dsh-button) {
+  flex: 0 0 28px;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  color: var(--dsh-muted);
+  background: transparent;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  .dsh-session-switcher__panel-actions
+  > :is(.dsh-icon-button, .dsh-button):is(:hover, :focus-visible) {
+  color: var(--dsh-text);
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-app[data-conversation-layout='focused']
+  .dsh-session-switcher__panel--docked
+  .dsh-session-switcher__panel-actions
+  > .dsh-session-switcher__new {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 0;
+  gap: 4px;
+  margin-inline-start: auto;
+  padding-inline: 8px;
+  background: var(--dsh-surface-hover);
+  color: var(--dsh-text);
+  font-size: var(--dsh-font-size-xs);
+}
+
+/* A vertical list gives long labels and secondary counts their own space. */
+.dsh-app[data-conversation-layout='focused'] .dsh-conversation__actions-panel {
+  width: min(280px, calc(100vw - 24px));
+  min-width: 0;
+  padding: 6px;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-conversation__actions-grid {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-conversation__actions-grid button {
+  border-color: transparent;
+  border-radius: 6px;
+  background: transparent;
+  font-weight: 400;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-conversation__actions-grid button:hover {
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-conversation__actions-grid strong {
+  font-weight: inherit;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  .dsh-conversation__actions-grid
+  button
+  > .dsh-icon:last-child:not(:first-child) {
+  margin-inline-start: auto;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  .dsh-conversation__actions-grid
+  .dsh-conversation__events-toggle--menu {
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  .dsh-conversation__actions-grid
+  .dsh-conversation__events-toggle-count {
+  margin-inline-start: auto;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  :is(.dsh-session-switcher__workspace, .dsh-session-switcher__list .dsh-session-item__button) {
+  min-height: 34px;
+  border-color: transparent;
+  border-radius: 8px;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-session-item__button[aria-current='page'] {
+  background: var(--dsh-selection-bg);
+  color: var(--dsh-selection-text);
+}
+
+.dsh-app[data-conversation-layout='focused']
+  .dsh-session-item__button[aria-current='page']
+  .dsh-session-item__status-label {
+  color: inherit;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-session-switcher__list .dsh-session-item__button::before {
+  display: none;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-session-switcher__workspace::before {
+  display: none;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-settings {
+  width: min(100%, 50rem);
+  height: min(100%, 50rem);
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-settings__header {
+  padding: 16px 20px;
+  border: 0;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-settings__body {
+  gap: 24px;
+  padding: 20px;
+}
+
+@media (min-width: 52.001rem) {
+  .dsh-app[data-conversation-layout='focused'] .dsh-settings__layout {
+    grid-template-columns: 188px minmax(0, 1fr);
+  }
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-setting-card {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-setting-card__header {
+  padding: 0;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-setting-card__body {
+  padding: 12px 0 0;
+}
+
+.dsh-app[data-conversation-layout='focused'] :is(.dsh-setting-card__title, .dsh-settings__header h2) {
+  font-weight: 500;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-settings__tab {
+  min-height: 40px;
+  border-radius: 12px;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-settings__provider {
+  container: dsh-provider / inline-size;
+  padding: 12px 14px;
+  border-radius: 16px;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-settings__provider-editor-head {
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  :is(.dsh-settings__provider-identity, .dsh-settings__provider-editor-head)
+  strong {
+  font-weight: 500;
+}
+
+@container dsh-provider (max-width: 24rem) {
+  .dsh-app[data-conversation-layout='focused'] .dsh-settings__provider-editor-head > div {
+    flex-basis: 100%;
+  }
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-preset-card {
+  border-radius: 16px;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-preset-card__main {
+  gap: 12px;
+  padding: 14px 16px 12px;
+  border-radius: 16px 16px 0 0;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-preset-card__head {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-preset-card__id {
+  background: transparent;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-preset-card__footer {
+  flex-wrap: wrap;
+  padding: 6px 10px;
+  border-top: var(--dsh-border);
+}
+
+.dsh-app[data-conversation-layout='focused']
+  .dsh-presets__badge:not(.dsh-presets__badge--in-use, .dsh-presets__badge--broken) {
+  color: var(--dsh-text);
+}
+
+.dsh-app[data-conversation-layout='focused'] :is(.dsh-plugin-inventory__catalog, .dsh-optional-bundles) {
+  padding: 16px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  :is(.dsh-plugin-inventory__card, .dsh-plugin-configuration__card, .dsh-optional-bundles__item) {
+  border-radius: 12px;
+  background: var(--dsh-surface-soft);
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-trajectory__toolbar {
+  padding: 8px 12px;
+  border-bottom: var(--dsh-border);
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-trajectory__rows {
+  padding-inline-start: 0;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-trajectory__rows::before,
+.dsh-app[data-conversation-layout='focused'] .dsh-trajectory__section-title::before {
+  display: none;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-trajectory__row {
+  min-height: 32px;
+  border-radius: 0;
+  border-bottom: var(--dsh-border);
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-trajectory__marker {
+  width: 6px;
+  height: 6px;
+  justify-self: center;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  :is(
+    .dsh-tasks-popover__row,
+    .dsh-changes-popover__row,
+    .dsh-checkpoints-popover__row,
+    .dsh-prompt-templates-popover__row
+  ) {
+  min-height: 34px;
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+
+/* Keep every picker and Send reachable instead of clipping a narrow rail. */
+@container dsh-composer (max-width: 36rem) {
+  .dsh-app[data-conversation-layout='focused']
+    .dsh-session-controls--permission
+    .dsh-select-menu__trigger-label,
+  .dsh-app[data-conversation-layout='focused'] .dsh-session-controls--permission .dsh-select-menu__chevron {
+    display: none;
+  }
+
+  .dsh-app[data-conversation-layout='focused'] .dsh-session-controls--permission .dsh-select-menu__trigger {
+    width: 32px;
+    min-width: 32px;
+    justify-content: center;
+    padding: 4px;
+  }
+
+  .dsh-app[data-conversation-layout='focused'] .dsh-session-controls--model .dsh-session-controls__metrics {
+    margin-inline-start: 0;
+  }
+}
+
+@container dsh-composer (max-width: 16rem) {
+  .dsh-app[data-conversation-layout='focused'] .dsh-composer__toolbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: 'start start' 'controls submit';
+  }
+
+  .dsh-app[data-conversation-layout='focused'] .dsh-session-controls--model {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
+
+@media (forced-colors: active) {
+  .dsh-app[data-conversation-layout='focused'] {
+    color: CanvasText;
+    --dsh-border-color: CanvasText;
+    --dsh-text: CanvasText;
+    --dsh-muted: CanvasText;
+    --dsh-bg: Canvas;
+    --dsh-surface: Canvas;
+    --dsh-surface-raised: Canvas;
+    --dsh-surface-soft: Canvas;
+    --dsh-surface-hover: Canvas;
+    --dsh-input-bg: Canvas;
+    --dsh-input-text: CanvasText;
+    --dsh-input-border: CanvasText;
+    --dsh-widget-bg: Canvas;
+    --dsh-code-bg: Canvas;
+    --dsh-code-surface: Canvas;
+    --dsh-control-background: Canvas;
+    --dsh-control-foreground: CanvasText;
+    --dsh-control-border: CanvasText;
+    --dsh-control-hover: Canvas;
+    --dsh-widget-foreground: CanvasText;
+    --dsh-secondary: ButtonFace;
+    --dsh-secondary-text: ButtonText;
+    --dsh-primary: ButtonFace;
+    --dsh-primary-text: ButtonText;
+    --dsh-primary-hover: ButtonFace;
+    --dsh-secondary-hover: ButtonFace;
+    --dsh-selection-bg: Highlight;
+    --dsh-selection-text: HighlightText;
+    --dsh-focus-ring: Highlight;
+    --dsh-focus: Highlight;
+    --dsh-link: LinkText;
+    --dsh-accent-line: LinkText;
+    --dsh-danger: CanvasText;
+    --dsh-error-text: CanvasText;
+    --dsh-warning: CanvasText;
+    --dsh-success: CanvasText;
+    --dsh-info: CanvasText;
+    --dsh-icon: CanvasText;
+    --dsh-placeholder: CanvasText;
+  }
+
+  .dsh-app[data-conversation-layout='focused']
+    :is(.dsh-session-item__button[aria-current='page'], .dsh-model-picker [aria-checked='true']) {
+    forced-color-adjust: none;
+  }
+
+  .dsh-app[data-conversation-layout='focused'] :is(.dsh-unified-composer, .dsh-setting-card) {
+    border: 1px solid CanvasText;
+  }
+}

@@ -36,6 +36,12 @@ export interface BackendFactory {
   connect(backend: ConnectedBackend, signal?: AbortSignal): Promise<DshBackend>
 }
 
+/** Host-owned authorization and transport preparation; no credential enters the request. */
+export interface BackendEndpointPreparation {
+  prepare(endpoint: BackendEndpoint, signal: AbortSignal): Promise<void>
+  release?(endpoint: BackendEndpoint): Promise<void>
+}
+
 export interface ProcessSupervisor {
   start(runtime: DshRuntime, signal?: AbortSignal): Promise<ManagedProcessHandle>
 }
@@ -45,4 +51,11 @@ export interface ConnectionRequest {
   readonly autoStart: boolean
   /** Required only for `custom`; the Webview never receives this value back. */
   readonly endpoint?: BackendEndpoint
+  /**
+   * Optional explicit wire version for an external endpoint whose runtime
+   * version cannot be discovered. Overrides the probe's version inference.
+   */
+  readonly runtimeVersion?: string
+  /** Opaque configuration generation, never a token or cookie. */
+  readonly credentialRevision?: number
 }

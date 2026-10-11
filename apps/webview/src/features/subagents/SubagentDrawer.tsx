@@ -375,12 +375,20 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
             const loading = busy.has(entry.id)
             const entryLabel = entry.label?.trim() || entry.id
             const mode =
-              entry.mode === 'continuable' ? t('subagents.mode.continuable') : t('subagents.mode.oneShot')
+              entry.mode === 'external'
+                ? t('subagents.mode.external')
+                : entry.mode === 'continuable'
+                  ? t('subagents.mode.continuable')
+                  : t('subagents.mode.oneShot')
             const status = isRunning(entry)
               ? t('subagents.activity.running')
               : t('subagents.activity.inactive')
             const availability =
-              entry.mode === 'continuable' && !parentAvailable ? t('subagents.parentUnavailable') : undefined
+              entry.mode === 'external'
+                ? t('subagents.externalUnavailable')
+                : entry.mode === 'continuable' && !parentAvailable
+                  ? t('subagents.parentUnavailable')
+                  : undefined
             const summary = summariesById.get(entry.id)
             const totalTokens = subagentTokenTotal(summary)
             const durationMs = subagentDurationMs(summary, entry.activity, now)
@@ -400,13 +408,14 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
                 aria-level={level}
                 aria-expanded={branch ? isExpanded : undefined}
                 aria-label={label}
+                aria-disabled={entry.mode === 'external' || undefined}
                 aria-busy={loading || undefined}
                 className="dsh-subagent-tree__row"
                 onFocus={() => setActiveRowId(entry.id)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' || event.key === ' ') {
                     event.preventDefault()
-                    props.onOpenChild(entry, parentAvailable)
+                    if (entry.mode !== 'external') props.onOpenChild(entry, parentAvailable)
                   } else if (
                     (event.key === 'ArrowRight' && branch && !isExpanded) ||
                     (event.key === 'ArrowLeft' && isExpanded)
@@ -415,7 +424,9 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
                     toggleBranch(entry)
                   }
                 }}
-                onClick={() => props.onOpenChild(entry, parentAvailable)}
+                onClick={() => {
+                  if (entry.mode !== 'external') props.onOpenChild(entry, parentAvailable)
+                }}
               >
                 {branch ? (
                   <button

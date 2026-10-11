@@ -1,0 +1,289 @@
+/* Aggregated model-retry status row (silent, shimmer, non-blocking). */
+.dsh-timeline__retry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0;
+  padding: 4px 10px;
+  font-size: var(--dsh-font-size-xs);
+  color: var(--dsh-muted, inherit);
+  background: color-mix(
+    in srgb,
+    var(--dsh-widget-bg, color-mix(in srgb, var(--dsh-muted) 8%, transparent)) 60%,
+    transparent
+  );
+  border-radius: var(--dsh-radius-md, 6px);
+}
+
+.dsh-timeline__retry--terminal {
+  color: var(--dsh-danger, inherit);
+}
+
+.dsh-timeline__retry-shimmer {
+  width: 28px;
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--dsh-focus, color-mix(in srgb, var(--dsh-muted) 60%, transparent)) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: dsh-retry-shimmer var(--dsh-motion-duration-loop-shimmer) var(--dsh-motion-ease-standard)
+    infinite;
+}
+
+.dsh-todo-list__toggle {
+  width: 100%;
+  min-width: 0;
+  min-height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.dsh-todo-list__toggle:focus-visible {
+  border-radius: var(--dsh-radius-sm);
+  outline: 2px solid var(--dsh-focus, var(--dsh-accent));
+  outline-offset: 2px;
+}
+
+.dsh-todo-list__progress,
+.dsh-todo-list__summary,
+.dsh-todo-list__status {
+  flex: 0 0 auto;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-2xs);
+}
+
+.dsh-todo-list__chevron {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  display: inline-grid;
+  place-items: center;
+  color: var(--dsh-muted);
+  transition: transform var(--dsh-motion-duration-fast) var(--dsh-motion-ease-standard);
+  transform: rotate(180deg);
+}
+
+.dsh-todo-list__chevron .dsh-icon {
+  width: 13px;
+  height: 13px;
+}
+
+.dsh-todo-list--collapsed {
+  display: block;
+  margin-bottom: 4px;
+  padding: 4px 7px;
+  cursor: pointer;
+}
+
+.dsh-todo-list--collapsed .dsh-todo-list__chevron {
+  transform: none;
+}
+
+.dsh-todo-list__collapsed-copy {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dsh-todo-list__current {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  font-size: var(--dsh-font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-todo-list__item--in-progress {
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-todo-list__state-icon {
+  width: var(--dsh-icon-size-sm);
+  height: var(--dsh-icon-size-sm);
+  flex: 0 0 var(--dsh-icon-size-sm);
+  display: inline-grid;
+  place-items: center;
+  color: var(--dsh-muted);
+}
+
+.dsh-todo-list__state-icon .dsh-icon {
+  width: 13px;
+  height: 13px;
+}
+
+.dsh-todo-list__state-icon--completed .dsh-icon {
+  animation: dsh-pop-once var(--dsh-motion-duration-fast) var(--dsh-motion-ease-pop) both;
+}
+
+.dsh-todo-list__content {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.dsh-todo-list__item--completed .dsh-todo-list__content {
+  color: var(--dsh-muted);
+  text-decoration: line-through;
+}
+
+.dsh-composer--dragging {
+  border-color: var(--dsh-focus, var(--dsh-accent));
+}
+
+.dsh-lightbox {
+  max-width: min(860px, 92vw);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--dsh-control-border);
+  border-radius: var(--dsh-radius-md, 8px);
+  background: var(--dsh-bg, var(--dsh-surface-raised));
+  box-shadow: 0 12px 40px color-mix(in srgb, var(--dsh-bg) 78%, transparent);
+  overflow: hidden;
+}
+
+.dsh-lightbox__placeholder {
+  min-width: 220px;
+  min-height: 120px;
+  display: grid;
+  place-items: center;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+}
+
+.dsh-composer__attachment-remove {
+  width: 20px;
+  min-width: 20px;
+  height: 20px;
+  min-height: 20px;
+  margin-inline-start: auto;
+  padding: 0;
+  border: 0;
+  color: var(--dsh-muted);
+  background: transparent;
+}
+
+.dsh-composer__attachment-remove:hover:not(:disabled),
+.dsh-composer__attachment-remove:focus-visible {
+  color: var(--dsh-danger, var(--dsh-danger));
+  background: var(--dsh-control-hover);
+}
+
+.dsh-open-file-picker__close {
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+  min-height: 22px;
+  padding: 0;
+  border: 0;
+  color: var(--dsh-muted);
+  background: transparent;
+}
+
+.dsh-open-file-picker__close:hover:not(:disabled),
+.dsh-open-file-picker__close:focus-visible {
+  color: var(--dsh-control-foreground);
+  background: var(--dsh-control-hover);
+}
+
+.dsh-open-file-picker__icon {
+  width: 16px;
+  min-width: 16px;
+  height: 16px;
+  display: inline-grid;
+  place-items: center;
+  color: var(--dsh-icon, var(--dsh-muted));
+}
+
+.dsh-open-file-picker__icon .dsh-icon {
+  width: var(--dsh-icon-size-sm);
+  height: var(--dsh-icon-size-sm);
+}
+
+.dsh-session-controls__access-picker .dsh-select-menu__trigger {
+  color: var(--dsh-icon, var(--dsh-muted));
+}
+
+.dsh-composer__send-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+.dsh-settings__runtime-update-progress {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 5px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--dsh-accent-line) 45%, var(--dsh-control-border));
+  border-radius: var(--dsh-radius-sm);
+  color: var(--dsh-accent-line);
+  font-size: var(--dsh-font-size-xs);
+}
+
+.dsh-settings__runtime-update-progress-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.dsh-settings__runtime-update-progress-head > * {
+  min-width: 0;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.dsh-settings__runtime-update-progress-head > :last-child {
+  flex: 0 0 auto;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+  white-space: nowrap;
+}
+
+.dsh-app__runtime-update-dismiss {
+  margin: -3px -5px 0 0;
+}
+
+.dsh-settings__connection-endpoint {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+}
+
+.dsh-settings__connection-endpoint input {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--dsh-control-border);
+  border-radius: var(--dsh-radius-sm);
+  color: var(--dsh-control-foreground);
+  background: var(--dsh-control-background);
+  font: inherit;
+  font-size: var(--dsh-font-size-xs);
+}

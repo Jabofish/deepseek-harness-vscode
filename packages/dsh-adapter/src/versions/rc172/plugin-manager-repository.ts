@@ -6,6 +6,7 @@ import {
   type PluginBundleFailureCode,
   type PluginBundleRepository,
   type PluginInstallCancellation,
+  type PluginInstallOptions,
   type PluginLocalizedText,
   type PluginManagerBundle,
   type PluginMetadata,
@@ -69,7 +70,7 @@ export class Rc172PluginBundleRepository implements PluginBundleRepository {
       'pluginManager/listBundles',
     )
     if (!Array.isArray(value) || value.length > MAX_BUNDLES) throw malformed('listBundles')
-    return value.map((item) => bundleInfo(item))
+    return value.map((item) => this.mapBundleInfo(item))
   }
 
   public async listPlugins(signal?: AbortSignal): Promise<readonly ManagedPluginEntry[]> {
@@ -120,11 +121,7 @@ export class Rc172PluginBundleRepository implements PluginBundleRepository {
 
   public async installBundle(
     spec: string,
-    options: {
-      readonly requestId: string
-      readonly registry?: PluginRegistry
-      readonly approvedBuilds?: readonly string[]
-    },
+    options: PluginInstallOptions,
     signal?: AbortSignal,
   ): Promise<PluginBundleChangeResult> {
     const args = (() => {
@@ -133,6 +130,7 @@ export class Rc172PluginBundleRepository implements PluginBundleRepository {
         return {
           spec,
           options: {
+            ...this.mapInstallOptions(options),
             enabled: true,
             requestId: options.requestId,
             ...(options.registry === undefined ? {} : { registry: validateRegistry(options.registry) }),
@@ -173,6 +171,14 @@ export class Rc172PluginBundleRepository implements PluginBundleRepository {
       'pluginManager/waitForInstall',
     )
     return value === null ? null : this.mapInstallRecoveryResult(value)
+  }
+
+  protected mapBundleInfo(value: unknown): PluginManagerBundle {
+    return bundleInfo(value)
+  }
+
+  protected mapInstallOptions(_options: PluginInstallOptions): Readonly<Record<string, unknown>> {
+    return {}
   }
 
   protected mapInstallResult(value: unknown, expectedSpec: string): PluginBundleChangeResult {

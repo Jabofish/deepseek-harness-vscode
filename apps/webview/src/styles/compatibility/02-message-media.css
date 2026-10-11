@@ -1,0 +1,483 @@
+.dsh-message-image-lightbox__close > .dsh-icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* Feedback is a persisted state, not just a click affordance. Keep the
+   default controls quiet, but make the selected rating unmistakable. The
+   positive/negative classes also avoid relying on DOM order when themes or
+   accessibility tooling restyle the toolbar. */
+.dsh-message-actions__button--feedback-positive[aria-pressed='true'] {
+  color: var(--dsh-chart-green, var(--dsh-success));
+  background: color-mix(in srgb, var(--dsh-chart-green, var(--dsh-success)) 18%, transparent);
+}
+
+.dsh-message-actions__button--feedback-negative[aria-pressed='true'] {
+  color: var(--dsh-chart-red, var(--dsh-danger));
+  background: color-mix(in srgb, var(--dsh-chart-red, var(--dsh-danger)) 18%, transparent);
+}
+
+.dsh-message-actions__button--feedback-positive[aria-pressed='true']:hover,
+.dsh-message-actions__button--feedback-positive[aria-pressed='true']:focus-visible {
+  color: var(--dsh-chart-green, var(--dsh-success));
+  background: color-mix(in srgb, var(--dsh-chart-green, var(--dsh-success)) 28%, transparent);
+}
+
+.dsh-message-actions__button--feedback-negative[aria-pressed='true']:hover,
+.dsh-message-actions__button--feedback-negative[aria-pressed='true']:focus-visible {
+  color: var(--dsh-chart-red, var(--dsh-danger));
+  background: color-mix(in srgb, var(--dsh-chart-red, var(--dsh-danger)) 28%, transparent);
+}
+
+/* Model editor row contract: the compact row owns its own grid, so the
+   surrounding editor collapses to one track instead of measuring at
+   min-content width. The header wraps for the same reason. */
+.dsh-settings__provider-editor-head {
+  display: none;
+}
+
+.dsh-settings__model-editor-head > strong {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.dsh-settings__editable-model {
+  grid-template-columns: minmax(0, 1fr);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.dsh-settings__editable-model-row,
+.dsh-settings__model-advanced {
+  grid-column: 1;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.dsh-settings__editable-model-row label {
+  width: 100%;
+}
+
+.dsh-settings__editable-model-row .dsh-icon-button {
+  width: 28px;
+  min-width: 28px;
+}
+
+.dsh-session-item__rename:hover:not(:disabled),
+.dsh-session-item__rename:focus-visible,
+.dsh-session-switcher__workspace-actions .dsh-icon-button:hover:not(:disabled),
+.dsh-session-switcher__workspace-actions .dsh-icon-button:focus-visible {
+  color: var(--dsh-accent-line);
+}
+
+.dsh-session-item__status--muted {
+  color: var(--dsh-muted);
+  background: color-mix(in srgb, var(--dsh-muted) 12%, transparent);
+}
+
+.dsh-session-switcher__workspace-button > span:not(.dsh-session-switcher__workspace-icon),
+.dsh-session-switcher__workspace-button > small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-session-switcher__workspace-remove:hover:not(:disabled),
+.dsh-session-switcher__workspace-remove:focus-visible,
+.dsh-session-item__remove:hover:not(:disabled),
+.dsh-session-item__remove:focus-visible {
+  color: var(--dsh-danger, var(--dsh-danger));
+}
+
+.dsh-session-switcher__group {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 3px;
+}
+
+.dsh-session-switcher__group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  gap: 8px;
+  padding: 2px 3px;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-2xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.dsh-session-switcher__group-header strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-session-switcher__group-header span {
+  flex: 0 0 auto;
+}
+
+.dsh-session-dialog__title {
+  margin: 0;
+  font-size: var(--dsh-font-size-lg);
+}
+
+.dsh-session-dialog__description,
+.dsh-session-dialog__warning,
+.dsh-session-dialog__error {
+  margin: 0;
+  font-size: var(--dsh-font-size-xs);
+  line-height: 1.4;
+}
+
+.dsh-session-dialog__label {
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+}
+
+.dsh-session-dialog__input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 8px;
+  border: 1px solid var(--dsh-input-border, var(--dsh-control-border));
+  border-radius: 6px;
+  color: var(--dsh-input-text, var(--dsh-text));
+  background: var(--dsh-input-bg, var(--dsh-surface));
+}
+
+.dsh-session-dialog__input:focus-visible {
+  border-color: var(--dsh-focus, var(--dsh-accent));
+  outline: 1px solid var(--dsh-focus, var(--dsh-accent));
+}
+
+.dsh-session-dialog__warning {
+  color: var(--dsh-warning);
+}
+
+.dsh-session-dialog__error {
+  color: var(--dsh-danger, var(--dsh-danger));
+}
+
+.dsh-session-controls__access-picker--full-access .dsh-select-menu__trigger {
+  color: var(--dsh-warning, var(--dsh-warning));
+  border-color: var(--dsh-border-color);
+  background: var(--dsh-surface-raised);
+}
+
+.dsh-session-controls__access-picker--full-access .dsh-select-menu__trigger:hover:not(:disabled),
+.dsh-session-controls__access-picker--full-access .dsh-select-menu__trigger:focus-visible {
+  color: var(--dsh-warning, var(--dsh-warning));
+  border-color: color-mix(in srgb, var(--dsh-warning, var(--dsh-warning)) 55%, var(--dsh-border-color));
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-timeline__disclosure {
+  display: inline-block;
+  transition: transform var(--dsh-motion-duration-fast) var(--dsh-motion-ease-standard);
+}
+
+.dsh-session-switcher__workspace > span:not(.dsh-session-switcher__workspace-icon) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The workspace card box owns hover and selected chrome (including the accent
+ * rail); see .dsh-session-switcher__workspace in layout.css. Painting any state
+ * on the inner button too stacks a second rounded box inside the first and puts
+ * the rail one padding step to the right of the session rails. */
+.dsh-session-switcher__workspace-button > span:not(.dsh-session-switcher__workspace-icon) {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-session-switcher__list .dsh-session-item__icon {
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  font-size: inherit;
+}
+
+.dsh-session-switcher__list .dsh-session-item__icon .dsh-icon {
+  width: var(--dsh-icon-size-sm);
+  height: var(--dsh-icon-size-sm);
+}
+.dsh-message-avatar .dsh-icon {
+  width: var(--dsh-icon-size-sm);
+  height: var(--dsh-icon-size-sm);
+}
+
+.dsh-timeline__disclosure .dsh-icon {
+  width: 13px;
+  height: 13px;
+}
+
+.dsh-session-switcher__icon .dsh-icon,
+.dsh-session-switcher__chevron .dsh-icon,
+.dsh-session-item__icon .dsh-icon,
+.dsh-message-avatar .dsh-icon,
+.dsh-timeline__disclosure .dsh-icon {
+  width: 16px;
+  height: 16px;
+  flex-basis: 16px;
+}
+
+.dsh-session-switcher__icon,
+.dsh-session-switcher__chevron,
+.dsh-session-item__icon {
+  display: grid;
+  place-items: center;
+}
+
+.dsh-session-switcher__icon {
+  width: var(--dsh-icon-size);
+  height: var(--dsh-icon-size);
+  min-width: var(--dsh-icon-size);
+  border: 0;
+  color: var(--dsh-muted);
+  line-height: 1;
+}
+
+.dsh-session-switcher__icon,
+.dsh-session-item__icon,
+.dsh-session-switcher__chevron {
+  color: var(--dsh-muted);
+}
+
+.dsh-session-switcher__trigger .dsh-session-switcher__icon,
+.dsh-session-switcher__trigger .dsh-session-switcher__chevron {
+  margin: 0;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  line-height: 1;
+}
+
+.dsh-session-switcher__trigger .dsh-session-switcher__icon {
+  width: 16px;
+  height: 16px;
+  color: currentColor;
+}
+
+.dsh-session-switcher__trigger .dsh-session-switcher__icon .dsh-icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+}
+
+.dsh-timeline__card--assistant {
+  min-width: 0;
+  max-width: 100%;
+  gap: 8px;
+  padding: 6px 4px 14px;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.dsh-timeline__card--user {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.dsh-message-actions__button {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px;
+  border: 0;
+  border-radius: var(--dsh-radius-sm);
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.dsh-message-actions__button:hover,
+.dsh-message-actions__button:focus-visible {
+  color: var(--dsh-text);
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-message-actions__button[aria-disabled='true'] {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.dsh-message-actions__button[aria-disabled='true']:hover {
+  color: inherit;
+  background: transparent;
+}
+
+.dsh-message-actions__button > .dsh-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.dsh-message-actions__note-trigger > span[aria-hidden='true'] {
+  font-size: var(--dsh-icon-size-sm);
+  line-height: 1;
+}
+
+.dsh-timeline__command-input,
+.dsh-goal-bar__input,
+.dsh-message-images__thumb,
+.dsh-lightbox,
+.dsh-message-image-lightbox__dialog,
+.dsh-message-image-lightbox__image,
+.dsh-lightbox__image,
+.dsh-lightbox__placeholder {
+  box-sizing: border-box;
+}
+
+.dsh-timeline__card--assistant > .dsh-timeline__card-header {
+  justify-content: flex-start;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+  font-weight: 500;
+}
+
+.dsh-timeline__turn-terminal-message {
+  min-width: 0;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.dsh-empty-session {
+  display: grid;
+  justify-items: center;
+  gap: var(--dsh-space-2);
+  width: min(100%, 440px);
+  padding: var(--dsh-space-5) var(--dsh-space-4);
+  border: 1px dashed color-mix(in srgb, var(--dsh-accent-line) 55%, var(--dsh-border-color));
+  border-radius: var(--dsh-radius-lg);
+  background: color-mix(in srgb, var(--dsh-surface-raised) 72%, transparent);
+  text-align: center;
+}
+
+.dsh-empty-session__icon {
+  display: grid;
+  place-items: center;
+  width: calc(var(--dsh-control-height) + var(--dsh-space-2));
+  height: calc(var(--dsh-control-height) + var(--dsh-space-2));
+  border-radius: 50%;
+  color: var(--dsh-accent-line);
+  background: color-mix(in srgb, var(--dsh-accent) 12%, transparent);
+}
+
+.dsh-empty-session h2,
+.dsh-empty-session p {
+  margin: 0;
+}
+
+.dsh-empty-session p {
+  max-width: 36ch;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-md);
+}
+
+.dsh-empty-session__picker {
+  display: grid;
+  gap: var(--dsh-space-1);
+  width: min(100%, 300px);
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+  text-align: start;
+}
+
+.dsh-empty-session__preset {
+  display: grid;
+  gap: var(--dsh-space-1);
+  width: min(100%, 300px);
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+  text-align: start;
+}
+
+.dsh-empty-session__picker .dsh-select-menu,
+.dsh-empty-session__preset .dsh-select-menu,
+.dsh-empty-session__picker .dsh-select-menu__trigger,
+.dsh-empty-session__preset .dsh-select-menu__trigger {
+  width: 100%;
+  min-height: var(--dsh-control-height);
+  border-color: var(--dsh-input-border);
+  color: var(--dsh-input-text);
+  background: var(--dsh-input-bg);
+}
+
+.dsh-empty-session__picker .dsh-select-menu__trigger:hover:not(:disabled),
+.dsh-empty-session__preset .dsh-select-menu__trigger:hover:not(:disabled),
+.dsh-empty-session__picker .dsh-select-menu--open .dsh-select-menu__trigger,
+.dsh-empty-session__preset .dsh-select-menu--open .dsh-select-menu__trigger {
+  color: var(--dsh-text);
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-approval__takeover {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0;
+  padding: 8px 10px;
+  border-inline-start: 3px solid var(--dsh-warning);
+  color: var(--dsh-warning);
+  background: color-mix(in srgb, var(--dsh-warning) 9%, transparent);
+  font-size: var(--dsh-font-size-sm);
+}
+
+.dsh-approval__takeover code {
+  min-width: 0;
+  overflow: auto;
+  color: var(--dsh-text, var(--dsh-text));
+  white-space: pre-wrap;
+}
+
+.dsh-question__decision-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: var(--dsh-border);
+}
+
+.dsh-composer__attachment-page {
+  z-index: 1;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 22px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--dsh-border-color);
+  border-radius: 4px;
+  color: var(--dsh-muted);
+  background: var(--dsh-surface-raised);
+  cursor: pointer;
+}
+
+.dsh-composer__attachment-page:hover,
+.dsh-composer__attachment-page:focus-visible {
+  color: var(--dsh-accent-line);
+  outline: none;
+}
+
+.dsh-timeline__card--assistant:hover .dsh-timeline__assistant-metrics,
+.dsh-timeline__card--assistant:focus-within .dsh-timeline__assistant-metrics {
+  max-width: 360px;
+  opacity: 1;
+}

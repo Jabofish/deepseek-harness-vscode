@@ -58,7 +58,10 @@ export function usePendingInteractions({
   t,
 }: {
   readonly store: AppStore
-  readonly state: ReturnType<AppStore['getState']>
+  readonly state: Pick<
+    ReturnType<AppStore['getState']>,
+    'permissions' | 'questions' | 'timeline' | 'projections'
+  >
   readonly activeSessionId: string | undefined
   readonly setRespondingInteractionId: Dispatch<SetStateAction<string | undefined>>
   readonly setError: (message: string | undefined) => void

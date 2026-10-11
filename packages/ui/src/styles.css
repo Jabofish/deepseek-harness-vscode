@@ -413,6 +413,93 @@
   background: var(--dsh-surface-raised);
 }
 
+/* The focused row uses sibling native buttons: opening its target cannot
+ * accidentally toggle details, including keyboard activation. */
+.dsh-tool-row__summary--focused {
+  position: relative;
+  isolation: isolate;
+  min-height: 24px;
+  padding: 0;
+  gap: 6px;
+}
+
+.dsh-tool-row__summary--focused > * {
+  grid-row: 1;
+}
+
+.dsh-tool-row__summary--focused
+  > :is(
+    .dsh-tool-row__icon,
+    .dsh-tool-row__title,
+    .dsh-tool-row__separator,
+    .dsh-tool-row__summary-text,
+    .dsh-tool-row__status,
+    .dsh-tool-row__chevron
+  ) {
+  z-index: 1;
+  pointer-events: none;
+}
+
+.dsh-tool-row__summary--focused > .dsh-tool-row__icon {
+  grid-column: 1;
+}
+.dsh-tool-row__summary--focused > .dsh-tool-row__title {
+  grid-column: 2;
+}
+.dsh-tool-row__summary--focused > .dsh-tool-row__separator {
+  grid-column: 3;
+}
+.dsh-tool-row__summary--focused > :is(.dsh-tool-row__summary-text, .dsh-tool-row__inline-target) {
+  grid-column: 4;
+}
+.dsh-tool-row__summary--focused > .dsh-tool-row__status {
+  grid-column: 5;
+}
+.dsh-tool-row__summary--focused > .dsh-tool-row__chevron {
+  grid-column: 6;
+}
+
+.dsh-tool-row__toggle {
+  grid-column: 1 / -1;
+  align-self: stretch;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.dsh-tool-row__toggle:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.dsh-tool-row__inline-target {
+  z-index: 2;
+  justify-self: start;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  text-overflow: ellipsis;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+:is(.dsh-tool-row__toggle, .dsh-tool-row__inline-target):focus-visible {
+  outline: 2px solid var(--dsh-focus);
+  outline-offset: 2px;
+}
+
 .dsh-tool-card--failed,
 .dsh-tool-row--error {
   border-color: var(--dsh-danger);

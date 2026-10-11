@@ -8,6 +8,11 @@ import { cancelled } from './transport-errors.js'
 
 export type LoopbackFrameChannel = 'mux' | 'host'
 
+/** Only the event carrier surface is required; DOM constructor constants are unused. */
+export interface LoopbackWebSocketConstructor {
+  new (url: string): Pick<WebSocket, 'readyState' | 'close' | 'addEventListener' | 'removeEventListener'>
+}
+
 /**
  * Version adapters can replace only the payload parser while retaining the
  * common WebSocket carrier. The parser must validate a complete frame and
@@ -109,7 +114,7 @@ export async function* readLoopbackWebSocket(options: {
   knownFrameTypes: ReadonlySet<string>
   channel: LoopbackFrameChannel
   baseUrl: string
-  webSocket?: typeof globalThis.WebSocket | undefined
+  webSocket?: LoopbackWebSocketConstructor | undefined
   frameParser?: LoopbackFrameParser | undefined
   onEnvelope: (message: RpcMessage) => void
 }): AsyncGenerator<unknown> {

@@ -29,19 +29,21 @@ export const ApprovalCard = memo(function ApprovalCard(props: ApprovalCardProps)
           <h2 id={`approval-${props.request.id}`}>{props.request.title}</h2>
         </div>
       </header>
-      <ContentFlow as="p" className="dsh-interaction__description">
-        {description}
-      </ContentFlow>
-      <div className="dsh-approval__takeover" role="status">
-        <span>{t('approval.takeover')}</span>
-        {props.command === undefined ? null : <code>{props.command}</code>}
+      <div className="dsh-interaction__body" tabIndex={0}>
+        <ContentFlow as="p" className="dsh-interaction__description">
+          {description}
+        </ContentFlow>
+        <div className="dsh-approval__takeover" role="status">
+          <span>{t('approval.takeover')}</span>
+          {props.command === undefined ? null : <code>{props.command}</code>}
+        </div>
+        <p className="dsh-interaction__risk">
+          {t('approval.risk')}{' '}
+          <span className={`dsh-status-pill dsh-status-pill--${props.request.risk}`}>
+            {t(`approval.risk.${props.request.risk}`)}
+          </span>
+        </p>
       </div>
-      <p className="dsh-interaction__risk">
-        {t('approval.risk')}{' '}
-        <span className={`dsh-status-pill dsh-status-pill--${props.request.risk}`}>
-          {t(`approval.risk.${props.request.risk}`)}
-        </span>
-      </p>
       <div className="dsh-interaction__actions">
         {props.request.options.map((option) => (
           <button

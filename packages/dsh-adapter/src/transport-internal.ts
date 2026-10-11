@@ -1,4 +1,4 @@
-import { AppError, type BackendEndpoint } from '@dsh-vscode/domain'
+import { AppError, isCanonicalEndpoint, type BackendEndpoint } from '@dsh-vscode/domain'
 
 import type { RetryPolicy } from './contracts.js'
 import { cancelled, normalizeTransportError } from './transport-errors.js'
@@ -16,17 +16,11 @@ export async function releaseUnreadBody(response: Response): Promise<void> {
   }
 }
 
-export function assertLoopback(endpoint: BackendEndpoint): void {
-  if (
-    (endpoint.host !== '127.0.0.1' && endpoint.host !== 'localhost') ||
-    !Number.isInteger(endpoint.port) ||
-    endpoint.port < 1 ||
-    endpoint.port > 65_535 ||
-    endpoint.baseUrl !== `http://${endpoint.host}:${endpoint.port}`
-  ) {
+export function assertValidEndpoint(endpoint: BackendEndpoint): void {
+  if (!isCanonicalEndpoint(endpoint)) {
     throw new AppError({
       code: 'INVALID_ENDPOINT',
-      message: 'DSH connections must use a validated loopback endpoint.',
+      message: 'DSH connections must use a validated HTTP(S) endpoint.',
       retryable: false,
     })
   }

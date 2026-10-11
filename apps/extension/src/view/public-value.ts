@@ -46,14 +46,43 @@ export function publicWorkspaceRelativePath(
 }
 
 /** Remove fields that are never needed by the renderer from public payloads. */
-export function sanitizePublicValue(value: unknown, parentKey?: string): unknown {
-  if (Array.isArray(value)) return value.map((entry) => sanitizePublicValue(entry, parentKey))
+export function sanitizePublicValue(
+  value: unknown,
+  parentKey?: string,
+  roots: readonly string[] = [],
+): unknown {
+  if (Array.isArray(value))
+    return value.flatMap((entry: unknown) => {
+      if (parentKey === 'paths' && typeof entry === 'string' && isAbsoluteHostPath(entry)) {
+        const relative = publicWorkspaceRelativePath(entry, undefined, roots)
+        return relative === undefined ? [] : [relative]
+      }
+      if (
+        typeof entry === 'object' &&
+        entry !== null &&
+        'path' in entry &&
+        typeof entry.path === 'string' &&
+        isAbsoluteHostPath(entry.path) &&
+        publicWorkspaceRelativePath(entry.path, undefined, roots) === undefined
+      )
+        return []
+      return [sanitizePublicValue(entry, parentKey, roots)]
+    })
   if (typeof value !== 'object' || value === null) return value
   const source = value as Record<string, unknown>
   const result: Record<string, unknown> = {}
   for (const [key, entry] of Object.entries(source)) {
     if (isSensitivePublicField(parentKey, key, entry, source)) continue
-    result[key] = sanitizePublicValue(entry, key)
+    if (source.type === 'session.projection' && source.key === 'workingDirectory' && key === 'value') {
+      result[key] = null
+      continue
+    }
+    if ((key === 'path' || key === 'filePath') && typeof entry === 'string' && isAbsoluteHostPath(entry)) {
+      const relative = publicWorkspaceRelativePath(entry, undefined, roots)
+      if (relative !== undefined) result[key] = relative
+      continue
+    }
+    result[key] = sanitizePublicValue(entry, key, roots)
   }
   return result
 }
@@ -144,6 +173,8 @@ const SENSITIVE_PUBLIC_FIELDS = new Set([
   // Session cwd and host home are useful to the privileged Host only. In
   // particular, do not let a tool presentation reintroduce an absolute cwd.
   'cwd',
+  'workingdirectory',
+  'installtarget',
   'home',
 ])
 

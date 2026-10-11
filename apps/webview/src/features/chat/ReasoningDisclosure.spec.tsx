@@ -1,11 +1,70 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { ReasoningDisclosure } from './ReasoningDisclosure.js'
+import { ConversationLayoutProvider } from '../../app/ConversationLayoutProvider.js'
 
 describe('ReasoningDisclosure', () => {
   afterEach(() => cleanup())
+
+  it('uses the completed paragraph first line in focused streams and lazily renders Markdown details', () => {
+    const props = {
+      id: 'focused-reasoning',
+      expanded: false,
+      onExpandedChange: () => undefined,
+      translate: (key: string): string => key,
+    }
+    const view = render(
+      <ConversationLayoutProvider initialLayout="focused">
+        <ReasoningDisclosure {...props} markdown={'**First**\nDetails\n\nSecond partial'} streaming />
+      </ConversationLayoutProvider>,
+    )
+    expect(view.container.querySelector('.dsh-timeline__reasoning-summary')?.textContent).toBe('First')
+    expect(view.container.querySelector('.dsh-markdown')).toBeNull()
+    view.rerender(
+      <ConversationLayoutProvider initialLayout="focused">
+        <ReasoningDisclosure
+          {...props}
+          markdown={'**First**\nDetails\n\nSecond completed\nDetails'}
+          streaming
+        />
+      </ConversationLayoutProvider>,
+    )
+    expect(view.container.querySelector('.dsh-timeline__reasoning-summary')?.textContent).toBe(
+      'Second completed',
+    )
+    view.rerender(
+      <ConversationLayoutProvider initialLayout="focused">
+        <ReasoningDisclosure {...props} markdown={'**First**\n\n- Detail'} streaming={false} expanded />
+      </ConversationLayoutProvider>,
+    )
+    expect(view.container.querySelector('.dsh-markdown strong')?.textContent).toBe('First')
+    expect(view.container.querySelector('.dsh-markdown li')?.textContent).toBe('Detail')
+  })
+
+  it('retains native disclosure semantics and the source identity in focused mode', () => {
+    let expanded = false
+    const view = render(
+      <ConversationLayoutProvider initialLayout="focused">
+        <ReasoningDisclosure
+          id="reasoning-source"
+          markdown="Inspect source"
+          streaming={false}
+          expanded={expanded}
+          onExpandedChange={(value) => {
+            expanded = value
+          }}
+          translate={(key) => key}
+        />
+      </ConversationLayoutProvider>,
+    )
+    const toggle = screen.getByRole('button', { name: 'timeline.showReasoning' })
+    fireEvent.click(toggle)
+    expect(expanded).toBe(true)
+    expect(view.container.querySelector('[data-reasoning-id="reasoning-source"]')).not.toBeNull()
+    expect(document.getElementById(toggle.getAttribute('aria-controls') ?? '')).not.toBeNull()
+  })
 
   it('keeps only the latest three non-blank reasoning lines in the streaming preview', () => {
     const { container } = render(

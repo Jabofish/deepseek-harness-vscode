@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { JobView } from '@dsh-vscode/domain'
 import type { JobFollowState } from '../../app/store.js'
@@ -34,6 +34,29 @@ function renderJobs(
 
 describe('JobsDrawer popover', () => {
   afterEach(() => cleanup())
+
+  it('locks job controls during a pending action and exposes retry inside the list', async () => {
+    let reject!: (reason: Error) => void
+    const onKill = vi.fn(
+      () =>
+        new Promise<'requested'>((_resolve, fail) => {
+          reject = fail
+        }),
+    )
+    renderJobs([job({ id: 'job-1', label: 'build', status: 'running' })], {
+      jobControllerAvailable: true,
+      onKill,
+    })
+    fireEvent.click(screen.getByRole('button', { name: '1 running' }))
+    const kill = screen.getByRole('button', { name: 'Stop job' })
+    fireEvent.click(kill)
+    fireEvent.click(kill)
+    expect(onKill).toHaveBeenCalledTimes(1)
+    reject(new Error('temporary failure'))
+    await waitFor(() => expect(screen.getByRole('alert')).toBeDefined())
+    expect(screen.getByRole('alert').closest('.dsh-jobs-popover__menu')).not.toBeNull()
+    expect((kill as HTMLButtonElement).disabled).toBe(false)
+  })
 
   it('renders nothing until the session has at least one job', () => {
     const { container } = renderJobs([])

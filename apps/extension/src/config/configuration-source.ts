@@ -1,6 +1,6 @@
 import type * as vscode from 'vscode'
 import type { ExtensionSettings } from '@dsh-vscode/domain'
-import { AppError, type AgentConfiguration } from '@dsh-vscode/domain'
+import { AppError, parseServerOrigin, type AgentConfiguration } from '@dsh-vscode/domain'
 
 export class VsCodeConfigurationSource {
   public constructor(private readonly workspace: typeof vscode.workspace) {}
@@ -33,7 +33,11 @@ export class VsCodeConfigurationSource {
       300_000,
       'connection.requestTimeoutMs',
     )
-    const serverUrl = normalizeLoopbackUrl(config.get<unknown>('connection.serverUrl', ''))
+    const serverUrl = normalizeServerUrl(config.get<unknown>('connection.serverUrl', ''))
+    const runtimeVersion = readOptionalString(
+      config.get<unknown>('connection.runtimeVersion', ''),
+      'connection.runtimeVersion',
+    )
     const executablePath = readOptionalPath(config.get<unknown>('runtime.executablePath', ''))
     const preset = readString(config.get<unknown>('agent.defaultPreset', 'standard'), 'agent.defaultPreset')
     const toolMode = readEnum(
@@ -58,8 +62,8 @@ export class VsCodeConfigurationSource {
     return {
       connection: {
         mode,
-        host: '127.0.0.1',
         ...(serverUrl === undefined ? {} : { serverUrl }),
+        ...(runtimeVersion === undefined ? {} : { runtimeVersion }),
         managedPort,
         attachPorts,
         discoveryTimeoutMs,
@@ -72,7 +76,6 @@ export class VsCodeConfigurationSource {
       },
       security: {
         defaultPermissionPreset: permissionPreset,
-        allowRemoteHost: false,
         redactDiagnostics: true,
       },
       defaultAgent,
@@ -90,6 +93,12 @@ export class VsCodeConfigurationSource {
 
 function readString(value: unknown, key: string): string {
   if (typeof value !== 'string') invalid(key, 'a string')
+  return value
+}
+
+function readOptionalString(value: unknown, key: string): string | undefined {
+  if (typeof value !== 'string') invalid(key, 'a string')
+  if (value.trim() === '') return undefined
   return value
 }
 
@@ -125,27 +134,12 @@ function readOptionalPath(value: unknown): string | undefined {
   return value
 }
 
-export function normalizeLoopbackUrl(value: unknown): string | undefined {
+export function normalizeServerUrl(value: unknown): string | undefined {
   if (typeof value !== 'string') invalid('connection.serverUrl', 'a string')
   if (value.trim() === '') return undefined
-  let parsed: URL
-  try {
-    parsed = new URL(value)
-  } catch {
-    invalid('connection.serverUrl', 'an http loopback URL')
-  }
-  if (
-    parsed.protocol !== 'http:' ||
-    (parsed.hostname !== '127.0.0.1' && parsed.hostname !== 'localhost') ||
-    !/^\d+$/.test(parsed.port) ||
-    Number(parsed.port) < 1 ||
-    Number(parsed.port) > 65_535 ||
-    parsed.pathname !== '/' ||
-    parsed.search !== '' ||
-    parsed.hash !== ''
-  )
-    invalid('connection.serverUrl', 'an http loopback URL')
-  return `http://${parsed.hostname}:${parsed.port}`
+  const origin = parseServerOrigin(value)
+  if (origin === undefined) invalid('connection.serverUrl', 'an http or https URL')
+  return origin.baseUrl
 }
 
 function isAbsolutePath(value: string): boolean {

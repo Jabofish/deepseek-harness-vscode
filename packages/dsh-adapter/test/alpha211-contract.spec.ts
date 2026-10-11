@@ -8,6 +8,11 @@ import { Alpha211VersionAdapter } from '../src/versions/alpha211/adapter.js'
 import { Alpha211ScheduleRepository } from '../src/versions/alpha211/schedule-repository.js'
 import { Alpha211AccountLifecycleRepository } from '../src/versions/alpha211/account-repository.js'
 import { Alpha211PluginBundleRepository } from '../src/versions/alpha211/plugin-manager-repository.js'
+import { Alpha211SubagentRepository } from '../src/versions/alpha211/subagent-repository.js'
+import { alpha211SessionProfile } from '../src/versions/alpha211/session-wire.js'
+import { validAlpha171SessionSnapshot } from '../src/versions/alpha171/session-wire.js'
+import { expandHistoryRecords } from '../src/versions/alpha/session-wire.js'
+import { normalizeEnvelope } from '../src/stream-envelopes.js'
 import { Rc202VersionAdapter } from '../src/versions/rc202/adapter.js'
 import { Rc202UserQuestionRepository } from '../src/versions/rc202/user-question-repository.js'
 import { candidate, transportOptions } from './support/contract-harness.js'
@@ -31,6 +36,66 @@ class FixtureAdapter extends Alpha211VersionAdapter {
 }
 
 describe('DSH 0.2.1-alpha.1 exact adapter', () => {
+  it('restores catalog v1 unknown facts and discovers children through the original projection baseline', async () => {
+    const records = [
+      {
+        type: 'event',
+        event: {
+          type: 'subagent/catalog',
+          seq: 0,
+          time: 1,
+          data: {
+            version: 1,
+            childId: 'unknown-1',
+            childCreatedAt: 1,
+            mode: 'unknown',
+          },
+        },
+      },
+    ]
+    const snapshot = {
+      type: 'snapshot',
+      header: { version: 4, id: 's1', createdAt: 1, isSeeded: false },
+      cursor: 0,
+      records,
+      hasMore: false,
+      projections: { asOfSeq: 0, values: {} },
+    }
+    expect(validAlpha171SessionSnapshot(snapshot, alpha211SessionProfile)).toBe(true)
+    const [event] = expandHistoryRecords(records, 's1', 'v4', false, alpha211SessionProfile)
+    expect(normalizeEnvelope({ type: 'session/event', sessionId: 's1', event })).toMatchObject({
+      type: 'subagent.catalog.updated',
+      entry: { id: 'unknown-1', mode: 'unknown' },
+    })
+    const methods: string[] = []
+    const source: DshTransport = {
+      request: <T>(method: string) => {
+        methods.push(method)
+        return Promise.resolve({
+          result: { ok: true, value: { items: [{ sessionId: 's1', agentAvailable: true, running: false }] } },
+        } as T)
+      },
+      remoteRequest: <T>(method: string) => {
+        methods.push(method)
+        return Promise.resolve({
+          ok: true,
+          value: {
+            asOfSeq: 0,
+            values: { subagentCatalog: [{ id: 'unknown-1', createdAt: 1, mode: 'unknown' }] },
+          },
+        } as T)
+      },
+      openEventStream: async function* () {
+        /* no fixture stream */
+      },
+      close: () => Promise.resolve(),
+    }
+    expect(await new Alpha211SubagentRepository(source).list('s1')).toMatchObject({
+      parentAvailable: true,
+      entries: [{ kind: 'diagnostic', id: 'unknown-1', reason: 'unsupported' }],
+    })
+    expect(methods).toEqual(['session/projections', 'session.list'])
+  })
   it('selects the new identity and assembles version-local ports plus retained timed questions', async () => {
     const fixture = new ProbeFixtureTransport()
     const adapters = [new FixtureAdapter(fixture), new Rc202VersionAdapter(options)]
@@ -49,6 +114,7 @@ describe('DSH 0.2.1-alpha.1 exact adapter', () => {
       expect(backend.schedules).toBeInstanceOf(Alpha211ScheduleRepository)
       expect(backend.account).toBeInstanceOf(Alpha211AccountLifecycleRepository)
       expect(backend.pluginBundles).toBeInstanceOf(Alpha211PluginBundleRepository)
+      expect(backend.subagents).toBeInstanceOf(Alpha211SubagentRepository)
       expect(backend.userQuestions).toBeInstanceOf(Rc202UserQuestionRepository)
     } finally {
       await backend.close()

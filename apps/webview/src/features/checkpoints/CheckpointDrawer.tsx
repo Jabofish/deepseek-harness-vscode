@@ -1,4 +1,12 @@
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactElement } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+  type ReactElement,
+} from 'react'
 import type {
   CheckpointConflictPolicy,
   CheckpointFilePreview,
@@ -10,6 +18,7 @@ import { useI18n, type Translate } from '../../i18n.js'
 import { useViewportMenuPosition } from '../../components/common/useViewportMenuPosition.js'
 import { Icon } from '../../ui/Icon.js'
 import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
+import { FocusedDialogPortal } from '../../components/common/FocusedDialogPortal.js'
 
 export interface CheckpointDrawerProps {
   readonly checkpoints: readonly CheckpointSummary[]
@@ -62,6 +71,7 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
   const [previewLoading, setPreviewLoading] = useState(false)
   const [error, setError] = useState<string | undefined>()
   const [notice, setNotice] = useState<string | undefined>()
+  const previewGeneration = useRef(0)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -81,6 +91,21 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
 
   const dialogOpen = dialog !== undefined
   useEffect(() => {
+    if (previewLoading) menuRef.current?.focus()
+  }, [previewLoading])
+  const closePopover = useCallback((): void => {
+    previewGeneration.current += 1
+    setPreviewLoading(false)
+    setPreview(undefined)
+    setOpen(false)
+  }, [])
+  useEffect(
+    () => () => {
+      previewGeneration.current += 1
+    },
+    [],
+  )
+  useEffect(() => {
     if (dialogWasOpen.current && !dialogOpen) {
       const target = dialogTriggerRef.current
       dialogTriggerRef.current = null
@@ -97,18 +122,20 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
   useEffect(() => {
     if (!open || dialogOpen) return
     const closeOutside = (event: PointerEvent): void => {
-      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) setOpen(false)
+      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) closePopover()
     }
     document.addEventListener('pointerdown', closeOutside)
     return () => document.removeEventListener('pointerdown', closeOutside)
-  }, [dialogOpen, open])
+  }, [closePopover, dialogOpen, open])
 
-  const closeDialog = (): void => {
-    if (busy) return
+  const resetDialog = (): void => {
     setDialog(undefined)
     setPreview(undefined)
     setLabel('')
     setError(undefined)
+  }
+  const closeDialog = (): void => {
+    if (!busy) resetDialog()
   }
 
   // The confirmations are `aria-modal`: while one is up, Tab has to cycle
@@ -132,20 +159,25 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
 
   const openRestore = (checkpoint: CheckpointSummary): void => {
     if (!checkpoint.restoreAllowed || checkpoint.expectedRevision === undefined || busy) return
+    const generation = ++previewGeneration.current
     setError(undefined)
     setPreview(undefined)
     setPreviewLoading(true)
     void props
       .onPreview(checkpoint.checkpointId)
       .then((next) => {
+        if (generation !== previewGeneration.current) return
         if (next === undefined) throw new Error(t('checkpoints.error'))
         setPreview(next)
         setDialog({ kind: 'restore', checkpoint: next.summary })
       })
       .catch((reason: unknown) => {
-        setError(reason instanceof Error ? reason.message : t('checkpoints.error'))
+        if (generation === previewGeneration.current)
+          setError(reason instanceof Error ? reason.message : t('checkpoints.error'))
       })
-      .finally(() => setPreviewLoading(false))
+      .finally(() => {
+        if (generation === previewGeneration.current) setPreviewLoading(false)
+      })
   }
 
   const create = (event: FormEvent<HTMLFormElement>): void => {
@@ -175,7 +207,7 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
     void props
       .onDelete(checkpointId)
       .then(() => {
-        closeDialog()
+        resetDialog()
         setNotice(t('checkpoints.deleted'))
       })
       .catch((reason: unknown) => {
@@ -198,7 +230,7 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
       .onRestore(checkpointId, preview.previewId, conflictPolicy)
       .then((result) => {
         if (result === undefined) throw new Error(t('checkpoints.error'))
-        closeDialog()
+        resetDialog()
         setNotice(t(result === 'partial' ? 'checkpoints.restorePartial' : 'checkpoints.restoreCompleted'))
       })
       .catch((reason: unknown) => {
@@ -212,7 +244,7 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
     event.preventDefault()
     if (dialog !== undefined) closeDialog()
     else {
-      setOpen(false)
+      closePopover()
       triggerRef.current?.focus()
     }
   }
@@ -228,7 +260,8 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
         aria-label={countLabel}
         onClick={() => {
           setNotice(undefined)
-          setOpen((current) => !current)
+          if (open) closePopover()
+          else setOpen(true)
         }}
       >
         <Icon name="box" />
@@ -241,6 +274,7 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
           style={menuPosition}
           className="dsh-checkpoints-popover__menu"
           role="dialog"
+          tabIndex={-1}
           aria-label={t('checkpoints.list.aria')}
         >
           <div className="dsh-checkpoints-popover__header">
@@ -345,127 +379,133 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
               {notice}
             </div>
           ) : null}
-          {error !== undefined ? (
+          {error !== undefined && !dialogOpen ? (
             <div className="dsh-checkpoints-popover__error" role="alert">
               {error}
             </div>
           ) : null}
           {dialog?.kind === 'create' ? (
-            <form
-              ref={(element) => {
-                dialogSurfaceRef.current = element
-              }}
-              className="dsh-checkpoints-popover__dialog"
-              role="dialog"
-              aria-modal="true"
-              aria-label={t('checkpoints.createTitle')}
-              onSubmit={create}
-            >
-              <strong>{t('checkpoints.createTitle')}</strong>
-              <p>{t('checkpoints.sensitive')}</p>
-              <label>
-                <span>{t('checkpoints.label')}</span>
-                <input
-                  autoFocus
-                  maxLength={256}
-                  value={label}
-                  placeholder={t('checkpoints.labelPlaceholder')}
-                  onChange={(event) => setLabel(event.target.value)}
-                />
-              </label>
-              <div className="dsh-checkpoints-popover__dialog-actions">
-                <button
-                  type="button"
-                  className="dsh-button dsh-button--secondary"
-                  disabled={busy}
-                  onClick={closeDialog}
-                >
-                  {t('checkpoints.cancel')}
-                </button>
-                <button type="submit" className="dsh-button" disabled={busy}>
-                  {busy ? t('checkpoints.working') : t('checkpoints.createSubmit')}
-                </button>
-              </div>
-            </form>
+            <FocusedDialogPortal error={error}>
+              <form
+                ref={(element) => {
+                  dialogSurfaceRef.current = element
+                }}
+                className="dsh-checkpoints-popover__dialog"
+                role="dialog"
+                aria-modal="true"
+                aria-label={t('checkpoints.createTitle')}
+                onSubmit={create}
+              >
+                <strong>{t('checkpoints.createTitle')}</strong>
+                <p>{t('checkpoints.sensitive')}</p>
+                <label>
+                  <span>{t('checkpoints.label')}</span>
+                  <input
+                    autoFocus
+                    maxLength={256}
+                    value={label}
+                    placeholder={t('checkpoints.labelPlaceholder')}
+                    onChange={(event) => setLabel(event.target.value)}
+                  />
+                </label>
+                <div className="dsh-checkpoints-popover__dialog-actions">
+                  <button
+                    type="button"
+                    className="dsh-button dsh-button--secondary"
+                    disabled={busy}
+                    onClick={closeDialog}
+                  >
+                    {t('checkpoints.cancel')}
+                  </button>
+                  <button type="submit" className="dsh-button" disabled={busy}>
+                    {busy ? t('checkpoints.working') : t('checkpoints.createSubmit')}
+                  </button>
+                </div>
+              </form>
+            </FocusedDialogPortal>
           ) : null}
           {dialog?.kind === 'restore' ? (
-            <section
-              ref={dialogSurfaceRef}
-              className="dsh-checkpoints-popover__dialog"
-              role="alertdialog"
-              aria-modal="true"
-              aria-label={t('checkpoints.restoreTitle')}
-            >
-              <strong>{t('checkpoints.restoreTitle')}</strong>
-              <p>{t('checkpoints.restoreWarning')}</p>
-              {preview === undefined ? null : (
-                <ul className="dsh-checkpoints-popover__preview-list">
-                  {preview.files.map((file) => (
-                    <li key={file.relativePath} data-conflict={file.conflict ? 'true' : 'false'}>
-                      <span title={file.relativePath}>{file.relativePath}</span>
-                      <code title={file.currentHash ?? t('checkpoints.missingHash')}>
-                        {fileLabel(file, t)}
-                      </code>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {preview !== undefined && preview.conflictCount > 0 ? (
-                <p className="dsh-checkpoints-popover__conflict">
-                  {t('checkpoints.conflictCount', { count: preview.conflictCount })}
-                </p>
-              ) : null}
-              <div className="dsh-checkpoints-popover__dialog-actions">
-                <button
-                  type="button"
-                  className="dsh-button dsh-button--secondary"
-                  disabled={busy}
-                  autoFocus
-                  onClick={closeDialog}
-                >
-                  {t('checkpoints.cancel')}
-                </button>
-                <button
-                  type="button"
-                  className="dsh-button"
-                  disabled={busy || preview === undefined}
-                  onClick={restore}
-                >
-                  {busy ? t('checkpoints.working') : t('checkpoints.restoreConfirm')}
-                </button>
-              </div>
-            </section>
+            <FocusedDialogPortal error={error}>
+              <section
+                ref={dialogSurfaceRef}
+                className="dsh-checkpoints-popover__dialog"
+                role="alertdialog"
+                aria-modal="true"
+                aria-label={t('checkpoints.restoreTitle')}
+              >
+                <strong>{t('checkpoints.restoreTitle')}</strong>
+                <p>{t('checkpoints.restoreWarning')}</p>
+                {preview === undefined ? null : (
+                  <ul className="dsh-checkpoints-popover__preview-list" tabIndex={0}>
+                    {preview.files.map((file) => (
+                      <li key={file.relativePath} data-conflict={file.conflict ? 'true' : 'false'}>
+                        <span title={file.relativePath}>{file.relativePath}</span>
+                        <code title={file.currentHash ?? t('checkpoints.missingHash')}>
+                          {fileLabel(file, t)}
+                        </code>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {preview !== undefined && preview.conflictCount > 0 ? (
+                  <p className="dsh-checkpoints-popover__conflict">
+                    {t('checkpoints.conflictCount', { count: preview.conflictCount })}
+                  </p>
+                ) : null}
+                <div className="dsh-checkpoints-popover__dialog-actions">
+                  <button
+                    type="button"
+                    className="dsh-button dsh-button--secondary"
+                    disabled={busy}
+                    autoFocus
+                    onClick={closeDialog}
+                  >
+                    {t('checkpoints.cancel')}
+                  </button>
+                  <button
+                    type="button"
+                    className="dsh-button"
+                    disabled={busy || preview === undefined}
+                    onClick={restore}
+                  >
+                    {busy ? t('checkpoints.working') : t('checkpoints.restoreConfirm')}
+                  </button>
+                </div>
+              </section>
+            </FocusedDialogPortal>
           ) : null}
           {dialog?.kind === 'delete' ? (
-            <section
-              ref={dialogSurfaceRef}
-              className="dsh-checkpoints-popover__dialog"
-              role="alertdialog"
-              aria-modal="true"
-              aria-label={t('checkpoints.deleteTitle')}
-            >
-              <strong>{t('checkpoints.deleteTitle')}</strong>
-              <p>{t('checkpoints.deleteWarning')}</p>
-              <div className="dsh-checkpoints-popover__dialog-actions">
-                <button
-                  type="button"
-                  className="dsh-button dsh-button--secondary"
-                  disabled={busy}
-                  autoFocus
-                  onClick={closeDialog}
-                >
-                  {t('checkpoints.cancel')}
-                </button>
-                <button
-                  type="button"
-                  className="dsh-button dsh-button--danger"
-                  disabled={busy}
-                  onClick={deleteCheckpoint}
-                >
-                  {busy ? t('checkpoints.working') : t('checkpoints.deleteConfirm')}
-                </button>
-              </div>
-            </section>
+            <FocusedDialogPortal error={error}>
+              <section
+                ref={dialogSurfaceRef}
+                className="dsh-checkpoints-popover__dialog"
+                role="alertdialog"
+                aria-modal="true"
+                aria-label={t('checkpoints.deleteTitle')}
+              >
+                <strong>{t('checkpoints.deleteTitle')}</strong>
+                <p>{t('checkpoints.deleteWarning')}</p>
+                <div className="dsh-checkpoints-popover__dialog-actions">
+                  <button
+                    type="button"
+                    className="dsh-button dsh-button--secondary"
+                    disabled={busy}
+                    autoFocus
+                    onClick={closeDialog}
+                  >
+                    {t('checkpoints.cancel')}
+                  </button>
+                  <button
+                    type="button"
+                    className="dsh-button dsh-button--danger"
+                    disabled={busy}
+                    onClick={deleteCheckpoint}
+                  >
+                    {busy ? t('checkpoints.working') : t('checkpoints.deleteConfirm')}
+                  </button>
+                </div>
+              </section>
+            </FocusedDialogPortal>
           ) : null}
         </div>
       ) : null}

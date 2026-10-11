@@ -36,6 +36,9 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
   const [answering, setAnswering] = useState<string | undefined>()
   const [answer, setAnswer] = useState('')
   const [failure, setFailure] = useState<string | undefined>(undefined)
+  const [busy, setBusy] = useState(false)
+  const pendingAction = useRef(false)
+  const actionGeneration = useRef(0)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -48,9 +51,13 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
   })
 
   const answeringRowRef = useRef<HTMLLIElement>(null)
+  useEffect(() => {
+    if (busy) menuRef.current?.focus()
+  }, [busy])
 
   /** Dismissing the center also drops the inline draft, so reopening is clean. */
   const close = (): void => {
+    actionGeneration.current += 1
     setOpen(false)
     setAnswering(undefined)
     setAnswer('')
@@ -63,11 +70,19 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
    * tell "applied" from "silently dropped".
    */
   const runAction = async (action: () => Promise<void>): Promise<void> => {
+    if (pendingAction.current) return
+    pendingAction.current = true
+    const generation = actionGeneration.current
+    setBusy(true)
     setFailure(undefined)
     try {
       await action()
     } catch (reason) {
-      setFailure(reason instanceof Error ? reason.message : t('tasks.actionFailed'))
+      if (generation === actionGeneration.current)
+        setFailure(reason instanceof Error ? reason.message : t('tasks.actionFailed'))
+    } finally {
+      pendingAction.current = false
+      setBusy(false)
     }
   }
 
@@ -118,16 +133,13 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
   const submitAnswer = async (task: TaskSummary): Promise<void> => {
     const interactionId = task.interactionId
     if (interactionId === undefined || answer.trim() === '') return
-    setFailure(undefined)
-    try {
+    const generation = actionGeneration.current
+    await runAction(async () => {
       await props.onAnswer(task, answer)
-    } catch (reason) {
-      // The form stays open with its draft so the refusal can be retried.
-      setFailure(reason instanceof Error ? reason.message : t('tasks.actionFailed'))
-      return
-    }
-    setAnswer('')
-    setAnswering(undefined)
+      if (generation !== actionGeneration.current) return
+      setAnswer('')
+      setAnswering(undefined)
+    })
   }
 
   const changeScope = (next: TaskListScope): void => {
@@ -160,6 +172,7 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
           style={menuPosition}
           className="dsh-tasks-popover__menu"
           role="dialog"
+          tabIndex={-1}
           aria-label={t(scope === 'workspace' ? 'tasks.workspaceList.aria' : 'tasks.list.aria')}
         >
           <div className="dsh-tasks-popover__header">
@@ -169,6 +182,7 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
               className="dsh-icon-button"
               aria-label={t('tasks.refresh')}
               title={t('tasks.refresh')}
+              disabled={busy || props.loading}
               onClick={() => void runAction(() => props.onRefresh())}
             >
               <Icon name="refresh" />
@@ -181,7 +195,7 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
               aria-pressed={scope === 'current-session'}
               // The pressed scope stays tabbable and reads as "selected";
               // changeScope ignores a re-pick of the current scope.
-              disabled={props.onScopeChange === undefined}
+              disabled={busy || props.loading || props.onScopeChange === undefined}
               onClick={() => changeScope('current-session')}
             >
               {t('tasks.scope.current')}
@@ -190,7 +204,7 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
               type="button"
               className="dsh-tasks-popover__scope-button"
               aria-pressed={scope === 'workspace'}
-              disabled={props.onScopeChange === undefined}
+              disabled={busy || props.loading || props.onScopeChange === undefined}
               onClick={() => changeScope('workspace')}
             >
               {t('tasks.scope.workspace')}
@@ -222,7 +236,7 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
                 <button
                   type="button"
                   className="dsh-tasks-popover__main"
-                  disabled={!task.canOpen}
+                  disabled={busy || !task.canOpen}
                   onClick={() => void runAction(() => props.onOpen(task))}
                 >
                   <span
@@ -247,6 +261,7 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
                     className="dsh-icon-button"
                     aria-label={t('tasks.stop', { title: task.title })}
                     title={t('tasks.stop', { title: task.title })}
+                    disabled={busy}
                     onClick={() => void runAction(() => props.onStop(task))}
                   >
                     <Icon name="stop" />
@@ -264,10 +279,11 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
                       <input
                         autoFocus
                         value={answer}
+                        disabled={busy}
                         aria-label={t('tasks.answerInput')}
                         onChange={(event) => setAnswer(event.target.value)}
                       />
-                      <button type="submit" disabled={answer.trim() === ''}>
+                      <button type="submit" disabled={busy || answer.trim() === ''}>
                         {t('tasks.answer')}
                       </button>
                     </form>
@@ -275,6 +291,7 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
                     <button
                       type="button"
                       className="dsh-tasks-popover__answer-button"
+                      disabled={busy}
                       onClick={() => {
                         setAnswering(task.taskId)
                         setAnswer('')

@@ -42,6 +42,18 @@ function fixture(
   return { fetch, repository }
 }
 describe('alpha211 optional Inspector discovery', () => {
+  it('never interprets a remote or forwarded worker announcement as local', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>()
+    for (const options of [
+      { endpoint: { host: 'remote.example', port: 443, baseUrl: 'https://remote.example:443' } },
+      { endpoint, allowWorkerDiscovery: () => false },
+    ]) {
+      const repository = new Alpha211InspectorRepository({ ...options, fetch, requestTimeoutMs: 100 })
+      await expect(repository.discover()).resolves.toEqual({ available: false })
+      await repository.close()
+    }
+    expect(fetch).not.toHaveBeenCalled()
+  })
   it('preserves an explicitly announced default port in verified debugger wire strings', async () => {
     const f = fixture()
     const atDefault = (value: string): string => value.replace(':3456', ':80')

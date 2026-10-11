@@ -27,7 +27,7 @@ domain         -> nothing platform-specific
 
 ## 连接与进程
 
-`auto` 必须先完成设置、已知实例、官方默认、经校验的 companion registry 和受限进程发现的候选验证，全部不可用后才允许启动本机 DSH。`attach-only` 只连接；`new-isolated` 只创建一个扩展持有的实例；`custom` 只探测用户给定且经校验的单个 loopback 端点，不转入自动启动。候选去重、排序、失败后继续和并发入口合并由连接协调器负责；不扫描任意端口范围。
+`auto` 必须先完成设置、已知实例、官方默认、经校验的 companion registry 和受限进程发现的候选验证，全部不可用后才允许启动本机 DSH。`attach-only` 只连接；`new-isolated` 只创建一个扩展持有的实例；`custom` 只探测用户给定且经校验的单个 HTTP(S) 端点（可为远程主机），不转入自动启动。候选去重、排序、失败后继续和并发入口合并由连接协调器负责；不扫描任意端口范围。
 
 | 来源                                 | 所有权     | 断开或停用时                                       |
 | ------------------------------------ | ---------- | -------------------------------------------------- |
@@ -35,6 +35,8 @@ domain         -> nothing platform-specific
 | 当前扩展直接创建并持有句柄           | `managed`  | 先优雅停止，超时后也只终止该句柄                   |
 
 PID 不证明所有权。发现先于启动、单个 in-flight 连接和显式句柄所有权同时保护用户现有 DSH。连接、订阅、socket、timer 和子进程在成功、失败、取消、超时与停用路径均须释放。
+
+远程连接仅由原生确认的 `custom` 入口授权，自动发现仍限 loopback。凭据按 origin 隔离存入 SecretStorage；失效认证只在连接前刷新，不重放业务写入。HTTP/WebSocket 禁止跳转并固定经过校验的 DNS 地址，HTTPS 强制证书与主机名校验；远程 HTTP 要求明文确认，地址变化后重新授权。远程目标拒绝元数据、环回、链路本地与非单播地址。取消、超时或凭据变更后清理旧连接；远程端点不授予本地文件及 Inspector 权限。
 
 Remote SSH、WSL 和 Dev Container 中，Extension Host 与 DSH 位于工作区一侧，Webview 显示在本地；PATH、全局包、进程、端口和文件操作均以 **Extension Host 所在平台**为准。已知实例的持久提示只保存经验证的 loopback port，不把完整 endpoint 或凭据写入工作区状态；读取旧格式时也必须重新校验 loopback。
 
@@ -46,6 +48,8 @@ Webview 不接收 endpoint、PID、命令行、Cookie、launch token、Secret、
 
 错误响应只含稳定 code、脱敏 message 和 retryable。增量消息在 Host/Store 合批，终态立即投递；一个 backend 共享一个上游流，历史分页传输。Webview 隐藏时可暂停昂贵渲染，不得丢失审批、问题或连接状态。断线恢复按服务器序号重新订阅、补齐缺口、去重并提交 reducer，不能只按时间戳排序。
 
+Timeline 的实时归约发布不可变节点快照；批量历史回放可以拥有私有工作数组及查找索引，但不得发布中间状态或把索引写入协议/持久化。插入、替换和删除节点后按最早变更位置同步索引；渲染投影仅在变更基准与上次快照身份一致时使用增量范围，否则安全重建。Turn、重试、计时与用量证据由独立状态规则管理，预览清理不将参数生成阶段当作已执行工具。
+
 ### 需要独立身份的长操作
 
 插件安装使用独立 `installRequestId`，与一次 Webview 请求的 `requestId` 分离。调用安装 Remote 前失败须明确返回“未开始”；调用后若回包丢失或取消太迟，必须以同一安装 ID 查询结果。结果未知时刷新权威目录，不重新发起安装；取消与等待也按同 ID 去重。
@@ -54,7 +58,7 @@ Job 输出的 `at`/`next` 是 UTF-8 字节偏移，首次数据帧可合法重�
 
 ## 安全规则
 
-- DSH 网络目标仅限经过验证的 `127.0.0.1`/`localhost` 和合法端口；Webview 不直接联网、读文件或启动进程。
+- DSH 网络目标仅限经规范化校验的 HTTP(S) origin 和合法端口：本机发现默认只接受 `127.0.0.1`/`localhost`，`custom` 模式允许用户显式配置的远程地址；Webview 不直接联网、读文件或启动进程。
 - Webview CSP 使用 nonce，禁止远程脚本、`unsafe-eval`、内联事件和任意 frame；模型 Markdown 禁止原始 HTML，链接只接受安全 scheme 并由 Host 打开。
 - Secret 经 VS Code 密码输入或 SecretStorage 交给 Extension Host 和本机 DSH；Webview 只见 configured/missing，Secret 不进入日志、状态、fixture 或剪贴板。
 - 日志以字段 allowlist 为准，对 prompt、body、response、工具输入输出、token、authorization、password、secret 和路径做递归脱敏；诊断只发布有界的版本、状态、来源类别、可重连标志及脱敏日志。完整 endpoint、PID、环境变量和堆栈不外传。
@@ -68,6 +72,6 @@ Checkpoint 与 Prompt Template 属于 Host 本地能力，不伪造 DSH RPC。�
 
 - **Web Host API 为主通道**：完整会话、工具、审批和 Agent 状态必须来自结构化 RPC/Event；TUI/ANSI 和模型文本不是机器契约。
 - **发现先于启动**：先验证外部候选，保留用户已有进程；只有当前扩展持有的进程可以停止。
-- **Activity Bar 默认位置**：使用 VS Code 稳定贡献点，提供把 View 移到 Secondary Side Bar 的引导；不调用私有 API，也不承诺安装后自动右置。
+- **辅助侧边栏默认位置**：使用 VS Code 稳定贡献点注册 View，升级保留编辑器已保存的布局；移动位置使用原生选择器。
 - **版本化 Adapter**：上游变化在版本边界内消化，Domain、Application 和 Webview 不依赖上游类或版本判断。
 - **Secret 留在 Host**：普通 Webview 输入框不处理 Provider Secret，诊断和协议测试必须验证无泄漏。

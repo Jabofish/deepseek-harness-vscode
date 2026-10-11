@@ -265,7 +265,7 @@ export function createAlphaLegacyRpc(dependencies: AlphaLegacyRpcDependencies): 
   ): Promise<Record<string, unknown>> {
     for await (const item of openRemoteStream('session/follow', { request }, signal)) {
       const frame = recordOrUndefined(item)
-      if (!validAlphaWireSnapshot(frame, options.sessionWireVersion ?? 'v0'))
+      if (!validAlphaWireSnapshot(frame, options.sessionWireVersion ?? 'v0', options.sessionWireProfile))
         throw malformedResponse('session/follow snapshot')
       return frame
     }
@@ -292,6 +292,7 @@ export function createAlphaLegacyRpc(dependencies: AlphaLegacyRpcDependencies): 
       sessionId,
       wireVersion,
       options.autoReviewDenialContract === true,
+      options.sessionWireProfile,
     )
     return {
       rpcId: randomUUID(),

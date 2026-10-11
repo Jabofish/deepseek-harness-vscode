@@ -1,22 +1,9 @@
-import type {
-  DynamicCommand,
-  ModelCatalogFailure,
-  ModelDescriptor,
-  ModelSelection,
-  SkillDescriptor,
-} from '@dsh-vscode/domain'
+import type { DynamicCommand, SkillDescriptor } from '@dsh-vscode/domain'
 import { translate } from '../../i18n.js'
 import type { ProtocolClient } from '../protocol-client.js'
 import { requestId } from './ids.js'
 import { isRecord, object } from './unknown-record.js'
-import { sameModelCatalogFailureList, sameModelDescriptorList, strictListValues } from './list-equality.js'
-import {
-  isModelCatalogFailure,
-  isModelDescriptor,
-  isModelSelection,
-  sameModelSelection,
-} from './model-catalog.js'
-import type { AppState, StateSetter } from './types.js'
+import { strictListValues } from './list-equality.js'
 
 export async function readCommandList(
   client: ProtocolClient,
@@ -82,133 +69,6 @@ export function mergeSkillCommands(
     ]
   })
   return [...commands, ...skillCommands]
-}
-
-export interface SessionModelDirectory {
-  readonly models: readonly ModelDescriptor[]
-  readonly failures: readonly ModelCatalogFailure[]
-  /** The route the session's next request will take, as the host states it. */
-  readonly current: ModelSelection
-  readonly routable: boolean
-}
-
-/**
- * One session-directory read. A read that could not answer carries the reason
- * the seat states: the host's own message for a refused request, or the shape
- * violation when the response cannot be read at all. Swallowing either leaves
- * the composer showing the global catalog as if it were the session's own
- * directory, with no way to ask again.
- */
-export type SessionModelDirectoryRead =
-  | { readonly ok: true; readonly directory: SessionModelDirectory }
-  | { readonly ok: false; readonly message: string }
-
-export async function loadSessionModelDirectory(
-  client: ProtocolClient,
-  sessionId: string,
-): Promise<SessionModelDirectoryRead> {
-  const malformed = translate('app.error.malformedModelDirectory')
-  try {
-    const result = object(
-      await client.request<unknown>({
-        type: 'models.session.list',
-        requestId: requestId(),
-        payload: { sessionId },
-      }),
-    )
-    if (result === undefined || !Array.isArray(result.models) || !result.models.every(isModelDescriptor))
-      return { ok: false, message: malformed }
-    // The failures are half the directory: they are the only statement about
-    // the providers that could not enumerate, so a row this side cannot read
-    // invalidates the fragment rather than being dropped from it.
-    if (!Array.isArray(result.failures) || !result.failures.every(isModelCatalogFailure))
-      return { ok: false, message: malformed }
-    // The route the next request will take is the directory's own statement
-    // about this session; the configuration only names what someone chose. A
-    // fragment without it cannot say what the seat should state, so it is
-    // refused rather than left to look like an unstated selection.
-    if (!isModelSelection(result.current)) return { ok: false, message: malformed }
-    // `routable` is the whole-fragment verdict and the host types it as
-    // required; a fragment without it cannot say whether input is legal, so it
-    // is refused rather than guessed (a guess would either lock a usable
-    // composer or unlock one the host will refuse).
-    if (typeof result.routable !== 'boolean') return { ok: false, message: malformed }
-    return {
-      ok: true,
-      directory: {
-        models: result.models,
-        failures: result.failures,
-        current: result.current,
-        routable: result.routable,
-      },
-    }
-  } catch (error) {
-    return { ok: false, message: errorText(error) }
-  }
-}
-
-export function errorText(error: unknown): string {
-  const message = object(error)?.message
-  return typeof message === 'string' && message.trim() !== ''
-    ? message
-    : translate('app.error.hostUnspecified')
-}
-
-/**
- * Fold one read into the state. A failed read keeps the last good directory —
- * the open flow has the same contract, and the picker's warning and model rows
- * must not be replaced by an empty directory the host never stated — but the
- * failure itself is published so the seat can explain the missing rows.
- */
-export function mergeSessionModelDirectory(
-  current: AppState,
-  sessionId: string,
-  read: SessionModelDirectoryRead,
-): AppState {
-  if (current.activeSessionId !== sessionId) return current
-  if (!read.ok) {
-    if (!current.sessionModelDirectoryLoading && current.sessionModelDirectoryError === read.message)
-      return current
-    return { ...current, sessionModelDirectoryLoading: false, sessionModelDirectoryError: read.message }
-  }
-  const { models, failures, routable, current: selection } = read.directory
-  if (
-    !current.sessionModelDirectoryLoading &&
-    current.sessionModelDirectoryError === undefined &&
-    sameModelDescriptorList(current.sessionModels, models) &&
-    sameModelCatalogFailureList(current.sessionModelFailures, failures) &&
-    sameModelSelection(current.sessionModelCurrent, selection) &&
-    current.sessionModelRoutable === routable
-  )
-    return current
-  return {
-    ...current,
-    sessionModels: models,
-    sessionModelFailures: failures,
-    sessionModelCurrent: selection,
-    sessionModelRoutable: routable,
-    sessionModelDirectoryLoading: false,
-    sessionModelDirectoryError: undefined,
-  }
-}
-
-/**
- * Re-read one session's model directory. This is also the seat's retry after a
- * refused read, so it has to be callable on demand and stateful while it runs.
- */
-export async function refreshSessionModelDirectory(
-  client: ProtocolClient,
-  setState: StateSetter,
-  sessionId: string,
-  isCurrent: () => boolean,
-): Promise<void> {
-  setState((current) =>
-    current.activeSessionId === sessionId && !current.sessionModelDirectoryLoading
-      ? { ...current, sessionModelDirectoryLoading: true }
-      : current,
-  )
-  const read = await loadSessionModelDirectory(client, sessionId)
-  setState((current) => (isCurrent() ? mergeSessionModelDirectory(current, sessionId, read) : current))
 }
 
 export function withClientCommandContributions(
@@ -319,8 +179,12 @@ export function createCommandDirectoryCache(
       loads.clear()
     },
     load(sessionId, force = false) {
-      if (force) cache.delete(sessionId)
-      else {
+      if (force) {
+        cache.delete(sessionId)
+        // A live registry invalidation needs a read issued after the event,
+        // rather than reusing a pending snapshot from before the change.
+        loads.delete(sessionId)
+      } else {
         const cached = cache.get(sessionId)
         if (cached !== undefined) return Promise.resolve(cached)
       }
@@ -329,7 +193,8 @@ export function createCommandDirectoryCache(
       const stamped = generation
       const load = fetch(sessionId)
         .then((commands) => {
-          if (commands === undefined || stamped !== generation) return undefined
+          if (commands === undefined || stamped !== generation || loads.get(sessionId) !== load)
+            return undefined
           cache.set(sessionId, commands)
           return commands
         })

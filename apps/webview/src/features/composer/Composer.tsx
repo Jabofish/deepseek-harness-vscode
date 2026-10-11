@@ -1,6 +1,7 @@
 import {
   memo,
   useCallback,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -57,6 +58,7 @@ import { EditorContextRail } from './EditorContextRail.js'
 import { ComposerCommandActions } from './ComposerCommandActions.js'
 import { ComposerExtrasMenu } from './ComposerExtrasMenu.js'
 import { ComposerAttachmentActions } from './ComposerAttachmentActions.js'
+import { useConversationLayout } from '../../app/ConversationLayoutProvider.js'
 
 const EMPTY_ATTACHMENT_PREVIEWS: Readonly<Record<string, string>> = {}
 const EMPTY_MODELS: readonly ModelDescriptor[] = []
@@ -158,9 +160,11 @@ export interface ComposerProps {
 
 export const Composer = memo(function Composer(props: ComposerProps): ReactElement {
   const { t } = useI18n()
+  const focused = useConversationLayout()?.layout === 'focused'
   const composerRef = useRef<HTMLFormElement>(null)
   const composing = useRef(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const hintId = useId()
   const pendingCursorRef = useRef<number | undefined>(undefined)
   const { restoreDraft } = useDraftHistory(props.draft, props.onDraftChange)
   const { railRef: attachmentRailRef, scrollable: attachmentRailScrollable } = useAttachmentRail(
@@ -185,14 +189,14 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
   }
   useLayoutEffect(() => {
     if (textareaRef.current !== null) {
-      fitComposerTextarea(textareaRef.current)
+      fitComposerTextarea(textareaRef.current, focused ? { minimum: 42, maximum: 240 } : undefined)
       if (pendingCursorRef.current !== undefined) {
         const cursor = Math.max(0, Math.min(pendingCursorRef.current, props.draft.length))
         textareaRef.current.setSelectionRange(cursor, cursor)
         pendingCursorRef.current = undefined
       }
     }
-  }, [props.draft])
+  }, [props.draft, focused])
 
   const ingestFiles = (files: readonly File[] | FileList | undefined): void => {
     if (props.attachmentsDisabled === true) return
@@ -288,7 +292,9 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
     },
     [onCommand],
   )
-  const renderSessionControls = (surface: 'primary' | 'secondary'): ReactElement | null => {
+  const renderSessionControls = (
+    surface: NonNullable<SessionControlsProps['surface']>,
+  ): ReactElement | null => {
     if (configuration === undefined || onConfigurationChange === undefined) return null
     const controlProps: SessionControlsProps = {
       configuration,
@@ -484,6 +490,20 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
+      onMouseDown={(event) => {
+        if (!focused || event.button !== 0 || props.disabled || inputBlocked || event.defaultPrevented) return
+        const target = event.target
+        if (
+          !(target instanceof Element) ||
+          target.closest(
+            'button, a, input, select, textarea, [role="button"], [tabindex], [role="dialog"], [role="menu"], [role="listbox"]',
+          ) !== null
+        )
+          return
+        event.preventDefault()
+        if (document.activeElement !== textareaRef.current)
+          textareaRef.current?.focus({ preventScroll: true })
+      }}
       onSubmit={(event) => {
         event.preventDefault()
         // The primary button is Stop while running (input stays free); the
@@ -542,6 +562,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
           ref={textareaRef}
           className="dsh-composer__textarea"
           aria-label={t('composer.prompt')}
+          aria-describedby={focused ? hintId : undefined}
           value={props.draft}
           disabled={props.disabled || inputBlocked}
           {...(menuOpen || referenceMenuOpen ? { 'aria-autocomplete': 'list' } : {})}
@@ -557,7 +578,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
               : {})}
           onChange={(event) => {
             const value = event.target.value
-            fitComposerTextarea(event.currentTarget)
+            fitComposerTextarea(event.currentTarget, focused ? { minimum: 42, maximum: 240 } : undefined)
             const cursor =
               event.currentTarget.selectionStart === 0 && props.draft.length === 0
                 ? value.length
@@ -587,7 +608,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
               composing.current = false
             }, 10)
           }}
-          placeholder={t('composer.placeholder')}
+          placeholder={t(focused ? 'composer.focusedPlaceholder' : 'composer.placeholder')}
           rows={1}
         />
         <span
@@ -677,15 +698,19 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
               <div className="dsh-composer__extras-section">{renderSessionControls('secondary')}</div>
             )}
           </ComposerExtrasMenu>
+          {focused ? renderSessionControls('permission') : null}
           <span
-            className="dsh-composer__hint"
+            id={hintId}
+            className={focused ? 'dsh-sr-only' : 'dsh-composer__hint'}
             title={props.running ? t('composer.runningHint') : t('composer.idleHint')}
           >
             {props.running ? t('composer.runningHintShort') : t('composer.idleHintShort')}
           </span>
         </div>
         {configuration === undefined || onConfigurationChange === undefined ? null : (
-          <div className="dsh-composer__toolbar-controls">{renderSessionControls('primary')}</div>
+          <div className="dsh-composer__toolbar-controls">
+            {renderSessionControls(focused ? 'model' : 'primary')}
+          </div>
         )}
         <span className="dsh-composer__toolbar-balance" aria-hidden="true" />
         <button
@@ -693,6 +718,11 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
           type="submit"
           aria-label={props.running ? t('composer.stopResponse') : t('composer.sendMessage')}
           title={props.running ? t('composer.stopResponse') : t('composer.sendMessage')}
+          onMouseDown={(event) => {
+            if (!focused || event.button !== 0 || props.disabled) return
+            event.preventDefault()
+            textareaRef.current?.focus({ preventScroll: true })
+          }}
           disabled={
             props.disabled ||
             (!props.running && inputBlocked) ||
@@ -700,7 +730,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
             (!props.running && props.draft.trim() === '' && props.attachments.length === 0)
           }
         >
-          <Icon name={props.running ? 'stop' : 'send'} />
+          <Icon name={props.running ? 'stop' : focused ? 'arrow-up' : 'send'} />
           <span className="dsh-composer__send-label">
             {props.running ? t('composer.stop') : t('composer.send')}
           </span>

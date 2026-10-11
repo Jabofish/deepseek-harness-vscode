@@ -85,7 +85,7 @@ async function scanForChild(
     }
     answered += 1
     const entry = entries.find((candidate) => candidate.kind === 'child')
-    if (entry !== undefined)
+    if (entry !== undefined && entry.kind === 'child' && entry.mode !== 'external')
       return { answered, scanned, child: { childId: entry.id, parentId, mode: entry.mode } }
   }
   return { answered, scanned }

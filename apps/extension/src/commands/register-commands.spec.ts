@@ -30,6 +30,8 @@ describe('registerCommands', () => {
     })
 
     expect(registrations.map(({ id }) => id)).toEqual([
+      'dsh.authorizeExternalConnection',
+      'dsh.clearExternalCredentials',
       'dsh.connect',
       'dsh.reconnect',
       'dsh.newSession',

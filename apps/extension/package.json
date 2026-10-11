@@ -2,7 +2,7 @@
   "name": "deepseek-harness-client",
   "displayName": "DeepSeek Harness Companion for VS Code",
   "description": "Run DSH sessions, tools, and coding tasks in VS Code.",
-  "version": "0.2.12",
+  "version": "0.3.0",
   "publisher": "Direwolf",
   "icon": "resources/dsh.png",
   "license": "MIT",
@@ -37,7 +37,6 @@
   ],
   "main": "./dist/extension.cjs",
   "activationEvents": [
-    "onStartupFinished",
     "onView:dsh.chatView",
     "onCommand:dsh.connect",
     "onCommand:dsh.reconnect",
@@ -62,10 +61,13 @@
     "@dsh-vscode/domain": "workspace:*",
     "@dsh-vscode/dsh-adapter": "workspace:*",
     "@dsh-vscode/webview-protocol": "workspace:*",
+    "undici": "7.29.0",
+    "ws": "8.21.3",
     "zod": "4.4.3"
   },
   "devDependencies": {
-    "@types/vscode": "1.125.0"
+    "@types/vscode": "1.125.0",
+    "@types/ws": "8.18.1"
   },
   "contributes": {
     "viewsContainers": {
@@ -161,6 +163,16 @@
         "command": "dsh.addDiagnosticContext",
         "title": "DSH: Add Diagnostic to Context",
         "icon": "$(error)"
+      },
+      {
+        "command": "dsh.authorizeExternalConnection",
+        "title": "Authorize External Connection",
+        "category": "DSH"
+      },
+      {
+        "command": "dsh.clearExternalCredentials",
+        "title": "Clear External Connection Credentials",
+        "category": "DSH"
       }
     ],
     "menus": {
@@ -248,7 +260,7 @@
             "new-isolated"
           ],
           "default": "auto",
-          "markdownDescription": "Connection policy. `auto` discovers and starts a local DSH as needed; `custom` probes only the configured local endpoint; `attach-only` never starts DSH; `new-isolated` always starts an extension-owned instance."
+          "markdownDescription": "Connection policy. `auto` discovers and starts a local DSH as needed; `custom` probes only the configured HTTP(S) endpoint (which may be remote); `attach-only` never starts DSH; `new-isolated` always starts an extension-owned instance."
         },
         "dsh.connection.managedPort": {
           "type": "integer",
@@ -260,7 +272,12 @@
         "dsh.connection.serverUrl": {
           "type": "string",
           "default": "",
-          "description": "Optional existing local DSH URL, restricted to http://127.0.0.1 or http://localhost."
+          "description": "Optional existing DSH URL, an http:// or https:// origin (any host)."
+        },
+        "dsh.connection.runtimeVersion": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Optional explicit DSH wire version for an external instance whose runtime version cannot be discovered (for example a containerized DSH such as `0.2.1-alpha.2`). Bypasses the compatibility-fallback probe and selects the exact matching adapter. Leave empty to auto-detect."
         },
         "dsh.connection.attachPorts": {
           "type": "array",

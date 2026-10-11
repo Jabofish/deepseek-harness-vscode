@@ -242,12 +242,26 @@ export function safeStableIdentifier(value: unknown, label: string): string {
   return value
 }
 
-export function subagentCatalogEntry(data: Record<string, unknown>): SubagentCatalogEntryFact {
-  if (data.version !== 0) throw new Error('Malformed subagent/catalog version')
+export function subagentCatalogEntry(
+  data: Record<string, unknown>,
+  externalCatalogContract = false,
+  unknownCatalogContract = false,
+): SubagentCatalogEntryFact {
+  if (
+    data.version !== 0 &&
+    !(externalCatalogContract && data.version === 2 && data.mode === 'external') &&
+    !(unknownCatalogContract && data.version === 1 && data.mode === 'unknown')
+  )
+    throw new Error('Malformed subagent/catalog version')
   const id = safeStableIdentifier(data.childId, 'subagent/catalog childId')
   const createdAt = nonNegativeSafeNumber(data.childCreatedAt)
   if (createdAt === undefined) throw new Error('Malformed subagent/catalog childCreatedAt')
-  if (data.mode !== 'one-shot' && data.mode !== 'continuable')
+  if (
+    data.mode !== 'one-shot' &&
+    data.mode !== 'continuable' &&
+    !(externalCatalogContract && data.mode === 'external') &&
+    !(unknownCatalogContract && data.mode === 'unknown')
+  )
     throw new Error('Malformed subagent/catalog mode')
   const hasLabel = Object.hasOwn(data, 'label')
   if (!hasLabel && data.mode === 'continuable')

@@ -1,0 +1,154 @@
+.dsh-unified-composer .dsh-composer__toolbar-controls {
+  /* Picker menus are positioned from this rail. Clipping the rail makes a
+   * menu look non-functional exactly when it is opened at the bottom edge. */
+  overflow: visible;
+}
+
+/* The timeline owns every remaining pixel. No right-side utility panel is
+ * allowed to become a sibling column and squeeze message content. */
+.dsh-timeline-shell {
+  position: relative;
+  display: flex;
+  flex: 1 1 0%;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  overflow: hidden;
+}
+
+.dsh-scroll-to-latest {
+  position: absolute;
+  inset-inline-start: 50%;
+  inset-block-end: var(--dsh-scroll-to-latest-bottom, var(--dsh-space-3));
+  z-index: 9;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  max-width: calc(100% - var(--dsh-space-4));
+  min-height: var(--dsh-control-height);
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-1) var(--dsh-space-3);
+  transform: translateX(-50%);
+  border-color: color-mix(in srgb, var(--dsh-info) 54%, var(--dsh-border-color));
+  border-radius: 999px;
+  color: var(--dsh-text);
+  background: color-mix(in srgb, var(--dsh-info) 84%, var(--dsh-surface-raised));
+  box-shadow: var(--dsh-shadow);
+  white-space: nowrap;
+}
+
+.dsh-scroll-to-latest:hover:not(:disabled),
+.dsh-scroll-to-latest:focus-visible {
+  color: var(--dsh-text);
+  background: color-mix(in srgb, var(--dsh-info) 92%, var(--dsh-surface-raised));
+}
+
+.dsh-scroll-to-latest__content {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+  animation: dsh-rise-in var(--dsh-motion-duration-standard) var(--dsh-motion-ease-enter) both;
+}
+
+.dsh-scroll-to-latest__content > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-timeline,
+.dsh-trajectory {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  padding: 0 var(--dsh-space-1) var(--dsh-space-2);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  /* The document flow is stable and useScrollFollow is the only owner of
+   * append-to-tail behavior. Native anchoring would move the reader when an
+   * older Markdown block or image changes height above the viewport. */
+  overflow-anchor: none;
+}
+
+.dsh-timeline:focus-visible {
+  outline: 1px solid var(--dsh-focus-ring);
+  outline-offset: -1px;
+}
+
+/* A selected trajectory record is an inspector layer, not a second layout
+ * column. It floats above the ledger and ends at the composer boundary, so
+ * the ledger keeps all remaining vertical space. Its own scroll owner keeps
+ * long input/output details reachable without creating page overflow. */
+.dsh-trajectory-shell--inspecting {
+  --dsh-trajectory-inspector-max-height: min(50%, 24rem);
+  --dsh-scroll-to-latest-bottom: calc(var(--dsh-trajectory-inspector-max-height) + var(--dsh-space-2));
+}
+
+.dsh-trajectory-inspector {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: 0;
+  z-index: 8;
+  width: 100%;
+  min-width: 0;
+  max-height: var(--dsh-trajectory-inspector-max-height, min(50%, 24rem));
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.dsh-timeline__canvas,
+.dsh-timeline__row {
+  min-width: 0;
+}
+
+.dsh-timeline__canvas--virtualized-ready {
+  position: relative;
+}
+
+.dsh-timeline__canvas--virtualized-ready > .dsh-timeline__row {
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+}
+
+.dsh-timeline__empty {
+  align-content: center;
+  gap: var(--dsh-space-2);
+  min-height: 100%;
+  padding: var(--dsh-space-5);
+  color: var(--dsh-muted);
+}
+
+.dsh-timeline__empty-icon {
+  display: grid;
+  width: 2.75rem;
+  height: 2.75rem;
+  place-items: center;
+  margin-bottom: var(--dsh-space-1);
+  border: 1px solid color-mix(in srgb, var(--dsh-info) 45%, var(--dsh-border-color));
+  border-radius: 50%;
+  color: var(--dsh-info);
+  background: color-mix(in srgb, var(--dsh-info) 10%, var(--dsh-surface-soft));
+}
+
+.dsh-timeline__empty-icon .dsh-icon {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.dsh-timeline__empty strong {
+  color: var(--dsh-text);
+  font-size: var(--dsh-font-size-lg);
+  font-weight: 600;
+}
+
+.dsh-timeline__empty > span:last-child {
+  font-size: var(--dsh-font-size-sm);
+}

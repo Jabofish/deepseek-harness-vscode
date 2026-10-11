@@ -1,3 +1,5 @@
+import type { AlphaV4SessionProfile } from '../alpha171/session-wire.js'
+
 import { randomUUID } from 'node:crypto'
 import WebSocket from 'ws'
 
@@ -46,6 +48,7 @@ export interface AlphaLoopbackApiClientOptions {
   readonly autoReviewDenialContract?: boolean
   /** Session Controller wire profile; old alpha uses v0, alpha13 uses v2, and alpha151+ uses v3. */
   readonly sessionWireVersion?: AlphaSessionWireVersion
+  readonly sessionWireProfile?: AlphaV4SessionProfile
   /** The exact Host profile requires its registered durable model-selection projection. */
   readonly requireModelSelectionProjection?: boolean
   /** Version-specific queue projection for Session/follow opening snapshots. */

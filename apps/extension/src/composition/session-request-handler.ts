@@ -1,0 +1,311 @@
+import * as vscode from 'vscode'
+import type { SessionSummary } from '@dsh-vscode/domain'
+import type { WebviewRequest } from '@dsh-vscode/webview-protocol'
+import { publicList } from './public-projection.js'
+import { sameWorkspacePath } from './workspace-state.js'
+import { pathExists } from './runtime.js'
+import { requireCatalogOwnedSession } from './session-scope.js'
+import type { RequestGatewayDependencies } from './request-gateway-dependencies.js'
+import { unsupportedRequest } from './request-routing.js'
+
+type SessionRequest = Extract<WebviewRequest, { type: `session.${string}` }>
+type SessionDependencies = Pick<
+  RequestGatewayDependencies,
+  | 'backendService'
+  | 'workspaceUseCases'
+  | 'sessionUseCases'
+  | 'modelUseCases'
+  | 'exportUseCases'
+  | 'attachmentTokens'
+  | 'editorContextUseCases'
+  | 'contextOwnerForSession'
+  | 'currentFeatureSessionBinding'
+  | 'workspaceFolderIdForSession'
+  | 'currentWorkspaceFolders'
+  | 'listCurrentWorkspaces'
+  | 'listCurrentArchivedSessionIds'
+  | 'ensureCurrentWorkspace'
+  | 'requireCurrentWorkspaceSession'
+  | 'requireCurrentWorkspaceId'
+  | 'requireOwnedQueuedInput'
+> & { readonly publicValue: (value: unknown) => unknown }
+
+export function isSessionRequest(request: WebviewRequest): request is SessionRequest {
+  return request.type.startsWith('session.')
+}
+
+export function createSessionRequestHandler(
+  deps: SessionDependencies,
+): (request: SessionRequest, signal: AbortSignal) => Promise<unknown> {
+  const {
+    backendService,
+    workspaceUseCases,
+    sessionUseCases,
+    modelUseCases,
+    exportUseCases,
+    attachmentTokens,
+    editorContextUseCases,
+    contextOwnerForSession,
+    currentFeatureSessionBinding,
+    workspaceFolderIdForSession,
+    currentWorkspaceFolders,
+    listCurrentWorkspaces,
+    listCurrentArchivedSessionIds,
+    ensureCurrentWorkspace,
+    requireCurrentWorkspaceSession,
+    requireCurrentWorkspaceId,
+    requireOwnedQueuedInput,
+    publicValue,
+  } = deps
+
+  /**
+   * State the VS Code folder that guards a session's paths. Only this id is
+   * accepted by feature routes, and the DSH workspace id is a different
+   * namespace, so the Webview reads the ownership here instead of inferring it.
+   */
+  const withSessionWorkspaceScope = <T extends Pick<SessionSummary, 'cwd'>>(
+    session: T,
+  ): T & { readonly workspaceFolderId?: string } => {
+    const folderId = workspaceFolderIdForSession(session)
+    return folderId === undefined ? session : { ...session, workspaceFolderId: folderId }
+  }
+  return async (request: SessionRequest, signal: AbortSignal): Promise<unknown> => {
+    if (request.type === 'session.move') {
+      await requireCurrentWorkspaceId(request.payload.workspaceId, signal)
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      return workspaceUseCases.insertSessionBefore(
+        request.payload.workspaceId,
+        request.payload.sessionId,
+        request.payload.beforeSessionId,
+        signal,
+      )
+    }
+
+    if (request.type === 'session.list') {
+      const folders = currentWorkspaceFolders()
+      const workspaces = await listCurrentWorkspaces(signal)
+      const archivedSessionIds = new Set(await listCurrentArchivedSessionIds(workspaces, signal))
+      const workspaceIds = new Set(workspaces.map((workspace) => workspace.id))
+      const sessionIds = new Set(workspaces.flatMap((workspace) => workspace.sessionIds ?? []))
+      const workspaceId = request.payload.workspaceId
+      const includeArchived = request.payload.archived ?? false
+      if (workspaceId !== undefined && !workspaceIds.has(workspaceId)) return publicValue({ items: [] })
+      const page = await sessionUseCases.list(
+        {
+          ...(workspaceId === undefined ? {} : { workspaceId }),
+          ...(request.payload.search === undefined ? {} : { search: request.payload.search }),
+          // The normal conversation list is the active, recoverable surface.
+          // Archived sessions remain in DSH for recovery but must not stay in
+          // the switcher after the user archives one.
+          archived: includeArchived,
+          ...(request.payload.cursor === undefined ? {} : { cursor: request.payload.cursor }),
+          ...(request.payload.limit === undefined ? {} : { limit: request.payload.limit }),
+        },
+        signal,
+      )
+      return publicValue({
+        ...page,
+        items: page.items
+          .filter((session) => {
+            const belongsToCurrentWorkspace =
+              (workspaceId === undefined
+                ? workspaceIds.has(session.workspaceId)
+                : session.workspaceId === workspaceId) || sessionIds.has(session.id)
+            const sessionCwd = session.cwd
+            const belongsByCwd =
+              sessionCwd !== undefined &&
+              folders.some((folder) => sameWorkspacePath(sessionCwd, folder.uri.fsPath))
+            return (
+              (belongsToCurrentWorkspace || belongsByCwd) &&
+              archivedSessionIds.has(session.id) === includeArchived
+            )
+          })
+          .map((session) => withSessionWorkspaceScope(session)),
+      })
+    }
+
+    if (request.type === 'session.open') {
+      const detail = await requireCurrentWorkspaceSession(request.payload.sessionId, signal, {
+        fresh: true,
+      })
+      return publicValue(withSessionWorkspaceScope(detail))
+    }
+
+    if (request.type === 'session.history') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      const page = await backendService
+        .requireBackend()
+        .sessions.history(request.payload.sessionId, request.payload.beforeSeq, signal, {
+          ...(request.payload.maxMessages === undefined ? {} : { pageSize: request.payload.maxMessages }),
+          ...(request.payload.pagePurpose === undefined ? {} : { pagePurpose: request.payload.pagePurpose }),
+        })
+      return publicValue({
+        events: page.events,
+        hasMore: page.hasMore,
+        ...(page.beforeSequence === undefined ? {} : { beforeSeq: page.beforeSequence }),
+        ...(page.coveredSequenceRanges === undefined ? {} : { coveredSeqRanges: page.coveredSequenceRanges }),
+        ...(page.projection === undefined ? {} : { projection: page.projection }),
+      })
+    }
+
+    if (request.type === 'session.create') {
+      const workspace = await ensureCurrentWorkspace(request.payload.workspaceId, signal)
+      const resolvedConfiguration = await modelUseCases.resolveSessionConfiguration(
+        request.payload.configuration,
+        signal,
+      )
+      return publicValue(
+        withSessionWorkspaceScope(
+          await sessionUseCases.create(
+            {
+              workspaceId: workspace.id,
+              ...(request.payload.sessionId === undefined ? {} : { sessionId: request.payload.sessionId }),
+              ...(request.payload.reuseWorkspaceBlank === true ? { reuseWorkspaceBlank: true as const } : {}),
+              ...(request.payload.title === undefined ? {} : { title: request.payload.title }),
+              configuration: resolvedConfiguration,
+            },
+            signal,
+          ),
+        ),
+      )
+    }
+
+    if (request.type === 'session.rename') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      // The host normalizes the stored title and returns what it accepted; the
+      // Webview shows that value so the row never claims a title the session
+      // log does not hold.
+      return {
+        title: await backendService
+          .requireBackend()
+          .sessions.rename(request.payload.sessionId, request.payload.title, signal),
+      }
+    }
+
+    if (request.type === 'session.remove') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal, { allowArchived: true })
+      return sessionUseCases.remove(request.payload.sessionId, signal)
+    }
+
+    if (request.type === 'session.fork') {
+      await requireCatalogOwnedSession(
+        backendService.requireBackend(),
+        request.payload.sessionId,
+        await listCurrentWorkspaces(signal),
+        currentWorkspaceFolders(),
+        signal,
+      )
+      return publicValue(
+        withSessionWorkspaceScope(
+          await sessionUseCases.fork(request.payload.sessionId, request.payload.atSeq, signal),
+        ),
+      )
+    }
+
+    if (request.type === 'session.archive') {
+      // Restoring is the one archiving direction that must reach an archived
+      // session; archiving an archived session stays refused like any other
+      // route to it.
+      await requireCurrentWorkspaceSession(
+        request.payload.sessionId,
+        signal,
+        request.payload.archived === false ? { allowArchived: true } : {},
+      )
+      return sessionUseCases.setArchived(request.payload.sessionId, request.payload.archived, signal)
+    }
+
+    if (request.type === 'session.sendPrompt') {
+      const session = await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      const attachments = attachmentTokens.resolve(request.payload.attachments)
+      const contextRefs = request.payload.contextRefs ?? []
+      const contextOwner = contextOwnerForSession(
+        session,
+        request.payload.contextWorkspaceFolderId,
+        contextRefs.length > 0,
+      )
+      const resolvedContext =
+        contextRefs.length === 0
+          ? []
+          : await editorContextUseCases.resolveForPrompt(
+              {
+                ...contextOwner,
+                ...currentFeatureSessionBinding(request.payload.sessionId),
+                contextRefs,
+              },
+              signal,
+            )
+      const result = await sessionUseCases.sendPrompt(
+        {
+          sessionId: request.payload.sessionId,
+          text: request.payload.text,
+          attachments: [...attachments, ...resolvedContext.map((entry) => entry.attachment)],
+        },
+        request.payload.mode ?? 'queue',
+        signal,
+      )
+      // The Webview keeps the chips after a failed send so the user can retry;
+      // retain their opaque handles on that path as well. Successful admission
+      // consumes them exactly once.
+      attachmentTokens.release(request.payload.attachments)
+      if (contextRefs.length > 0) await editorContextUseCases.release(contextRefs, contextOwner)
+      return result
+    }
+
+    if (request.type === 'session.cancel') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      return sessionUseCases.cancel(request.payload.sessionId, signal)
+    }
+
+    if (request.type === 'session.queue.list') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      return publicList(
+        await backendService.requireBackend().sessions.listQueue(request.payload.sessionId, signal),
+      )
+    }
+
+    if (request.type === 'session.queue.update') {
+      await requireOwnedQueuedInput(request.payload.inputId, signal)
+      return backendService
+        .requireBackend()
+        .sessions.updateQueuedInput(request.payload.inputId, request.payload.text, signal)
+    }
+
+    if (request.type === 'session.queue.remove') {
+      await requireOwnedQueuedInput(request.payload.inputId, signal)
+      return backendService.requireBackend().sessions.removeQueuedInput(request.payload.inputId, signal)
+    }
+
+    if (request.type === 'session.queue.steer') {
+      await requireOwnedQueuedInput(request.payload.inputId, signal)
+      return backendService
+        .requireBackend()
+        .sessions.convertQueuedInputToSteer(request.payload.inputId, signal)
+    }
+
+    if (request.type === 'session.configure') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      return modelUseCases.setSessionConfiguration(
+        request.payload.sessionId,
+        request.payload.configuration,
+        signal,
+      )
+    }
+
+    if (request.type === 'session.export') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      const uri = await vscode.window.showSaveDialog({ saveLabel: 'Export DSH session' })
+      if (uri === undefined) return { cancelled: true }
+      const destinationExists = await pathExists(uri.fsPath)
+      if (destinationExists) {
+        const choice = await vscode.window.showWarningMessage(
+          'The selected export file already exists. Replace it?',
+          { modal: true, detail: 'The existing file will be recoverably replaced only after confirmation.' },
+          'Overwrite',
+        )
+        if (choice !== 'Overwrite') return { cancelled: true }
+      }
+      return exportUseCases.exportSession(request.payload, uri.fsPath, signal, destinationExists)
+    }
+    return unsupportedRequest(request)
+  }
+}

@@ -5,7 +5,6 @@ import {
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactElement,
 } from 'react'
@@ -29,7 +28,10 @@ import { useScheduleSessionActions } from './app/useScheduleSessionActions.js'
 import { usePendingInteractions } from './app/usePendingInteractions.js'
 import { CONVERSATION_VIEW_IDS } from './app/conversation-view-ids.js'
 import { ConversationActionItems } from './features/shell/ConversationActionItems.js'
-import { createAppStore, type AppStore } from './app/store.js'
+import { createAppStore, type AppState, type AppStore } from './app/store.js'
+import { sameShallowSelection, useAppStoreSelector } from './app/useAppStoreSelector.js'
+import { selectAppViewState } from './app/store/view-state.js'
+import { selectSessionModels } from './app/store/model-directory-state.js'
 import { readDraft, resetDraft, setDraft } from './app/draft-store.js'
 import { publicProtocolErrorMessage } from './app/protocol-client.js'
 import { useDshSettings } from './app/useDshSettings.js'
@@ -68,11 +70,7 @@ const useAppControllerImpl = () => {
   const initializedStoreRef = useRef<AppStore | undefined>(undefined)
   const disposeTimerRef = useRef<number | undefined>(undefined)
   const popupSelects = useMemo(() => new PopupSelectRegistry(), [])
-  const state = useSyncExternalStore(
-    (listener) => store.subscribe(listener),
-    () => store.getState(),
-    () => store.getState(),
-  )
+  const state = useAppStoreSelector(store, selectAppViewState, sameShallowSelection)
   useEffect(() => {
     mountedRef.current = true
     // A remount (error-boundary recovery, test render) must not inherit the
@@ -336,27 +334,6 @@ const useAppControllerImpl = () => {
     if (!codingToolsEnabled || activeSessionId === undefined) return
     setDshEventVisibility({ sessionId: activeSessionId, visible })
   })
-  const sessionModels = state.sessionModels.length > 0 ? state.sessionModels : state.models
-  // These rows name the providers the session directory could not enumerate.
-  // They stay visible while the global catalog stands in, because that
-  // fallback is what lets a session whose providers all failed show models at
-  // all, and dropping the rows there would hide the only explanation.
-  const sessionModelFailures = state.sessionModelFailures
-  // The route the host says the session's next request will take. The
-  // configuration names a model only once someone chose one, so this is the
-  // only statement of what an unstated configuration actually runs.
-  const sessionModelCurrent = state.sessionModelCurrent
-  // The host's verdict on the session's current model, not a guess from the
-  // groups: a route can serve a model it stopped advertising, and only the
-  // host knows which adapters are live. `undefined` means no directory has
-  // answered, which must not read as blocked.
-  const sessionModelRoutable = state.sessionModelRoutable
-  // The read's own state travels with the rows: the fallback above is what the
-  // composer can offer when the session directory has not answered, and the
-  // picker has to say so instead of presenting the global catalog as the
-  // session's own.
-  const sessionModelDirectoryLoading = state.sessionModelDirectoryLoading
-  const sessionModelDirectoryError = state.sessionModelDirectoryError
   const {
     pendingPermissions,
     pendingQuestions,
@@ -372,9 +349,13 @@ const useAppControllerImpl = () => {
     setError,
     t,
   })
-  const assistantLabel = useMemo(
-    () => resolveAssistantModelLabel(active, state.configuration, sessionModels, t),
-    [active, sessionModels, state.configuration, t],
+  const assistantLabel = useAppStoreSelector(
+    store,
+    useCallback(
+      (current: AppState) =>
+        resolveAssistantModelLabel(active, current.configuration, selectSessionModels(current), t),
+      [active, t],
+    ),
   )
   const activeProjection = useMemo(
     () => (activeSessionId === undefined ? undefined : state.projections[activeSessionId]),
@@ -641,11 +622,6 @@ const useAppControllerImpl = () => {
         setError(reason instanceof Error ? reason.message : t('app.error.promptMode')),
       )
   })
-  // The read's failure is stated inside the picker, so this only has to run it
-  // again: a rejection here would repeat what the menu already shows.
-  const composerOnModelRetry = useStableCallback((): void => {
-    void store.refreshSessionModels().catch(() => undefined)
-  })
   const composerOnCommand = useStableCallback(
     async (command: string, commandAttachments: readonly PromptAttachment[] = []): Promise<void> => {
       if (active === undefined) return
@@ -690,6 +666,7 @@ const useAppControllerImpl = () => {
   const composerStatus = useMemo(
     () => (
       <StatsLine
+        sessionId={activeSessionId}
         nodes={state.timeline.nodes}
         {...(state.timeline.nodeChangeStart === undefined
           ? {}
@@ -704,6 +681,7 @@ const useAppControllerImpl = () => {
       />
     ),
     [
+      activeSessionId,
       composerUsage,
       performanceUsage,
       sessionStats,
@@ -884,7 +862,6 @@ const useAppControllerImpl = () => {
     composerOnConfigurationChange,
     composerOnExtrasOpenChange,
     composerOnIngestFiles,
-    composerOnModelRetry,
     composerOnPickAttachment,
     composerOnPopupSelect,
     composerOnPreviewEditorContext,
@@ -946,12 +923,6 @@ const useAppControllerImpl = () => {
     scheduleOnOpenLinkedSession,
     scheduleOnStartSession,
     sessionControl,
-    sessionModelCurrent,
-    sessionModelDirectoryError,
-    sessionModelDirectoryLoading,
-    sessionModelFailures,
-    sessionModelRoutable,
-    sessionModels,
     setConversationFontSize,
     setConversationView,
     setDismissedConnection,

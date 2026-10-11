@@ -125,7 +125,7 @@ describe('session gap recovery through paginated history', () => {
       requestTimeoutMs: 1_000,
       retryPolicy: { maximumAttempts: 1, baseDelayMs: 1, maximumDelayMs: 1 },
       fetch,
-      webSocket: FakeWebSocket as unknown as typeof WebSocket,
+      webSocket: FakeWebSocket,
     })
     const backend = await adapter.createBackend({
       endpoint,

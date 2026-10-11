@@ -24,6 +24,7 @@ import { MarkdownContent } from '../chat/MarkdownContent.js'
 import { Icon } from '../../ui/Icon.js'
 import { SelectMenu } from '../../components/common/SelectMenu.js'
 import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
+import { FocusedDialogPortal } from '../../components/common/FocusedDialogPortal.js'
 
 export interface PromptTemplatesDrawerProps {
   readonly onOpenLink?: (href: string) => void | Promise<void>
@@ -325,7 +326,10 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
               <button
                 type="button"
                 className="dsh-button dsh-button--secondary dsh-button--compact"
-                onClick={startCreate}
+                onClick={(event) => {
+                  dialogTriggerRef.current = event.currentTarget
+                  startCreate()
+                }}
                 disabled={busy}
               >
                 <Icon name="add" />
@@ -425,7 +429,10 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
                     aria-label={t('promptTemplates.edit')}
                     title={t('promptTemplates.edit')}
                     disabled={busy}
-                    onClick={startEdit}
+                    onClick={(event) => {
+                      dialogTriggerRef.current = event.currentTarget
+                      startEdit()
+                    }}
                   >
                     <Icon name="edit" />
                   </button>
@@ -464,200 +471,206 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
             </section>
           ) : null}
           {pendingInsertion !== undefined ? (
-            <section
-              ref={dialogSurfaceRef}
-              className="dsh-prompt-templates-popover__dialog"
-              role="alertdialog"
-              aria-modal="true"
-              aria-label={t('promptTemplates.missingTitle')}
-            >
-              <strong>{t('promptTemplates.missingTitle')}</strong>
-              <p>{t('promptTemplates.missingDescription')}</p>
-              {pendingInsertion.unresolvedVariables.map((variable, index) => (
-                <label key={variable}>
-                  <span>{`{{${variable}}}`}</span>
+            <FocusedDialogPortal error={error}>
+              <section
+                ref={dialogSurfaceRef}
+                className="dsh-prompt-templates-popover__dialog"
+                role="alertdialog"
+                aria-modal="true"
+                aria-label={t('promptTemplates.missingTitle')}
+              >
+                <strong>{t('promptTemplates.missingTitle')}</strong>
+                <p>{t('promptTemplates.missingDescription')}</p>
+                {pendingInsertion.unresolvedVariables.map((variable, index) => (
+                  <label key={variable}>
+                    <span>{`{{${variable}}}`}</span>
+                    <input
+                      autoFocus={index === 0}
+                      value={pendingValues[variable] ?? ''}
+                      onChange={(event) =>
+                        setPendingValues((current) => ({ ...current, [variable]: event.target.value }))
+                      }
+                    />
+                  </label>
+                ))}
+                <div className="dsh-prompt-templates-popover__dialog-actions">
+                  <button
+                    type="button"
+                    className="dsh-button dsh-button--secondary"
+                    disabled={busy}
+                    onClick={() => setPendingInsertion(undefined)}
+                  >
+                    {t('promptTemplates.cancel')}
+                  </button>
+                  <button
+                    type="button"
+                    className="dsh-button dsh-button--secondary"
+                    disabled={busy}
+                    onClick={insertUnresolved}
+                  >
+                    {t('promptTemplates.insertUnresolved')}
+                  </button>
+                  <button type="button" className="dsh-button" disabled={busy} onClick={insertWithValues}>
+                    {t('promptTemplates.insertWithValues')}
+                  </button>
+                </div>
+              </section>
+            </FocusedDialogPortal>
+          ) : null}
+          {dialog?.kind === 'editor' ? (
+            <FocusedDialogPortal error={error}>
+              <form
+                ref={(element) => {
+                  dialogSurfaceRef.current = element
+                }}
+                className="dsh-prompt-templates-popover__dialog"
+                role="dialog"
+                aria-modal="true"
+                aria-label={
+                  dialog.templateId === undefined
+                    ? t('promptTemplates.createTitle')
+                    : t('promptTemplates.editTitle')
+                }
+                onSubmit={submitEditor}
+              >
+                <strong>
+                  {dialog.templateId === undefined
+                    ? t('promptTemplates.createTitle')
+                    : t('promptTemplates.editTitle')}
+                </strong>
+                <label>
+                  <span>{t('promptTemplates.titleLabel')}</span>
                   <input
-                    autoFocus={index === 0}
-                    value={pendingValues[variable] ?? ''}
+                    autoFocus
+                    maxLength={256}
+                    required
+                    value={form.title}
+                    onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))}
+                  />
+                </label>
+                <label>
+                  <span>{t('promptTemplates.descriptionLabel')}</span>
+                  <input
+                    maxLength={2_000}
+                    value={form.description}
                     onChange={(event) =>
-                      setPendingValues((current) => ({ ...current, [variable]: event.target.value }))
+                      setForm((current) => ({ ...current, description: event.target.value }))
                     }
                   />
                 </label>
-              ))}
-              <div className="dsh-prompt-templates-popover__dialog-actions">
-                <button
-                  type="button"
-                  className="dsh-button dsh-button--secondary"
-                  disabled={busy}
-                  onClick={() => setPendingInsertion(undefined)}
-                >
-                  {t('promptTemplates.cancel')}
-                </button>
-                <button
-                  type="button"
-                  className="dsh-button dsh-button--secondary"
-                  disabled={busy}
-                  onClick={insertUnresolved}
-                >
-                  {t('promptTemplates.insertUnresolved')}
-                </button>
-                <button type="button" className="dsh-button" disabled={busy} onClick={insertWithValues}>
-                  {t('promptTemplates.insertWithValues')}
-                </button>
-              </div>
-            </section>
-          ) : null}
-          {dialog?.kind === 'editor' ? (
-            <form
-              ref={(element) => {
-                dialogSurfaceRef.current = element
-              }}
-              className="dsh-prompt-templates-popover__dialog"
-              role="dialog"
-              aria-modal="true"
-              aria-label={
-                dialog.templateId === undefined
-                  ? t('promptTemplates.createTitle')
-                  : t('promptTemplates.editTitle')
-              }
-              onSubmit={submitEditor}
-            >
-              <strong>
-                {dialog.templateId === undefined
-                  ? t('promptTemplates.createTitle')
-                  : t('promptTemplates.editTitle')}
-              </strong>
-              <label>
-                <span>{t('promptTemplates.titleLabel')}</span>
-                <input
-                  autoFocus
-                  maxLength={256}
-                  required
-                  value={form.title}
-                  onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))}
-                />
-              </label>
-              <label>
-                <span>{t('promptTemplates.descriptionLabel')}</span>
-                <input
-                  maxLength={2_000}
-                  value={form.description}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, description: event.target.value }))
-                  }
-                />
-              </label>
-              <div className="dsh-prompt-templates-popover__field">
-                <span>{t('promptTemplates.scopeLabel')}</span>
-                <SelectMenu
-                  icon="folder"
-                  density="regular"
-                  displayLabel
-                  label={t(`promptTemplates.scope.${form.scope}`)}
-                  ariaLabel={t('promptTemplates.scopeLabel')}
-                  title={t('promptTemplates.scopeLabel')}
-                  value={form.scope}
-                  disabled={dialog.templateId !== undefined}
-                  options={[
-                    { value: 'global', label: t('promptTemplates.scope.global') },
-                    { value: 'workspace', label: t('promptTemplates.scope.workspace') },
-                    { value: 'session', label: t('promptTemplates.scope.session') },
-                  ]}
-                  placement="below"
-                  onChange={(scope) => {
-                    if (scope === 'global' || scope === 'workspace' || scope === 'session')
-                      setForm((current) => ({ ...current, scope }))
-                  }}
-                />
-              </div>
-              <fieldset>
-                <legend>{t('promptTemplates.variablesLabel')}</legend>
-                <div className="dsh-prompt-templates-popover__variable-options">
-                  {PROMPT_TEMPLATE_VARIABLES.map((variable) => (
-                    <label key={variable}>
-                      <input
-                        type="checkbox"
-                        checked={form.variables.includes(variable)}
-                        onChange={(event) =>
-                          setForm((current) => ({
-                            ...current,
-                            variables: event.target.checked
-                              ? [...current.variables, variable]
-                              : current.variables.filter((entry) => entry !== variable),
-                          }))
-                        }
-                      />
-                      <code>{`{{${variable}}}`}</code>
-                    </label>
-                  ))}
+                <div className="dsh-prompt-templates-popover__field">
+                  <span>{t('promptTemplates.scopeLabel')}</span>
+                  <SelectMenu
+                    icon="folder"
+                    density="regular"
+                    displayLabel
+                    label={t(`promptTemplates.scope.${form.scope}`)}
+                    ariaLabel={t('promptTemplates.scopeLabel')}
+                    title={t('promptTemplates.scopeLabel')}
+                    value={form.scope}
+                    disabled={dialog.templateId !== undefined}
+                    options={[
+                      { value: 'global', label: t('promptTemplates.scope.global') },
+                      { value: 'workspace', label: t('promptTemplates.scope.workspace') },
+                      { value: 'session', label: t('promptTemplates.scope.session') },
+                    ]}
+                    placement="below"
+                    onChange={(scope) => {
+                      if (scope === 'global' || scope === 'workspace' || scope === 'session')
+                        setForm((current) => ({ ...current, scope }))
+                    }}
+                  />
                 </div>
-              </fieldset>
-              <label>
-                <span>{t('promptTemplates.bodyLabel')}</span>
-                <textarea
-                  required
-                  maxLength={100_000}
-                  rows={8}
-                  value={form.templateText}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, templateText: event.target.value }))
-                  }
-                />
-              </label>
-              <p className="dsh-prompt-templates-popover__hint">{t('promptTemplates.bodyHint')}</p>
-              <div className="dsh-prompt-templates-popover__dialog-actions">
-                <button
-                  type="button"
-                  className="dsh-button dsh-button--secondary"
-                  disabled={busy}
-                  onClick={closeEditor}
-                >
-                  {t('promptTemplates.cancel')}
-                </button>
-                <button type="submit" className="dsh-button" disabled={busy}>
-                  {busy ? t('promptTemplates.working') : t('promptTemplates.save')}
-                </button>
-              </div>
-            </form>
+                <fieldset>
+                  <legend>{t('promptTemplates.variablesLabel')}</legend>
+                  <div className="dsh-prompt-templates-popover__variable-options">
+                    {PROMPT_TEMPLATE_VARIABLES.map((variable) => (
+                      <label key={variable}>
+                        <input
+                          type="checkbox"
+                          checked={form.variables.includes(variable)}
+                          onChange={(event) =>
+                            setForm((current) => ({
+                              ...current,
+                              variables: event.target.checked
+                                ? [...current.variables, variable]
+                                : current.variables.filter((entry) => entry !== variable),
+                            }))
+                          }
+                        />
+                        <code>{`{{${variable}}}`}</code>
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+                <label>
+                  <span>{t('promptTemplates.bodyLabel')}</span>
+                  <textarea
+                    required
+                    maxLength={100_000}
+                    rows={8}
+                    value={form.templateText}
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, templateText: event.target.value }))
+                    }
+                  />
+                </label>
+                <p className="dsh-prompt-templates-popover__hint">{t('promptTemplates.bodyHint')}</p>
+                <div className="dsh-prompt-templates-popover__dialog-actions">
+                  <button
+                    type="button"
+                    className="dsh-button dsh-button--secondary"
+                    disabled={busy}
+                    onClick={closeEditor}
+                  >
+                    {t('promptTemplates.cancel')}
+                  </button>
+                  <button type="submit" className="dsh-button" disabled={busy}>
+                    {busy ? t('promptTemplates.working') : t('promptTemplates.save')}
+                  </button>
+                </div>
+              </form>
+            </FocusedDialogPortal>
           ) : null}
           {dialog?.kind === 'delete' ? (
-            <section
-              ref={dialogSurfaceRef}
-              className="dsh-prompt-templates-popover__dialog"
-              role="alertdialog"
-              aria-modal="true"
-              aria-label={t('promptTemplates.deleteTitle')}
-            >
-              <strong>{t('promptTemplates.deleteTitle')}</strong>
-              <p>{t('promptTemplates.deleteWarning', { title: dialog.template.title })}</p>
-              <div className="dsh-prompt-templates-popover__dialog-actions">
-                <button
-                  type="button"
-                  className="dsh-button dsh-button--secondary"
-                  disabled={busy}
-                  autoFocus
-                  onClick={() => setDialog(undefined)}
-                >
-                  {t('promptTemplates.cancel')}
-                </button>
-                <button
-                  type="button"
-                  className="dsh-button dsh-button--danger"
-                  disabled={busy}
-                  onClick={deleteTemplate}
-                >
-                  {t('promptTemplates.deleteConfirm')}
-                </button>
-              </div>
-            </section>
+            <FocusedDialogPortal error={error}>
+              <section
+                ref={dialogSurfaceRef}
+                className="dsh-prompt-templates-popover__dialog"
+                role="alertdialog"
+                aria-modal="true"
+                aria-label={t('promptTemplates.deleteTitle')}
+              >
+                <strong>{t('promptTemplates.deleteTitle')}</strong>
+                <p>{t('promptTemplates.deleteWarning', { title: dialog.template.title })}</p>
+                <div className="dsh-prompt-templates-popover__dialog-actions">
+                  <button
+                    type="button"
+                    className="dsh-button dsh-button--secondary"
+                    disabled={busy}
+                    autoFocus
+                    onClick={() => setDialog(undefined)}
+                  >
+                    {t('promptTemplates.cancel')}
+                  </button>
+                  <button
+                    type="button"
+                    className="dsh-button dsh-button--danger"
+                    disabled={busy}
+                    onClick={deleteTemplate}
+                  >
+                    {t('promptTemplates.deleteConfirm')}
+                  </button>
+                </div>
+              </section>
+            </FocusedDialogPortal>
           ) : null}
           {notice !== undefined ? (
             <div className="dsh-prompt-templates-popover__status" role="status">
               {notice}
             </div>
           ) : null}
-          {error !== undefined ? (
+          {error !== undefined && !dialogOpen ? (
             <div className="dsh-prompt-templates-popover__error" role="alert">
               {error}
             </div>

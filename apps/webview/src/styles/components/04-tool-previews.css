@@ -1,0 +1,354 @@
+.dsh-tool-code-preview__token {
+  white-space: pre;
+}
+
+.dsh-tool-code-preview__fold {
+  display: block;
+  width: 100%;
+  padding: var(--dsh-space-1) var(--dsh-space-2) var(--dsh-space-1) 4.5em;
+  border: 0;
+  color: var(--dsh-muted);
+  background: transparent;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.dsh-tool-code-preview__fold:hover,
+.dsh-tool-code-preview__fold:focus-visible {
+  color: var(--dsh-text);
+  background: var(--dsh-surface-hover);
+  outline: none;
+}
+
+.dsh-tool-diff-preview {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  border: var(--dsh-border);
+  border-radius: var(--dsh-radius-sm);
+  color: var(--dsh-text);
+  background: var(--dsh-code-surface);
+}
+
+.dsh-tool-diff-preview__copy {
+  position: absolute;
+  top: var(--dsh-space-2);
+  right: var(--dsh-space-3);
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--dsh-control-height-compact);
+  height: var(--dsh-control-height-compact);
+  padding: var(--dsh-space-1);
+  border: var(--dsh-border);
+  border-color: transparent;
+  border-radius: var(--dsh-radius-sm);
+  color: var(--dsh-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.dsh-tool-diff-preview__copy:hover,
+.dsh-tool-diff-preview__copy:focus-visible {
+  border-color: var(--dsh-control-border);
+  color: var(--dsh-text);
+  background: var(--dsh-surface-hover);
+  outline: none;
+}
+
+.dsh-tool-diff-preview__copy > .dsh-icon {
+  width: var(--dsh-icon-size-sm);
+  height: var(--dsh-icon-size-sm);
+}
+
+.dsh-tool-diff-preview__body {
+  max-height: var(--dsh-tool-detail-max-height);
+  overflow: auto;
+  padding: var(--dsh-space-2) var(--dsh-space-3);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: var(--dsh-tool-detail-font-size);
+  line-height: 1.45;
+  white-space: pre;
+  tab-size: 2;
+}
+
+.dsh-tool-diff-preview__content {
+  min-width: 100%;
+  width: max-content;
+}
+
+.dsh-tool-diff-preview__line {
+  min-height: 1.45em;
+  white-space: pre;
+}
+
+.dsh-tool-diff-preview__line--path {
+  padding-inline-end: calc(var(--dsh-control-height-compact) + var(--dsh-space-3));
+  color: var(--dsh-text);
+  font-weight: 600;
+}
+
+.dsh-tool-diff-preview__line--gap {
+  color: var(--dsh-muted);
+}
+
+.dsh-tool-diff-preview__line--del {
+  color: var(--dsh-danger);
+  background: color-mix(in srgb, var(--dsh-danger) 14%, transparent);
+}
+
+.dsh-tool-diff-preview__line--add {
+  color: var(--dsh-success);
+  background: color-mix(in srgb, var(--dsh-success) 14%, transparent);
+}
+
+.dsh-tool-diff-preview__prefix {
+  display: inline-block;
+  width: 1.25em;
+  user-select: none;
+}
+
+.dsh-tool-diff-preview__fold {
+  display: block;
+  width: 100%;
+  padding: var(--dsh-space-1) 0;
+  border: 0;
+  color: var(--dsh-muted);
+  background: transparent;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.dsh-tool-diff-preview__fold:hover,
+.dsh-tool-diff-preview__fold:focus-visible {
+  color: var(--dsh-text);
+  background: var(--dsh-surface-hover);
+  outline: none;
+}
+
+.dsh-tool-diff-preview__footer {
+  padding: 0 var(--dsh-space-3) var(--dsh-space-2);
+  color: var(--dsh-muted);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: var(--dsh-tool-detail-font-size);
+}
+
+.dsh-tool-terminal-preview {
+  min-width: 0;
+  overflow: hidden;
+  border: var(--dsh-border);
+  border-radius: var(--dsh-radius-sm);
+  color: var(--dsh-text);
+  background: var(--dsh-code-surface);
+}
+
+.dsh-tool-terminal-preview__header {
+  display: flex;
+  align-items: center;
+  min-height: var(--dsh-control-height-compact);
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-1) var(--dsh-space-3);
+  color: var(--dsh-muted);
+  background: var(--dsh-surface-hover);
+  font-size: var(--dsh-font-size-2xs);
+}
+
+.dsh-tool-terminal-preview__status {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-tool-terminal-preview__status--error {
+  color: var(--dsh-danger);
+}
+
+.dsh-tool-terminal-preview__copy {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--dsh-control-height-compact);
+  height: var(--dsh-control-height-compact);
+  margin-inline-start: auto;
+  padding: var(--dsh-space-1);
+  border: var(--dsh-border);
+  border-color: transparent;
+  border-radius: var(--dsh-radius-sm);
+  color: var(--dsh-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.dsh-tool-terminal-preview__copy:hover,
+.dsh-tool-terminal-preview__copy:focus-visible {
+  border-color: var(--dsh-control-border);
+  color: var(--dsh-text);
+  background: var(--dsh-surface-raised);
+  outline: none;
+}
+
+.dsh-tool-terminal-preview__copy > .dsh-icon {
+  width: var(--dsh-icon-size-sm);
+  height: var(--dsh-icon-size-sm);
+}
+
+.dsh-tool-terminal-preview__body {
+  max-height: var(--dsh-tool-detail-max-height);
+  margin: 0;
+  overflow: auto;
+  padding: var(--dsh-space-2) var(--dsh-space-3);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: var(--dsh-tool-detail-font-size);
+  line-height: 1.45;
+  white-space: pre;
+  tab-size: 2;
+}
+
+.dsh-tool-terminal-preview__line {
+  display: block;
+  min-width: max-content;
+  min-height: 1.45em;
+}
+
+.dsh-tool-terminal-preview__empty {
+  padding: var(--dsh-space-2) var(--dsh-space-3);
+  color: var(--dsh-muted);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: var(--dsh-tool-detail-font-size);
+}
+
+.dsh-tool-terminal-preview__fold {
+  display: block;
+  width: 100%;
+  padding: var(--dsh-space-1) 0;
+  border: 0;
+  color: var(--dsh-muted);
+  background: transparent;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.dsh-tool-terminal-preview__fold:hover,
+.dsh-tool-terminal-preview__fold:focus-visible {
+  color: var(--dsh-text);
+  background: var(--dsh-surface-hover);
+  outline: none;
+}
+
+.dsh-tool-search-preview {
+  min-width: 0;
+  overflow: hidden;
+  border: var(--dsh-border);
+  border-radius: var(--dsh-radius-sm);
+  color: var(--dsh-text);
+  background: var(--dsh-code-surface);
+}
+
+.dsh-tool-search-preview__header {
+  display: flex;
+  align-items: center;
+  gap: var(--dsh-space-2);
+  min-height: var(--dsh-control-height-compact);
+  padding: var(--dsh-space-1) var(--dsh-space-3);
+  color: var(--dsh-muted);
+  background: var(--dsh-surface-hover);
+  font-size: var(--dsh-font-size-2xs);
+}
+
+.dsh-tool-search-preview__summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-tool-search-preview__copy {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--dsh-control-height-compact);
+  height: var(--dsh-control-height-compact);
+  margin-inline-start: auto;
+  padding: var(--dsh-space-1);
+  border: var(--dsh-border);
+  border-color: transparent;
+  border-radius: var(--dsh-radius-sm);
+  color: var(--dsh-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.dsh-tool-search-preview__copy:hover,
+.dsh-tool-search-preview__copy:focus-visible {
+  border-color: var(--dsh-control-border);
+  color: var(--dsh-text);
+  background: var(--dsh-surface-raised);
+  outline: none;
+}
+
+.dsh-tool-search-preview__copy > .dsh-icon {
+  width: var(--dsh-icon-size-sm);
+  height: var(--dsh-icon-size-sm);
+}
+
+.dsh-tool-search-preview__body {
+  max-height: var(--dsh-tool-detail-max-height);
+  overflow: auto;
+  padding: var(--dsh-space-2) 0 var(--dsh-space-3);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: var(--dsh-tool-detail-font-size);
+  line-height: 1.45;
+  white-space: pre;
+  tab-size: 2;
+}
+
+.dsh-tool-search-preview__line {
+  min-height: 1.45em;
+  padding-inline: var(--dsh-space-3);
+  white-space: pre;
+}
+
+.dsh-tool-search-preview__line-number {
+  color: var(--dsh-muted);
+}
+
+.dsh-tool-search-preview__file-header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--dsh-space-2);
+  width: 100%;
+  min-height: 1.45em;
+  padding: 0 var(--dsh-space-3);
+  border: 0;
+  color: var(--dsh-text);
+  background: transparent;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.dsh-tool-search-preview__file-header:hover,
+.dsh-tool-search-preview__file-header:focus-visible {
+  background: var(--dsh-surface-hover);
+  outline: none;
+}
+
+.dsh-tool-search-preview__file-path {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+
+.dsh-tool-search-preview__file-count {
+  flex: none;
+  color: var(--dsh-muted);
+}

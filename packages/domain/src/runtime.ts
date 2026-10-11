@@ -49,7 +49,7 @@ export interface DshUpdateSnapshot {
 }
 
 export interface BackendEndpoint {
-  readonly host: '127.0.0.1' | 'localhost'
+  readonly host: string
   readonly port: number
   readonly baseUrl: string
 }

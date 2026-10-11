@@ -136,6 +136,7 @@ export function ToolCodePreview(props: ToolCodeRenderProps): ReactElement {
       ) : null}
       <pre
         className="dsh-tool-code-preview__body"
+        tabIndex={0}
         data-highlighted={highlightedSource === undefined ? 'false' : 'true'}
       >
         {capped ? renderRows(props.lines.slice(0, headLines), 0) : renderRows(props.lines, 0)}

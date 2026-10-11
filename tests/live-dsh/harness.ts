@@ -27,6 +27,7 @@ import { Rc171VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc1
 import { Rc172VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc172/adapter.js'
 import { Rc201VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc201/adapter.js'
 import { Rc202VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc202/adapter.js'
+import { Alpha212VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha212/adapter.js'
 import { Alpha211VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha211/adapter.js'
 import { acquireManagedRuntimeScope, type ManagedRuntimeScope } from './runtime-scope.js'
 import { resolveLiveRuntime } from './runtime.js'
@@ -54,6 +55,8 @@ export interface LiveRuntimeSnapshot {
 }
 
 export interface ManagedLiveRuntime {
+  /** Test-owned launch credential, used only by isolated external-connection fixtures; never logged. */
+  readonly launchUrl?: string
   readonly backend: DshBackend
   readonly snapshot: LiveRuntimeSnapshot
   readonly steps: string[]
@@ -101,6 +104,8 @@ export async function startManagedProcessWithCleanup<T>(
  * newer binary under the pinned default version.
  */
 export async function startManagedRuntime(options?: {
+  /** Exact alpha212 web CLI trust fence; test-owned proxy authority only. */
+  readonly trustedHost?: string
   readonly requestedRuntime?: string
   readonly runtimeVersion?: string
   /** A fixture-owned isolated home used when the live test seeds DSH state. */
@@ -121,14 +126,20 @@ export async function startManagedRuntime(options?: {
   const launchArguments = [
     ...(options?.patchFile === undefined ? [] : ['--patch', options.patchFile]),
     ...managedWebArguments(runtimeVersion, port),
+    ...(options?.trustedHost === undefined ? [] : ['--trusted-host', options.trustedHost]),
   ]
   const steps: string[] = []
   const endpointCookie: { value: string | undefined } = { value: undefined }
+  let ownedLaunchUrl: string | undefined
   const supervisor = new DshProcessSupervisor({
     spawn: (executable, args, cwd, environment) =>
       spawnManagedChild(
         executable,
-        [...(options?.patchFile === undefined ? [] : ['--patch', options.patchFile]), ...args],
+        [
+          ...(options?.patchFile === undefined ? [] : ['--patch', options.patchFile]),
+          ...args,
+          ...(options?.trustedHost === undefined ? [] : ['--trusted-host', options.trustedHost]),
+        ],
         cwd,
         environment,
       ),
@@ -136,6 +147,7 @@ export async function startManagedRuntime(options?: {
     workingDirectory: () => workspace,
     onReadyEndpoint: async (endpoint, launchUrl) => {
       if (launchUrl === undefined) return
+      ownedLaunchUrl = launchUrl
       const response = await globalThis.fetch(launchUrl, { method: 'GET', redirect: 'manual' })
       const headers = response.headers as Headers & { getSetCookie?: () => string[] }
       const setCookies = headers.getSetCookie?.() ?? [headers.get('set-cookie') ?? '']
@@ -187,6 +199,7 @@ export async function startManagedRuntime(options?: {
     steps.push(`managed start pid=${started.pid} endpoint=${started.endpoint.baseUrl}`)
 
     const adapters = [
+      new Alpha212VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
       new Alpha211VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
       new Rc202VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
       new Rc201VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
@@ -214,6 +227,7 @@ export async function startManagedRuntime(options?: {
     const backend = await new VersionedBackendFactory(adapters).connect(connected)
     return {
       backend,
+      ...(ownedLaunchUrl === undefined ? {} : { launchUrl: ownedLaunchUrl }),
       snapshot,
       steps,
       stop: async () => {

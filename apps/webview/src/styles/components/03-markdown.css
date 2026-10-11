@@ -1,0 +1,290 @@
+/* Content flow ------------------------------------------------------------
+ *
+ * Normal prose must wrap at meaningful boundaries and keep its own width
+ * inside flex/grid parents. `anywhere` is reserved for explicit code and
+ * identifier surfaces; using it on ordinary copy creates the inconsistent
+ * mid-word breaks visible across feature cards.
+ */
+
+.dsh-content-flow {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: break-word;
+  word-break: normal;
+  text-align: start;
+}
+
+.dsh-content-flow--preserve-breaks {
+  white-space: pre-wrap;
+}
+
+.dsh-content-flow--code {
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.dsh-content-flow--truncate {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Markdown is a reusable content surface. Keep its line-breaking contract
+ * here with the other shared components so feature cards cannot reintroduce
+ * independent paragraph or code geometry. Soft source newlines are ordinary
+ * whitespace; only Markdown hard breaks and block boundaries create a line. */
+
+.dsh-markdown > :first-child {
+  margin-top: 0;
+}
+
+.dsh-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.dsh-markdown h1,
+.dsh-markdown h2,
+.dsh-markdown h3,
+.dsh-markdown h4,
+.dsh-markdown h5,
+.dsh-markdown h6 {
+  margin: var(--dsh-space-3) 0 var(--dsh-space-2);
+  color: var(--dsh-text);
+  line-height: var(--dsh-line-height-tight);
+  text-align: start;
+}
+
+.dsh-markdown h1 {
+  font-size: var(--dsh-markdown-heading-1);
+}
+
+.dsh-markdown h2 {
+  font-size: var(--dsh-markdown-heading-2);
+}
+
+.dsh-markdown h3 {
+  font-size: var(--dsh-markdown-heading-3);
+}
+
+.dsh-markdown h4 {
+  font-size: var(--dsh-markdown-heading-4);
+}
+
+.dsh-markdown h5 {
+  font-size: var(--dsh-markdown-heading-5);
+}
+
+.dsh-markdown h6 {
+  font-size: var(--dsh-markdown-heading-6);
+}
+
+.dsh-markdown p,
+.dsh-markdown ul,
+.dsh-markdown ol,
+.dsh-markdown blockquote,
+.dsh-markdown pre,
+.dsh-markdown table {
+  margin: var(--dsh-space-2) 0;
+}
+
+.dsh-markdown blockquote {
+  margin-inline: 0;
+  padding-inline-start: var(--dsh-space-3);
+  border-inline-start: 2px solid var(--dsh-border-color);
+  color: var(--dsh-muted);
+}
+
+.dsh-markdown a {
+  color: var(--dsh-link);
+}
+
+.dsh-markdown code {
+  padding: 0.1em 0.3em;
+  border-radius: var(--dsh-radius-sm);
+  background: var(--dsh-code-bg);
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  font-size: var(--dsh-font-size-xs);
+  overflow-wrap: break-word;
+}
+
+.dsh-markdown pre {
+  max-width: 100%;
+  overflow: auto;
+  padding: var(--dsh-space-3);
+  border-radius: var(--dsh-radius-md);
+  background: var(--dsh-code-bg);
+  white-space: pre-wrap;
+}
+
+.dsh-markdown pre code {
+  padding: 0;
+  background: transparent;
+  overflow-wrap: normal;
+}
+
+.dsh-markdown table {
+  display: block;
+  max-width: 100%;
+  overflow: auto;
+  border-collapse: collapse;
+}
+
+.dsh-markdown th,
+.dsh-markdown td {
+  padding: var(--dsh-space-2) var(--dsh-space-3);
+  border: var(--dsh-border);
+  text-align: start;
+  vertical-align: top;
+}
+
+.dsh-markdown th {
+  background: var(--dsh-surface-soft);
+}
+
+.dsh-markdown__copy-region {
+  position: relative;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.dsh-markdown__copy-region--code > pre {
+  padding-inline-end: calc(var(--dsh-control-height-compact) + var(--dsh-space-3));
+}
+
+.dsh-markdown__copy-button {
+  position: absolute;
+  top: var(--dsh-space-1);
+  inset-inline-end: var(--dsh-space-1);
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--dsh-control-height-compact);
+  height: var(--dsh-control-height-compact);
+  min-width: var(--dsh-control-height-compact);
+  min-height: var(--dsh-control-height-compact);
+  padding: var(--dsh-space-1);
+  border: var(--dsh-border);
+  border-color: transparent;
+  border-radius: var(--dsh-radius-sm);
+  color: var(--dsh-muted);
+  background: color-mix(in srgb, var(--dsh-surface-raised) 72%, transparent);
+  cursor: pointer;
+}
+
+.dsh-markdown__copy-button:hover,
+.dsh-markdown__copy-button:focus-visible {
+  border-color: var(--dsh-control-border);
+  color: var(--dsh-text);
+  background: var(--dsh-surface-hover);
+  outline: none;
+}
+
+.dsh-markdown__copy-button > .dsh-icon {
+  width: var(--dsh-icon-size-sm);
+  height: var(--dsh-icon-size-sm);
+}
+
+.dsh-tool-code-preview {
+  min-width: 0;
+  overflow: hidden;
+  border: var(--dsh-border);
+  border-radius: var(--dsh-radius-sm);
+  background: var(--dsh-code-surface);
+}
+
+.dsh-tool-code-preview__toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--dsh-space-2);
+  min-height: var(--dsh-control-height-compact);
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  color: var(--dsh-muted);
+  background: var(--dsh-surface-hover);
+  font-size: var(--dsh-font-size-2xs);
+}
+
+/* A complete, unlabeled read window only needs the copy affordance. Keep the
+ * control row compact instead of showing an empty full-width gray strip. */
+.dsh-tool-code-preview__toolbar--minimal {
+  width: fit-content;
+  min-height: 0;
+  margin-inline-start: auto;
+  padding: 0;
+  background: transparent;
+}
+
+.dsh-tool-code-preview__toolbar--minimal .dsh-tool-code-preview__copy {
+  margin-inline-start: 0;
+}
+
+.dsh-tool-code-preview__window {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-tool-code-preview__language {
+  flex: none;
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+
+.dsh-tool-code-preview__copy {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--dsh-control-height-compact);
+  height: var(--dsh-control-height-compact);
+  margin-inline-start: auto;
+  padding: var(--dsh-space-1);
+  border: var(--dsh-border);
+  border-color: transparent;
+  border-radius: var(--dsh-radius-sm);
+  color: var(--dsh-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.dsh-tool-code-preview__copy:hover,
+.dsh-tool-code-preview__copy:focus-visible {
+  border-color: var(--dsh-control-border);
+  color: var(--dsh-text);
+  background: var(--dsh-surface-raised);
+  outline: none;
+}
+
+.dsh-tool-code-preview__copy > .dsh-icon {
+  width: var(--dsh-icon-size-sm);
+  height: var(--dsh-icon-size-sm);
+}
+
+.dsh-tool-code-preview__body {
+  max-height: var(--dsh-tool-detail-max-height);
+  margin: 0;
+  overflow: auto;
+  padding-block: var(--dsh-space-2);
+  white-space: pre;
+  tab-size: 2;
+}
+
+.dsh-tool-code-preview__line {
+  display: grid;
+  grid-template-columns: 4.5em minmax(0, 1fr);
+  min-width: max-content;
+  padding-inline-end: var(--dsh-space-2);
+}
+
+.dsh-tool-code-preview__line-number {
+  padding-inline: var(--dsh-space-2);
+  color: var(--dsh-muted);
+  text-align: end;
+  user-select: none;
+}
+
+.dsh-tool-code-preview__line code {
+  color: var(--dsh-text);
+}

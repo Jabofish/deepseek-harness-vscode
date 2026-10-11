@@ -115,6 +115,54 @@ function useCases(
 }
 
 describe('PluginBundleUseCases', () => {
+  it('keeps official install sources private and resolves the current target with an exact version', async () => {
+    const services = useCases()
+    const official: PluginManagerBundle = {
+      ...bundle,
+      official: true,
+      availability: 'missing',
+      installTarget: { spec: '/fixture/development/official', version: '0.2.1-alpha.2' },
+    }
+    services.mocks.listBundles.mockResolvedValue([official])
+    const catalog = await services.useCases.list()
+    expect(catalog.bundles[0]).toMatchObject({ installable: true, targetVersion: '0.2.1-alpha.2' })
+    expect(catalog.bundles[0]).not.toHaveProperty('installTarget')
+    const signal = new AbortController().signal
+    const confirm = vi.fn(() => Promise.resolve(true))
+    await services.useCases.install(
+      bundle.name,
+      'install-official',
+      undefined,
+      undefined,
+      signal,
+      confirm,
+      undefined,
+      undefined,
+      true,
+    )
+    expect(services.mocks.inspect).toHaveBeenCalledWith(official.installTarget!.spec, undefined, signal)
+    expect(services.mocks.installBundle).toHaveBeenCalledWith(
+      official.installTarget!.spec,
+      { requestId: 'install-official', saveExact: true },
+      signal,
+    )
+    services.mocks.listBundles.mockResolvedValue([{ ...official, availability: 'profile' }])
+    await expect(
+      services.useCases.install(
+        bundle.name,
+        'stale-official',
+        undefined,
+        undefined,
+        signal,
+        confirm,
+        undefined,
+        undefined,
+        true,
+      ),
+    ).rejects.toMatchObject({ code: 'PLUGIN_INSTALL_NOT_STARTED' })
+    expect(services.mocks.installBundle).toHaveBeenCalledTimes(1)
+  })
+
   it('returns all live bundle and plugin records only when the Host reports manager availability', async () => {
     const services = useCases()
     await expect(services.useCases.list()).resolves.toEqual({

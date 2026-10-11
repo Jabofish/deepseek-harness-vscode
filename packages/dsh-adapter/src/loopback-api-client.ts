@@ -15,6 +15,7 @@ import {
   HOST_FRAME_TYPES,
   type LoopbackFrameChannel,
   type LoopbackFrameParser,
+  type LoopbackWebSocketConstructor,
   MUX_FRAME_TYPES,
   readLoopbackWebSocket,
 } from './loopback-ws-stream.js'
@@ -26,7 +27,7 @@ import {
 } from './loopback-rpc-envelope.js'
 import { httpFailure, normalizeTransportError } from './transport-errors.js'
 import {
-  assertLoopback,
+  assertValidEndpoint,
   closedConnectionError,
   IDEMPOTENT_METHODS,
   mergeSignals,
@@ -41,7 +42,7 @@ export interface LoopbackApiClientOptions {
   readonly requestTimeoutMs: number
   readonly retryPolicy: RetryPolicy
   readonly fetch: typeof globalThis.fetch
-  readonly webSocket?: typeof globalThis.WebSocket
+  readonly webSocket?: LoopbackWebSocketConstructor
   /** Optional exact-version frame contract for an older Host API family. */
   readonly frameParser?: LoopbackFrameParser
 }
@@ -53,7 +54,7 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
 
   public constructor(private readonly options: LoopbackApiClientOptions) {
     super(options.requestTimeoutMs)
-    assertLoopback(options.endpoint)
+    assertValidEndpoint(options.endpoint)
   }
 
   protected override async doFetch(input: URL, init?: RequestInit): Promise<Response> {

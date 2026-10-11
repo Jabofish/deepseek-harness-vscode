@@ -1,4 +1,14 @@
-import type { SessionSummary } from '@dsh-vscode/domain'
+import { isLoopbackEndpoint, type ConnectedBackend, type SessionSummary } from '@dsh-vscode/domain'
+
+/** An endpoint's filesystem is local only when a current local process proves its identity. */
+export function hasLocalWorkspaceAuthority(backend: ConnectedBackend | undefined): boolean {
+  return (
+    backend !== undefined &&
+    isLoopbackEndpoint(backend.endpoint) &&
+    (backend.ownership === 'managed' ||
+      (backend.pid !== undefined && Number.isSafeInteger(backend.pid) && backend.pid > 0))
+  )
+}
 
 export interface SessionWorkspaceFolder {
   readonly id: string

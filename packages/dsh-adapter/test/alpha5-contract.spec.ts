@@ -51,6 +51,28 @@ describe('DSH 0.1.2-alpha.5 Connection/Gateway contract', () => {
     expect(connected?.capabilities.compatibilityWarning).toContain('0.1.2-alpha.6')
   })
 
+  it('connects an endpoint with no discoverable runtime version via the compatibility fallback', async () => {
+    const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+      Promise.resolve(response(init, { ok: true, value: { items: [] } })),
+    )
+    const connected = await new VersionedBackendProbe([adapter(fetch)]).probe({
+      endpoint,
+      source: 'configured',
+      confidence: 120,
+    })
+
+    expect(connected).toMatchObject({
+      ownership: 'external',
+      capabilities: {
+        protocolVersion: 'alpha5',
+        dshVersion: 'unknown',
+        adapterId: 'dsh-0.1.2-alpha.5',
+        compatibilityMode: 'best-effort',
+      },
+    })
+    expect(connected?.capabilities.compatibilityWarning).toContain('did not expose its package version')
+  })
+
   it('retains the alpha Remote error mapper at the alpha.5 version boundary', async () => {
     const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
       Promise.resolve(

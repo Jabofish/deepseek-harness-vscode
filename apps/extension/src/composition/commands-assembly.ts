@@ -28,6 +28,7 @@ import type { PostFeatureEvent } from './host-event-pipeline.js'
 const TRANSPORT_CONFIGURATION_KEYS = [
   'dsh.connection.mode',
   'dsh.connection.serverUrl',
+  'dsh.connection.runtimeVersion',
   'dsh.connection.managedPort',
   'dsh.connection.attachPorts',
   'dsh.connection.discoveryTimeoutMs',
@@ -35,6 +36,9 @@ const TRANSPORT_CONFIGURATION_KEYS = [
 ] as const
 
 export interface CommandsAssemblyDependencies {
+  readonly authorizeExternalConnection?: () => Promise<void>
+  readonly clearExternalCredentials?: () => Promise<void>
+  readonly disposeEndpointAccess?: () => Promise<void>
   readonly context: vscode.ExtensionContext
   readonly configuration: VsCodeConfigurationSource
   readonly diagnostics: RedactedDiagnostics
@@ -170,6 +174,8 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
       commands: vscode.commands,
       subscriptions: context.subscriptions,
       handlers: {
+        'dsh.authorizeExternalConnection': () => deps.authorizeExternalConnection?.(),
+        'dsh.clearExternalCredentials': () => deps.clearExternalCredentials?.(),
         'dsh.connect': () => reconnect(),
         'dsh.reconnect': () => reconnect(),
         'dsh.newSession': async () => {
@@ -249,6 +255,7 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
       () => taskRegistry.dispose(),
       () => backendService.detach(),
       () => coordinator.disconnect(),
+      () => deps.disposeEndpointAccess?.(),
       () => supervisor.dispose(),
       () => endpointLaunchUrls.clear(),
       () => attachmentTokens.clear(),

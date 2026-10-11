@@ -8,6 +8,7 @@ import {
   type FeatureHostMessage,
   type FeatureRequest,
   type HostMessage,
+  type ProtocolEnvelope,
   type WebviewRequest,
 } from '@dsh-vscode/webview-protocol'
 
@@ -15,6 +16,7 @@ import { translate } from '../i18n.js'
 import type { VsCodeApi } from '../vscode-api.js'
 
 interface Pending {
+  readonly responseType: 'response' | 'feature.response'
   readonly resolve: (value: unknown) => void
   readonly reject: (reason: unknown) => void
   readonly timer: number
@@ -109,7 +111,27 @@ export class ProtocolClient {
 
   public request<T>(request: WebviewRequest): Promise<T> {
     if (this.disposed) return Promise.reject(new Error(translate('app.error.disposed')))
-    const parsed = webviewRequestSchema.parse(request)
+    return this.sendRequest(
+      { protocolVersion: PROTOCOL_VERSION, message: webviewRequestSchema.parse(request) },
+      'response',
+    )
+  }
+
+  /** Request the staged, strict feature surface without widening legacy schemas. */
+  public featureRequest<T>(request: FeatureRequest): Promise<T> {
+    if (this.disposed) return Promise.reject(new Error(translate('app.error.disposed')))
+    const parsed = featureWebviewEnvelopeSchema.parse({
+      protocolVersion: PROTOCOL_VERSION,
+      message: request,
+    }).message
+    return this.sendRequest({ protocolVersion: PROTOCOL_VERSION, message: parsed }, 'feature.response')
+  }
+
+  private sendRequest<T>(
+    envelope: Extract<ProtocolEnvelope, { message: WebviewRequest | FeatureRequest }>,
+    responseType: Pending['responseType'],
+  ): Promise<T> {
+    const parsed = envelope.message
     if (this.pending.has(parsed.requestId))
       return Promise.reject(new Error(translate('app.error.duplicateRequest')))
     return new Promise<T>((resolve, reject) => {
@@ -121,41 +143,22 @@ export class ProtocolClient {
         // A prompt send can still be running in the Host after the local
         // waiter expires; request cancellation is best effort, so the UI
         // reports that delivery is unconfirmed instead of claiming failure.
-        if (parsed.type === 'session.sendPrompt' || parsed.type === 'subagent.send')
+        if (
+          parsed.type === 'session.sendPrompt' ||
+          parsed.type === 'subagent.send' ||
+          parsed.type === 'mods.band.read' ||
+          parsed.type === 'mods.band.press'
+        )
           this.cancelTimedOutRequest(parsed.requestId)
       }, timeoutMs)
-      this.pending.set(parsed.requestId, { resolve: (value) => resolve(value as T), reject, timer })
+      this.pending.set(parsed.requestId, {
+        responseType,
+        resolve: (value) => resolve(value as T),
+        reject,
+        timer,
+      })
       try {
-        this.api.postMessage({ protocolVersion: PROTOCOL_VERSION, message: parsed })
-      } catch (error) {
-        window.clearTimeout(timer)
-        this.pending.delete(parsed.requestId)
-        reject(error instanceof Error ? error : new Error(String(error)))
-      }
-    })
-  }
-
-  /** Request the staged, strict feature surface without widening legacy schemas. */
-  public featureRequest<T>(request: FeatureRequest): Promise<T> {
-    if (this.disposed) return Promise.reject(new Error(translate('app.error.disposed')))
-    const parsed = featureWebviewEnvelopeSchema.parse({
-      protocolVersion: PROTOCOL_VERSION,
-      message: request,
-    }).message
-    if (this.pending.has(parsed.requestId))
-      return Promise.reject(new Error(translate('app.error.duplicateRequest')))
-    return new Promise<T>((resolve, reject) => {
-      const timeoutMs = timeoutMsFor(this.timeoutMs, parsed.type)
-      const timer = window.setTimeout(() => {
-        if (this.pending.get(parsed.requestId)?.timer !== timer) return
-        this.pending.delete(parsed.requestId)
-        reject(timeoutError(parsed.type))
-        if (parsed.type === 'mods.band.read' || parsed.type === 'mods.band.press')
-          this.cancelTimedOutRequest(parsed.requestId)
-      }, timeoutMs)
-      this.pending.set(parsed.requestId, { resolve: (value) => resolve(value as T), reject, timer })
-      try {
-        this.api.postMessage({ protocolVersion: PROTOCOL_VERSION, message: parsed })
+        this.api.postMessage(envelope)
       } catch (error) {
         window.clearTimeout(timer)
         this.pending.delete(parsed.requestId)
@@ -165,6 +168,7 @@ export class ProtocolClient {
   }
 
   public handle(rawMessage: unknown): void {
+    if (this.disposed) return
     const parsed = hostEnvelopeSchema.safeParse(rawMessage)
     if (parsed.success) {
       this.handleLegacyMessage(parsed.data.message)
@@ -176,16 +180,15 @@ export class ProtocolClient {
   }
 
   public subscribeFeature(listener: (message: FeatureHostEvent) => void): () => void {
+    if (this.disposed) return () => undefined
     this.featureListeners.add(listener)
     return () => this.featureListeners.delete(listener)
   }
 
   private handleLegacyMessage(message: HostMessage): void {
     if (message.type === 'response') {
-      const pending = this.pending.get(message.requestId)
+      const pending = this.takePending(message.requestId, message.type)
       if (pending === undefined) return
-      this.pending.delete(message.requestId)
-      window.clearTimeout(pending.timer)
       if (message.ok) pending.resolve(message.payload)
       else {
         const error = new Error(message.error?.message ?? translate('app.error.hostUnspecified'))
@@ -207,10 +210,8 @@ export class ProtocolClient {
 
   private handleFeatureMessage(message: FeatureHostMessage): void {
     if (message.type === 'feature.response') {
-      const pending = this.pending.get(message.requestId)
+      const pending = this.takePending(message.requestId, message.type)
       if (pending === undefined) return
-      this.pending.delete(message.requestId)
-      window.clearTimeout(pending.timer)
       if (message.ok) pending.resolve(message.payload)
       else {
         const error = new Error(message.error.message)
@@ -300,8 +301,17 @@ export class ProtocolClient {
   }
 
   public subscribe(listener: (message: HostMessage) => void): () => void {
+    if (this.disposed) return () => undefined
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
+  }
+
+  private takePending(requestId: string, responseType: Pending['responseType']): Pending | undefined {
+    const pending = this.pending.get(requestId)
+    if (pending?.responseType !== responseType) return undefined
+    this.pending.delete(requestId)
+    window.clearTimeout(pending.timer)
+    return pending
   }
 
   public dispose(): void {

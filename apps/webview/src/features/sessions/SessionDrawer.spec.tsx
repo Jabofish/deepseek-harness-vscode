@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SessionPage, SessionSummary, WorkspaceSummary } from '@dsh-vscode/domain'
 import { SessionDrawer } from './SessionDrawer.js'
+import { ConversationLayoutProvider } from '../../app/ConversationLayoutProvider.js'
 
 const workspaces: readonly WorkspaceSummary[] = [
   {
@@ -43,6 +44,7 @@ const sessions: readonly SessionSummary[] = [
 
 function renderDrawer(
   overrides: Partial<Parameters<typeof SessionDrawer>[0]> = {},
+  layout?: 'focused',
 ): ReturnType<typeof render> {
   const onSearch = vi.fn().mockResolvedValue({ items: [] })
   const props = {
@@ -67,8 +69,52 @@ function renderDrawer(
     onSearch,
     ...overrides,
   }
-  return render(<SessionDrawer {...props} />)
+  return render(
+    layout === undefined ? (
+      <SessionDrawer {...props} />
+    ) : (
+      <ConversationLayoutProvider initialLayout={layout}>
+        <SessionDrawer {...props} />
+      </ConversationLayoutProvider>
+    ),
+  )
 }
+
+describe('DSH workspace navigation posture', () => {
+  afterEach(() => {
+    cleanup()
+    vi.unstubAllGlobals()
+  })
+  it('keeps the wide navigation visible through outside clicks and session selection, with an explicit close', () => {
+    vi.stubGlobal('matchMedia', () => ({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }))
+    const onOpen = vi.fn()
+    const onOpenChange = vi.fn()
+    renderDrawer({ open: false, onOpen, onOpenChange }, 'focused')
+    expect(screen.getByRole('navigation', { name: 'Sessions' })).toBeDefined()
+    fireEvent.pointerDown(document.body)
+    expect(screen.getByRole('navigation', { name: 'Sessions' })).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: /^CompletedWrite docs/u }))
+    expect(onOpen).toHaveBeenCalledWith('s2')
+    expect(screen.getByRole('navigation', { name: 'Sessions' })).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Close workspace navigation' }))
+    expect(screen.queryByRole('navigation', { name: 'Sessions' })).toBeNull()
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+  it('uses the existing bounded popover in a narrow view', () => {
+    vi.stubGlobal('matchMedia', () => ({
+      matches: false,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }))
+    renderDrawer({}, 'focused')
+    expect(screen.getByRole('dialog', { name: 'Sessions' })).toBeDefined()
+    expect(screen.queryByRole('navigation')).toBeNull()
+  })
+})
 
 function createDataTransfer(): {
   effectAllowed: string

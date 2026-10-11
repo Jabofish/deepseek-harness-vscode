@@ -42,6 +42,23 @@ function fetchProps(
 }
 
 describe('ToolWebPreview', () => {
+  it('keeps a long source list keyboard reachable and delegates the final full title to the Host', () => {
+    const onOpenLink = vi.fn()
+    const sources = Array.from({ length: 120 }, (_, index) => ({
+      url: `https://example.test/source/${index}`,
+      title: `${index + 1}. ${'完整的多行搜索标题与长地址。'.repeat(8)}`,
+    }))
+    render(<ToolWebPreview {...searchProps({ sources })} onOpenLink={onOpenLink} />)
+    const list = screen.getByRole('list')
+    list.focus()
+    expect(document.activeElement).toBe(list)
+    const items = screen.getAllByRole<HTMLLIElement>('listitem')
+    expect(items).toHaveLength(120)
+    expect(items.at(-1)?.value).toBe(120)
+    fireEvent.click(screen.getByRole('button', { name: sources[119]!.title }))
+    expect(onOpenLink).toHaveBeenCalledExactlyOnceWith(sources[119]!.url)
+  })
+
   it('renders sanitized Markdown answers, numbered sources, and host-only source actions', () => {
     const onOpenLink = vi.fn()
     const { container } = render(

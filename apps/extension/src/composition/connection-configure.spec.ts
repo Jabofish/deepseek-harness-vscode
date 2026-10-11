@@ -71,6 +71,8 @@ function lifecycle(
     },
     currentWorkspaceFolders: () => [],
     endpointLaunchUrls: new Map(),
+    loginWithToken: () => Promise.resolve(),
+    hasCookie: () => false,
     attach: () => Promise.resolve(),
     publishState: () => undefined,
     disposeAccountLifecycleHost: () => Promise.resolve(),
@@ -162,6 +164,8 @@ describe('connection.configure reconnect', () => {
       },
       currentWorkspaceFolders: () => [],
       endpointLaunchUrls: new Map<string, string>(),
+      loginWithToken: () => Promise.resolve(),
+      hasCookie: () => false,
       attach: () => Promise.resolve(undefined),
       publishState: () => undefined,
       disposeAccountLifecycleHost: () => Promise.resolve(undefined),
@@ -176,6 +180,7 @@ describe('connection.configure reconnect', () => {
         mode: 'custom',
         endpoint: { host: '127.0.0.1', port: 3080, baseUrl: 'http://127.0.0.1:3080' },
         autoStart: false,
+        credentialRevision: 0,
       },
     ])
   })

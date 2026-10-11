@@ -17,6 +17,7 @@ import {
 } from '../alpha151/session-wire.js'
 import {
   normalizeAlpha171Event,
+  type AlphaV4SessionProfile,
   validAlpha171HistoryRecord,
   validAlpha171SessionEventFrame,
   validAlpha171SessionSnapshot,
@@ -41,6 +42,14 @@ export function alphaSessionList(value: unknown): unknown {
   }
 }
 
+function normalizeV4Event(
+  event: Record<string, unknown>,
+  profile?: AlphaV4SessionProfile,
+): Record<string, unknown> {
+  const normalized = normalizeAlpha171Event(event)
+  return profile?.normalizeEvent?.(normalized) ?? normalized
+}
+
 function hasDefinedAlphaTitle(value: Record<string, unknown>): boolean {
   if (typeof value.title === 'string' || typeof value.name === 'string') return true
   const projections = recordOrUndefined(value.projections)
@@ -53,6 +62,7 @@ export function normalizeAlphaEvent(
   sessionId: string,
   wireVersion: AlphaSessionWireVersion = 'v0',
   autoReviewDenialContract = false,
+  profile?: AlphaV4SessionProfile,
 ): Record<string, unknown> | undefined {
   const event = recordOrUndefined(value)
   if (event === undefined || typeof event.type !== 'string') return undefined
@@ -60,7 +70,7 @@ export function normalizeAlphaEvent(
     wireVersion === 'v2'
       ? normalizeAlpha13Event(event)
       : wireVersion === 'v4'
-        ? normalizeAlpha171Event(event)
+        ? normalizeV4Event(event, profile)
         : event
   return { ...withAutoReviewDenialContract(normalized, autoReviewDenialContract), sessionId }
 }
@@ -84,6 +94,7 @@ export function expandHistoryRecords(
   sessionId: string,
   wireVersion: AlphaSessionWireVersion = 'v0',
   autoReviewDenialContract = false,
+  profile?: AlphaV4SessionProfile,
 ): readonly Record<string, unknown>[] {
   const v2 = wireVersion === 'v2'
   const v3 = wireVersion === 'v3'
@@ -98,7 +109,7 @@ export function expandHistoryRecords(
         !(v3
           ? validAlpha151HistoryRecord(record)
           : v4
-            ? validAlpha171HistoryRecord(record)
+            ? validAlpha171HistoryRecord(record, profile)
             : v2
               ? validAlpha13HistoryRecord(record)
               : validAlphaSessionEvent(event))
@@ -106,12 +117,13 @@ export function expandHistoryRecords(
         throw malformedResponse('session history event')
       out.push({
         ...withAutoReviewDenialContract(
-          v2 ? normalizeAlpha13Event(event) : v4 ? normalizeAlpha171Event(event) : event,
+          v2 ? normalizeAlpha13Event(event) : v4 ? normalizeV4Event(event, profile) : event,
           autoReviewDenialContract,
         ),
         sessionId,
       })
-    } else if (!v2 && !v3 && record?.type === 'chunks') out.push(...expandChunkRow(record.event, sessionId))
+    } else if (!v2 && !v3 && !v4 && record?.type === 'chunks')
+      out.push(...expandChunkRow(record.event, sessionId))
     else throw malformedResponse('session history record')
   }
   // The Gateway snapshot is a set of history records, not the stream's
@@ -139,9 +151,10 @@ function withAutoReviewDenialContract(
 export function validAlphaWireSnapshot(
   value: unknown,
   wireVersion: AlphaSessionWireVersion,
+  profile?: AlphaV4SessionProfile,
 ): value is AlphaSessionSnapshot {
   return wireVersion === 'v4'
-    ? validAlpha171SessionSnapshot(value)
+    ? validAlpha171SessionSnapshot(value, profile)
     : wireVersion === 'v3'
       ? validAlpha151SessionSnapshot(value)
       : validAlphaSessionSnapshot(value, wireVersion === 'v2')
@@ -150,9 +163,10 @@ export function validAlphaWireSnapshot(
 export function validAlphaWireEventFrame(
   value: unknown,
   wireVersion: AlphaSessionWireVersion,
+  profile?: AlphaV4SessionProfile,
 ): value is AlphaSessionEventFrame {
   return wireVersion === 'v4'
-    ? validAlpha171SessionEventFrame(value)
+    ? validAlpha171SessionEventFrame(value, profile)
     : wireVersion === 'v3'
       ? validAlpha151SessionEventFrame(value)
       : validAlphaSessionEventFrame(value, wireVersion === 'v2')

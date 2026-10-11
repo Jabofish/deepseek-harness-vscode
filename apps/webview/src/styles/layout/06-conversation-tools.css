@@ -1,0 +1,512 @@
+/* Structured conversation tools -------------------------------------------
+ *
+ * The feature drawers live in a horizontally scrollable chrome rail. Their
+ * menus must therefore never participate in that rail's layout: doing so
+ * makes a narrow webview grow vertically and clips the menu at the rail's
+ * edge. All of these menus use the same viewport-bounded surface contract.
+ */
+
+.dsh-jobs-popover,
+.dsh-changes-popover,
+.dsh-tasks-popover,
+.dsh-checkpoints-popover,
+.dsh-prompt-templates-popover,
+.dsh-diagnostics-popover,
+.dsh-subagent-tree {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.dsh-changes-popover__trigger,
+.dsh-tasks-popover__trigger,
+.dsh-checkpoints-popover__trigger,
+.dsh-prompt-templates-popover__trigger,
+.dsh-jobs-popover__trigger,
+.dsh-diagnostics-popover__trigger,
+.dsh-subagent-tree__trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--dsh-control-height);
+  min-height: var(--dsh-control-height);
+  gap: var(--dsh-space-1);
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  border: 1px solid var(--dsh-border-color);
+  border-radius: var(--dsh-radius-md);
+  color: var(--dsh-muted);
+  background: transparent;
+  font: inherit;
+  font-size: var(--dsh-font-size-xs);
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.dsh-changes-popover__trigger:hover,
+.dsh-changes-popover__trigger:focus-visible,
+.dsh-changes-popover__trigger[aria-expanded='true'],
+.dsh-tasks-popover__trigger:hover,
+.dsh-tasks-popover__trigger:focus-visible,
+.dsh-tasks-popover__trigger[aria-expanded='true'],
+.dsh-checkpoints-popover__trigger:hover,
+.dsh-checkpoints-popover__trigger:focus-visible,
+.dsh-checkpoints-popover__trigger[aria-expanded='true'],
+.dsh-prompt-templates-popover__trigger:hover,
+.dsh-prompt-templates-popover__trigger:focus-visible,
+.dsh-prompt-templates-popover__trigger[aria-expanded='true'],
+.dsh-diagnostics-popover__trigger:hover,
+.dsh-diagnostics-popover__trigger:focus-visible,
+.dsh-diagnostics-popover__trigger[aria-expanded='true'],
+.dsh-jobs-popover__trigger:hover,
+.dsh-jobs-popover__trigger:focus-visible,
+.dsh-jobs-popover__trigger[aria-expanded='true'],
+.dsh-subagent-tree__trigger:hover,
+.dsh-subagent-tree__trigger:focus-visible,
+.dsh-subagent-tree__trigger[aria-expanded='true'] {
+  border-color: var(--dsh-border-color);
+  color: var(--dsh-text);
+  background: var(--dsh-surface-hover);
+  outline: none;
+}
+
+.dsh-changes-popover__trigger > span,
+.dsh-tasks-popover__trigger > span,
+.dsh-checkpoints-popover__trigger > span,
+.dsh-prompt-templates-popover__trigger > span,
+.dsh-jobs-popover__trigger > span,
+.dsh-diagnostics-popover__trigger > span,
+.dsh-subagent-tree__trigger > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-changes-popover__trigger > .dsh-icon,
+.dsh-tasks-popover__trigger > .dsh-icon,
+.dsh-checkpoints-popover__trigger > .dsh-icon,
+.dsh-prompt-templates-popover__trigger > .dsh-icon,
+.dsh-jobs-popover__trigger > .dsh-icon,
+.dsh-diagnostics-popover__trigger > .dsh-icon,
+.dsh-subagent-tree__trigger > .dsh-icon {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+}
+
+.dsh-jobs-popover__trigger,
+.dsh-subagent-tree__trigger {
+  border-radius: 999px;
+}
+
+.dsh-jobs-popover__dot,
+.dsh-tasks-popover__dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--dsh-muted);
+}
+
+.dsh-tasks-popover__dot[data-state='warning'],
+.dsh-jobs-popover__dot[data-state='warning'] {
+  background: var(--dsh-warning);
+}
+
+.dsh-jobs-popover__dot[data-state='ongoing'],
+.dsh-tasks-popover__dot[data-state='running'] {
+  background: var(--dsh-info);
+}
+
+.dsh-jobs-popover__dot[data-state='done'],
+.dsh-tasks-popover__dot[data-state='completed'] {
+  background: var(--dsh-success);
+}
+
+.dsh-jobs-popover__dot[data-state='error'],
+.dsh-tasks-popover__dot[data-state='failed'] {
+  background: var(--dsh-danger);
+}
+
+.dsh-changes-popover__menu,
+.dsh-tasks-popover__menu,
+.dsh-checkpoints-popover__menu,
+.dsh-prompt-templates-popover__menu,
+.dsh-jobs-popover__menu {
+  /* Geometry comes from useViewportMenuPosition, anchored to the trigger:
+  the topbar may wrap to several lines at narrow widths. */
+  position: fixed;
+  z-index: 60;
+  box-sizing: border-box;
+  width: min(34rem, calc(100vw - var(--dsh-space-4)));
+  min-width: min(20rem, calc(100vw - var(--dsh-space-4)));
+  max-width: calc(100vw - var(--dsh-space-4));
+  max-height: min(34rem, calc(100vh - 5rem));
+  margin: 0;
+  padding: var(--dsh-space-2);
+  overflow: auto;
+  border: 1px solid var(--dsh-border-color);
+  border-radius: var(--dsh-radius-lg);
+  color: var(--dsh-text);
+  background: var(--dsh-widget-bg);
+  box-shadow: var(--dsh-shadow);
+}
+
+.dsh-jobs-popover__menu {
+  display: grid;
+  gap: var(--dsh-space-1);
+  list-style: none;
+}
+
+.dsh-changes-popover__menu,
+.dsh-tasks-popover__menu,
+.dsh-checkpoints-popover__menu,
+.dsh-prompt-templates-popover__menu {
+  display: grid;
+  align-content: start;
+  gap: var(--dsh-space-2);
+}
+
+.dsh-changes-popover__header,
+.dsh-tasks-popover__header,
+.dsh-checkpoints-popover__header,
+.dsh-prompt-templates-popover__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+  padding-bottom: var(--dsh-space-2);
+  border-bottom: 1px solid var(--dsh-border-color);
+}
+
+.dsh-changes-popover__header > strong,
+.dsh-tasks-popover__header > strong,
+.dsh-checkpoints-popover__header > strong,
+.dsh-prompt-templates-popover__header > strong {
+  min-width: 0;
+  color: var(--dsh-text);
+  font-size: var(--dsh-font-size-sm);
+  font-weight: 600;
+}
+
+.dsh-checkpoints-popover__header-actions,
+.dsh-prompt-templates-popover__header-actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: var(--dsh-space-1);
+}
+
+.dsh-changes-popover__status,
+.dsh-tasks-popover__status,
+.dsh-checkpoints-popover__status,
+.dsh-prompt-templates-popover__status,
+.dsh-checkpoints-popover__error,
+.dsh-prompt-templates-popover__error,
+.dsh-tasks-popover__error,
+.dsh-session-switcher__error,
+.dsh-session-switcher__warning {
+  min-width: 0;
+  padding: var(--dsh-space-2);
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.dsh-tasks-popover__scope {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--dsh-space-1);
+}
+
+.dsh-tasks-popover__scope-button {
+  min-width: 0;
+  min-height: 1.75rem;
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  border: 1px solid var(--dsh-border-color);
+  border-radius: var(--dsh-radius-sm);
+  color: var(--dsh-muted);
+  background: var(--dsh-surface-raised);
+  font: inherit;
+  font-size: var(--dsh-font-size-xs);
+  cursor: pointer;
+}
+
+.dsh-tasks-popover__scope-button:hover:not(:disabled),
+.dsh-tasks-popover__scope-button:focus-visible,
+.dsh-tasks-popover__scope-button[aria-pressed='true'] {
+  border-color: var(--dsh-border-color);
+  color: var(--dsh-text);
+  background: var(--dsh-surface-hover);
+  outline: none;
+}
+
+.dsh-tasks-popover__scope-button:disabled {
+  cursor: default;
+  opacity: 0.8;
+}
+
+.dsh-tasks-popover__notice {
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  border-inline-start: 2px solid var(--dsh-warning);
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.dsh-changes-popover__error {
+  min-width: 0;
+  padding: var(--dsh-space-1) 0;
+  color: var(--dsh-danger);
+  font-size: var(--dsh-font-size-xs);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.dsh-checkpoints-popover__error,
+.dsh-prompt-templates-popover__error {
+  color: var(--dsh-danger);
+}
+
+.dsh-checkpoints-popover__conflict {
+  color: var(--dsh-warning);
+}
+
+.dsh-changes-popover__rows,
+.dsh-tasks-popover__rows,
+.dsh-checkpoints-popover__rows,
+.dsh-prompt-templates-popover__rows {
+  display: grid;
+  align-content: start;
+  justify-content: stretch;
+  min-width: 0;
+  width: 100%;
+  gap: var(--dsh-space-1);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  list-style: none;
+}
+
+.dsh-changes-popover__row,
+.dsh-tasks-popover__row,
+.dsh-checkpoints-popover__row,
+.dsh-prompt-templates-popover__row {
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-1);
+  border: 1px solid transparent;
+  border-radius: var(--dsh-radius-md);
+}
+
+.dsh-changes-popover__row:hover,
+.dsh-tasks-popover__row:hover,
+.dsh-checkpoints-popover__row:hover,
+.dsh-prompt-templates-popover__row:hover {
+  border-color: var(--dsh-border-color);
+  background: var(--dsh-surface-hover);
+}
+
+/* The row the reader is currently viewing. The flag sits on the inner button, so it
+ * has to reach the row that owns the hover surface. */
+.dsh-prompt-templates-popover__row:has(> .dsh-prompt-templates-popover__row-main[aria-pressed='true']) {
+  border-color: var(--dsh-border-color);
+  background: var(--dsh-selection-bg);
+}
+
+.dsh-changes-popover__row-main,
+.dsh-tasks-popover__main,
+.dsh-prompt-templates-popover__row-main {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-1);
+  border: 0;
+  color: var(--dsh-text);
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
+}
+
+.dsh-changes-popover__row-main:hover,
+.dsh-changes-popover__row-main:focus-visible,
+.dsh-tasks-popover__main:hover,
+.dsh-tasks-popover__main:focus-visible,
+.dsh-prompt-templates-popover__row-main:hover,
+.dsh-prompt-templates-popover__row-main:focus-visible {
+  color: var(--dsh-text);
+  outline: none;
+}
+
+.dsh-changes-popover__row-main > .dsh-icon,
+.dsh-prompt-templates-popover__row-main > .dsh-icon {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+  color: var(--dsh-muted);
+}
+
+.dsh-changes-popover__path,
+.dsh-tasks-popover__title,
+.dsh-prompt-templates-popover__row-main > span,
+.dsh-checkpoints-popover__summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-changes-popover__path,
+.dsh-tasks-popover__title {
+  flex: 1 1 auto;
+}
+
+.dsh-changes-popover__status-label,
+.dsh-changes-popover__evidence,
+.dsh-tasks-popover__kind,
+.dsh-tasks-popover__session,
+.dsh-tasks-popover__status,
+.dsh-prompt-templates-popover__row-main em {
+  flex: 0 0 auto;
+  max-width: 10rem;
+  overflow: hidden;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-tasks-popover__status-dot,
+.dsh-checkpoints-popover__state {
+  width: 0.5rem;
+  height: 0.5rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--dsh-muted);
+}
+
+.dsh-tasks-popover__status-dot[data-state='running'] {
+  background: var(--dsh-info);
+}
+
+.dsh-tasks-popover__status-dot[data-state='needs-input'],
+.dsh-tasks-popover__status-dot[data-state='blocked'] {
+  background: var(--dsh-warning);
+}
+
+.dsh-tasks-popover__status-dot[data-state='completed'] {
+  background: var(--dsh-success);
+}
+
+.dsh-tasks-popover__status-dot[data-state='failed'] {
+  background: var(--dsh-danger);
+}
+
+/* Domain `CheckpointState`: metadata-only | content-ready | stale | corrupt |
+ * partial-restore | deleted. `deleted` keeps the neutral dot from the base rule. */
+.dsh-checkpoints-popover__state[data-state='content-ready'] {
+  background: var(--dsh-success);
+}
+
+.dsh-checkpoints-popover__state[data-state='metadata-only'] {
+  background: var(--dsh-info);
+}
+
+.dsh-checkpoints-popover__state[data-state='stale'],
+.dsh-checkpoints-popover__state[data-state='partial-restore'] {
+  background: var(--dsh-warning);
+}
+
+.dsh-checkpoints-popover__state[data-state='corrupt'] {
+  background: var(--dsh-danger);
+}
+
+.dsh-checkpoints-popover__summary {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 2px;
+}
+
+.dsh-checkpoints-popover__summary strong,
+.dsh-prompt-templates-popover__row-main strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsh-text);
+  font-size: var(--dsh-font-size-xs);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-checkpoints-popover__summary > span,
+.dsh-checkpoints-popover__time,
+.dsh-prompt-templates-popover__row-main small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-2xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-checkpoints-popover__row-actions,
+.dsh-prompt-templates-popover__row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 0 0 auto;
+  gap: var(--dsh-space-1);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+.dsh-checkpoints-popover__header-actions,
+.dsh-prompt-templates-popover__header-actions,
+.dsh-checkpoints-popover__dialog-actions,
+.dsh-prompt-templates-popover__dialog-actions {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+.dsh-prompt-templates-popover__row-main > span {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 2px;
+  text-align: start;
+}
+
+.dsh-prompt-templates-popover__search {
+  display: grid;
+  min-width: 0;
+  gap: var(--dsh-space-1);
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+}
+
+.dsh-prompt-templates-popover__search input,
+.dsh-tasks-popover__answer input,
+.dsh-checkpoints-popover__dialog input,
+.dsh-prompt-templates-popover__dialog input,
+.dsh-prompt-templates-popover__dialog textarea {
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--dsh-border-color);
+  border-radius: var(--dsh-radius-sm);
+  color: var(--dsh-text);
+  background: var(--dsh-input-bg);
+}

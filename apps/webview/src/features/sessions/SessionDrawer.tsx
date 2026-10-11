@@ -18,6 +18,7 @@ import type {
 } from '@dsh-vscode/domain'
 import { PopoverCard } from '../../components/common/PopoverCard.js'
 import { SelectMenu } from '../../components/common/SelectMenu.js'
+import { useConversationLayout } from '../../app/ConversationLayoutProvider.js'
 import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 import { Icon } from '../../ui/Icon.js'
 import { displaySessionTitle } from './session-title.js'
@@ -72,6 +73,18 @@ export interface SessionDrawerProps {
 
 export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerProps): ReactElement {
   const { t } = useI18n()
+  const focused = useConversationLayout()?.layout === 'focused'
+  const [wide, setWide] = useState(
+    () => typeof window.matchMedia === 'function' && window.matchMedia('(min-width: 900px)').matches,
+  )
+  useEffect(() => {
+    if (!focused || typeof window.matchMedia !== 'function') return
+    const query = window.matchMedia('(min-width: 900px)')
+    const update = (event: MediaQueryListEvent): void => setWide(event.matches)
+    query.addEventListener('change', update)
+    return () => query.removeEventListener('change', update)
+  }, [focused])
+  const docked = focused && wide
   const displayWorkspaceName = (name: string): string => workspaceDisplayName(name, t)
   const { onLoadArchived, onSearch } = props
   const [internalOpen, setInternalOpen] = useState(false)
@@ -107,10 +120,14 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
   const panelId = useId()
   const renameDialogId = useId()
   const isControlled = props.open !== undefined
-  const open = props.open ?? internalOpen
+  const [dockState, setDockState] = useState({ requested: props.open, open: true })
+  if (dockState.requested !== props.open)
+    setDockState({ requested: props.open, open: props.open === true || dockState.open })
+  const open = docked ? props.open === true || dockState.open : (props.open ?? internalOpen)
   const showTrigger = props.showTrigger !== false
   const setOpen = (next: boolean | ((current: boolean) => boolean)): void => {
     const resolved = typeof next === 'function' ? next(open) : next
+    if (docked) setDockState((current) => ({ ...current, open: resolved }))
     if (!isControlled) setInternalOpen(resolved)
     props.onOpenChange?.(resolved)
   }
@@ -177,7 +194,7 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
   // layer as well: without it a real press (pointerdown then click) closes the
   // switcher on the pointerdown and the click toggles it straight back open.
   useDismissibleLayer({
-    open,
+    open: open && !docked,
     refs: [triggerRef, panelRef, renameDialogRef, removeDialogRef, deleteDialogRef],
     onDismiss: closeSwitcher,
     onEscape: closeSwitcherAndRefocus,
@@ -266,7 +283,7 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
 
   const openSession = (session: SessionSummary): void => {
     setSelectedWorkspaceId(session.workspaceId)
-    setOpen(false)
+    if (!docked) setOpen(false)
     props.onOpen(session.id)
   }
 
@@ -517,8 +534,8 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
         <PopoverCard
           ref={panelRef}
           id={panelId}
-          className="dsh-session-switcher__panel"
-          role="dialog"
+          className={`dsh-session-switcher__panel${docked ? ' dsh-session-switcher__panel--docked' : ''}`}
+          role={docked ? 'navigation' : 'dialog'}
           aria-label={t('sessions.title')}
           tabIndex={-1}
         >
@@ -526,15 +543,26 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
             <span
               className="dsh-session-switcher__panel-title"
               title={
-                selectedWorkspace === undefined
+                docked || selectedWorkspace === undefined
                   ? t('sessions.title')
                   : displayWorkspaceName(selectedWorkspace.name)
               }
             >
-              {selectedWorkspace === undefined
+              {docked || selectedWorkspace === undefined
                 ? t('sessions.title')
                 : displayWorkspaceName(selectedWorkspace.name)}
             </span>
+            {docked ? (
+              <button
+                type="button"
+                className="dsh-icon-button dsh-session-switcher__close"
+                aria-label={t('sessions.closeNavigation')}
+                title={t('sessions.closeNavigation')}
+                onClick={closeSwitcherAndRefocus}
+              >
+                <Icon name="close" />
+              </button>
+            ) : null}
             <div className="dsh-session-switcher__panel-actions">
               <button
                 className="dsh-icon-button"
@@ -555,8 +583,14 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
                     .finally(() => setMutationBusy(false))
                 }}
               >
-                <Icon name="folder" />
-                <span>+</span>
+                {focused ? (
+                  <Icon name="folder-add" />
+                ) : (
+                  <>
+                    <Icon name="folder" />
+                    <span>+</span>
+                  </>
+                )}
               </button>
               <button
                 className="dsh-icon-button"
@@ -588,17 +622,19 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
                 <Icon name={sorting === 'manual' ? 'list' : 'clock'} />
               </button>
               <button
-                className="dsh-button dsh-button--primary dsh-button--compact"
+                className="dsh-button dsh-button--primary dsh-button--compact dsh-session-switcher__new"
                 type="button"
                 aria-label={t('sessions.new')}
                 title={t('sessions.new')}
                 onClick={() => {
-                  setOpen(false)
+                  if (!docked) setOpen(false)
                   props.onCreate(selectedWorkspaceKey)
                 }}
               >
                 <Icon name="add" />
-                <span className="dsh-sr-only">{t('sessions.new')}</span>
+                <span className={docked ? 'dsh-session-switcher__new-label' : 'dsh-sr-only'}>
+                  {t('sessions.new')}
+                </span>
               </button>
             </div>
           </header>

@@ -29,6 +29,7 @@ vi.mock('./features/chat/Timeline.js', () => ({
 }))
 
 import { App } from './App.js'
+import { ConversationLayoutProvider } from './app/ConversationLayoutProvider.js'
 import { CONVERSATION_FONT_SIZE_STORAGE_KEY, THEME_PREFERENCE_STORAGE_KEY } from './app/ui-preferences.js'
 import { I18nProvider, LOCALE_EXPLICIT_STORAGE_KEY, LOCALE_STORAGE_KEY, useI18n } from './i18n.js'
 
@@ -700,7 +701,7 @@ describe('App connected rendering', () => {
     expect(screen.getByRole('button', { name: 'Settings' })).toBeDefined()
   })
 
-  it('restores and applies the conversation font size from General settings', () => {
+  it('restores and applies the conversation font size from General settings', async () => {
     window.localStorage.setItem(CONVERSATION_FONT_SIZE_STORAGE_KEY, 'large')
     currentStore = storeFor({ ...connectedState(true), drawer: 'settings' })
     render(<App />)
@@ -708,7 +709,9 @@ describe('App connected rendering', () => {
     expect(document.querySelector('.dsh-conversation')?.getAttribute('data-conversation-font-size')).toBe(
       'large',
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Small' }))
+    // The first settings opening loads a separate chunk; allow module loading
+    // under the full parallel suite before checking the actual preference write.
+    fireEvent.click(await screen.findByRole('button', { name: 'Small' }, { timeout: 5_000 }))
 
     expect(document.querySelector('.dsh-conversation')?.getAttribute('data-conversation-font-size')).toBe(
       'small',
@@ -1393,7 +1396,7 @@ describe('App connected rendering', () => {
 
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Attach file' }))
     const remove = await screen.findByRole('button', { name: 'Remove notes.txt' })
     fireEvent.click(remove)
 
@@ -1413,7 +1416,7 @@ describe('App connected rendering', () => {
 
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Attach file' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Preview photo.png' }))
 
     const lightbox = await screen.findByRole('dialog', { name: 'Preview photo.png' })
@@ -1432,7 +1435,7 @@ describe('App connected rendering', () => {
 
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Attach file' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Preview photo.png' }))
 
     const lightbox = await screen.findByRole('dialog', { name: 'Preview photo.png' })
@@ -1453,7 +1456,7 @@ describe('App connected rendering', () => {
 
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Attach file' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Preview photo.png' }))
     const lightbox = await screen.findByRole('dialog', { name: 'Preview photo.png' })
     await waitFor(() => expect(within(lightbox).getByText('Unable to load image')).toBeDefined())
@@ -1461,7 +1464,7 @@ describe('App connected rendering', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove photo.png' }))
     fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Attach file' }))
     await screen.findByRole('button', { name: 'Preview photo.png' })
 
     await waitFor(() => expect(previewAttachment).toHaveBeenCalledTimes(2))
@@ -1481,7 +1484,7 @@ describe('App connected rendering', () => {
 
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Choose an open file' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Choose an open file' }))
     fireEvent.click(await screen.findByRole('option', { name: /LICENSE/u }))
 
     await waitFor(() => expect(attachOpenFile).toHaveBeenCalledWith('dsh-open-file-1', expect.any(Function)))
@@ -1498,7 +1501,7 @@ describe('App connected rendering', () => {
       render(<App />)
       const failAttachment = async (): Promise<void> => {
         fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
-        fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+        fireEvent.click(screen.getByRole('button', { name: 'Attach file' }))
         await act(async () => {
           await Promise.resolve()
         })
@@ -1535,7 +1538,7 @@ describe('App connected rendering', () => {
 
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Attach file' }))
     await screen.findByText('Host refused the attachment')
 
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss error' }))
@@ -1557,8 +1560,8 @@ describe('App connected rendering', () => {
     })
 
     expect(listOpenFiles).toHaveBeenCalled()
-    expect(screen.getByRole('menuitem', { name: 'Attach file' })).toBeDefined()
-    expect(screen.queryByRole('menuitem', { name: 'Choose an open file' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Attach file' })).toBeDefined()
+    expect(screen.queryByRole('button', { name: 'Choose an open file' })).toBeNull()
   })
 
   it('does not leave the open-file picker open after its menu is dismissed', async () => {
@@ -1572,7 +1575,7 @@ describe('App connected rendering', () => {
 
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Choose an open file' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Choose an open file' }))
     await screen.findByRole('option', { name: /LICENSE/u })
 
     fireEvent.keyDown(document, { key: 'Escape' })
@@ -1597,12 +1600,12 @@ describe('App connected rendering', () => {
 
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Choose an open file' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Choose an open file' }))
     await screen.findByRole('dialog', { name: 'Open files' })
     expect(screen.getByText('Loading…')).toBeDefined()
 
     fireEvent.click(screen.getByRole('button', { name: 'Close open files' }))
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Choose an open file' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Choose an open file' }))
     expect(await screen.findByRole('dialog', { name: 'Open files' })).toBeDefined()
     expect(screen.getByText('Loading…')).toBeDefined()
 
@@ -1639,9 +1642,9 @@ describe('App connected rendering', () => {
 
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Attach file' }))
     fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Attach file' }))
 
     await waitFor(() => expect(screen.getAllByRole('button', { name: 'Remove notes.txt' })).toHaveLength(1))
     expect(releaseAttachments).toHaveBeenCalledWith([secondUri])
@@ -1683,7 +1686,7 @@ describe('App connected rendering', () => {
       target: { value: 'a prompt I do not want to retype' },
     })
     fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Attach file' }))
     await screen.findByRole('button', { name: 'Remove notes.txt' })
 
     fireEvent.click(await screen.findByText('Another'))
@@ -1716,7 +1719,7 @@ describe('App connected rendering', () => {
       target: { value: 'a prompt I do not want to retype' },
     })
     fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Attach file' }))
     await screen.findByRole('button', { name: 'Remove notes.txt' })
 
     fireEvent.click(screen.getByRole('button', { name: 'New Session' }))
@@ -1818,7 +1821,7 @@ describe('App connected rendering', () => {
     const releaseAttachments = vi.spyOn(currentStore, 'releaseAttachments')
     fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), { target: { value: 'Old draft' } })
     fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Attach file' }))
     await screen.findByRole('button', { name: 'Remove notes.txt' })
 
     updateState({
@@ -1871,6 +1874,33 @@ describe('App connected rendering', () => {
     expect(screen.getByText('包含附件')).toBeDefined()
     expect(screen.getByRole('button', { name: '选择保存位置并导出' })).toBeDefined()
     await waitFor(() => expect(updateDshSetting).toHaveBeenCalledWith('locale.preference', 'zh', 1))
+  })
+
+  it('switches and restores layout from Settings without changing DSH or offering it in the conversation menu', async () => {
+    const updateDshSetting = vi.fn()
+    currentStore = { ...storeFor({ ...connectedState(true), drawer: 'settings' }), updateDshSetting }
+    const view = render(
+      <ConversationLayoutProvider>
+        <App />
+      </ConversationLayoutProvider>,
+    )
+    expect(document.querySelector('.dsh-app')?.getAttribute('data-conversation-layout')).toBe('focused')
+    const picker = await screen.findByRole<HTMLSelectElement>('combobox', { name: 'Conversation layout' })
+    fireEvent.change(picker, {
+      target: { value: 'classic' },
+    })
+    expect(document.querySelector('.dsh-app')?.getAttribute('data-conversation-layout')).toBe('classic')
+    view.unmount()
+    expect(updateDshSetting).not.toHaveBeenCalled()
+    currentStore = storeFor(connectedState(true))
+    render(
+      <ConversationLayoutProvider>
+        <App />
+      </ConversationLayoutProvider>,
+    )
+    expect(document.querySelector('.dsh-app')?.getAttribute('data-conversation-layout')).toBe('classic')
+    fireEvent.click(screen.getByRole('button', { name: 'Conversation tools' }))
+    expect(screen.queryByRole('combobox', { name: 'Conversation layout' })).toBeNull()
   })
 
   it('opens the Inspector from conversation tools and restores focus after menu dismissal', () => {

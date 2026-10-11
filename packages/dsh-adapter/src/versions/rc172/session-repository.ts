@@ -13,7 +13,7 @@ const INITIALIZE_DEFAULT_MODEL = 'session/initializeDefaultModel'
 /** RC2-only Session Remote added after account authorization succeeds. */
 export class Rc172SessionRepository extends Rc6SessionRepository {
   public constructor(
-    private readonly remoteTransport: DshTransport,
+    protected readonly remoteTransport: DshTransport,
     workspaces: Rc6WorkspaceRepository,
     samePath: ((left: string, right: string) => boolean) | undefined,
     options: Rc6SessionRepositoryOptions,

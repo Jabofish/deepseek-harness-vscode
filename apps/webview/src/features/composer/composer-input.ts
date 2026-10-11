@@ -13,12 +13,16 @@ export function formatByteSize(value: number): string {
   return `${value} B`
 }
 
-export function fitComposerTextarea(element: HTMLTextAreaElement): void {
+export function fitComposerTextarea(
+  element: HTMLTextAreaElement,
+  limits?: { readonly minimum: number; readonly maximum: number },
+): void {
   element.style.height = 'auto'
-  const contentHeight = Math.max(COMPOSER_MIN_HEIGHT, element.scrollHeight)
-  const nextHeight = Math.min(contentHeight, COMPOSER_MAX_HEIGHT)
+  const contentHeight = Math.max(limits?.minimum ?? COMPOSER_MIN_HEIGHT, element.scrollHeight)
+  const maximum = limits?.maximum ?? COMPOSER_MAX_HEIGHT
+  const nextHeight = Math.min(contentHeight, maximum)
   element.style.height = `${nextHeight}px`
-  element.style.overflowY = contentHeight > COMPOSER_MAX_HEIGHT ? 'auto' : 'hidden'
+  element.style.overflowY = contentHeight > maximum ? 'auto' : 'hidden'
 }
 
 export function pageAttachmentRail(element: HTMLUListElement | null, direction: -1 | 1): void {

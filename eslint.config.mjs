@@ -33,9 +33,11 @@ export default tseslint.config(
             'scripts/check-docs.mjs',
             'scripts/i18n.mjs',
             'scripts/release-notes.mjs',
+            'scripts/read-stylesheet.mjs',
+            'scripts/read-stylesheet.d.mts',
           ],
           // The build/config scripts above are intentionally outside every
-          // tsconfig; ten files exceed the default match limit.
+          // tsconfig; twelve files exceed the default match limit.
           maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 12,
         },
         tsconfigRootDir: import.meta.dirname,

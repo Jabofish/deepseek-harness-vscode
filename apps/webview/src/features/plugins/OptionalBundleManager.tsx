@@ -704,6 +704,16 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
                         plugins={plugins}
                         busyKey={busyKey}
                         installBusy={installBusy}
+                        onInstallOfficial={
+                          props.onStartInstall === undefined
+                            ? undefined
+                            : (bundle) => {
+                                if (busyKey !== undefined || installBusy) return
+                                setNotice(undefined)
+                                setDismissedRecoveryRequestId(undefined)
+                                void props.onStartInstall?.({ spec: bundle.name, officialBundle: true })
+                              }
+                        }
                         onSetPlugin={setPlugin}
                         onToggle={() =>
                           expandForSearch

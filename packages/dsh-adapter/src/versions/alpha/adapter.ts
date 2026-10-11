@@ -1,5 +1,6 @@
 import { workspaceChangeSource } from '../alpha162/workspace-changes.js'
 import {
+  AppError,
   type BackendCandidate,
   type BackendCapabilities,
   type BackendEndpoint,
@@ -45,7 +46,10 @@ import {
 } from '../../repositories/session-repository.js'
 import { Rc6SettingsRepository } from '../../repositories/settings-repository.js'
 import { Rc6SkillRepository } from '../../repositories/skill-repository.js'
-import { Rc6SubagentRepository } from '../../repositories/subagent-repository.js'
+import {
+  Rc6SubagentRepository,
+  type SubagentRepositoryOptions,
+} from '../../repositories/subagent-repository.js'
 import { Rc6WorkspaceRepository } from '../../repositories/workspace-repository.js'
 import { SubagentAddressRegistry } from '../../repositories/shared/subagent-addresses.js'
 import { AlphaEventSource } from './events.js'
@@ -58,6 +62,7 @@ import { callRpc } from '../rc6/rpc.js'
 import { deriveFeatureCapabilityProfile } from '../../feature-capabilities.js'
 
 export type AlphaAdapterOptions = Omit<Rc6AdapterOptions, 'webSocket'> & {
+  readonly allowLocalInspector?: (endpoint: BackendEndpoint) => boolean
   readonly authCookie?: (endpoint: BackendEndpoint) => string | undefined
   readonly webSocket?: AlphaWebSocketConstructor
   readonly exportFileSystem?: ExportFileSystem
@@ -124,12 +129,13 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
     const hintedVersion = normalizeDshVersion(candidate.runtimeVersion)
     if (!compatibility && candidate.runtimeVersion !== hintedVersion) return undefined
     // Exact probes are still strict. Compatibility probes are a separate,
-    // read-only path for a non-empty unknown runtime label; the successful
+    // read-only path for an unknown or absent runtime label; the successful
     // response, not the release suffix, is what permits reuse of this
-    // adapter's known contract.
+    // adapter's known contract. A known release is declined here because an
+    // exact adapter owns it.
     if (
       compatibility
-        ? hintedVersion === undefined || isKnownDshVersion(hintedVersion)
+        ? hintedVersion !== undefined && isKnownDshVersion(hintedVersion)
         : hintedVersion !== this.supportedVersion
     )
       return undefined
@@ -169,6 +175,11 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
           )
     } catch (error) {
       if (signal?.aborted === true) throw error
+      if (
+        error instanceof AppError &&
+        ['AUTH_REQUIRED', 'PERMISSION_DENIED', 'INVALID_ENDPOINT'].includes(error.code)
+      )
+        throw error
       return undefined
     } finally {
       await transport.close()
@@ -177,6 +188,13 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
 
   public createTransport(endpoint: BackendEndpoint): DshTransport {
     return new AlphaLoopbackApiClient(this.createTransportOptions(endpoint))
+  }
+
+  protected createSubagentRepository(
+    transport: AlphaLoopbackApiClient,
+    options: SubagentRepositoryOptions,
+  ): Rc6SubagentRepository {
+    return new Rc6SubagentRepository(transport, options)
   }
 
   protected createTransportOptions(endpoint: BackendEndpoint): AlphaLoopbackApiClientOptions {
@@ -262,7 +280,7 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
       ...(inspectorDevtools === undefined ? {} : { inspectorDevtools }),
       goals,
       jobs,
-      subagents: new Rc6SubagentRepository(transport, {
+      subagents: this.createSubagentRepository(transport, {
         inlineImagePrompts: backend.capabilities.subagentImagePrompts === true,
         subagentPromptDelivery: this.supportsSubagentPromptDelivery,
         maxPromptAttachmentBytes: 20 * 1024 * 1024,

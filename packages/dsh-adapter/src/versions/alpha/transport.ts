@@ -6,7 +6,7 @@ import { AppError } from '@dsh-vscode/domain'
 import type { DshTransport } from '../../contracts.js'
 import { cancelled, httpFailure, normalizeTransportError } from '../../transport-errors.js'
 import {
-  assertLoopback,
+  assertValidEndpoint,
   closedConnectionError as closedError,
   combineSignals,
   isAlphaIdempotentMethod,
@@ -93,7 +93,7 @@ export class AlphaLoopbackApiClient implements DshTransport {
   public readonly sessionHistoryTurnWindow: boolean
 
   public constructor(private readonly options: AlphaLoopbackApiClientOptions) {
-    assertLoopback(options.endpoint)
+    assertValidEndpoint(options.endpoint)
     this.sessionHistoryTurnWindow = options.sessionHistoryTurnWindow === true
     this.remoteMux = new AlphaRemoteMux(options)
     this.legacyRpc = createAlphaLegacyRpc({
@@ -814,7 +814,8 @@ export class AlphaLoopbackApiClient implements DshTransport {
     for await (const item of this.openRemoteStream('session/follow', { request }, signal)) {
       const frame = recordOrUndefined(item)
       if (frame?.type === 'snapshot') {
-        if (!validAlphaWireSnapshot(frame, wireVersion)) throw malformedResponse('session/follow snapshot')
+        if (!validAlphaWireSnapshot(frame, wireVersion, this.options.sessionWireProfile))
+          throw malformedResponse('session/follow snapshot')
         let queueFrame: unknown
         if (this.options.normalizeSessionQueueProjection !== undefined) {
           try {
@@ -831,6 +832,7 @@ export class AlphaLoopbackApiClient implements DshTransport {
           sessionId,
           wireVersion,
           this.options.autoReviewDenialContract === true,
+          this.options.sessionWireProfile,
         )
         if (projector !== undefined) for (const event of events) projector.rememberDurable(event)
         for (const event of events) yield { type: 'session/event', sessionId, event }
@@ -857,12 +859,14 @@ export class AlphaLoopbackApiClient implements DshTransport {
           for (const output of projected) yield this.alpha13ProjectorFrame(output)
         }
       } else if (frame?.type === 'event') {
-        if (!validAlphaWireEventFrame(frame, wireVersion)) throw malformedResponse('session/follow event')
+        if (!validAlphaWireEventFrame(frame, wireVersion, this.options.sessionWireProfile))
+          throw malformedResponse('session/follow event')
         const event = normalizeAlphaEvent(
           frame.event,
           sessionId,
           wireVersion,
           this.options.autoReviewDenialContract === true,
+          this.options.sessionWireProfile,
         )
         if (event === undefined) throw malformedResponse('session/follow event')
         if (projector === undefined) yield { type: 'session/event', sessionId, event }

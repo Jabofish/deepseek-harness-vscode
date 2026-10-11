@@ -1,0 +1,458 @@
+.dsh-conversation {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  gap: var(--dsh-space-3);
+  overflow: hidden;
+  --dsh-conversation-font-scale: 1;
+  /* The host `ui-theme.fontSize` is documented upstream as "仅影响会话内容的字号", and the
+   * reference client keeps its smallest text at fixed px - only the content size and its
+   * one-step-below secondary follow the setting. So the caption steps grow with the scale but
+   * never shrink below their design baseline: an unbounded multiplier put 2xs at 8.6px on the
+   * 12px setting, which is unreadable and is a size the reference client never renders. */
+  --dsh-font-size-2xs: max(0.625rem, calc(0.625rem * var(--dsh-conversation-font-scale)));
+  --dsh-font-size-xs: max(0.75rem, calc(0.75rem * var(--dsh-conversation-font-scale)));
+  --dsh-font-size-sm: calc(0.8125rem * var(--dsh-conversation-font-scale));
+  --dsh-font-size-md: calc(0.875rem * var(--dsh-conversation-font-scale));
+  --dsh-font-size-lg: calc(1rem * var(--dsh-conversation-font-scale));
+  --dsh-markdown-heading-1: calc(1.35rem * var(--dsh-conversation-font-scale));
+  --dsh-markdown-heading-2: calc(1.15rem * var(--dsh-conversation-font-scale));
+  --dsh-markdown-heading-3: calc(1rem * var(--dsh-conversation-font-scale));
+  --dsh-markdown-heading-4: calc(0.9375rem * var(--dsh-conversation-font-scale));
+  --dsh-markdown-heading-5: var(--dsh-font-size-md);
+  --dsh-markdown-heading-6: var(--dsh-font-size-sm);
+  font-size: calc(var(--vscode-font-size, 13px) * var(--dsh-conversation-font-scale));
+}
+
+.dsh-conversation[data-conversation-font-size='small'] {
+  --dsh-conversation-font-scale: 0.9;
+}
+
+.dsh-conversation[data-conversation-font-size='large'] {
+  --dsh-conversation-font-scale: 1.15;
+}
+
+.dsh-conversation__views,
+.dsh-conversation__locale-control {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+}
+
+.dsh-conversation__views {
+  flex: 0 0 auto;
+  padding: var(--dsh-space-1);
+  border: var(--dsh-border);
+  border-radius: var(--dsh-radius-md);
+  background: var(--dsh-surface-raised);
+}
+
+.dsh-conversation__events-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-width: var(--dsh-control-height-compact);
+  min-height: var(--dsh-control-height-compact);
+  gap: var(--dsh-space-1);
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  border: var(--dsh-border);
+  border-radius: var(--dsh-radius-sm);
+  color: var(--dsh-muted);
+  background: transparent;
+  font-size: var(--dsh-font-size-xs);
+}
+
+.dsh-conversation__events-toggle--menu {
+  justify-content: flex-start;
+  width: 100%;
+  min-width: 0;
+  min-height: var(--dsh-menu-item-height);
+  padding: var(--dsh-space-2) var(--dsh-space-3);
+  border-color: transparent;
+  border-radius: var(--dsh-radius-md);
+  text-align: start;
+}
+
+.dsh-conversation__events-toggle > .dsh-icon {
+  width: var(--dsh-icon-size-sm);
+  height: var(--dsh-icon-size-sm);
+  flex: 0 0 auto;
+}
+
+.dsh-conversation__events-toggle--menu .dsh-conversation__events-toggle-count {
+  margin-inline-start: auto;
+  color: var(--dsh-muted);
+}
+
+.dsh-conversation__events-toggle:hover:not(:disabled),
+.dsh-conversation__events-toggle:focus-visible,
+.dsh-conversation__events-toggle[aria-pressed='true'] {
+  color: var(--dsh-text);
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-conversation__events-toggle[aria-pressed='true'] {
+  border-color: var(--dsh-focus);
+}
+
+.dsh-conversation__view-tab,
+.dsh-conversation__export-trigger,
+.dsh-conversation__locale-switch,
+.dsh-conversation__locale-option {
+  min-height: 1.75rem;
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  border: 1px solid transparent;
+  color: var(--dsh-muted);
+  background: transparent;
+  font-size: var(--dsh-font-size-2xs);
+}
+
+.dsh-conversation__view-tab:hover:not(:disabled),
+.dsh-conversation__view-tab--active,
+.dsh-conversation__export-trigger:hover:not(:disabled),
+.dsh-conversation__locale-switch:hover:not(:disabled),
+.dsh-conversation__locale-option:hover:not(:disabled),
+.dsh-conversation__locale-option--selected {
+  color: var(--dsh-text);
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-conversation__view-tab--active {
+  border-color: var(--dsh-border-color);
+  border-radius: var(--dsh-radius-sm);
+}
+
+.dsh-conversation__locale-control {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.dsh-conversation__locale-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dsh-space-1);
+  border-color: var(--dsh-border-color);
+  border-radius: var(--dsh-radius-sm);
+}
+
+.dsh-conversation__locale-menu,
+.dsh-model-picker__menu,
+.dsh-open-file-picker,
+.dsh-context-meter__details {
+  position: absolute;
+  z-index: 40;
+  min-width: 12rem;
+  max-width: min(32rem, calc(100vw - 2rem));
+  max-height: min(28rem, calc(100vh - 2rem));
+  overflow: auto;
+  padding: var(--dsh-space-2);
+  border: var(--dsh-border);
+  border-radius: var(--dsh-radius-md);
+  background: var(--dsh-widget-bg);
+  box-shadow: var(--dsh-shadow);
+}
+
+.dsh-conversation__locale-menu {
+  top: calc(100% + var(--dsh-space-2));
+  inset-inline-end: 0;
+  display: grid;
+  gap: var(--dsh-space-1);
+}
+
+/* The header stays visible; every directory state shares one scrollport. */
+.dsh-model-picker__menu.dsh-select-menu__menu {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 0;
+  max-height: min(28rem, calc(100dvh - 16px));
+  overflow: hidden;
+}
+
+.dsh-model-picker__header {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding-bottom: var(--dsh-space-2);
+  border-bottom: var(--dsh-border);
+  margin-bottom: var(--dsh-space-1);
+}
+
+.dsh-model-picker__content {
+  display: grid;
+  align-content: start;
+  gap: var(--dsh-space-1);
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.dsh-model-picker__groups {
+  display: grid;
+  gap: var(--dsh-space-2);
+  min-width: 0;
+}
+
+.dsh-model-picker__feedback {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding-top: var(--dsh-space-1);
+}
+
+.dsh-model-picker__menu .dsh-select-menu__option > span:first-child {
+  flex: 1 1 auto;
+}
+
+.dsh-model-picker__menu :is(.dsh-select-menu__option, .dsh-model-picker__back) > svg {
+  flex: 0 0 auto;
+}
+
+.dsh-conversation__locale-option {
+  width: 100%;
+  text-align: start;
+}
+
+.dsh-model-picker,
+.dsh-open-file-picker,
+.dsh-context-meter {
+  position: relative;
+  min-width: 0;
+}
+
+.dsh-model-picker__row,
+.dsh-model-picker__back {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  min-height: 1.9rem;
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-2);
+  border-color: transparent;
+  color: var(--dsh-text);
+  background: transparent;
+  text-align: start;
+}
+
+.dsh-model-picker__row > span:first-child,
+.dsh-model-picker__back > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-model-picker__row > svg:last-child {
+  margin-inline-start: auto;
+}
+
+.dsh-model-picker__row:hover:not(:disabled),
+.dsh-model-picker__back:hover:not(:disabled) {
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-model-picker__group {
+  display: grid;
+  gap: var(--dsh-space-1);
+  min-width: 0;
+}
+
+.dsh-model-picker__group h3 {
+  margin: var(--dsh-space-2) var(--dsh-space-2) 0;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-2xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-model-picker__row-value {
+  min-width: 0;
+  margin-inline-start: auto;
+  overflow: hidden;
+  color: var(--dsh-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-model-picker__empty,
+.dsh-open-file-picker__empty,
+.dsh-session-switcher__empty {
+  margin: 0;
+  padding: var(--dsh-space-3);
+  color: var(--dsh-muted);
+}
+
+/*
+ * Statements about the directory read itself, above the per-provider rows: a
+ * read still running, and a read the host refused. The refusal keeps its own
+ * retry so a composer showing the global fallback is not a dead end.
+ */
+.dsh-model-picker__status {
+  margin: 0;
+  padding: var(--dsh-space-2) var(--dsh-space-3);
+  color: var(--dsh-muted);
+}
+
+.dsh-model-picker__error {
+  display: grid;
+  justify-items: start;
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-2);
+}
+
+/*
+ * A provider the host could not enumerate. The message is host prose and can
+ * be arbitrarily long, so it wraps inside the menu instead of being clipped.
+ */
+.dsh-model-picker__failures {
+  display: grid;
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-2);
+}
+
+.dsh-model-picker__warning {
+  margin: 0;
+  padding: var(--dsh-space-2);
+  border: 1px solid var(--dsh-warning-border);
+  border-radius: var(--dsh-radius-sm);
+  background: var(--dsh-warning-bg);
+  color: var(--dsh-warning);
+  font-size: var(--dsh-font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+.dsh-runtime-status {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  --dsh-runtime-status-color: var(--dsh-muted);
+}
+
+.dsh-runtime-status__trigger {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  min-height: var(--dsh-control-height);
+  gap: var(--dsh-space-1);
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  border-color: transparent;
+  color: var(--dsh-muted);
+  background: transparent;
+  font-size: var(--dsh-font-size-sm);
+  text-align: start;
+}
+
+.dsh-runtime-status__trigger:hover:not(:disabled),
+.dsh-runtime-status__trigger:focus-visible,
+.dsh-runtime-status__trigger[aria-expanded='true'] {
+  color: var(--dsh-text);
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-runtime-status__icon {
+  width: var(--dsh-icon-size-sm);
+  height: var(--dsh-icon-size-sm);
+  flex: 0 0 auto;
+  color: var(--dsh-runtime-status-color);
+}
+
+.dsh-runtime-status__label {
+  max-width: 12rem;
+}
+
+.dsh-runtime-status--connected {
+  --dsh-runtime-status-color: var(--dsh-success);
+}
+
+/* `idle` is the only quiet state; `runtime-missing` asks for a setup step and
+ * `stopping` is a transition, so neither reads as a failure. */
+.dsh-runtime-status--idle {
+  --dsh-runtime-status-color: var(--dsh-muted);
+}
+
+.dsh-runtime-status--connecting,
+.dsh-runtime-status--discovering,
+.dsh-runtime-status--starting,
+.dsh-runtime-status--locating-runtime,
+.dsh-runtime-status--runtime-missing,
+.dsh-runtime-status--stopping {
+  --dsh-runtime-status-color: var(--dsh-warning);
+}
+
+.dsh-runtime-status--failed,
+.dsh-runtime-status--port-conflict {
+  --dsh-runtime-status-color: var(--dsh-danger);
+}
+
+.dsh-runtime-status__panel {
+  display: grid;
+  width: min(24rem, calc(100vw - var(--dsh-space-4)));
+  max-width: calc(100vw - var(--dsh-space-4));
+  gap: var(--dsh-space-3);
+  padding: 0;
+  overflow: hidden;
+}
+
+.dsh-runtime-status__panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  gap: var(--dsh-space-3);
+  padding: var(--dsh-space-2) var(--dsh-space-3);
+  border-bottom: var(--dsh-border);
+}
+
+.dsh-runtime-status__panel-heading {
+  display: grid;
+  min-width: 0;
+  gap: var(--dsh-space-1);
+}
+
+.dsh-runtime-status__panel-state,
+.dsh-runtime-status__empty,
+.dsh-runtime-status__message,
+.dsh-runtime-status__warning {
+  min-width: 0;
+  margin: 0;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-sm);
+}
+
+.dsh-runtime-status__details {
+  display: grid;
+  gap: var(--dsh-space-2);
+  min-width: 0;
+  margin: 0;
+  padding: 0 var(--dsh-space-3);
+}
+
+.dsh-runtime-status__details > div {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--dsh-space-3);
+  min-width: 0;
+}
+
+.dsh-runtime-status__details dt {
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+}
+
+.dsh-runtime-status__details dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--dsh-text);
+  font-size: var(--dsh-font-size-sm);
+  text-align: end;
+}

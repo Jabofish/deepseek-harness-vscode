@@ -4,6 +4,7 @@ export type IconName =
   | 'add'
   | 'alert'
   | 'arrow-down'
+  | 'arrow-up'
   | 'box'
   | 'branch'
   | 'check'
@@ -16,6 +17,7 @@ export type IconName =
   | 'edit'
   | 'file'
   | 'folder'
+  | 'folder-add'
   | 'image'
   | 'list'
   | 'model'
@@ -88,6 +90,13 @@ function renderIcon(name: IconName): ReactElement {
           <path d="m6 13 6 6 6-6" />
         </>
       )
+    case 'arrow-up':
+      return (
+        <>
+          <path d="M12 20V5" />
+          <path d="m6 11 6-6 6 6" />
+        </>
+      )
     case 'box':
       return (
         <>
@@ -144,6 +153,13 @@ function renderIcon(name: IconName): ReactElement {
       )
     case 'folder':
       return <path d="M3.5 6.5h6l2 2h9v8.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-8.5a2 2 0 0 1 2-2Z" />
+    case 'folder-add':
+      return (
+        <>
+          <path d="M3.5 6.5h6l2 2h9v8.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-8.5a2 2 0 0 1 2-2Z" />
+          <path d="M12 11v6M9 14h6" />
+        </>
+      )
     case 'file':
       return (
         <>

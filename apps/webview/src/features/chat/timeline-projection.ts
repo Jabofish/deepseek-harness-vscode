@@ -1,9 +1,4 @@
-import {
-  isInjectedUserMessage,
-  type AssistantTiming,
-  type TimelineNode,
-  type TurnTokenUsage,
-} from '@dsh-vscode/timeline'
+import { type AssistantTiming, type TimelineNode, type TurnTokenUsage } from '@dsh-vscode/timeline'
 import type { MessageImageReference, TokenUsage } from '@dsh-vscode/domain'
 import {
   DEFAULT_VIRTUALIZATION_PAYLOAD_THRESHOLD,
@@ -20,8 +15,9 @@ import {
   type DshEventGroupNode,
   type DshEventNode,
   type ReasoningBlock,
-  type UserTextFacts,
 } from './timeline-shared.js'
+import { isInjectedUserTimelineNode } from './timeline-user-text-facts.js'
+export { createUserTextFactsProjector } from './timeline-user-text-facts.js'
 
 interface VirtualizationCache {
   readonly sourceNodes: readonly DisplayTimelineNode[]
@@ -385,75 +381,6 @@ function prepareVisibleNodes(
   }
 
   return display
-}
-
-function isInjectedUserTimelineNode(node: Extract<TimelineNode, { readonly kind: 'user-message' }>): boolean {
-  return isInjectedUserMessage({
-    type: 'message.user',
-    sessionId: '',
-    messageId: node.id,
-    markdown: node.markdown,
-    ...(node.source === undefined ? {} : { source: node.source }),
-  })
-}
-
-/**
- * DSH projects structured context messages immediately after the user turn
- * they enrich. Keep those hidden records out of the visible timeline while
- * retaining their display facts for the preceding user-authored text.
- */
-function collectUserTextFacts(nodes: readonly TimelineNode[]): ReadonlyMap<string, UserTextFacts> {
-  const facts = new Map<string, UserTextFacts>()
-  for (let index = 0; index < nodes.length; index += 1) {
-    const node = nodes[index]
-    if (node?.kind !== 'user-message' || isInjectedUserTimelineNode(node)) continue
-
-    const labels: string[] = []
-    for (let nextIndex = index + 1; nextIndex < nodes.length; nextIndex += 1) {
-      const next = nodes[nextIndex]
-      if (next?.kind !== 'user-message' || !isInjectedUserTimelineNode(next)) break
-      if (next.source === 'session-reference') labels.push(...(next.sessionReferenceLabels ?? []))
-    }
-
-    const uniqueLabels = [...new Set(labels)].slice(0, 32)
-    if (uniqueLabels.length > 0) facts.set(node.id, { sessionReferenceLabels: uniqueLabels })
-  }
-  return facts
-}
-
-/**
- * Streaming appends to the same nodes array identity every frame, and the
- * facts of user-authored rows rarely change with it. Returning the previous
- * map while the computed facts are equal keeps the render context identity
- * (and every memoized row that receives it) stable across those frames.
- */
-export function createUserTextFactsProjector(): (
-  nodes: readonly TimelineNode[],
-) => ReadonlyMap<string, UserTextFacts> {
-  let previous: ReadonlyMap<string, UserTextFacts> = new Map()
-  return (nodes) => {
-    const next = collectUserTextFacts(nodes)
-    if (sameUserTextFacts(previous, next)) return previous
-    previous = next
-    return next
-  }
-}
-
-function sameUserTextFacts(
-  left: ReadonlyMap<string, UserTextFacts>,
-  right: ReadonlyMap<string, UserTextFacts>,
-): boolean {
-  if (left.size !== right.size) return false
-  for (const [id, facts] of right) {
-    const known = left.get(id)
-    if (known === undefined) return false
-    if (
-      known.sessionReferenceLabels.length !== facts.sessionReferenceLabels.length ||
-      known.sessionReferenceLabels.some((label, index) => label !== facts.sessionReferenceLabels[index])
-    )
-      return false
-  }
-  return true
 }
 
 interface PendingAssistantWork {

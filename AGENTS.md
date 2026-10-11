@@ -16,7 +16,7 @@
 - Domain 引入 VS Code、React、HTTP、子进程或平台 API；DSH Adapter 调用 `vscode.*`；上游 wire 类型向 Application/Webview 泄漏。
 - 解析 TUI/ANSI，或从模型文本猜测工具、审批、Goal、Job、Workflow 等状态。
 - `auto` 发现完成前启动 DSH；停止、重启、kill 或接管外部 DSH；仅凭 PID 推断进程所有权。
-- 扫描任意端口范围，连接非验证 loopback 目标，或使用 shell 拼接子进程命令。
+- 扫描任意端口范围，自动发现连接非验证 loopback 目标，或使用 shell 拼接子进程命令。远程 HTTP(S) 仅允许用户显式选择并原生授权的 `custom` 端点；凭据按完整 origin 隔离，禁止自动重定向，HTTPS 必须验证证书，远程 HTTP 必须明确确认明文风险。
 - 硬编码 Provider、Model、Skill、Plugin、动态命令或第三方工具清单。
 - 删除 TODO 验收条件、弱化严格类型、跳过错误分支，或把自动测试冒充真实运行验证。
 - 提交 `DSH_VSCODE_IMPLEMENTATION_PLAN.md`、`LOCAL_*.md`、真实凭据、用户路径、构建产物或 `.vsix`。
