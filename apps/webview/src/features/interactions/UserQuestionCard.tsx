@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, useState, type ReactElement } from 'react'
 import type { QuestionAnswer, QuestionChoice, UserQuestion, UserQuestionItem } from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
 import { ContentFlow } from '../../components/common/ContentFlow.js'
+import { useConversationLayout } from '../../app/ConversationLayoutProvider.js'
 
 export interface UserQuestionCardProps {
   readonly question: UserQuestion
@@ -36,6 +37,7 @@ interface TimedWaitState {
 // streams behind it; memo keeps those frames from re-rendering the card.
 export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuestionCardProps): ReactElement {
   const { t } = useI18n()
+  const focused = useConversationLayout()?.layout === 'focused'
   const items = questionItems(props.question)
   const planReview = isPlanReview(items)
   const timedForeground = props.question.state === 'open' && props.question.timed === true
@@ -149,10 +151,16 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
           ?
         </span>
         <div>
-          <span className="dsh-app__eyebrow">
-            {t(planReview ? 'question.planReview' : 'question.inputNeeded')}
-          </span>
-          <h2 id={`question-${props.question.id}`}>{items[0]?.prompt ?? ''}</h2>
+          {focused ? null : (
+            <span className="dsh-app__eyebrow">
+              {t(planReview ? 'question.planReview' : 'question.inputNeeded')}
+            </span>
+          )}
+          <h2 id={`question-${props.question.id}`}>
+            {focused
+              ? t(planReview ? 'question.planReview' : 'question.inputNeeded')
+              : (items[0]?.prompt ?? '')}
+          </h2>
         </div>
       </header>
       {timedForeground ? (
@@ -184,7 +192,7 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
           ) : null}
         </div>
       ) : null}
-      <div className="dsh-interaction__body">
+      <div className="dsh-interaction__body" tabIndex={0}>
         {items.map((item, index) => (
           <div className="dsh-question__item" key={item.id}>
             {items.length > 1 || item.header === undefined ? null : (
@@ -197,7 +205,7 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
                 {item.header === undefined ? item.prompt : item.header}
               </h3>
             ) : null}
-            {items.length > 1 ? (
+            {focused || items.length > 1 ? (
               <ContentFlow as="p" className="dsh-question__prompt">
                 {item.prompt}
               </ContentFlow>

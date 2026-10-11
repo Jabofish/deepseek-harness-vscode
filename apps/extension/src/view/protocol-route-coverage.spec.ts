@@ -19,6 +19,14 @@ const REQUEST_HANDLER_SOURCE = readFileSync(
   new URL('../composition/request-handler.ts', import.meta.url),
   'utf8',
 )
+const SESSION_HANDLER_SOURCE = readFileSync(
+  new URL('../composition/session-request-handler.ts', import.meta.url),
+  'utf8',
+)
+const ATTACHMENT_HANDLER_SOURCE = readFileSync(
+  new URL('../composition/attachment-request-handler.ts', import.meta.url),
+  'utf8',
+)
 const JOB_FOLLOW_HOST_SOURCE = readFileSync(
   new URL('../composition/job-follow-host.ts', import.meta.url),
   'utf8',
@@ -50,13 +58,14 @@ function routedTypes(body: string): ReadonlySet<string> {
 }
 
 const handleFeatureRequestBody = handlerBody(FEATURE_HANDLER_SOURCE, 'const handleFeatureRequest = ')
-const handleRequestBody = handlerBody(
+const gatewayRequestBody = handlerBody(
   REQUEST_HANDLER_SOURCE,
   'const handleRequest = async (request: WebviewRequest',
   'const router = new WebviewMessageRouter({',
 )
+const handleRequestBody = [gatewayRequestBody, SESSION_HANDLER_SOURCE, ATTACHMENT_HANDLER_SOURCE].join('\n')
 const sessionHistoryRequestBody = handlerBody(
-  REQUEST_HANDLER_SOURCE,
+  SESSION_HANDLER_SOURCE,
   "if (request.type === 'session.history') {",
   "if (request.type === 'session.create') {",
 )

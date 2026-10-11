@@ -117,6 +117,34 @@ function openSection(): void {
   if (toggle.getAttribute('aria-expanded') !== 'true') fireEvent.click(toggle)
 }
 
+it('installs an official catalog target by name through the existing recovery controller', async () => {
+  const missing = {
+    ...bundle,
+    official: true,
+    availability: 'missing',
+    installed: false,
+    installable: true,
+    targetVersion: '0.2.1-alpha.2',
+    rows: [],
+    overrides: [],
+  }
+  const { requests } = mountManager((request) =>
+    request.type === 'plugin.bundles.list'
+      ? { kind: 'plugin.bundles', available: true, bundles: [missing], plugins: [] }
+      : defaultResponse(request),
+  )
+  const install = await screen.findByRole('button', { name: 'Install official bundle 0.2.1-alpha.2' })
+  expect(screen.getByRole('button', { name: /Enable.*Review layer/ }).hasAttribute('disabled')).toBe(true)
+  fireEvent.click(install)
+  await waitFor(() => expect(requests.some((request) => request.type === 'plugin.bundle.install')).toBe(true))
+  expect(requests.find((request) => request.type === 'plugin.bundle.install')).toMatchObject({
+    payload: { spec: bundle.name, officialBundle: true },
+  })
+  const request = requests.find((item) => item.type === 'plugin.bundle.install')
+  if (request?.type !== 'plugin.bundle.install') throw new Error('Missing official install request')
+  expect(typeof request.payload.installRequestId).toBe('string')
+})
+
 function mountManager(resolve: (request: FeatureRequest) => unknown = defaultResponse): MountedManager {
   const requests: FeatureRequest[] = []
   const featureRequest: OptionalBundleManagerProps['featureRequest'] = <T,>(request: FeatureRequest) => {

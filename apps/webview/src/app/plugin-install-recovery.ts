@@ -16,6 +16,7 @@ export interface PluginInstallRecoveryState {
 }
 
 export interface PluginInstallInput {
+  readonly officialBundle?: boolean
   readonly spec: string
   readonly registry?: PluginRegistry
   readonly approvedBuilds?: readonly string[]
@@ -105,6 +106,7 @@ export class PluginInstallRecoveryController {
         payload: {
           spec: input.spec,
           installRequestId: requestId,
+          ...(input.officialBundle === undefined ? {} : { officialBundle: input.officialBundle }),
           ...(input.registry === undefined ? {} : { registry: input.registry }),
           ...(input.approvedBuilds === undefined ? {} : { approvedBuilds: [...input.approvedBuilds] }),
         },

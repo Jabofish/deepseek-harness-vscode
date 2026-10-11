@@ -28,6 +28,26 @@ function catalog(entries: SubagentCatalog['entries'], parentAvailable = true): S
 describe('SubagentDrawer tree', () => {
   afterEach(() => cleanup())
 
+  it('shows external executions without opening or loading a nonexistent child conversation', () => {
+    const onOpenChild = vi.fn()
+    const onLoadChildren = vi.fn()
+    render(
+      <SubagentDrawer
+        parentSessionId="root"
+        catalog={catalog([child({ id: 'external-1', mode: 'external' })])}
+        onLoadChildren={onLoadChildren}
+        onOpenChild={onOpenChild}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button'))
+    const entry = screen.getByRole('treeitem', { name: /External/ })
+    expect(entry.getAttribute('aria-disabled')).toBe('true')
+    fireEvent.click(entry)
+    fireEvent.keyDown(entry, { key: 'Enter' })
+    expect(onOpenChild).not.toHaveBeenCalled()
+    expect(onLoadChildren).not.toHaveBeenCalled()
+  })
+
   it('renders nothing until the session has children', () => {
     const { container } = render(
       <SubagentDrawer

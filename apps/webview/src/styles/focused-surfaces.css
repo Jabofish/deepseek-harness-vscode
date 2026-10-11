@@ -1,0 +1,541 @@
+/* Pinned DSH DisclosureRow, ToolRow, ReasoningRow and result primitives.
+ * Detail payloads keep their own scrollports; decision surfaces stay visible. */
+.dsh-app[data-conversation-layout='focused'] {
+  --dsh-tool-summary-height: 24px;
+  --dsh-tool-summary-padding: 0;
+  --dsh-tool-detail-max-height: 260px;
+  --dsh-tool-detail-padding: 12px;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  :is(.dsh-button:not(.dsh-composer__submit), .dsh-feedback-dialog__chip) {
+  min-height: 32px;
+  border-radius: 8px;
+  font-weight: 400;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  :is(.dsh-select-menu__menu, .dsh-command-palette, .dsh-composer__extras-panel, .dsh-open-file-picker) {
+  padding: 8px;
+  border-radius: 12px;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  :is(.dsh-select-menu__option, .dsh-command-palette__item, .dsh-open-file-picker__option) {
+  min-height: 32px;
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  :is(.dsh-tool-row, .dsh-tool-card, .dsh-timeline__reasoning-preview) {
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--dsh-muted);
+}
+
+.dsh-app[data-conversation-layout='focused']
+  :is(.dsh-tool-row__summary, .dsh-tool-card__summary, .dsh-timeline__reasoning-toggle) {
+  min-height: 24px;
+  gap: 6px;
+  padding: 0;
+  font-size: var(--dsh-font-size-sm);
+  line-height: 24px;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  :is(.dsh-tool-row__summary, .dsh-tool-card__summary, .dsh-timeline__reasoning-toggle):hover {
+  background: transparent;
+  color: var(--dsh-text);
+}
+
+.dsh-app[data-conversation-layout='focused']
+  :is(.dsh-tool-row__title, .dsh-tool-card__title, .dsh-timeline__reasoning-heading strong) {
+  font-weight: 400;
+  color: inherit;
+}
+
+.dsh-app[data-conversation-layout='focused'] :is(.dsh-tool-card__subtitle, .dsh-timeline__reasoning-summary) {
+  font-size: inherit;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-timeline__reasoning-icon {
+  color: inherit;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-timeline__reasoning-preview--expanded {
+  color: var(--dsh-text);
+}
+
+.dsh-app[data-conversation-layout='focused']
+  .dsh-timeline__reasoning-preview--expanded
+  > .dsh-timeline__reasoning-toggle {
+  position: static;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-timeline__reasoning-preview-content {
+  max-height: none;
+  overflow: visible;
+  padding: 4px 0 4px 22px;
+  white-space: normal;
+  color: var(--dsh-muted);
+}
+
+.dsh-app[data-conversation-layout='focused'] :is(.dsh-tool-card__details, .dsh-tool-row__details) {
+  gap: 8px;
+  padding: 4px 0 4px 22px;
+  border: 0;
+}
+
+.dsh-app[data-conversation-layout='focused'] :is(.dsh-tool-card__section, .dsh-tool-row__section) {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: start;
+  gap: 14px;
+  max-height: 150px;
+  padding: 12px 16px;
+  overflow: auto;
+  border: var(--dsh-border);
+  border-radius: 12px;
+  background: var(--dsh-code-bg);
+}
+
+.dsh-app[data-conversation-layout='focused'] :is(.dsh-tool-card__section, .dsh-tool-row__section) > h4 {
+  position: sticky;
+  top: 0;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+  font-weight: 400;
+}
+
+/* The structured code block owns its toolbar and scrollport. A read wrapper
+ * must not inherit the generic IN/OUT grid or create a second result card. */
+.dsh-app[data-conversation-layout='focused'] .dsh-tool-row__read-window:has(.dsh-tool-code-preview) {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  max-height: none;
+  padding: 0;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-tool-row__read-window:has(.dsh-tool-code-preview) > h4 {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-tool-row__read-total {
+  align-self: flex-end;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+}
+
+.dsh-app[data-conversation-layout='focused']
+  :is(.dsh-tool-card__section, .dsh-tool-row__section)
+  > :is(p, pre) {
+  max-height: none;
+  overflow: visible;
+  font-size: var(--dsh-font-size-sm);
+  line-height: 1.65;
+}
+
+.dsh-app[data-conversation-layout='focused'] :is(.dsh-tool-row--error, .dsh-tool-card--failed) {
+  color: var(--dsh-danger);
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-tool-row--stopped {
+  color: var(--dsh-warning);
+}
+
+.dsh-app[data-conversation-layout='focused']
+  :is(.dsh-tool-row__section--error, .dsh-tool-card__section--error) {
+  border-color: var(--dsh-danger);
+}
+
+/* Successful state is announced without repeating a badge on every line. */
+.dsh-app[data-conversation-layout='focused']
+  :is(
+    .dsh-tool-row[data-state='ok'] .dsh-tool-row__status,
+    .dsh-tool-card--completed .dsh-tool-card__status
+  ) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  :is(
+    .dsh-tool-code-preview,
+    .dsh-tool-diff-preview,
+    .dsh-tool-terminal-preview,
+    .dsh-tool-search-preview,
+    .dsh-tool-web-preview,
+    .dsh-markdown pre
+  ) {
+  border-radius: 12px;
+  background: var(--dsh-code-bg);
+}
+
+.dsh-app[data-conversation-layout='focused']
+  :is(
+    .dsh-tool-code-preview__toolbar,
+    .dsh-tool-terminal-preview__header,
+    .dsh-tool-search-preview__header,
+    .dsh-tool-web-preview__fetch-meta
+  ) {
+  min-height: 32px;
+  padding: 6px 12px;
+  border-bottom: var(--dsh-border);
+  background: transparent;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  :is(
+    .dsh-tool-terminal-preview__body,
+    .dsh-tool-search-preview__body,
+    .dsh-tool-diff-preview__body,
+    .dsh-tool-code-preview__body
+  ) {
+  line-height: 22px;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  :is(
+    .dsh-tool-code-preview__body,
+    .dsh-tool-diff-preview__body,
+    .dsh-tool-search-preview__body,
+    .dsh-tool-terminal-preview__body
+  ):focus-visible {
+  outline: 2px solid var(--dsh-focus);
+  outline-offset: -2px;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  :is(.dsh-tool-row__source, .dsh-tool-row__diff-file, .dsh-tool-row__search-file) {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: transparent;
+}
+
+.dsh-app[data-conversation-layout='focused'] :is(.dsh-tool-row__target, .dsh-tool-card__target) {
+  min-height: 28px;
+  padding: 2px 8px;
+  border-radius: 8px;
+  border-color: transparent;
+  background: transparent;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-timeline__tool-subcalls {
+  margin-inline-start: 8px;
+  padding-inline-start: 12px;
+  border-inline-start: var(--dsh-border);
+}
+
+.dsh-app[data-conversation-layout='focused']
+  :is(
+    .dsh-timeline__card--event,
+    .dsh-timeline__command-input,
+    .dsh-goal-bar,
+    .dsh-goal-strip,
+    .dsh-submitted-plan,
+    .dsh-queue
+  ) {
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--dsh-surface-soft);
+}
+
+.dsh-app[data-conversation-layout='focused']
+  :is(
+    .dsh-submitted-plan > summary,
+    .dsh-goal-strip__heading,
+    .dsh-timeline__event-title,
+    .dsh-timeline__card-heading strong
+  ) {
+  font-size: var(--dsh-font-size-sm);
+  font-weight: 500;
+}
+
+.dsh-app[data-conversation-layout='focused'] :is(.dsh-goal-strip__list li, .dsh-todo-list li) {
+  min-height: 28px;
+  padding: 4px 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.dsh-app[data-conversation-layout='focused'] :is(.dsh-timeline__notice, .dsh-timeline__turn-terminal) {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border-color: transparent;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-conversation__interactions {
+  width: min(calc(100% - 2 * clamp(4px, 1.5vw, 12px)), var(--dsh-timeline-content-max-width));
+  margin-inline: auto;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-interaction {
+  gap: 12px;
+  padding: 16px;
+  border-radius: 16px;
+  background: var(--dsh-surface-soft);
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-interaction__header h2 {
+  font-size: var(--dsh-font-size-md);
+  font-weight: 500;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  :is(
+    .dsh-interaction__description,
+    .dsh-interaction__risk,
+    .dsh-approval__takeover,
+    .dsh-question__prompt,
+    .dsh-question__detail
+  ) {
+  margin: 0;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-question__choice {
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: transparent;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-question__choice:has(input:checked) {
+  border-color: var(--dsh-focus);
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-question__choice:has(input:focus-visible) {
+  outline: 2px solid var(--dsh-focus);
+  outline-offset: 2px;
+}
+
+.dsh-app[data-conversation-layout='focused'] :is(.dsh-approval__takeover, .dsh-question__field) {
+  border-radius: 8px;
+  background: var(--dsh-input-bg);
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-focused-tools__summary {
+  min-height: 24px;
+  padding: 0;
+  gap: 6px;
+  font-size: var(--dsh-font-size-sm);
+  line-height: 24px;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-tool-web-preview {
+  padding: 12px 14px;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-tool-web-preview__sources {
+  max-height: 320px;
+  padding-inline-start: 2.5em;
+  gap: 10px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-tool-web-preview__source {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-tool-web-preview__link {
+  font-size: var(--dsh-font-size-md);
+  font-weight: 500;
+  line-height: 1.45;
+  vertical-align: top;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-tool-web-preview__sources:focus-visible {
+  outline: 2px solid var(--dsh-focus);
+  outline-offset: -2px;
+}
+
+/* Diagnostics are opt-in support detail, using the same quiet rows as tools. */
+.dsh-app[data-conversation-layout='focused'] .dsh-timeline__event-group {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-timeline__event-group-summary {
+  min-height: 24px;
+  margin: 0;
+  padding: 0;
+  border-bottom: 0;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-sm);
+  font-weight: 400;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-timeline__event-group-heading > .dsh-icon {
+  flex: 0 0 auto;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-timeline__event-group-list {
+  padding: 8px 0 0 22px;
+  gap: 8px;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-timeline__event-payload {
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--dsh-code-bg);
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-timeline__event-payload > pre {
+  max-height: min(260px, 40vh);
+  margin: 8px 0 0;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-timeline__event-payload > pre:focus-visible {
+  outline: 2px solid var(--dsh-focus);
+  outline-offset: -2px;
+}
+
+.dsh-app[data-conversation-layout='focused'] :is(.dsh-interaction__actions, .dsh-session-dialog__actions) {
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dsh-app[data-conversation-layout='focused'] :is(.dsh-stats-details, .dsh-timeline__turn-usage) {
+  border: 0;
+  background: transparent;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+}
+
+/* Job identity remains readable independently of progress and row actions. */
+.dsh-app[data-conversation-layout='focused'] .dsh-jobs-popover__row {
+  display: grid;
+  grid-template-columns: 8px auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto;
+  gap: 6px 8px;
+  min-width: 0;
+  padding: 10px 8px;
+  border: 0;
+  background: transparent;
+}
+.dsh-app[data-conversation-layout='focused'] .dsh-jobs-popover__row > .dsh-jobs-popover__dot {
+  grid-area: 1 / 1;
+}
+.dsh-app[data-conversation-layout='focused'] .dsh-jobs-popover__kind {
+  grid-area: 1 / 2;
+}
+.dsh-app[data-conversation-layout='focused'] .dsh-jobs-popover__label {
+  grid-area: 1 / 3;
+  color: var(--dsh-text);
+}
+.dsh-app[data-conversation-layout='focused'] .dsh-jobs-popover__duration {
+  grid-area: 1 / 4;
+}
+.dsh-app[data-conversation-layout='focused'] .dsh-jobs-popover__status {
+  grid-area: 2 / 2 / 3 / -1;
+  max-width: none;
+}
+.dsh-app[data-conversation-layout='focused'] .dsh-jobs-popover__actions {
+  grid-area: 3 / 2 / 4 / -1;
+  flex-wrap: wrap;
+}
+.dsh-app[data-conversation-layout='focused'] .dsh-jobs-popover__actions button {
+  min-height: 28px;
+  white-space: nowrap;
+}
+.dsh-app[data-conversation-layout='focused'] .dsh-jobs-popover__row + .dsh-jobs-popover__row {
+  border-top: 1px solid var(--dsh-border-color);
+}
+.dsh-jobs-popover__error {
+  padding: 8px;
+  color: var(--dsh-danger);
+  overflow-wrap: anywhere;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  :is(.dsh-trajectory-inspector, .dsh-session-inspector, .dsh-lightbox) {
+  border-radius: 12px;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-session-inspector__rows > li {
+  min-height: 32px;
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-message-actions {
+  min-height: 28px;
+  gap: 4px;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-message-actions__button {
+  border-radius: 8px;
+  color: var(--dsh-muted);
+}
+
+/* Keep diff meaning in the prefix and fill while body text stays readable in
+ * both host palettes, including low-contrast red/green theme accents. */
+.dsh-app[data-conversation-layout='focused']
+  :is(.dsh-tool-diff-preview__line--add, .dsh-tool-diff-preview__line--del, .dsh-tool-row__diff-line)
+  > span:last-child {
+  color: var(--dsh-text);
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-scroll-to-latest {
+  inset-inline-start: auto;
+  inset-inline-end: max(16px, calc((100% - var(--dsh-timeline-content-max-width)) / 2));
+  width: 40px;
+  height: 40px;
+  min-height: 40px;
+  justify-content: center;
+  padding: 8px;
+  transform: none;
+  border: var(--dsh-border);
+  border-radius: 50%;
+  background: var(--dsh-surface-soft);
+  color: var(--dsh-text);
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-scroll-to-latest:is(:hover, :focus-visible) {
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-scroll-to-latest__content > span {
+  display: none;
+}
+
+@media (forced-colors: active) {
+  .dsh-app[data-conversation-layout='focused']
+    :is(
+      .dsh-interaction,
+      .dsh-goal-strip,
+      .dsh-submitted-plan,
+      .dsh-queue,
+      .dsh-timeline__notice,
+      .dsh-timeline__turn-terminal
+    ) {
+    border: 1px solid CanvasText;
+  }
+}

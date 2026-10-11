@@ -1,0 +1,80 @@
+.dsh-focused-dialog-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+  display: grid;
+  place-items: center;
+  padding: 12px;
+  background: rgb(0 0 0 / 30%);
+  font-family: var(--vscode-font-family, sans-serif);
+}
+.dsh-focused-dialog-layer > :is(form, section) {
+  box-sizing: border-box;
+  width: min(520px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+  margin: 0;
+  padding: 20px;
+  overflow: auto;
+  border: 1px solid var(--dsh-border-color);
+  border-radius: 12px;
+  color: var(--dsh-text);
+  background: var(--dsh-widget-bg);
+  box-shadow: var(--dsh-shadow);
+  font-size: var(--dsh-font-size-xs);
+  scrollbar-width: thin;
+}
+.dsh-focused-dialog-layer :is(input:not([type='checkbox']), textarea) {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+}
+.dsh-focused-dialog-layer .dsh-prompt-templates-popover__variable-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 6px 12px;
+}
+.dsh-focused-dialog-layer .dsh-prompt-templates-popover__variable-options input {
+  flex: none;
+  width: 16px;
+  min-height: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+}
+.dsh-focused-dialog-layer .dsh-prompt-templates-popover__variable-options code {
+  white-space: nowrap;
+}
+.dsh-focused-dialog-layer textarea {
+  max-height: 30vh;
+  resize: vertical;
+}
+.dsh-focused-dialog-layer
+  :is(.dsh-checkpoints-popover__dialog-actions, .dsh-prompt-templates-popover__dialog-actions) {
+  position: sticky;
+  bottom: -20px;
+  margin: 0 -20px -20px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--dsh-border-color);
+  background: var(--dsh-widget-bg);
+}
+.dsh-focused-dialog-layer .dsh-checkpoints-popover__preview-list > li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+}
+.dsh-focused-dialog-layer .dsh-checkpoints-popover__preview-list code {
+  white-space: nowrap;
+}
+.dsh-focused-dialog-layer .dsh-button--danger {
+  color: var(--dsh-danger);
+  background: transparent;
+}
+.dsh-focused-dialog-layer .dsh-button--danger:hover:not(:disabled),
+.dsh-focused-dialog-layer .dsh-button--danger:focus-visible {
+  color: var(--dsh-danger);
+  background: color-mix(in srgb, var(--dsh-danger) 10%, var(--dsh-widget-bg));
+}
+.dsh-feature-dialog-error {
+  color: var(--dsh-danger);
+  overflow-wrap: anywhere;
+}

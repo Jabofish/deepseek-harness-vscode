@@ -36,76 +36,45 @@ import {
 } from '@dsh-vscode/dsh-adapter'
 import type { createAdapterOptions } from './adapter-options.js'
 
+/** Exact versions take precedence in this order; registration has one source of truth. */
+const VERSION_ADAPTER_CONSTRUCTORS = [
+  Alpha212VersionAdapter,
+  Alpha211VersionAdapter,
+  Rc202VersionAdapter,
+  Rc201VersionAdapter,
+  Rc172VersionAdapter,
+  Rc171VersionAdapter,
+  Alpha172VersionAdapter,
+  Alpha171VersionAdapter,
+  Alpha162VersionAdapter,
+  Alpha161VersionAdapter,
+  Rc153VersionAdapter,
+  Rc152VersionAdapter,
+  Rc151VersionAdapter,
+  Alpha152VersionAdapter,
+  Alpha151VersionAdapter,
+  Alpha132VersionAdapter,
+  Alpha13VersionAdapter,
+  Rc13VersionAdapter,
+  Alpha5VersionAdapter,
+  Alpha4VersionAdapter,
+  Alpha3VersionAdapter,
+  Alpha2VersionAdapter,
+  Alpha1VersionAdapter,
+  Rc12VersionAdapter,
+  Rc11VersionAdapter,
+  Rc8VersionAdapter,
+  Rc7VersionAdapter,
+  Rc6VersionAdapter,
+  Rc03VersionAdapter,
+  Rc02VersionAdapter,
+  LegacyRc5VersionAdapter,
+  LegacyRc2VersionAdapter,
+  LegacyRc1VersionAdapter,
+] as const satisfies readonly (new (options: ReturnType<typeof createAdapterOptions>) => DshVersionAdapter)[]
+
 export function createVersionAdapters(
   adapterOptions: ReturnType<typeof createAdapterOptions>,
 ): readonly DshVersionAdapter[] {
-  const alpha2Adapter = new Alpha2VersionAdapter(adapterOptions)
-  const alpha132Adapter = new Alpha132VersionAdapter(adapterOptions)
-  const alpha151Adapter = new Alpha151VersionAdapter(adapterOptions)
-  const alpha152Adapter = new Alpha152VersionAdapter(adapterOptions)
-  const rc151Adapter = new Rc151VersionAdapter(adapterOptions)
-  const rc152Adapter = new Rc152VersionAdapter(adapterOptions)
-  const alpha161Adapter = new Alpha161VersionAdapter(adapterOptions)
-  const alpha162Adapter = new Alpha162VersionAdapter(adapterOptions)
-  const alpha171Adapter = new Alpha171VersionAdapter(adapterOptions)
-  const alpha172Adapter = new Alpha172VersionAdapter(adapterOptions)
-  const rc153Adapter = new Rc153VersionAdapter(adapterOptions)
-  const rc171Adapter = new Rc171VersionAdapter(adapterOptions)
-  const rc172Adapter = new Rc172VersionAdapter(adapterOptions)
-  const rc201Adapter = new Rc201VersionAdapter(adapterOptions)
-  const rc202Adapter = new Rc202VersionAdapter(adapterOptions)
-  const alpha211Adapter = new Alpha211VersionAdapter(adapterOptions)
-  const alpha212Adapter = new Alpha212VersionAdapter(adapterOptions)
-  const alpha13Adapter = new Alpha13VersionAdapter(adapterOptions)
-  const rc13Adapter = new Rc13VersionAdapter(adapterOptions)
-  const alpha3Adapter = new Alpha3VersionAdapter(adapterOptions)
-  const alpha5Adapter = new Alpha5VersionAdapter(adapterOptions)
-  const alpha4Adapter = new Alpha4VersionAdapter(adapterOptions)
-  const alpha1Adapter = new Alpha1VersionAdapter(adapterOptions)
-  const rc12Adapter = new Rc12VersionAdapter(adapterOptions)
-  const rc11Adapter = new Rc11VersionAdapter(adapterOptions)
-  const rc8Adapter = new Rc8VersionAdapter(adapterOptions)
-  const rc7Adapter = new Rc7VersionAdapter(adapterOptions)
-  const rc6Adapter = new Rc6VersionAdapter(adapterOptions)
-  const rc03Adapter = new Rc03VersionAdapter(adapterOptions)
-  const rc02Adapter = new Rc02VersionAdapter(adapterOptions)
-  const legacyRc5Adapter = new LegacyRc5VersionAdapter(adapterOptions)
-  const legacyRc2Adapter = new LegacyRc2VersionAdapter(adapterOptions)
-  const legacyRc1Adapter = new LegacyRc1VersionAdapter(adapterOptions)
-  const adapters = [
-    alpha212Adapter,
-    alpha211Adapter,
-    rc202Adapter,
-    rc201Adapter,
-    rc172Adapter,
-    rc171Adapter,
-    alpha172Adapter,
-    alpha171Adapter,
-    alpha162Adapter,
-    alpha161Adapter,
-    rc153Adapter,
-    rc152Adapter,
-    rc151Adapter,
-    alpha152Adapter,
-    alpha151Adapter,
-    alpha132Adapter,
-    alpha13Adapter,
-    rc13Adapter,
-    alpha5Adapter,
-    alpha4Adapter,
-    alpha3Adapter,
-    alpha2Adapter,
-    alpha1Adapter,
-    rc12Adapter,
-    rc11Adapter,
-    rc8Adapter,
-    rc7Adapter,
-    rc6Adapter,
-    rc03Adapter,
-    rc02Adapter,
-    legacyRc5Adapter,
-    legacyRc2Adapter,
-    legacyRc1Adapter,
-  ] as const
-  return adapters
+  return VERSION_ADAPTER_CONSTRUCTORS.map((Adapter) => new Adapter(adapterOptions))
 }

@@ -105,6 +105,9 @@ export function SessionRow({
         </span>
         <span className="dsh-session-item__copy">
           <strong title={title}>{title}</strong>
+          {session.formatStatus === 'migration-required' ? (
+            <span>{t('sessions.migrationRequired')}</span>
+          ) : null}
           {workspaceName === undefined ? null : (
             <span className="dsh-session-item__workspace" title={workspaceName}>
               {workspaceName}

@@ -141,7 +141,7 @@ export class Rc6SessionRepository implements SessionRepository {
     }
   }
 
-  private mapSessionSummary(value: unknown): SessionSummary {
+  protected mapSessionSummary(value: unknown): SessionSummary {
     const summary = rc6Mapper.sessionSummary(value)
     if (summary.projection === undefined || this.mapProjectionValues === undefined) return summary
     return {

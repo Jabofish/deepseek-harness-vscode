@@ -28,8 +28,8 @@
 | `0.1.7-rc.1`, `0.1.7-rc.2`                                                          | `rc171`, `rc172`                                | V4 与 Job Controller；rc.2 的 preset registry、Schedule 等只在其精确入口启用；rc.2 是源码适配，不能宣称已完成真实运行                                             |
 | `0.2.0-rc.1`                                                                        | `rc201`                                         | 复用已核对的 rc.2 Gateway/Session V4 wire；保留失败工具结果恢复与 Schedule 缺失能力映射；仅精确身份，不作为未知版本回退                                           |
 | `0.2.0-rc.2`                                                                        | `rc202`                                         | 保留 rc.1 的精确契约，新增 timed `userQuestions/answer` 与 `userQuestions/attachWait`、`userQuestions` 会话投影及结构化迟到答复；非幂等 answer 不重试；仅精确身份 |
-| `0.2.1-alpha.1`                                                                     | `alpha211`                                      | Session V4 与 timed question wire 沿用已核对的 rc.2；新增 Schedule 子代理拒绝、账号失败归一与插件实际安装版本；默认 Schedule 服务不再依赖可选 bundle；仅精确身份  |
-| `0.2.1-alpha.2`                                                                     | `alpha212`                                      | `alpha212` 为 `alpha211` 的纯子类，沿用 Session V4 / projection-v2 / pinned-v2 控制线；仅版本身份不同，仅精确身份，不作为未知版本回退                             |
+| `0.2.1-alpha.1`                                                                     | `alpha211`                                      | 独立 V4 codec 与 catalog v0/v1、projection 子代理目录；保留 timed question，新增 Schedule 子代理拒绝、账号失败归一与插件实际安装版本；仅精确身份                  |
+| `0.2.1-alpha.2`                                                                     | `alpha212`                                      | 独立 V4 格式库与工作目录事件、external 子代理目录、迁移状态和禁止隐式迁移的 fork；官方按需插件目录与精确安装；仅精确身份                                          |
 
 `0.1.7-rc.2` 的固定源码是 [tag `dsh-v0.1.7-rc.2`](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.1.7-rc.2)，提交 `477b4f420553e8a52c2fbccc464d7561b239c443`。其他新增版本也必须在 fixture 注明 tag、commit、文件和类型；版本身份、schema、错误词汇、启动参数与能力声明一起核对。
 
@@ -39,7 +39,6 @@
 
 `0.2.1-alpha.1` 的固定来源是 [tag `dsh-v0.2.1-alpha.1`](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.2.1-alpha.1)，提交 `5badb15009ae1756c3afe0ae0cef1faafc290ccc`。`alpha211` 独立继承 `rc202`，仅接受完整精确身份，不作为未知版本回退。核对目标提交的 Connection/Gateway、typed Remote、Session V4/history/control、Workspace、Job、userQuestions 和工具目录后，既有请求/事件形状保持可复用；Session list 的时间片和上传 receipt 的 Session 实例隔离是上游内部实现变化。web CLI 新增 `--public-url`，受管启动仍使用已验证的 loopback/port/`--no-open` 参数。
 
-`0.2.1-alpha.2` 的固定来源是 [tag `dsh-v0.2.1-alpha.2`](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.2.1-alpha.2)，提交 `6851e496285b2c9670066fdd142e7e46da586649`。`alpha212` 是 `alpha211` 的纯子类，沿用 Session V4 / projection-v2 / pinned-v2 控制线与 typed Remote；alpha.1→alpha.2 的上游增量主要落在会话兼容策略与标题、typert 远程方法调用和浏览器目录选择，逐字段核对仍未完成，扩展入口保持对 alpha211 已验证表面的复用并维持 `PARTIAL`。
 目标版本的增量保留在 `versions/alpha211/`：
 
 - [Schedule 类型与 Remote](https://github.com/deepseek-ai/deepseek-harness/blob/5badb15009ae1756c3afe0ae0cef1faafc290ccc/packages/schedule/schedule/src/types.ts)新增非变更 `subagent_session` 拒绝；仅 alpha211 的 update mapper 接纳并投影为 Domain/严格协议/本地化 UI 错误，旧入口仍拒绝未知形状。web profile 直接挂载服务，`standard`、`cordis`、`ptc` Preset 挂载 `tool-schedule`；旧可选 Schedule bundle 已删除。工具创建仍由 DSH 执行，扩展不调用未声明的 create Remote。
@@ -55,6 +54,17 @@
 这些入口遵循 VS Code 宿主安全边界，不复制上游桌面布局或原始诊断对象。mods 与 Inspector 是可选插件，不是标准后端必需服务。各项适配及现场缺口见 [alpha211 适配审计](../reviews/dsh-alpha211-adaptation-audit.md)。
 
 脱敏增量 fixture 与精确探测/错误/取消/释放测试见 `alpha211-*-contract.spec.ts`、`alpha211-mods-band.spec.ts` 和 `alpha211-inspector.spec.ts`；`tests/alpha211-feature-projection.spec.ts` 与 Extension composition 规格覆盖 Adapter→Application→Host→严格协议，Webview 规格覆盖最终动作、安装恢复、解析与长列表。隔离真实包 smoke 与 `tests/live-dsh/alpha211-surfaces.spec.ts` 已验证精确入口、Session/Workspace、timed question 的未知 call 与空 wait 路由、默认 Schedule/Plugin Manager 目录、账号空状态/watch、Creator roster 和未挂载可选服务。`alpha211-optional-surfaces.spec.ts` 在精确发布实验包的隔离 overlay 下验证实际 Inspector bootstrap/Worker、mods 读取/按钮执行/取消/过期拒绝及两个端口释放；测试专用 mod 不使用模型或工具。本机 VS Code managed E2E 已通过扩展 Host connect/reconnect；真实 timed 问答、委派提醒拒绝、插件安装恢复、OAuth、模型参数预览、Chrome 原生打开及新增 Webview 交互仍需独立现场证据，相关能力维持 `PARTIAL`。
+
+`0.2.1-alpha.2` 的固定来源是 [tag `dsh-v0.2.1-alpha.2`](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.2.1-alpha.2)，提交 `d743267388641bc76f17c45ce8b4c231aed1d32c`。`alpha212` 独立继承 `alpha211`；两者分别加载精确发布的 V4 codec，历史入口的格式库及依赖解析保持原值。完整快照恢复与逐条事件校验使用同一版本 profile，不把新事件登记为未知可忽略事件。
+
+- [工作目录](https://github.com/deepseek-ai/deepseek-harness/blob/d743267388641bc76f17c45ce8b4c231aed1d32c/packages/session/working-directory/src/index.ts)的必需 `working-directory/change` 保留持久 sequence 并归一为 Host 投影；Session header 的原始项目目录继续用于工作区归属。当前目录不跨 Webview，工具结果中的规范路径经 Host 归属校验后才投影为相对路径；PTC 子调用保留同样的结构化 meta。失败结果不提供导航 authority，目录变化清除旧参数预览的路径基准。
+- 两个新 alpha 入口均从 `session/projections` 读取子代理目录，不调用上游未声明的 `subagents/list`。alpha211 接受 `{asOfSeq, values}`；alpha212 只接受 `kind: sequenced` 的精确基线，`migration-required` 的无序号提示不建立子会话路由。null 表示不可读取。子目录读取有并发上限，分支失败保留诊断；原子提交目录及刷新 generation 守卫沿用共享仓储。
+- alpha211 接纳 catalog v0/v1；alpha212 增加 [catalog v2](https://github.com/deepseek-ai/deepseek-harness/blob/d743267388641bc76f17c45ce8b4c231aed1d32c/packages/subagent/subagent/src/catalog.ts) 的 `external` 执行。它只用于目录展示，没有本地 child Session，不进入地址表或历史/Follow-up/Interrupt 路由。未知模式保留诊断。
+- [Session Controller](https://github.com/deepseek-ai/deepseek-harness/blob/d743267388641bc76f17c45ce8b4c231aed1d32c/packages/api/session-controller/src/types.ts)的 `formatStatus` 经 Domain/Host 到列表，成功解码 V4 历史后显示 current。alpha212 `session/fork` 使用真实 `{request}` 参数并固定 `allowMigration: false`；需要迁移时提示先打开源会话，拒绝在后台分叉中启动迁移。
+- [Plugin Manager](https://github.com/deepseek-ai/deepseek-harness/blob/d743267388641bc76f17c45ce8b4c231aed1d32c/packages/boot/plugin-manager/src/types.ts)的 `official`、`availability` 和安装目标由 alpha212 严格解析。Application 移除 Host 私有 `installTarget.spec`，仅投影可安装状态和目标版本；Webview 发出包名，Host 重新查询实时目录并走现有检查、确认、取消与同 ID 恢复流程，安装使用 `saveExact: true`。已有文件的包使用启停入口，缺少文件的包显示安装入口。实际安装 receipt 的版本继续沿用 alpha211 校验。
+- Connection/Gateway、timed userQuestions、Account、Workspace、Job、Schedule、动态命令/Settings，以及可选 mods/Inspector 保留经过固定源码核对的能力入口。上游移除 tool mode `both` 不产生本扩展静态选项；运行目录、Preset 与 Settings 继续由上游目录决定。受管启动仍限定验证过的 loopback HTTP 与所有权。
+
+这些入口不作为未知版本回退；真实模型运行、外部执行和新增 VS Code 交互缺少独立现场证据时，能力保持 `PARTIAL`。
 
 ### 未知版本
 

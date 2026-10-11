@@ -1,4 +1,9 @@
 import type { SessionHistoryEvent, SessionSequenceRange } from '@dsh-vscode/domain'
+import { createHistoryCompactionIndex } from './history-compaction-index.js'
+
+// Keys are immutable snapshots/events, so old sessions are not retained by the cache.
+const orderedHistories = new WeakSet<readonly SessionHistoryEvent[]>()
+const eventIdentities = new WeakMap<SessionHistoryEvent['event'], string>()
 
 export function mergeHistory(
   current: readonly SessionHistoryEvent[],
@@ -7,7 +12,8 @@ export function mergeHistory(
   if (additions.length === 0) return current
   let previousSequence = current[current.length - 1]?.sequence
   let appendOnly = true
-  for (let index = 1; index < current.length; index += 1) {
+  const knownOrdered = orderedHistories.has(current)
+  for (let index = 1; !knownOrdered && index < current.length; index += 1) {
     const previous = current[index - 1]?.sequence
     const currentSequence = current[index]?.sequence
     if (previous !== undefined && currentSequence !== undefined && currentSequence < previous) {
@@ -26,7 +32,11 @@ export function mergeHistory(
   // Live stream frames are monotonic in the durable DSH sequence space. Keep
   // the common path linear in the new entries; older-page merges and replay
   // races still use the deduplicating sorted path below.
-  if (appendOnly) return current.concat(additions)
+  if (appendOnly) {
+    const appended = current.concat(additions)
+    orderedHistories.add(appended)
+    return appended
+  }
 
   // A durable sequence identifies the upstream log position, not a whole
   // history batch. Projection records intentionally share one sequence, and
@@ -42,14 +52,26 @@ export function mergeHistory(
     else byIdentity.set(identity, mergeHistoryCoverage(existing, entry))
   }
   const unique = [...byIdentity.values()]
-  return unique
-    .filter((entry) => !isDeltaCoveredByCompactedEntry(entry, unique))
+  const coveredByCompaction = createHistoryCompactionIndex(unique)
+  const merged = unique
+    .filter((entry) => !coveredByCompaction(entry))
     .sort((left, right) => left.sequence - right.sequence)
+  const result =
+    merged.length === current.length && merged.every((entry, index) => entry === current[index])
+      ? current
+      : merged
+  orderedHistories.add(result)
+  return result
 }
 
 function historyEntryIdentity(entry: SessionHistoryEvent): string {
   try {
-    return `${entry.sequence}:${JSON.stringify(entry.event)}`
+    let identity = eventIdentities.get(entry.event)
+    if (identity === undefined) {
+      identity = JSON.stringify(entry.event)
+      eventIdentities.set(entry.event, identity)
+    }
+    return `${entry.sequence}:${identity}`
   } catch {
     // Parsed DSH payloads are acyclic, but retain a deterministic fallback if
     // a future adapter event carries a non-serializable extension value.
@@ -61,7 +83,11 @@ function mergeHistoryCoverage(left: SessionHistoryEvent, right: SessionHistoryEv
   const coveredSequences = [
     ...new Set([...(left.coveredSequences ?? []), ...(right.coveredSequences ?? [])]),
   ].sort((first, second) => first - second)
-  return coveredSequences.length === 0 ? left : { ...left, coveredSequences }
+  return coveredSequences.length === 0 ||
+    (coveredSequences.length === left.coveredSequences?.length &&
+      coveredSequences.every((sequence, index) => sequence === left.coveredSequences?.[index]))
+    ? left
+    : { ...left, coveredSequences }
 }
 
 export function oldestHistorySequence(history: readonly SessionHistoryEvent[]): number | undefined {
@@ -113,28 +139,6 @@ export function sequenceRangesCover(
 ): boolean {
   if (fromSequence > toSequence) return true
   return ranges.some((range) => range.from <= fromSequence && range.to >= toSequence)
-}
-
-function isDeltaCoveredByCompactedEntry(
-  entry: SessionHistoryEvent,
-  candidates: readonly SessionHistoryEvent[],
-): boolean {
-  if (entry.coveredSequences !== undefined || !isDeltaHistoryEvent(entry.event)) return false
-  return candidates.some(
-    (candidate) =>
-      candidate.coveredSequences !== undefined &&
-      candidate.coveredSequences.length > 1 &&
-      isDeltaHistoryEvent(candidate.event) &&
-      candidate.event.type === entry.event.type &&
-      candidate.event.messageId === entry.event.messageId &&
-      candidate.coveredSequences.includes(entry.sequence),
-  )
-}
-
-function isDeltaHistoryEvent(
-  event: SessionHistoryEvent['event'],
-): event is Extract<SessionHistoryEvent['event'], { readonly type: 'message.delta' | 'reasoning.delta' }> {
-  return event.type === 'message.delta' || event.type === 'reasoning.delta'
 }
 
 export function newestHistorySequence(history: readonly SessionHistoryEvent[]): number | undefined {

@@ -12,6 +12,7 @@ const EXTENSION_ID = 'Direwolf.deepseek-harness-client'
 export async function run() {
   const extension = vscode.extensions.getExtension(EXTENSION_ID)
   assert.ok(extension, 'the development extension must be installed')
+  assert.equal(extension.isActive, false, 'DSH must stay inactive until a view or command is requested')
   await extension.activate()
   const commands = await vscode.commands.getCommands(true)
   for (const command of ['dsh.connect', 'dsh.openInSecondarySidebar', 'dsh.openWebUi'])

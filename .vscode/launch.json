@@ -10,7 +10,7 @@
         "${workspaceFolder}/.test-workspace",
         "--disable-extensions"
       ],
-      "outFiles": ["${workspaceFolder}/apps/extension/dist/**/*.js"],
+      "outFiles": ["${workspaceFolder}/apps/extension/dist/**/*.cjs"],
       "preLaunchTask": "build"
     }
   ]

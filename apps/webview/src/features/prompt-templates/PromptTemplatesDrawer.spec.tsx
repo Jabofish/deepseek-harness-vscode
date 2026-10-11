@@ -6,6 +6,7 @@ import type { PromptTemplate, PromptTemplateInsertion, PromptTemplateSummary } f
 
 import { I18nProvider } from '../../i18n.js'
 import { PromptTemplatesDrawer } from './PromptTemplatesDrawer.js'
+import { ConversationLayoutProvider } from '../../app/ConversationLayoutProvider.js'
 
 const summary: PromptTemplateSummary = {
   templateId: 'dsh-template-1',
@@ -24,6 +25,7 @@ const template: PromptTemplate = {
 
 function renderDrawer(
   overrides: Partial<React.ComponentProps<typeof PromptTemplatesDrawer>> = {},
+  focused = false,
 ): React.ComponentProps<typeof PromptTemplatesDrawer> {
   const props: React.ComponentProps<typeof PromptTemplatesDrawer> = {
     templates: [summary],
@@ -43,7 +45,13 @@ function renderDrawer(
   }
   render(
     <I18nProvider>
-      <PromptTemplatesDrawer {...props} />
+      {focused ? (
+        <ConversationLayoutProvider>
+          <PromptTemplatesDrawer {...props} />
+        </ConversationLayoutProvider>
+      ) : (
+        <PromptTemplatesDrawer {...props} />
+      )}
     </I18nProvider>,
   )
   fireEvent.click(screen.getByRole('button', { name: `${props.templates.length} templates` }))
@@ -52,6 +60,24 @@ function renderDrawer(
 
 describe('PromptTemplatesDrawer', () => {
   afterEach(() => cleanup())
+
+  it('keeps focused editor failures inside the modal and preserves inputs for retry', async () => {
+    renderDrawer({ onCreate: vi.fn().mockRejectedValue(new Error('retry save')) }, true)
+    const create = screen.getByRole('button', { name: 'Create' })
+    fireEvent.click(create)
+    const editor = screen.getByRole('dialog', { name: 'Create prompt template' })
+    expect(editor.closest('.dsh-prompt-templates-popover__menu')).toBeNull()
+    fireEvent.change(within(editor).getByLabelText('Title'), { target: { value: 'Keep title' } })
+    fireEvent.change(within(editor).getByLabelText('Template text'), { target: { value: 'Keep body' } })
+    fireEvent.submit(editor)
+    await waitFor(() => expect(within(editor).getByRole('alert').textContent).toBe('retry save'))
+    expect(within(editor).getByRole('alert').closest('[inert]')).toBeNull()
+    expect(within(editor).getByLabelText<HTMLInputElement>('Title').value).toBe('Keep title')
+    fireEvent.keyDown(editor, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Create prompt template' })).toBeNull()
+    expect(document.activeElement).toBe(create)
+    expect(screen.getByRole('dialog', { name: 'Prompt template library' })).toBeDefined()
+  })
 
   it('previews safely and requires an explicit decision for missing variables', async () => {
     const onApply = vi.fn()

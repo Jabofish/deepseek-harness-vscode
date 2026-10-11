@@ -1,0 +1,204 @@
+/* DSH-style reading column; classic selectors and their cascade stay intact. */
+.dsh-conversation-layout {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-2) 0;
+  font-size: var(--dsh-font-size-sm);
+}
+
+.dsh-conversation-layout select {
+  min-height: var(--dsh-control-height);
+  max-width: 100%;
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  color: var(--dsh-text);
+  background: var(--dsh-input-bg);
+  border: var(--dsh-border);
+  border-radius: var(--dsh-radius-sm);
+}
+
+.dsh-conversation-layout select:focus-visible {
+  outline: 2px solid var(--dsh-focus-ring);
+  outline-offset: 2px;
+}
+
+.dsh-app[data-conversation-layout='focused'],
+.dsh-timeline[data-conversation-layout='focused'] {
+  --dsh-timeline-content-max-width: 748px;
+  --dsh-message-content-max-width: 100%;
+}
+
+.dsh-timeline[data-conversation-layout='focused'] {
+  padding: var(--dsh-space-4) clamp(8px, 2.5vw, 24px) var(--dsh-space-4);
+}
+
+.dsh-timeline[data-conversation-layout='focused'] .dsh-timeline__row {
+  padding-block: var(--dsh-space-2);
+}
+
+.dsh-timeline[data-conversation-layout='focused'] .dsh-timeline__message-stack {
+  width: 100%;
+  gap: var(--dsh-space-2);
+}
+
+.dsh-timeline[data-conversation-layout='focused'] .dsh-timeline__card--assistant {
+  width: 100%;
+  padding: var(--dsh-space-2) 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  gap: var(--dsh-space-3);
+  overflow: visible;
+}
+
+.dsh-timeline[data-conversation-layout='focused']
+  .dsh-timeline__card--assistant
+  > .dsh-timeline__card-header {
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+  font-weight: 400;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.dsh-timeline[data-conversation-layout='focused']
+  .dsh-timeline__card--assistant
+  > .dsh-timeline__card-header:not(:has(.dsh-timeline__card-meta, .dsh-timeline__assistant-metrics)) {
+  display: none;
+}
+
+.dsh-timeline[data-conversation-layout='focused']
+  .dsh-timeline__card--assistant
+  > .dsh-timeline__card-header
+  strong {
+  color: inherit;
+  font-size: inherit;
+  font-weight: 400;
+}
+
+.dsh-timeline[data-conversation-layout='focused'] .dsh-timeline__card--user {
+  max-width: min(82%, 525px);
+  padding: 10px 16px;
+  border: 0;
+  border-radius: var(--dsh-radius-lg);
+  background: var(--dsh-surface-soft);
+}
+
+.dsh-timeline[data-conversation-layout='focused'] .dsh-markdown {
+  line-height: 1.75;
+}
+
+.dsh-focused-turn {
+  min-width: 0;
+  width: 100%;
+}
+
+.dsh-focused-turn__summary,
+.dsh-focused-tools__summary {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  min-height: var(--dsh-control-height);
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-1) 0;
+  border: 0;
+  border-radius: 0;
+  color: var(--dsh-muted);
+  background: transparent;
+  font-size: var(--dsh-font-size-sm);
+  line-height: 1.6;
+  text-align: start;
+}
+
+.dsh-focused-turn__summary {
+  margin-bottom: var(--dsh-space-2);
+  padding-bottom: var(--dsh-space-2);
+  border-bottom: var(--dsh-border);
+}
+
+.dsh-focused-turn__summary:disabled,
+.dsh-focused-tools__summary:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.dsh-focused-turn__summary:hover:not(:disabled),
+.dsh-focused-tools__summary:hover:not(:disabled) {
+  color: var(--dsh-text);
+  background: transparent;
+}
+
+.dsh-focused-turn__summary > .dsh-icon,
+.dsh-focused-tools__summary > .dsh-icon,
+.dsh-focused-tools__failure > .dsh-icon {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+}
+
+.dsh-focused-turn__count {
+  margin-inline-start: auto;
+  font-size: var(--dsh-font-size-xs);
+  white-space: nowrap;
+}
+
+.dsh-focused-tools__summary > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-focused-turn__process > div + div,
+.dsh-focused-turn__answer {
+  margin-top: var(--dsh-space-3);
+}
+
+.dsh-focused-tools__body {
+  padding-block: var(--dsh-space-2);
+}
+
+.dsh-focused-tools__failure {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: var(--dsh-space-1);
+  margin: var(--dsh-space-1) 0;
+  color: var(--dsh-danger);
+  font-size: var(--dsh-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.dsh-focused-tools__pages {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--dsh-space-2);
+  padding-top: var(--dsh-space-2);
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+}
+
+.dsh-focused-tools__pages button {
+  min-height: var(--dsh-control-height);
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-compose-area {
+  padding-inline: clamp(4px, 1.5vw, 12px);
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-unified-composer {
+  padding: var(--dsh-space-3);
+  border-radius: var(--dsh-radius-xl, var(--dsh-radius-lg));
+}
+
+@media (forced-colors: active) {
+  .dsh-timeline[data-conversation-layout='focused'] .dsh-timeline__card--user {
+    border: 1px solid CanvasText;
+  }
+}

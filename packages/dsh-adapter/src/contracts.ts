@@ -58,7 +58,6 @@ export const SUPPORTED_DSH_VERSIONS = [
   '0.2.0-rc.2',
   // 0.2.1-alpha.1 retains Session V4 and adds version-local failure/result fields.
   '0.2.1-alpha.1',
-  // 0.2.1-alpha.2 keeps the alpha.1 Session V4 / projection-v2 control wire.
   '0.2.1-alpha.2',
 ] as const
 

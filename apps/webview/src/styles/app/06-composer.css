@@ -1,0 +1,786 @@
+.dsh-composer {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  gap: var(--dsh-space-3);
+}
+
+.dsh-composer__input-shell {
+  position: relative;
+  min-width: 0;
+  border: var(--dsh-border);
+  border-radius: var(--dsh-radius-md);
+  background: var(--dsh-surface-raised);
+}
+
+/* The input is inert because no adapter serves the session's current model;
+   the text states the reason, and the picker above stays the way out. */
+.dsh-composer__model-block {
+  margin: 0;
+  padding: var(--dsh-space-2) var(--dsh-space-3);
+  border: 1px solid var(--dsh-warning-border);
+  border-radius: var(--dsh-radius-sm);
+  background: var(--dsh-warning-bg);
+  color: var(--dsh-warning);
+  font-size: var(--dsh-font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+.dsh-composer__textarea {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 4.5rem;
+  max-height: 16rem;
+  resize: vertical;
+  border: 0;
+  color: var(--dsh-text);
+  background: transparent;
+  line-height: 1.5;
+}
+
+.dsh-composer__textarea::placeholder {
+  color: var(--dsh-muted);
+}
+
+.dsh-composer__toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto;
+  align-items: center;
+  min-width: 0;
+  gap: var(--dsh-space-3);
+}
+
+.dsh-composer__toolbar-start,
+.dsh-composer__toolbar-controls,
+.dsh-session-controls__selectors,
+.dsh-session-controls__metrics {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+}
+
+.dsh-composer__toolbar-start {
+  flex-wrap: wrap;
+}
+
+.dsh-composer__toolbar-controls {
+  justify-content: flex-end;
+  flex: 1 1 auto;
+}
+
+.dsh-composer__toolbar-controls > .dsh-session-controls {
+  justify-content: flex-end;
+}
+
+.dsh-composer__hint {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-2xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-composer__open-files {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.dsh-composer__attachment-rail {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+}
+
+.dsh-composer__attachments {
+  display: flex;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+  margin: 0;
+  padding: 0;
+  overflow: auto hidden;
+  list-style: none;
+  scrollbar-width: thin;
+}
+
+.dsh-composer__attachment {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  min-width: 10rem;
+  max-width: 18rem;
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-2);
+  border: var(--dsh-border);
+  border-radius: var(--dsh-radius-sm);
+  background: var(--dsh-surface-raised);
+}
+
+.dsh-composer__attachment-thumb,
+.dsh-composer__attachment-preview {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dsh-radius-sm);
+  color: var(--dsh-muted);
+  background: var(--dsh-surface-soft);
+}
+
+.dsh-composer__attachment-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+}
+
+.dsh-composer__attachment-name,
+.dsh-open-file-picker__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-drop-overlay {
+  position: absolute;
+  z-index: 30;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--dsh-space-2);
+  border: 2px dashed var(--dsh-info);
+  border-radius: var(--dsh-radius-md);
+  color: var(--dsh-info);
+  background: color-mix(in srgb, var(--dsh-info) 12%, var(--dsh-surface));
+}
+
+.dsh-drop-overlay--blocked {
+  color: var(--dsh-danger);
+  border-color: var(--dsh-danger);
+  background: var(--dsh-danger-bg);
+}
+
+.dsh-open-file-picker {
+  top: auto;
+  bottom: calc(100% + var(--dsh-space-2));
+  inset-inline-start: 0;
+  display: grid;
+  min-width: min(24rem, calc(100vw - 2rem));
+  max-width: min(32rem, calc(100vw - 2rem));
+  padding: 0;
+}
+
+.dsh-open-file-picker__header,
+.dsh-open-file-picker__list {
+  min-width: 0;
+}
+
+.dsh-open-file-picker__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-3);
+  border-bottom: var(--dsh-border);
+}
+
+.dsh-open-file-picker__list {
+  display: grid;
+  gap: var(--dsh-space-1);
+  margin: 0;
+  padding: var(--dsh-space-2);
+  list-style: none;
+}
+
+.dsh-open-file-picker__option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-2);
+  border-color: transparent;
+  color: var(--dsh-text);
+  background: transparent;
+  text-align: start;
+}
+
+.dsh-open-file-picker__option:hover:not(:disabled),
+.dsh-open-file-picker__option--remembered {
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-open-file-picker__status {
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+  white-space: nowrap;
+}
+
+.dsh-session-controls {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: var(--dsh-space-2);
+}
+
+.dsh-session-controls__selectors {
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+}
+
+.dsh-session-controls__metrics {
+  flex: 0 0 auto;
+}
+
+.dsh-session-controls__access,
+.dsh-session-controls__plan {
+  width: 2rem;
+  min-width: 2rem;
+  padding: var(--dsh-space-1);
+}
+
+.dsh-session-controls__risk {
+  z-index: 60;
+  display: grid;
+  width: min(var(--dsh-risk-width), calc(100vw - var(--dsh-space-5) - var(--dsh-space-5)));
+  max-width: calc(100vw - var(--dsh-space-5) - var(--dsh-space-5));
+  max-height: min(var(--dsh-risk-max-height), calc(100vh - var(--dsh-space-5) - var(--dsh-space-5)));
+  gap: var(--dsh-space-3);
+  padding: var(--dsh-space-4);
+  border: var(--dsh-border);
+  border-radius: var(--dsh-radius-md);
+  color: var(--dsh-text);
+  background: var(--dsh-widget-bg);
+  box-shadow: var(--dsh-shadow);
+}
+
+.dsh-session-controls__risk p {
+  margin: 0;
+}
+
+.dsh-session-controls__risk label {
+  display: flex;
+  align-items: center;
+  gap: var(--dsh-space-2);
+  color: var(--dsh-muted);
+}
+
+.dsh-session-controls__risk label input[type='checkbox'] {
+  flex: 0 0 auto;
+}
+
+.dsh-settings__risk label {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+}
+
+.dsh-settings__risk label input[type='checkbox'] {
+  flex: 0 0 auto;
+}
+
+.dsh-session-controls__risk-actions,
+.dsh-interaction__actions,
+.dsh-session-dialog__actions,
+.dsh-settings__risk-actions,
+.dsh-plugin-configuration__footer,
+.dsh-presets__dialog-actions,
+.dsh-checkpoints-popover__dialog-actions,
+.dsh-prompt-templates-popover__dialog-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--dsh-space-2);
+}
+
+.dsh-context-meter {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.dsh-context-meter__ring {
+  display: block;
+  flex: 0 0 1rem;
+  width: 1rem;
+  height: 1rem;
+  overflow: visible;
+}
+
+.dsh-context-meter__ring circle {
+  fill: none;
+  stroke-width: 2;
+}
+
+.dsh-context-meter__track {
+  stroke: var(--dsh-border-color);
+  opacity: 0.72;
+}
+
+.dsh-context-meter__value {
+  stroke: color-mix(in srgb, var(--dsh-info) 72%, var(--dsh-border-color));
+  stroke-linecap: round;
+  opacity: 0.82;
+  transform: rotate(-90deg);
+  transform-origin: 50% 50%;
+}
+
+/* The estimate exceeds the window: saturate the ring and tint the stated
+occupancy so the overflow is visible without opening the details. */
+.dsh-context-meter[data-overflow='true'] .dsh-context-meter__value {
+  stroke: var(--dsh-error-text);
+  opacity: 1;
+}
+
+.dsh-context-meter[data-overflow='true'] .dsh-context-meter__label {
+  color: var(--dsh-error-text);
+}
+
+.dsh-context-meter__overflow {
+  margin: 0;
+  color: var(--dsh-error-text);
+  font-size: var(--dsh-font-size-xs);
+}
+
+.dsh-context-meter__trigger {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  gap: var(--dsh-space-1);
+  padding: var(--dsh-space-1);
+  border: 0;
+  border-radius: var(--dsh-radius-sm);
+  color: var(--dsh-muted);
+  background: transparent;
+  font: inherit;
+  font-size: var(--dsh-font-size-xs);
+  line-height: 1.2;
+  text-align: start;
+  white-space: nowrap;
+}
+
+.dsh-context-meter__trigger:hover,
+.dsh-context-meter__trigger:focus-visible {
+  color: var(--dsh-text);
+  background: var(--dsh-surface-hover);
+  outline: none;
+}
+
+.dsh-context-meter__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-context-meter__label--compact {
+  display: none;
+}
+
+.dsh-context-meter__details {
+  top: calc(100% + var(--dsh-space-2));
+  inset-inline-end: 0;
+  display: grid;
+  gap: var(--dsh-space-2);
+  min-width: 16rem;
+}
+
+.dsh-context-meter__header,
+.dsh-context-meter__breakdown > div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--dsh-space-3);
+}
+
+.dsh-context-meter__bar {
+  width: 100%;
+  height: 0.5rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--dsh-surface-soft);
+}
+
+.dsh-context-meter__segment {
+  height: 100%;
+  float: inline-start;
+}
+
+/* One tone modifier colours both the bar segment and the breakdown swatch. */
+.dsh-context-meter__tone--system {
+  background: var(--dsh-info);
+}
+
+.dsh-context-meter__tone--tools {
+  background: var(--dsh-warning);
+}
+
+.dsh-context-meter__tone--messages {
+  background: var(--dsh-success);
+}
+
+.dsh-context-meter__breakdown dl {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--dsh-space-1) var(--dsh-space-3);
+  margin: 0;
+}
+
+.dsh-context-meter__breakdown dt,
+.dsh-context-meter__breakdown dd {
+  margin: 0;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+}
+
+.dsh-context-meter__breakdown dd {
+  color: var(--dsh-text);
+}
+
+.dsh-stats-line {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: var(--dsh-space-1);
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-2xs);
+  line-height: 1.35;
+}
+
+.dsh-interaction__header > div,
+.dsh-interaction__description,
+.dsh-interaction__risk,
+.dsh-question__prompt,
+.dsh-question__detail {
+  min-width: 0;
+}
+
+/* The header inherits `justify-content: space-between` from the shared
+ * bar/queue rule, which flung the eyebrow and title to the far edge of a wide
+ * card and left a gap between them and their icon. The text block is the only
+ * flexible child, so it takes the remaining width and reads from the icon. */
+.dsh-interaction__header > div {
+  flex: 1 1 auto;
+}
+
+.dsh-interaction__description,
+.dsh-question__prompt,
+.dsh-question__detail {
+  margin: var(--dsh-space-3) 0;
+}
+
+/* Each question is a single-column grid, which stretches the skip control into
+ * a full-width bar next to the auto-width actions row. Keep it the size of its
+ * label so the per-question and card-level actions read the same way. */
+.dsh-question__item .dsh-button {
+  justify-self: start;
+}
+
+.dsh-question__choices {
+  display: grid;
+  gap: var(--dsh-space-2);
+}
+
+.dsh-question__choice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-3);
+  border: var(--dsh-border);
+  border-radius: var(--dsh-radius-sm);
+  color: var(--dsh-text);
+  background: var(--dsh-surface-soft);
+  text-align: start;
+}
+
+.dsh-question__choice:hover {
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-question__choice-label,
+.dsh-question__choice-description {
+  min-width: 0;
+}
+
+.dsh-question__choice-description {
+  display: block;
+  margin-top: var(--dsh-space-1);
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+}
+
+.dsh-question__textarea {
+  width: 100%;
+  min-height: 5rem;
+  resize: vertical;
+}
+
+.dsh-runtime-connection {
+  display: grid;
+  gap: var(--dsh-space-3);
+  width: 100%;
+  max-width: 28rem;
+  min-width: 0;
+  padding: var(--dsh-space-5);
+  border: 1px solid color-mix(in srgb, var(--dsh-info) 28%, var(--dsh-border-color));
+  border-radius: var(--dsh-radius-lg);
+  background:
+    radial-gradient(
+      120% 100% at 50% 0%,
+      color-mix(in srgb, var(--dsh-info) 9%, transparent),
+      transparent 68%
+    ),
+    color-mix(in srgb, var(--dsh-surface-raised) 78%, transparent);
+  box-shadow: var(--dsh-shadow);
+  animation: dsh-surface-enter var(--dsh-motion-duration-standard) var(--dsh-motion-ease-enter) both;
+}
+
+.dsh-runtime-connection--failure {
+  border-color: color-mix(in srgb, var(--dsh-danger) 38%, var(--dsh-border-color));
+  background:
+    radial-gradient(
+      120% 100% at 50% 0%,
+      color-mix(in srgb, var(--dsh-danger) 9%, transparent),
+      transparent 68%
+    ),
+    color-mix(in srgb, var(--dsh-surface-raised) 78%, transparent);
+}
+
+.dsh-runtime-connection__header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--dsh-space-2);
+}
+
+.dsh-runtime-connection__signal {
+  display: grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border: 1px solid var(--dsh-border-color);
+  border-radius: var(--dsh-radius-pill);
+  color: var(--dsh-muted);
+}
+
+.dsh-runtime-connection__signal > .dsh-icon {
+  width: var(--dsh-icon-size-sm);
+  height: var(--dsh-icon-size-sm);
+}
+
+.dsh-runtime-connection__signal--loading {
+  border-color: color-mix(in srgb, var(--dsh-info) 58%, var(--dsh-border-color));
+  color: var(--dsh-info);
+  background: color-mix(in srgb, var(--dsh-info) 12%, transparent);
+  animation: dsh-pulse-dot var(--dsh-motion-duration-loop-pulse) var(--dsh-motion-ease-standard) infinite;
+}
+
+.dsh-runtime-connection__signal--ready {
+  border-color: color-mix(in srgb, var(--dsh-success) 58%, var(--dsh-border-color));
+  color: var(--dsh-success);
+  background: color-mix(in srgb, var(--dsh-success) 12%, transparent);
+}
+
+.dsh-runtime-connection__signal--danger {
+  border-color: color-mix(in srgb, var(--dsh-danger) 46%, var(--dsh-border-color));
+  color: var(--dsh-danger);
+  background: color-mix(in srgb, var(--dsh-danger) 12%, transparent);
+}
+
+.dsh-runtime-connection__track-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--dsh-space-2);
+}
+
+.dsh-runtime-connection__track {
+  height: 0.375rem;
+  overflow: hidden;
+  border-radius: var(--dsh-radius-pill);
+  background: color-mix(in srgb, var(--dsh-muted) 24%, transparent);
+}
+
+.dsh-runtime-connection__track-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--dsh-info) 55%, transparent), var(--dsh-info));
+  transition: width var(--dsh-motion-duration-slow) var(--dsh-motion-ease-standard);
+}
+
+.dsh-runtime-connection__percent {
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--dsh-line-height-tight);
+}
+
+.dsh-runtime-connection__preview {
+  display: grid;
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-3);
+  border: 1px solid var(--dsh-border-color);
+  border-radius: var(--dsh-radius-md);
+  background: color-mix(in srgb, var(--dsh-surface-raised) 84%, var(--dsh-bg));
+}
+
+.dsh-runtime-connection__preview-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--dsh-space-2);
+}
+
+.dsh-runtime-connection__preview-badge {
+  width: 1.125rem;
+  height: 1.125rem;
+  border-radius: var(--dsh-radius-pill);
+}
+
+.dsh-runtime-connection__preview-name,
+.dsh-runtime-connection__preview-meta {
+  height: 0.5rem;
+}
+
+.dsh-runtime-connection__preview-meta {
+  justify-self: end;
+}
+
+.dsh-runtime-connection__preview-row:nth-child(2) .dsh-skeleton {
+  animation-delay: var(--dsh-motion-duration-fast);
+}
+
+.dsh-runtime-connection__preview-row:nth-child(3) .dsh-skeleton {
+  animation-delay: calc(var(--dsh-motion-duration-fast) * 2);
+}
+
+.dsh-runtime-connection__preview-row:nth-child(4) .dsh-skeleton {
+  animation-delay: calc(var(--dsh-motion-duration-fast) * 3);
+}
+
+.dsh-runtime-connection__preview-row:nth-child(5) .dsh-skeleton {
+  animation-delay: calc(var(--dsh-motion-duration-fast) * 4);
+}
+
+.dsh-runtime-connection h2,
+.dsh-runtime-connection p {
+  margin: 0;
+}
+
+.dsh-runtime-connection h2 {
+  min-width: 0;
+  font-size: var(--dsh-font-size-lg);
+  font-weight: 600;
+  line-height: var(--dsh-line-height-tight);
+}
+
+.dsh-runtime-connection__hint {
+  max-width: 34ch;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-sm);
+  line-height: var(--dsh-line-height-body);
+}
+
+.dsh-runtime-connection__message {
+  max-width: none;
+  padding: var(--dsh-space-2) var(--dsh-space-3);
+  border: 1px solid color-mix(in srgb, var(--dsh-danger) 32%, var(--dsh-border-color));
+  border-radius: var(--dsh-radius-sm);
+  color: var(--dsh-danger);
+  background: color-mix(in srgb, var(--dsh-danger) 8%, transparent);
+  overflow-wrap: anywhere;
+}
+
+.dsh-runtime-connection__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--dsh-space-2);
+}
+
+.dsh-runtime-missing,
+.dsh-error-boundary,
+.dsh-diagnostics {
+  width: min(100%, 52rem);
+  min-width: 0;
+  margin: auto;
+  padding: var(--dsh-space-5);
+  border: var(--dsh-border);
+  border-radius: var(--dsh-radius-lg);
+  background: var(--dsh-surface-raised);
+}
+
+.dsh-runtime-missing__intro,
+.dsh-runtime-missing__steps,
+.dsh-runtime-missing__actions {
+  display: grid;
+  gap: var(--dsh-space-3);
+}
+
+.dsh-runtime-missing__title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--dsh-space-3);
+}
+
+.dsh-runtime-missing__title-row h1,
+.dsh-error-boundary h1 {
+  margin: 0;
+  font-size: var(--dsh-font-size-lg);
+}
+
+.dsh-runtime-missing__description,
+.dsh-error-boundary p {
+  color: var(--dsh-muted);
+}
+
+.dsh-runtime-missing__steps {
+  color: var(--dsh-muted);
+}
+
+.dsh-runtime-missing__actions {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.dsh-runtime-missing details,
+.dsh-error-boundary code,
+.dsh-diagnostics pre {
+  max-width: 100%;
+  overflow: auto;
+  padding: var(--dsh-space-3);
+  border-radius: var(--dsh-radius-sm);
+  background: var(--dsh-code-bg);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.dsh-settings__backdrop,
+.dsh-tool-error-modal__backdrop,
+.dsh-session-dialog__backdrop,
+.dsh-feedback-dialog__backdrop,
+.dsh-lightbox__backdrop,
+.dsh-message-image-lightbox {
+  position: fixed;
+  z-index: 70;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--dsh-panel-gutter);
+  background: color-mix(in srgb, var(--dsh-bg) 76%, transparent);
+}

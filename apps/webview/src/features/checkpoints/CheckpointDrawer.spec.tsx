@@ -63,6 +63,31 @@ function renderDrawer(
 describe('CheckpointDrawer', () => {
   afterEach(() => cleanup())
 
+  it('ignores a restore preview resolved after the list was dismissed', async () => {
+    let resolve!: (value: CheckpointPreview) => void
+    const pending = new Promise<CheckpointPreview>((settle) => {
+      resolve = settle
+    })
+    renderDrawer({ onPreview: vi.fn(() => pending) })
+    fireEvent.click(screen.getByRole('button', { name: 'Restore Before refactor' }))
+    fireEvent.keyDown(screen.getByRole('dialog', { name: 'Session checkpoints' }), { key: 'Escape' })
+    resolve(preview(checkpoint()))
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+    fireEvent.click(screen.getByRole('button', { name: '1 checkpoints' }))
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+  })
+
+  it('dismisses a successful restore and delete confirmation after pending work', async () => {
+    renderDrawer()
+    fireEvent.click(screen.getByRole('button', { name: 'Restore Before refactor' }))
+    await waitFor(() => expect(screen.getByRole('alertdialog')).toBeDefined())
+    fireEvent.click(screen.getByRole('button', { name: 'Restore files' }))
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Before refactor' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete checkpoint' }))
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+  })
+
   it('offers explicit creation and passes only the user-entered label', async () => {
     const onCreate = vi.fn().mockResolvedValue(checkpoint())
     renderDrawer({ checkpoints: [], onCreate })

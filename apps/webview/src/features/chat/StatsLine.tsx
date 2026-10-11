@@ -1,12 +1,15 @@
-import { memo, useMemo, type ReactElement } from 'react'
+import { memo, useMemo, useState, type ReactElement } from 'react'
 import type { SessionStatsProjection, TokenUsage } from '@dsh-vscode/domain'
 import { billedInputTokens, cacheHitPercent } from '@dsh-vscode/timeline'
 import type { TimelineNode } from '@dsh-vscode/timeline'
 import { useI18n } from '../../i18n.js'
 import type { PerformanceUsageMode } from '../../app/ui-preferences.js'
-import { StatsDetails } from './StatsDetails.js'
+import { StatsDetails, statisticsRows } from './StatsDetails.js'
+import { StatsPopover } from './StatsPopover.js'
+import { useConversationLayout } from '../../app/ConversationLayoutProvider.js'
 
 export interface StatsLineProps {
+  readonly sessionId?: string | undefined
   readonly nodes: readonly TimelineNode[]
   /** Optional reducer boundary for incremental fallback statistics. */
   readonly nodeChangeStart?: number
@@ -54,6 +57,7 @@ const nodeStatsCache = new WeakMap<object, NodeStats>()
  */
 export const StatsLine = memo(function StatsLine(props: StatsLineProps): ReactElement {
   const { t } = useI18n()
+  const focused = useConversationLayout()?.layout === 'focused'
   const presentation = props.performanceUsage ?? 'detailed'
   const statsProjector = useMemo(() => createStatsProjector(), [])
   const stats = useMemo(
@@ -96,6 +100,29 @@ export const StatsLine = memo(function StatsLine(props: StatsLineProps): ReactEl
           <span title={t('stats.cache')}>{t('stats.cacheShort', { percent: cachePercent })}</span>
         )}
       </div>
+    )
+  }
+  if (focused) {
+    const counts = [
+      ...(props.sessionStats === undefined ? [t('stats.loadedWindow')] : []),
+      t(stats.turns === 1 ? 'stats.turns' : 'stats.turns.plural', { count: stats.turns }),
+      t(stats.steps === 1 ? 'stats.steps' : 'stats.steps.plural', { count: stats.steps }),
+      ...(stats.decodeMs > 0 && stats.decodeTokens > 0
+        ? [`${formatRate(stats.decodeTokens / (stats.decodeMs / 1000))} tk/s`]
+        : []),
+    ].join(' · ')
+    const usageLabel = [
+      ...(tokenTotal === undefined ? [] : [t('stats.totalTokensValue', { count: formatTokens(tokenTotal) })]),
+      t('stats.cacheShort', { percent: cachePercent }),
+    ].join(' · ')
+    return (
+      <FocusedStatsLine
+        key={props.sessionId}
+        counts={counts}
+        usageLabel={usageLabel}
+        stats={stats}
+        usage={props.usage}
+      />
     )
   }
   return (
@@ -143,6 +170,36 @@ export const StatsLine = memo(function StatsLine(props: StatsLineProps): ReactEl
     </div>
   )
 })
+
+function FocusedStatsLine(props: {
+  readonly counts: string
+  readonly usageLabel: string
+  readonly stats: WindowStats
+  readonly usage: TokenUsage | undefined
+}): ReactElement {
+  const { t, locale } = useI18n()
+  const [openDetail, setOpenDetail] = useState<'time' | 'tokens' | undefined>()
+  return (
+    <div className="dsh-stats-line dsh-stats-line--focused" role="group" aria-label={t('stats.aria')}>
+      <StatsPopover
+        label={props.counts}
+        icon="clock"
+        rows={statisticsRows(props.stats, undefined, t, locale, 'time')}
+        open={openDetail === 'time'}
+        onOpenChange={(open) => setOpenDetail(open ? 'time' : undefined)}
+      />
+      {props.usage === undefined ? null : (
+        <StatsPopover
+          label={props.usageLabel}
+          icon="box"
+          rows={statisticsRows(props.stats, props.usage, t, locale, 'tokens')}
+          open={openDetail === 'tokens'}
+          onOpenChange={(open) => setOpenDetail(open ? 'tokens' : undefined)}
+        />
+      )}
+    </div>
+  )
+}
 
 function createStatsProjector(): (
   nodes: readonly TimelineNode[],

@@ -9,7 +9,10 @@ import type {
 } from '@dsh-vscode/domain'
 
 import type { VersionAdapterIdentity } from '../../adapter-base.js'
-import type { AlphaLoopbackApiClient } from '../alpha/transport.js'
+import type { AlphaLoopbackApiClient, AlphaLoopbackApiClientOptions } from '../alpha/transport.js'
+import { Alpha211SubagentRepository } from './subagent-repository.js'
+import type { SubagentRepositoryOptions } from '../../repositories/subagent-repository.js'
+import { alpha211SessionProfile } from './session-wire.js'
 import { Rc202VersionAdapter } from '../rc202/adapter.js'
 import { Alpha211ScheduleRepository } from './schedule-repository.js'
 import { Alpha211AccountLifecycleRepository } from './account-repository.js'
@@ -26,6 +29,17 @@ export class Alpha211VersionAdapter extends Rc202VersionAdapter {
     protocolVersion: 'alpha211',
     compatibilityPriority: 270,
     fallback: false,
+  }
+
+  protected override createTransportOptions(endpoint: BackendEndpoint): AlphaLoopbackApiClientOptions {
+    return { ...super.createTransportOptions(endpoint), sessionWireProfile: alpha211SessionProfile }
+  }
+
+  protected override createSubagentRepository(
+    transport: AlphaLoopbackApiClient,
+    options: SubagentRepositoryOptions,
+  ): Alpha211SubagentRepository {
+    return new Alpha211SubagentRepository(transport, options)
   }
 
   protected override createScheduleRepository(transport: AlphaLoopbackApiClient): ScheduleRepository {

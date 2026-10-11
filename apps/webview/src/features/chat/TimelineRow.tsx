@@ -7,24 +7,37 @@ import {
   type TimelineNodeRenderContext,
 } from './timeline-shared.js'
 import { renderTimelineNode } from './timeline-renderers.js'
+import { FocusedTurn } from './FocusedTurn.js'
+import type { PresentedTimelineNode } from './focused-timeline-projection.js'
 
 export const TimelineRow = memo(
   function TimelineRow(props: {
-    readonly node: DisplayTimelineNode
+    readonly node: PresentedTimelineNode
     readonly context: TimelineNodeRenderContext
   }): ReactElement {
-    return renderTimelineNode(props.node, props.context)
+    return props.node.kind === 'focused-turn' ? (
+      <FocusedTurn node={props.node} context={props.context} />
+    ) : (
+      renderTimelineNode(props.node, props.context)
+    )
   },
   (previous, next) =>
     previous.node === next.node && timelineRowContextEqual(previous.node, previous.context, next.context),
 )
 
 function timelineRowContextEqual(
-  node: DisplayTimelineNode,
+  node: PresentedTimelineNode,
   previous: TimelineNodeRenderContext,
   next: TimelineNodeRenderContext,
 ): boolean {
   if (previous === next) return true
+  if (
+    previous.conversationLayout !== next.conversationLayout ||
+    previous.revealSourceNodeId !== next.revealSourceNodeId ||
+    previous.revealRequestId !== next.revealRequestId
+  )
+    return false
+  if (node.kind === 'focused-turn') return previous === next
   if (
     previous.assistantLabel !== next.assistantLabel ||
     previous.setExpandedDetails !== next.setExpandedDetails ||

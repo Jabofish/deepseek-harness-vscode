@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { ModelDescriptor, ModelProvider } from '@dsh-vscode/domain'
 import type { HostMessage, WebviewRequest } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
 import { createAppStore } from './store.js'
@@ -152,6 +153,70 @@ describe('AppStore startup session restoration', () => {
   afterEach(() => {
     persisted.state = undefined
     document.body.replaceChildren()
+  })
+
+  it.each(['success', 'failure'] as const)(
+    'keeps a disposed store inert when a pending directory read ends in %s',
+    async (outcome) => {
+      vi.useFakeTimers()
+      let finish: (() => void) | undefined
+      const sessions = new Promise<unknown>((resolve, reject) => {
+        finish = () =>
+          outcome === 'success' ? resolve({ items: [] }) : reject(new Error('directory unavailable'))
+      })
+      const client = new StartupClient((request) =>
+        request.type === 'session.list' ? sessions : startupResponse(request),
+      )
+      const store = createAppStore(client as unknown as ProtocolClient)
+      try {
+        const refresh = store.refreshSessions()
+        const snapshot = store.getState()
+        store.dispose()
+        expect(vi.getTimerCount()).toBe(0)
+
+        finish?.()
+        await refresh
+        expect(store.getState()).toBe(snapshot)
+        expect(vi.getTimerCount()).toBe(0)
+
+        const notified = vi.fn()
+        const unsubscribe = store.subscribe(notified)
+        store.setDrawer('settings')
+        await vi.runAllTimersAsync()
+        expect(store.getState()).toBe(snapshot)
+        expect(persisted.state).toBeUndefined()
+        expect(notified).not.toHaveBeenCalled()
+        unsubscribe()
+      } finally {
+        store.dispose()
+        vi.useRealTimers()
+      }
+    },
+  )
+
+  it('releases a pending retry without sending another open after disposal', async () => {
+    vi.useFakeTimers()
+    const client = new StartupClient((request) =>
+      request.type === 'session.open'
+        ? Promise.reject(Object.assign(new Error('temporarily unavailable'), { retryable: true }))
+        : startupResponse(request),
+    )
+    const store = createAppStore(client as unknown as ProtocolClient)
+    try {
+      const opening = store.openSession(activeSession.id).catch((reason: unknown) => reason)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(client.requests.filter((request) => request.type === 'session.open')).toHaveLength(1)
+      store.dispose()
+      expect(vi.getTimerCount()).toBe(0)
+      // The open controller treats a retired view as a no-op; its waiter must
+      // settle immediately rather than remain parked on the old backoff.
+      await expect(opening).resolves.toBeUndefined()
+      await vi.runAllTimersAsync()
+      expect(client.requests.filter((request) => request.type === 'session.open')).toHaveLength(1)
+    } finally {
+      store.dispose()
+      vi.useRealTimers()
+    }
   })
 
   it('starts the independent settings read while the startup catalog is still loading', async () => {
@@ -1804,6 +1869,104 @@ describe('AppStore startup session restoration', () => {
     expect(store.models).toBe(models)
     expect(listener).not.toHaveBeenCalled()
     store.dispose()
+  })
+
+  it.each(['settings', 'startup'] as const)(
+    'keeps the latest global catalog when the older %s read finishes last',
+    async (first) => {
+      let finishOld: (() => void) | undefined
+      const oldReady = new Promise<void>((resolve) => {
+        finishOld = resolve
+      })
+      let providerReads = 0
+      let modelReads = 0
+      const provider = (name: string): ModelProvider => ({
+        id: name,
+        name,
+        kind: 'builtin',
+        configurable: false,
+        fields: [],
+      })
+      const model = (id: string): ModelDescriptor => ({
+        id,
+        providerId: id,
+        label: id,
+        supportsReasoning: false,
+      })
+      const client = new StartupClient((request) => {
+        if (request.type === 'providers.list')
+          return ++providerReads === 1 ? oldReady.then(() => [provider('old')]) : [provider('new')]
+        if (request.type === 'models.list')
+          return ++modelReads === 1 ? oldReady.then(() => [model('old')]) : [model('new')]
+        return startupResponse(request)
+      })
+      const store = createAppStore(client as unknown as ProtocolClient)
+      try {
+        const older = first === 'settings' ? store.refreshModelCatalog() : store.refreshSessions()
+        await (first === 'settings' ? store.refreshSessions() : store.refreshModelCatalog())
+        await Promise.resolve()
+        expect(store.providers).toEqual([provider('new')])
+        expect(store.models).toEqual([model('new')])
+        finishOld?.()
+        await older
+        await Promise.resolve()
+        await Promise.resolve()
+        expect(store.providers).toEqual([provider('new')])
+        expect(store.models).toEqual([model('new')])
+      } finally {
+        finishOld?.()
+        store.dispose()
+      }
+    },
+  )
+
+  it.each(['unavailable', 'malformed'] as const)(
+    'retains known providers when a background session refresh is %s',
+    async (failure) => {
+      const provider = { id: 'catalog', name: 'Catalog', kind: 'builtin', configurable: false, fields: [] }
+      let unavailable = false
+      const client = new StartupClient((request) => {
+        if (request.type === 'providers.list')
+          return unavailable
+            ? failure === 'unavailable'
+              ? Promise.reject(new Error('catalog unavailable'))
+              : { wrong: 'directory shape' }
+            : [provider]
+        return startupResponse(request)
+      })
+      const store = createAppStore(client as unknown as ProtocolClient)
+      try {
+        await store.refreshModelCatalog()
+        const known = store.providers
+        unavailable = true
+        await store.refreshSessions()
+        await Promise.resolve()
+        expect(store.providers).toBe(known)
+      } finally {
+        store.dispose()
+      }
+    },
+  )
+
+  it('discards a global catalog read after losing its connection', async () => {
+    let finish: ((value: unknown) => void) | undefined
+    const providers = new Promise<unknown>((resolve) => {
+      finish = resolve
+    })
+    const client = new StartupClient((request) =>
+      request.type === 'providers.list' ? providers : startupResponse(request),
+    )
+    const store = createAppStore(client as unknown as ProtocolClient)
+    try {
+      const read = store.refreshModelCatalog()
+      client.emit({ type: 'event', name: 'connection.lost', sequence: 1, payload: {} })
+      finish?.([{ id: 'old', name: 'Old', kind: 'builtin', configurable: false, fields: [] }])
+      await read
+      expect(store.providers).toEqual([])
+    } finally {
+      finish?.([])
+      store.dispose()
+    }
   })
 
   it('updates same-identity catalog rows when input modalities change and accepts omitted or empty values', async () => {

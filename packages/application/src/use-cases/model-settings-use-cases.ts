@@ -8,6 +8,10 @@ import type {
 } from '@dsh-vscode/domain'
 
 import type { BackendService } from '../services/backend-service.js'
+import {
+  resolveSessionConfigurationForRoster,
+  type SessionConfigurationInput,
+} from './session-configuration.js'
 
 export class ModelSettingsUseCases {
   public constructor(private readonly backendService: BackendService) {}
@@ -31,11 +35,22 @@ export class ModelSettingsUseCases {
     return this.backendService.requireBackend().models.discoverModels(input, signal)
   }
 
-  public setSessionConfiguration(
+  public async resolveSessionConfiguration(
+    requested: SessionConfigurationInput,
+    signal?: AbortSignal,
+  ): Promise<AgentConfiguration> {
+    signal?.throwIfAborted()
+    const { presets } = await this.backendService.requireBackend().presets.list(signal)
+    signal?.throwIfAborted()
+    return resolveSessionConfigurationForRoster(requested, presets)
+  }
+
+  public async setSessionConfiguration(
     sessionId: string,
-    configuration: AgentConfiguration,
+    configuration: SessionConfigurationInput,
     signal?: AbortSignal,
   ): Promise<void> {
-    return this.backendService.requireBackend().sessions.setConfiguration(sessionId, configuration, signal)
+    const resolved = await this.resolveSessionConfiguration(configuration, signal)
+    return this.backendService.requireBackend().sessions.setConfiguration(sessionId, resolved, signal)
   }
 }

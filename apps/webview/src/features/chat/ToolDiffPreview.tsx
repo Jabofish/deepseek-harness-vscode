@@ -45,7 +45,7 @@ export function ToolDiffPreview(props: ToolDiffRenderProps): ReactElement {
         className="dsh-tool-diff-preview__copy"
         translate={translate}
       />
-      <div className="dsh-tool-diff-preview__body">
+      <div className="dsh-tool-diff-preview__body" tabIndex={0}>
         <div className="dsh-tool-diff-preview__content">
           {head.map((row, index) => renderRow(row, index))}
           {hidden > 0 ? (

@@ -331,7 +331,10 @@ export function parseSubagentCatalogEntryFact(value: unknown): SubagentCatalogEn
   if (
     id === undefined ||
     createdAt === undefined ||
-    (entry?.mode !== 'one-shot' && entry?.mode !== 'continuable') ||
+    (entry?.mode !== 'one-shot' &&
+      entry?.mode !== 'continuable' &&
+      entry?.mode !== 'external' &&
+      entry?.mode !== 'unknown') ||
     (hasLabel && typeof entry?.label !== 'string')
   )
     return undefined

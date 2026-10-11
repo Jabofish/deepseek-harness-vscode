@@ -1,0 +1,167 @@
+/* Shared Webview component contract ----------------------------------------
+ *
+ * Feature styles describe content and state. This file owns the reusable
+ * visual primitives used by every feature: controls, selection surfaces,
+ * overlays, configuration cards, and inline references.
+ */
+
+.dsh-icon {
+  display: block;
+  width: var(--dsh-icon-size);
+  height: var(--dsh-icon-size);
+  flex: 0 0 auto;
+}
+
+.dsh-button,
+.dsh-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--dsh-space-2);
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* A button label is normally a short app string, but buttons that carry a session
+ * or tool name must truncate rather than widen their row. */
+.dsh-button {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dsh-button {
+  min-height: var(--dsh-control-height);
+  padding: var(--dsh-space-2) var(--dsh-space-3);
+  transition: transform var(--dsh-motion-duration-fast) var(--dsh-motion-ease-standard);
+}
+
+.dsh-button:active:not(:disabled) {
+  transform: scale(var(--dsh-motion-scale-press));
+}
+
+.dsh-button--primary {
+  border-color: var(--dsh-primary);
+  color: var(--dsh-primary-text);
+  background: var(--dsh-primary);
+}
+
+.dsh-button--primary:hover:not(:disabled) {
+  background: var(--dsh-primary-hover);
+}
+
+.dsh-button--secondary {
+  color: var(--dsh-secondary-text);
+  background: var(--dsh-secondary);
+}
+
+.dsh-button--ghost {
+  border-color: transparent;
+  color: var(--dsh-muted);
+  background: transparent;
+}
+
+.dsh-button--ghost:hover:not(:disabled) {
+  color: var(--dsh-text);
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-button--danger {
+  border-color: var(--dsh-danger);
+  color: var(--dsh-primary-text);
+  background: var(--dsh-danger);
+}
+
+.dsh-button--danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--dsh-danger) 82%, var(--dsh-text));
+}
+
+.dsh-button--compact {
+  min-height: var(--dsh-control-height-compact);
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  font-size: var(--dsh-font-size-sm);
+}
+
+.dsh-icon-button {
+  width: var(--dsh-control-height);
+  min-width: var(--dsh-control-height);
+  height: var(--dsh-control-height);
+  min-height: var(--dsh-control-height);
+  padding: var(--dsh-space-1);
+  border-color: transparent;
+  color: var(--dsh-muted);
+  background: transparent;
+}
+
+.dsh-icon-button:hover:not(:disabled),
+.dsh-icon-button:focus-visible {
+  color: var(--dsh-text);
+  background: var(--dsh-surface-hover);
+}
+
+/* Toggle icon buttons mirror their label in no other way, so the pressed state
+ * has to survive without a pointer. */
+.dsh-icon-button[aria-pressed='true'] {
+  color: var(--dsh-text);
+  background: var(--dsh-selection-bg);
+}
+
+.dsh-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dsh-space-1);
+  min-width: 0;
+  width: fit-content;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  border: var(--dsh-border);
+  border-radius: var(--dsh-radius-pill);
+  color: var(--dsh-muted);
+  background: var(--dsh-surface-soft);
+  font-size: var(--dsh-font-size-xs);
+  line-height: var(--dsh-line-height-tight);
+  white-space: nowrap;
+}
+
+.dsh-status-pill--in-progress,
+.dsh-status-pill--info,
+.dsh-status-pill--running {
+  color: var(--dsh-info);
+}
+
+.dsh-status-pill--completed {
+  color: var(--dsh-success);
+}
+
+/* Neutral states: `pending` from goal/todo views and `unknown` from an
+ * unclassified approval risk. Both intentionally keep the muted pill base. */
+.dsh-status-pill--pending,
+.dsh-status-pill--unknown {
+  color: var(--dsh-muted);
+}
+
+/* Approval risk is a severity, not a lifecycle state: low reads as safe. */
+.dsh-status-pill--low {
+  color: var(--dsh-success);
+}
+
+.dsh-status-pill--medium {
+  color: var(--dsh-warning);
+}
+
+.dsh-status-pill--high {
+  color: var(--dsh-danger);
+}
+
+.dsh-status-pill--failed,
+.dsh-status-pill--blocked,
+.dsh-status-pill--killed {
+  color: var(--dsh-danger);
+}
+
+.dsh-status-pill--awaiting-input,
+.dsh-status-pill--stopping {
+  color: var(--dsh-warning);
+}

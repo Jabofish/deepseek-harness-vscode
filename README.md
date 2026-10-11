@@ -16,6 +16,7 @@
 - Follow tool progress, answer questions and approvals, and open produced files through VS Code.
 - Choose the models, providers, permissions, and agent options exposed by the connected DSH runtime.
 - Use local prompt templates, checkpoints, a Changes view, and a task center when their prerequisites are available.
+- Use the DSH-style focused layout with collapsible process details and a compact composer. Switch to the original classic layout in **Settings → General → Conversation layout**; the choice is saved locally.
 
 The connected DSH version determines which advanced capabilities are available. Unsupported operations show a clear unavailable state. The [compatibility contract](docs/dsh-contract.md) lists exact adapter boundaries; the [capability matrix](docs/capability-matrix.md) distinguishes implementation, automated tests, and real runtime verification.
 

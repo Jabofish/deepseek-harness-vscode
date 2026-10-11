@@ -2,16 +2,35 @@
 
 ## Unreleased
 
-- 允许连接任意 HTTP(S) 主机上的外部 DSH 实例（移除仅回环限制），新增服务器地址规范化与端点校验，使容器化 DSH 可通过局域网地址访问。
-- Support external DSH instances on any HTTP(S) host (drop the loopback-only restriction), with server-origin normalization and canonical endpoint validation so a containerized DSH can be reached over a LAN address.
-- 精确适配 DSH `0.2.1-alpha.2`（沿用 alpha.1 的 Session V4 / projection-v2 控制线），并将其设为最新已发布版本。
-- Add exact DSH `0.2.1-alpha.2` support (retains the alpha.1 Session V4 / projection-v2 wire) and mark it the latest published version.
-- 新增 `dsh.connection.runtimeVersion`，为无法被探测（如容器化）的实例显式指定线版本，绕过兼容性回退探测。
-- Add `dsh.connection.runtimeVersion` to explicitly select the wire version for instances that cannot be discovered (for example containerized DSH), bypassing the compatibility fallback probe.
-- 新增 `dsh.connection.launchToken` 及启动令牌换取会话 Cookie 的登录流程，用于已运行的外部 DSH（如 Docker 化实例）。
-- Add `dsh.connection.launchToken` and a launch-token → session-cookie login flow for an already-running external DSH (for example the Dockerized instance).
-- 会话 Cookie 持久化到 SecretStorage（操作系统钥匙串）并在跨重启连接时复用，使 DSH 容器重启后无需重新认证。
-- Persist session cookies to SecretStorage (the OS keychain) and reuse them across reconnects, so a restarted DSH container reconnects without re-authentication.
+- 修复设置页首次打开反复出现“重试”：延迟资源改为相对于扩展资源目录加载，关闭不符合 Webview 安全策略的脚本预加载，并保留小字体为独立资源。
+- Fixed Settings repeatedly showing Retry on first open: deferred assets resolve relative to the extension media directory, script preloads respect the Webview security policy, and small fonts remain packaged resources.
+
+- 统计改为紧凑读数与独立明细；改善窄窗口任务回答、后台任务列表、模板编辑和检查点确认。失败后保留输入，阻止重复提交和关闭后的迟到结果，恢复或删除成功后正确关闭确认框。
+- Statistics use compact readings with separate details. Task answers, background jobs, template editors and checkpoint confirmations work in narrow views; failed requests retain input, duplicate submissions and dismissed late results are guarded, and successful restore/delete operations close their confirmation.
+
+- 修复完成回合仍显示“工作过程”、过程或检查器定位后的工具详情无法收起、重复展开丢失状态，以及长搜索标题编号错位和思考标记漂移。会话按钮、更多菜单和事件详情统一为紧凑布局，矮窗口菜单与长结果可键盘滚动。
+- Fixed completed turns remaining open, processes and inspector-revealed tools refusing to collapse, lost disclosure state, misaligned long search titles, and floating reasoning headers. Session controls, action menus and event details use compact layouts with keyboard scrolling for short windows and long results.
+
+- 修复窄栏输入区多余换行、附件菜单名称截断、矮窗口审批按钮和长问题选项被裁切的问题；统一 Provider、预设及复制弹窗的细节，并改善附件面板的屏幕阅读器语义。
+- Fixed unnecessary composer wrapping, truncated attachment controls, clipped approval actions and long-question content in short views. Provider, preset and copy-dialog details now follow the focused layout; attachment panels use appropriate accessible semantics.
+
+- 新增参考 DSH 原版源码的聚焦布局：平面正文、回合过程折叠、常驻产出文件入口、宽视图工作区导航、紧凑输入栏与统一的设置、插件、轨迹和任务界面。模型图标移除，大目录支持模糊搜索及键盘高亮，输入按钮保留草稿选区；设置记住上次分区，并允许随时切回经典布局。
+- Added a DSH-style focused layout with flat replies, collapsible turn processes, visible file actions, wide-view workspace navigation, a compact composer, and consistent Settings, Plugins, Trajectory and task surfaces. The model trigger has no icon; large catalogs support fuzzy search and keyboard highlighting. Composer actions preserve the caret, Settings remembers its last section, and the original classic layout remains selectable.
+
+- 工具和思考也采用紧凑摘要；文件和网页链接可直接打开，读取、diff、终端、搜索和插件详情按需展开，保留失败提示与复制。审批、提问、计划、队列和统计统一改版，默认输入框进一步缩小，代码结果可用键盘滚动。
+- Tool calls and reasoning now use compact summaries with direct file and web links, expandable read/diff/terminal/search/plugin results, visible failures and copy actions. Approvals, questions, plans, queues and statistics share the new presentation; the default composer is shorter and result panes support keyboard scrolling.
+
+- 改善长对话的历史加载和流式回复显示，保留历史补载后的消息顺序与会话引用。
+- Improve long-conversation history loading and streamed reply display while preserving message order and session references after older history loads.
+
+- 修复模型目录被迟到结果覆盖、目录暂时读取失败后已有 Provider 消失，以及动态命令变化未及时刷新的问题。
+- Prevent delayed model catalogs from replacing newer lists, retain known providers after temporary read failures, and refresh dynamic commands after registry changes.
+
+- 扩展改为打开 DSH 视图或执行命令时激活；设置界面首次打开时加载，后续打开复用已加载的界面。
+- Activate when a DSH view or command is requested; load Settings on first open and reuse the loaded view on subsequent opens.
+
+- 适配 DSH `0.2.1-alpha.2`，并补齐 alpha.1 子代理目录读取。支持工作目录变化后的安全文件导航、外部子代理目录展示、旧会话升级提示与官方按需插件包安装；分叉不再隐式升级旧会话，安装取消与断线恢复沿用同一请求 ID。引导安装默认保持稳定 rc.2。
+- Added exact DSH `0.2.1-alpha.2` support and repaired alpha.1 subagent discovery. File navigation uses the operation's actual path after directory changes; external executions appear without a local conversation; old sessions show an upgrade hint; official bundles install on demand with existing cancellation and recovery. Forking requires opening an old source session first. Guided installation keeps stable rc.2.
 
 ## 0.2.12
 

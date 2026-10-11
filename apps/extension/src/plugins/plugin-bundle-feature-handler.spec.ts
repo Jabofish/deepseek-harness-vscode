@@ -123,6 +123,7 @@ describe('Plugin Manager feature route', () => {
       confirmations.install,
       confirmations.builds,
       undefined,
+      false,
     )
   })
 

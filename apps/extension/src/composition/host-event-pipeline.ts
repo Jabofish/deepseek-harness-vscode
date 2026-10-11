@@ -228,9 +228,11 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
     Map<string, { attemptId: string; cwd: Promise<string | undefined> }>
   >()
   const publicBackendEvent = async (backend: DshBackend, event: BackendEvent): Promise<unknown> => {
-    if (event.type === 'session.subscribed') preparationScopes.get(backend)?.delete(event.sessionId)
-    if (event.type !== 'deliverables.presented' && event.type !== 'tool.preparing')
-      return sanitizePublicValue(event)
+    if (
+      event.type === 'session.subscribed' ||
+      (event.type === 'session.projection' && event.key === 'workingDirectory')
+    )
+      preparationScopes.get(backend)?.delete(event.sessionId)
     const roots = [
       ...currentWorkspaceFolders().map((folder) => folder.uri.fsPath),
       ...(temporaryWorkspaceManager.current?.path === undefined
@@ -241,6 +243,8 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
         : [temporaryWorkspaceManager.reference.path]),
     ]
     const uniqueRoots = [...new Set(roots)]
+    if (event.type !== 'deliverables.presented' && event.type !== 'tool.preparing')
+      return sanitizePublicValue(event, undefined, uniqueRoots)
     if (event.type === 'tool.preparing') {
       const isCurrentBackend = (): boolean => {
         try {
@@ -263,7 +267,11 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
             attemptId: event.attemptId,
             cwd: backend.sessions
               .get(event.sessionId)
-              .then((session) => session.cwd)
+              .then((session) =>
+                typeof session.projection?.values.workingDirectory === 'string'
+                  ? session.projection.values.workingDirectory
+                  : session.cwd,
+              )
               .catch(() => undefined),
           }
           scopes.set(event.sessionId, scope)

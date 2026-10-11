@@ -1,6 +1,5 @@
 import * as vscode from 'vscode'
 import { mkdir, mkdtemp } from 'node:fs/promises'
-import type { AgentConfiguration, AgentPresetDescriptor } from '@dsh-vscode/domain'
 import type { BackendService } from '@dsh-vscode/application'
 import {
   AdvancedAgentUseCases,
@@ -30,26 +29,6 @@ import {
 } from './workspace-state.js'
 
 const TEMPORARY_WORKSPACE_STATE_KEY = 'dsh.temporaryWorkspace'
-
-/** Resolve a new session's requested preset against the host's optional roster. */
-export function resolveSessionConfigurationForRoster(
-  requested: AgentConfiguration,
-  presets: readonly AgentPresetDescriptor[],
-): AgentConfiguration {
-  if (presets.length === 0) {
-    // The empty string is an internal sentinel; the session adapter omits it
-    // from the wire so DSH uses its own composition and default.
-    return { ...requested, preset: '' }
-  }
-
-  const usable = presets.filter((preset) => preset.broken === undefined)
-  const candidates = usable.length > 0 ? usable : presets
-  const selected =
-    candidates.find((preset) => preset.id === requested.preset) ??
-    candidates.find((preset) => preset.isDefault) ??
-    candidates[0]
-  return { ...requested, preset: selected?.id ?? '' }
-}
 
 export interface UseCasesAssemblyDependencies {
   readonly backendService: BackendService

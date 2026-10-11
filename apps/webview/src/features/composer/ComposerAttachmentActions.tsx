@@ -42,7 +42,6 @@ export function ComposerAttachmentActions(props: ComposerAttachmentActionsProps)
       <button
         className="dsh-composer__extra-action"
         type="button"
-        role="menuitem"
         aria-label={t('composer.attach')}
         disabled={props.disabled || props.attachmentsDisabled}
         onClick={props.onPickAttachment}
@@ -56,10 +55,9 @@ export function ComposerAttachmentActions(props: ComposerAttachmentActionsProps)
             ref={openFileTriggerRef}
             className="dsh-composer__extra-action"
             type="button"
-            role="menuitem"
             aria-label={t('composer.chooseOpenFile')}
             aria-expanded={props.openFilePickerOpen}
-            aria-haspopup="listbox"
+            aria-haspopup="dialog"
             disabled={props.disabled || props.attachmentsDisabled}
             onClick={props.onToggleOpenFilePicker}
           >

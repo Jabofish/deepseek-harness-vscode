@@ -15,7 +15,28 @@ import { ConversationEventToggle } from './ConversationEventToggle.js'
 interface ConversationActionItemsProps {
   readonly activeId: string | undefined
   readonly isSubagent: boolean
-  readonly state: ReturnType<AppStore['getState']>
+  readonly state: Pick<
+    ReturnType<AppStore['getState']>,
+    | 'unavailableLists'
+    | 'jobs'
+    | 'jobControllerAvailable'
+    | 'jobFollow'
+    | 'changes'
+    | 'changesLoading'
+    | 'changesRefreshFailed'
+    | 'tasks'
+    | 'tasksLoading'
+    | 'taskScope'
+    | 'tasksComplete'
+    | 'tasksOmittedSessions'
+    | 'checkpoints'
+    | 'checkpointsLoading'
+    | 'promptTemplates'
+    | 'promptTemplatesLoading'
+    | 'subagents'
+    | 'sessions'
+    | 'subagentImagePrompts'
+  >
   readonly store: AppStore
   readonly codingToolsEnabled: boolean
   readonly dshEventCount: number

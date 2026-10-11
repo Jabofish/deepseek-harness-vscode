@@ -2,6 +2,12 @@ import type { BackendEvent } from '@dsh-vscode/domain'
 
 import type { TimelineNode } from './nodes.js'
 
+export interface TimelineNodeLookup {
+  readonly synchronize: (from: number) => void
+  readonly byId: (id: string, predicate?: (node: TimelineNode) => boolean) => number
+  readonly optimisticUser: (event: Extract<BackendEvent, { readonly type: 'message.user' }>) => number
+}
+
 /**
  * Live DSH updates target the newest node in an append-ordered transcript.
  * Keep malformed/legacy collections deterministic by returning the newest
@@ -18,10 +24,11 @@ export function findNodeIndexFromEnd(
   return -1
 }
 
-export function upsert(nodes: TimelineNode[], node: TimelineNode): void {
-  const index = findNodeIndexFromEnd(nodes, (existing) => existing.id === node.id)
+export function upsert(nodes: TimelineNode[], node: TimelineNode, lookup?: TimelineNodeLookup): number {
+  const index = lookup?.byId(node.id) ?? findNodeIndexFromEnd(nodes, (existing) => existing.id === node.id)
   if (index < 0) nodes.push(node)
   else nodes[index] = node
+  return index < 0 ? nodes.length - 1 : index
 }
 
 /**
@@ -77,12 +84,15 @@ export function conversationNodeIndex(
   turn?: number,
   step?: number,
   transient = false,
+  lookup?: TimelineNodeLookup,
 ): number {
-  const exactIndex = findNodeIndexFromEnd(nodes, (node) => {
-    if (node.id !== messageId || (node.kind !== 'assistant-message' && node.kind !== 'reasoning'))
-      return false
+  const matches = (node: TimelineNode): boolean => {
+    if (node.kind !== 'assistant-message' && node.kind !== 'reasoning') return false
     return !transient || isOpenConversationNode(node)
-  })
+  }
+  const exactIndex =
+    lookup?.byId(messageId, matches) ??
+    findNodeIndexFromEnd(nodes, (node) => node.id === messageId && matches(node))
   if (exactIndex >= 0 || turn === undefined || step === undefined) return exactIndex
   return findNodeIndexFromEnd(
     nodes,

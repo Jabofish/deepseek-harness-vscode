@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { PermissionRequest } from '@dsh-vscode/domain'
 import { I18nProvider, setActiveLocale } from '../../i18n.js'
@@ -46,6 +46,29 @@ describe('ApprovalCard', () => {
     expect(container.querySelector('code')).toBeNull()
     expect(screen.getByText('The command needs approval.')).toBeDefined()
     expect(screen.getByText('The agent is waiting for your decision')).toBeDefined()
+  })
+
+  it('keeps decisions outside the scrollable command and description', () => {
+    const onRespond = vi.fn()
+    const { container } = render(
+      <ApprovalCard
+        request={{ ...approvalRequest(), description: 'Detailed approval reason. '.repeat(100) }}
+        disabled={false}
+        command={'pnpm check\n'.repeat(100)}
+        onRespond={onRespond}
+      />,
+    )
+
+    const body = container.querySelector<HTMLElement>('.dsh-interaction__body')!
+    expect(body.tabIndex).toBe(0)
+    expect(body.querySelector('code')?.textContent).toContain('pnpm check')
+    const allow = screen.getByRole('button', { name: 'Allow once' })
+    const reject = screen.getByRole('button', { name: 'Reject' })
+    expect(body.contains(allow)).toBe(false)
+    expect(body.contains(reject)).toBe(false)
+    fireEvent.click(allow)
+    fireEvent.click(reject)
+    expect(onRespond.mock.calls).toEqual([['allowed-once'], ['rejected']])
   })
 
   it('renders the upstream display reason in the active language', () => {

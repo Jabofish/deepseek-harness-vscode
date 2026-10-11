@@ -1,5 +1,7 @@
-import type { ComponentProps, ReactElement } from 'react'
-import { SettingsDrawer } from './SettingsDrawer.js'
+import type { ComponentProps, ComponentType, ReactElement } from 'react'
+import type { SettingsDrawer } from './SettingsDrawer.js'
+import { useDeferredComponent } from '../../app/useDeferredComponent.js'
+import { ModalWrapper } from '../../components/common/PopoverCard.js'
 import type { AppStore } from '../../app/store.js'
 import { setDraft } from '../../app/draft-store.js'
 import type { ThemePreference, ConversationFontSize } from '../../app/ui-preferences.js'
@@ -7,8 +9,40 @@ import type { useI18n } from '../../i18n.js'
 
 type DrawerProps = ComponentProps<typeof SettingsDrawer>
 
+let settingsDrawerLoad: Promise<ComponentType<DrawerProps>> | undefined
+function loadSettingsDrawer(): Promise<ComponentType<DrawerProps>> {
+  settingsDrawerLoad ??= import('./SettingsDrawer.js')
+    .then((module) => module.SettingsDrawer)
+    .catch((error: unknown) => {
+      settingsDrawerLoad = undefined
+      throw error
+    })
+  return settingsDrawerLoad
+}
+
 interface AppSettingsDrawerProps {
-  readonly state: ReturnType<AppStore['getState']>
+  readonly state: Pick<
+    ReturnType<AppStore['getState']>,
+    | 'drawer'
+    | 'backend'
+    | 'connectedDshVersion'
+    | 'dshUpdate'
+    | 'dshUpdateProgress'
+    | 'providers'
+    | 'models'
+    | 'pluginInstallOperation'
+    | 'accountLifecycleAvailable'
+    | 'accountLifecycle'
+    | 'accountLifecycleLoading'
+    | 'accountLifecycleBusy'
+    | 'accountLifecycleImpact'
+    | 'accountSessionExpired'
+    | 'accountLifecycleError'
+    | 'accountLifecycleRequestFailed'
+    | 'accountProfileDetails'
+    | 'accountProfileLoading'
+    | 'accountProfileRequestFailed'
+  >
   readonly store: AppStore
   readonly themePreference: ThemePreference
   readonly setThemePreference: DrawerProps['onThemeChange']
@@ -47,9 +81,45 @@ export function AppSettingsDrawer({
   loadAccountDetailsFromSettings,
   acknowledgeAccountBonusFromSettings,
   openAccountPageFromSettings,
-}: AppSettingsDrawerProps): ReactElement {
+}: AppSettingsDrawerProps): ReactElement | null {
+  const {
+    Component: LoadedSettingsDrawer,
+    failed,
+    retry,
+  } = useDeferredComponent(state.drawer === 'settings', loadSettingsDrawer)
+  if (LoadedSettingsDrawer === undefined) {
+    if (state.drawer !== 'settings') return null
+    return (
+      <ModalWrapper>
+        <section
+          className="dsh-settings"
+          role="dialog"
+          aria-modal="true"
+          aria-label={t('settings.title')}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') store.setDrawer(undefined)
+          }}
+        >
+          <header className="dsh-settings__header">
+            <h2>{t('settings.title')}</h2>
+            <button type="button" autoFocus onClick={() => store.setDrawer(undefined)}>
+              {t('settings.close')}
+            </button>
+          </header>
+          <p role={failed ? 'alert' : 'status'}>
+            {failed ? t('settings.viewLoadFailed') : t('settings.loading')}
+          </p>
+          {failed ? (
+            <button type="button" onClick={retry}>
+              {t('settings.viewRetry')}
+            </button>
+          ) : null}
+        </section>
+      </ModalWrapper>
+    )
+  }
   return (
-    <SettingsDrawer
+    <LoadedSettingsDrawer
       open={state.drawer === 'settings'}
       onOpenChange={(open) => store.setDrawer(open ? 'settings' : undefined)}
       connected={state.backend.kind === 'connected'}

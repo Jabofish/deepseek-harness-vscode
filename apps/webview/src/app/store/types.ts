@@ -36,11 +36,9 @@ import type {
   MessageFeedbackItem,
   MessageFeedbackRating,
   MessageImageReference,
-  ModelCatalogFailure,
   ModelDescriptor,
   ModelDiscoveryInput,
   ModelProvider,
-  ModelSelection,
   PermissionRequest,
   PluginInventorySnapshot,
   PluginInstallProgressView,
@@ -71,6 +69,7 @@ import type {
 import type { TimelineState } from '@dsh-vscode/timeline'
 import type { JobFollowState } from './job-follow.js'
 import type { PluginInstallInput, PluginInstallRecoveryState } from '../plugin-install-recovery.js'
+import type { SessionModelDirectoryState } from './model-directory-state.js'
 
 export interface OpenFileCandidate {
   readonly id: string
@@ -129,7 +128,7 @@ export type WebviewBackendState =
     }
   | { readonly kind: 'stopping' }
 
-export interface AppState {
+export interface AppState extends SessionModelDirectoryState {
   readonly backend: WebviewBackendState
   /** Monotonic opaque counter for a newly observed connected backend epoch. */
   readonly connectionEpoch?: number
@@ -174,37 +173,6 @@ export interface AppState {
   readonly configuration: AgentConfiguration | undefined
   readonly providers: readonly ModelProvider[]
   readonly models: readonly ModelDescriptor[]
-  /** Session-scoped model directory; the global catalog remains the Settings source. */
-  readonly sessionModels: readonly ModelDescriptor[]
-  /** Providers the session directory could not enumerate, with the host's reason. */
-  readonly sessionModelFailures: readonly ModelCatalogFailure[]
-  /**
-   * The route the session's next request will take, as the directory states it.
-   * The configuration names a model only once someone chose one, so an unstated
-   * configuration is not "no model" — it is this route, which only the host can
-   * name. It stays separate from `configuration` so that a control which sends
-   * the configuration back never writes a route the session did not choose.
-   */
-  readonly sessionModelCurrent: ModelSelection | undefined
-  /**
-   * Whether the host currently lists the session's selection. `undefined`
-   * means no directory has answered yet; DSH rc.2 still accepts a prompt for
-   * an unlisted model so the runtime can return its actionable error.
-   */
-  readonly sessionModelRoutable: boolean | undefined
-  /**
-   * True while the session directory is being read. The seat states the read
-   * in progress; without it an unanswered directory is indistinguishable from
-   * one the host answered empty.
-   */
-  readonly sessionModelDirectoryLoading: boolean
-  /**
-   * The host's own reason the session directory could not be read, `undefined`
-   * after a read that answered. A refused read is not an empty directory: the
-   * rows shown may still come from the global catalog, so the seat has to say
-   * why the session's own directory is missing and offer another read.
-   */
-  readonly sessionModelDirectoryError: string | undefined
   readonly presets: readonly AgentPresetDescriptor[]
   /** Upstream preset registry may disable the mode chooser for new sessions. */
   readonly presetSelectionEnabled?: boolean | undefined

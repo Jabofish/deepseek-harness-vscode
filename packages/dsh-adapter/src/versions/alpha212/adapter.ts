@@ -1,17 +1,17 @@
+import type { BackendEndpoint, PluginBundleRepository } from '@dsh-vscode/domain'
+
 import type { VersionAdapterIdentity } from '../../adapter-base.js'
-import type { Alpha171AdapterOptions } from '../alpha171/adapter.js'
+import type { Rc6SessionRepositoryOptions } from '../../repositories/session-repository.js'
+import type { Rc6WorkspaceRepository } from '../../repositories/workspace-repository.js'
+import type { SubagentRepositoryOptions } from '../../repositories/subagent-repository.js'
+import type { AlphaLoopbackApiClient, AlphaLoopbackApiClientOptions } from '../alpha/transport.js'
 import { Alpha211VersionAdapter } from '../alpha211/adapter.js'
+import { alpha212SessionProfile } from './session-wire.js'
+import { Alpha212SessionRepository } from './session-repository.js'
+import { Alpha212PluginBundleRepository } from './plugin-manager-repository.js'
+import { Alpha212SubagentRepository } from './subagent-repository.js'
 
-export type Alpha212AdapterOptions = Alpha171AdapterOptions
-
-/**
- * Exact adapter for the DSH 0.2.1-alpha.2 source/tag contract.
- *
- * Retains the alpha.1 Session V4 and projection-v2 control wire unchanged.
- * This patch release is only distinguished from alpha.1 by its version
- * identity; the wire contract is identical, so the adapter is a pure subclass
- * of {@link Alpha211VersionAdapter}.
- */
+/** Exact DSH alpha.2. Older release admission and routing remain independent. */
 export class Alpha212VersionAdapter extends Alpha211VersionAdapter {
   protected override readonly identity: VersionAdapterIdentity = {
     id: 'dsh-0.2.1-alpha.2',
@@ -21,7 +21,26 @@ export class Alpha212VersionAdapter extends Alpha211VersionAdapter {
     fallback: false,
   }
 
-  public constructor(options: Alpha212AdapterOptions) {
-    super(options)
+  protected override createTransportOptions(endpoint: BackendEndpoint): AlphaLoopbackApiClientOptions {
+    return { ...super.createTransportOptions(endpoint), sessionWireProfile: alpha212SessionProfile }
+  }
+
+  protected override createSubagentRepository(
+    transport: AlphaLoopbackApiClient,
+    options: SubagentRepositoryOptions,
+  ): Alpha212SubagentRepository {
+    return new Alpha212SubagentRepository(transport, options)
+  }
+
+  protected override createSessionRepository(
+    transport: AlphaLoopbackApiClient,
+    workspaces: Rc6WorkspaceRepository,
+    options: Rc6SessionRepositoryOptions,
+  ): Alpha212SessionRepository {
+    return new Alpha212SessionRepository(transport, workspaces, this.options.samePath, options)
+  }
+
+  protected override createPluginBundleRepository(transport: AlphaLoopbackApiClient): PluginBundleRepository {
+    return new Alpha212PluginBundleRepository(transport)
   }
 }

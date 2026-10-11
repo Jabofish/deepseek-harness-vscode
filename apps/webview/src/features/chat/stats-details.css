@@ -22,3 +22,93 @@
 .dsh-stats-details dd {
   margin: 0;
 }
+
+.dsh-stats-line--focused {
+  justify-content: center;
+  gap: 4px 12px;
+}
+.dsh-stats-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--dsh-muted);
+  background: transparent;
+  font: inherit;
+  line-height: 20px;
+  font-variant-numeric: tabular-nums;
+}
+.dsh-stats-pill > .dsh-icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+.dsh-stats-pill > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+button.dsh-stats-pill {
+  cursor: pointer;
+}
+button.dsh-stats-pill:hover,
+button.dsh-stats-pill[aria-expanded='true'] {
+  color: var(--dsh-text);
+  background: var(--dsh-surface-hover);
+}
+.dsh-stats-dialog {
+  z-index: 100;
+  box-sizing: border-box;
+  width: min(380px, calc(100vw - 16px));
+  max-height: min(420px, calc(100vh - 16px));
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid var(--dsh-border-color);
+  border-radius: 12px;
+  color: var(--dsh-text);
+  background: var(--dsh-widget-bg);
+  box-shadow: var(--dsh-shadow);
+  font-family: var(--vscode-font-family, sans-serif);
+  font-size: var(--dsh-font-size-xs);
+  scrollbar-width: thin;
+}
+.dsh-stats-dialog > strong {
+  display: block;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--dsh-border-color);
+}
+.dsh-stats-dialog dl {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0 0;
+}
+.dsh-stats-dialog dl > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 16px;
+}
+.dsh-stats-dialog dt {
+  color: var(--dsh-muted);
+  overflow-wrap: anywhere;
+}
+.dsh-stats-dialog dd {
+  margin: 0;
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+.dsh-stats-dialog:focus-visible {
+  outline: 2px solid var(--dsh-focus);
+  outline-offset: -2px;
+}
+
+.dsh-unified-composer .dsh-stats-line--focused {
+  display: flex;
+  flex-wrap: wrap;
+  overflow: visible;
+  white-space: normal;
+}

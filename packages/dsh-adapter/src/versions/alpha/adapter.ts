@@ -45,7 +45,10 @@ import {
 } from '../../repositories/session-repository.js'
 import { Rc6SettingsRepository } from '../../repositories/settings-repository.js'
 import { Rc6SkillRepository } from '../../repositories/skill-repository.js'
-import { Rc6SubagentRepository } from '../../repositories/subagent-repository.js'
+import {
+  Rc6SubagentRepository,
+  type SubagentRepositoryOptions,
+} from '../../repositories/subagent-repository.js'
 import { Rc6WorkspaceRepository } from '../../repositories/workspace-repository.js'
 import { SubagentAddressRegistry } from '../../repositories/shared/subagent-addresses.js'
 import { AlphaEventSource } from './events.js'
@@ -180,6 +183,13 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
     return new AlphaLoopbackApiClient(this.createTransportOptions(endpoint))
   }
 
+  protected createSubagentRepository(
+    transport: AlphaLoopbackApiClient,
+    options: SubagentRepositoryOptions,
+  ): Rc6SubagentRepository {
+    return new Rc6SubagentRepository(transport, options)
+  }
+
   protected createTransportOptions(endpoint: BackendEndpoint): AlphaLoopbackApiClientOptions {
     const options: AlphaLoopbackApiClientOptions = {
       ...this.options,
@@ -263,7 +273,7 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
       ...(inspectorDevtools === undefined ? {} : { inspectorDevtools }),
       goals,
       jobs,
-      subagents: new Rc6SubagentRepository(transport, {
+      subagents: this.createSubagentRepository(transport, {
         inlineImagePrompts: backend.capabilities.subagentImagePrompts === true,
         subagentPromptDelivery: this.supportsSubagentPromptDelivery,
         maxPromptAttachmentBytes: 20 * 1024 * 1024,

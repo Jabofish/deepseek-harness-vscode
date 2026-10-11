@@ -21,6 +21,7 @@ import { SubagentAddressRegistry } from './shared/subagent-addresses.js'
 /** Match the official web client's 50-message history pages. */
 const HISTORY_PAGE_MESSAGES = 50
 export interface SubagentRepositoryOptions {
+  readonly externalCatalog?: boolean
   /** Alpha.3+ admits inline image parts; rc.6/alpha.1-2 accept text parts only. */
   readonly inlineImagePrompts?: boolean
   /** DSH 0.1.3-alpha.2 requires the queue/steer delivery discriminator. */
@@ -50,12 +51,12 @@ export class Rc6SubagentRepository implements SubagentRepository {
   public async list(sessionId: string, signal?: AbortSignal): Promise<SubagentCatalog> {
     const generation = (this.refreshGenerations.get(sessionId) ?? 0) + 1
     this.refreshGenerations.set(sessionId, generation)
-    const value = requiredRecord(
-      await callRpc<unknown>(this.transport, 'subagent.list', { parentSessionId: sessionId }, signal),
-    )
+    const value = requiredRecord(await this.readCatalog(sessionId, signal))
     if (!Array.isArray(value.entries) || typeof value.parentAvailable !== 'boolean')
       throw malformedSubagentResponse('catalog')
-    const entries = value.entries.map((entry) => catalogEntry(entry, sessionId))
+    const entries = value.entries.map((entry) =>
+      catalogEntry(entry, sessionId, this.options.externalCatalog === true),
+    )
 
     // Commit routing only after the entire catalog validates. A malformed
     // refresh must not leave a half-new address set behind. Concurrent
@@ -68,11 +69,18 @@ export class Rc6SubagentRepository implements SubagentRepository {
     this.addresses.replaceParent(
       sessionId,
       entries
-        .filter((entry): entry is SubagentView => entry.kind === 'child')
+        .filter(
+          (entry): entry is SubagentView & { readonly mode: 'one-shot' | 'continuable' } =>
+            entry.kind === 'child' && entry.mode !== 'external',
+        )
         .map((entry) => ({ id: entry.id, mode: entry.mode })),
     )
 
     return { entries, parentAvailable: value.parentAvailable }
+  }
+
+  protected readCatalog(sessionId: string, signal?: AbortSignal): Promise<unknown> {
+    return callRpc<unknown>(this.transport, 'subagent.list', { parentSessionId: sessionId }, signal)
   }
 
   /** Durable parent of a catalog-resolved child, for child-scoped ownership checks. */
@@ -202,7 +210,11 @@ function isAbortSignal(value: unknown): value is AbortSignal {
   return typeof value === 'object' && value !== null && 'aborted' in value && 'addEventListener' in value
 }
 
-function catalogEntry(value: unknown, parentSessionId: string): SubagentView | SubagentDiagnosticView {
+function catalogEntry(
+  value: unknown,
+  parentSessionId: string,
+  externalCatalog: boolean,
+): SubagentView | SubagentDiagnosticView {
   const record = requiredRecord(value)
   if (typeof record.id !== 'string' || record.id.length === 0)
     throw malformedSubagentResponse('catalog entry')
@@ -215,7 +227,10 @@ function catalogEntry(value: unknown, parentSessionId: string): SubagentView | S
     record.kind !== 'child' ||
     (record.activity !== 'running' && record.activity !== 'inactive') ||
     typeof record.hasChildren !== 'boolean' ||
-    (record.mode !== 'one-shot' && record.mode !== 'continuable') ||
+    (record.mode !== 'one-shot' &&
+      record.mode !== 'continuable' &&
+      !(externalCatalog && record.mode === 'external')) ||
+    (record.mode === 'external' && (record.hasChildren !== false || record.activity !== 'inactive')) ||
     (record.label !== undefined && typeof record.label !== 'string') ||
     (record.mode === 'continuable' && typeof record.label !== 'string')
   )

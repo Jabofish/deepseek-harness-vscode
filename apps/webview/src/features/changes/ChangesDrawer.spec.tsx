@@ -70,6 +70,24 @@ function renderDrawer(
 describe('ChangesDrawer', () => {
   afterEach(() => cleanup())
 
+  it('reports failed and unavailable detail reads and allows a successful retry', async () => {
+    const onDetail = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('unavailable'))
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValue({ ...change, redactedDiff: 'retry diff', diffTruncated: false })
+    renderDrawer({ onDetail })
+    fireEvent.click(screen.getByRole('button', { name: '1 changes' }))
+    const trigger = screen.getByRole('button', { name: 'Review src/main.ts' })
+    fireEvent.click(trigger)
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('could not be loaded'))
+    fireEvent.click(trigger)
+    await waitFor(() => expect(onDetail).toHaveBeenCalledTimes(2))
+    fireEvent.click(trigger)
+    await waitFor(() => expect(screen.getByText('retry diff')).toBeDefined())
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
   it('shows a refresh warning and retry control even without local records', () => {
     renderDrawer({ changes: [], refreshFailed: true })
     expect(screen.getByRole('alert').textContent).toContain('Could not refresh changes')

@@ -57,6 +57,12 @@ export interface ManagedPluginEntry {
 
 /** A profile or installation bundle discovered from the live RC2 Plugin Manager. */
 export interface PluginManagerBundle {
+  readonly official?: boolean
+  readonly availability?: 'installation' | 'profile' | 'missing'
+  /** Host-private install source; public catalogs only carry installable and targetVersion. */
+  readonly installTarget?: { readonly spec: string; readonly version: string }
+  readonly installable?: boolean
+  readonly targetVersion?: string
   readonly name: string
   readonly version?: string
   readonly title?: PluginLocalizedText
@@ -134,6 +140,7 @@ export interface PluginInstallProgressView {
 }
 
 export interface PluginInstallOptions {
+  readonly saveExact?: boolean
   readonly requestId: string
   readonly registry?: PluginRegistry
   readonly approvedBuilds?: readonly string[]

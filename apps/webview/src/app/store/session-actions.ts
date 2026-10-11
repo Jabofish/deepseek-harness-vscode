@@ -135,7 +135,7 @@ export function createSessionActions(dependencies: SessionActionDependencies): S
 
   const cancelSession = async (sessionId: string): Promise<void> => {
     const subagent = activeSubagentFor(sessionId)
-    if (subagent?.entry.mode === 'one-shot') throw new Error(translate('app.error.subagentInterrupt'))
+    if (subagent?.entry.mode !== 'continuable') throw new Error(translate('app.error.subagentInterrupt'))
     await client.request<unknown>(
       subagent === undefined
         ? { type: 'session.cancel', requestId: requestId(), payload: { sessionId } }

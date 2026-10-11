@@ -384,7 +384,11 @@ export const rc6Mapper = {
         return {
           type: 'subagent.catalog.updated',
           sessionId,
-          entry: subagentCatalogEntry(data),
+          entry: subagentCatalogEntry(
+            data,
+            envelope.externalCatalogContract === true,
+            envelope.unknownCatalogContract === true,
+          ),
         }
       }
       case 'user/message': {

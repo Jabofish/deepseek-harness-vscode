@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { UserQuestion } from '@dsh-vscode/domain'
 import { UserQuestionCard } from './UserQuestionCard.js'
+import { ConversationLayoutProvider } from '../../app/ConversationLayoutProvider.js'
 import { I18nProvider } from '../../i18n.js'
 
 function batchQuestion(): UserQuestion {
@@ -63,6 +64,36 @@ describe('UserQuestionCard', () => {
     expect(screen.getByText('Stop here')).toBeDefined()
     expect(screen.getAllByText('Who to notify?').length).toBeGreaterThan(0)
     expect(screen.queryByText(/approves the plan/)).toBeNull()
+  })
+
+  it('keeps the complete focused prompt in the scroll body and submits its original choice', () => {
+    const prompt = 'Choose a scope after reviewing these requirements. '.repeat(50)
+    const onRespond = vi.fn()
+    const { container } = render(
+      <ConversationLayoutProvider initialLayout="focused">
+        <UserQuestionCard
+          question={{
+            id: 'long-question',
+            sessionId: 's1',
+            prompt,
+            choices: [{ id: 'all', label: 'All pages' }],
+            allowFreeText: true,
+          }}
+          disabled={false}
+          onRespond={onRespond}
+          onCancel={vi.fn()}
+        />
+      </ConversationLayoutProvider>,
+    )
+
+    expect(screen.getByRole('heading', { level: 2 }).textContent).not.toContain(prompt)
+    const body = container.querySelector<HTMLElement>('.dsh-interaction__body')!
+    expect(body.tabIndex).toBe(0)
+    expect(body.querySelector('.dsh-question__prompt')?.textContent).toBe(prompt)
+    expect(body.contains(submitButton())).toBe(false)
+    fireEvent.click(screen.getByRole('radio', { name: 'All pages' }))
+    fireEvent.click(submitButton())
+    expect(onRespond).toHaveBeenCalledWith([{ id: 'long-question', response: ['all'] }])
   })
 
   it('localizes the interaction chrome without changing upstream question content', () => {

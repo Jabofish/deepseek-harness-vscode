@@ -4,11 +4,8 @@ import type { ProtocolClient } from '../protocol-client.js'
 import { requestId } from './ids.js'
 import { createDefaultConfiguration, isAgentConfiguration } from './model-catalog.js'
 import { promptModeForConfiguration } from './agent-config.js'
-import {
-  loadSessionModelDirectory,
-  mergeSessionModelDirectory,
-  type CommandDirectoryCache,
-} from './command-directory.js'
+import { loadSessionModelDirectory, mergeSessionModelDirectory } from './session-model-directory.js'
+import type { CommandDirectoryCache } from './command-directory.js'
 import { isGoalView, isJobView, isQueuedInput, nonEmptyString } from './event-values.js'
 import { feedbackRecord } from './feature-parsers.js'
 import {
@@ -360,6 +357,7 @@ export function createSessionOpenController(host: SessionOpenHost): {
     }
   }
   const openSubagent = async (entry: SubagentView, parentAvailable: boolean): Promise<void> => {
+    if (entry.mode === 'external') throw new Error(translate('subagents.externalUnavailable'))
     // A direct child open (drawer, task row) also supersedes an in-flight
     // by-id resolution inside `open`.
     host.nextOpenIntent()

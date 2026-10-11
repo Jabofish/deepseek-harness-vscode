@@ -36,6 +36,7 @@ export function isImageMediaType(value: string): boolean {
 }
 
 export interface SessionSummary {
+  readonly formatStatus?: 'current' | 'migration-required'
   readonly id: string
   /** DSH workspace registry identity; it is not a VS Code folder id. */
   readonly workspaceId: string

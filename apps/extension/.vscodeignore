@@ -2,7 +2,7 @@
 # add back the runtime surface. vsce has no way to express an exclusion for the
 # package.json `files` property, and `.vscodeignore` cannot be combined with it.
 **
-!dist/**
+!dist/*.cjs
 !resources/**
 !README.md
 !CHANGELOG.md
