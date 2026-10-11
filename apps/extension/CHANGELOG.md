@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- 修复设置页首次打开反复出现“重试”：延迟资源改为相对于扩展资源目录加载，关闭不符合 Webview 安全策略的脚本预加载，并保留小字体为独立资源。
+- Fixed Settings repeatedly showing Retry on first open: deferred assets resolve relative to the extension media directory, script preloads respect the Webview security policy, and small fonts remain packaged resources.
+
+- 统计改为紧凑读数与独立明细；改善窄窗口任务回答、后台任务列表、模板编辑和检查点确认。失败后保留输入，阻止重复提交和关闭后的迟到结果，恢复或删除成功后正确关闭确认框。
+- Statistics use compact readings with separate details. Task answers, background jobs, template editors and checkpoint confirmations work in narrow views; failed requests retain input, duplicate submissions and dismissed late results are guarded, and successful restore/delete operations close their confirmation.
+
 - 修复完成回合仍显示“工作过程”、过程或检查器定位后的工具详情无法收起、重复展开丢失状态，以及长搜索标题编号错位和思考标记漂移。会话按钮、更多菜单和事件详情统一为紧凑布局，矮窗口菜单与长结果可键盘滚动。
 - Fixed completed turns remaining open, processes and inspector-revealed tools refusing to collapse, lost disclosure state, misaligned long search titles, and floating reasoning headers. Session controls, action menus and event details use compact layouts with keyboard scrolling for short windows and long results.
 

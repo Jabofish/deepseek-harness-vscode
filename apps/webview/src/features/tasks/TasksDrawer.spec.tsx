@@ -70,6 +70,40 @@ const runningTask: TaskSummary = {
 describe('TasksDrawer failures', () => {
   afterEach(() => cleanup())
 
+  it('locks an answer while pending, keeps failed drafts and ignores errors after dismissal', async () => {
+    let reject!: (reason: Error) => void
+    const onAnswer = vi.fn(
+      () =>
+        new Promise<void>((_resolve, fail) => {
+          reject = fail
+        }),
+    )
+    renderDrawer({ onAnswer })
+    const trigger = openDrawer()
+    fireEvent.click(screen.getByRole('button', { name: 'Answer' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Task answer' }), {
+      target: { value: 'retry this answer' },
+    })
+    const form = document.querySelector('form')!
+    fireEvent.submit(form)
+    fireEvent.submit(form)
+    expect(onAnswer).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Answer' }).disabled).toBe(true)
+    reject(new Error('retryable failure'))
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('retryable failure'))
+    expect(screen.getByRole<HTMLInputElement>('textbox', { name: 'Task answer' }).value).toBe(
+      'retry this answer',
+    )
+    fireEvent.submit(form)
+    fireEvent.pointerDown(document.body)
+    fireEvent.click(trigger)
+    reject(new Error('late failure'))
+    await waitFor(() =>
+      expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Refresh tasks' }).disabled).toBe(false),
+    )
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
   it('reports a rejected stop instead of silently dropping it', async () => {
     const onStop = vi.fn().mockRejectedValue(new Error('task-state-stale'))
     renderDrawer({ tasks: [runningTask], onStop })

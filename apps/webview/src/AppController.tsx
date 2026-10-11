@@ -666,6 +666,7 @@ const useAppControllerImpl = () => {
   const composerStatus = useMemo(
     () => (
       <StatsLine
+        sessionId={activeSessionId}
         nodes={state.timeline.nodes}
         {...(state.timeline.nodeChangeStart === undefined
           ? {}
@@ -680,6 +681,7 @@ const useAppControllerImpl = () => {
       />
     ),
     [
+      activeSessionId,
       composerUsage,
       performanceUsage,
       sessionStats,

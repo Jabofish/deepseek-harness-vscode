@@ -70,6 +70,9 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
   const [open, setOpen] = useState(false)
   const [now, setNow] = useState(() => Date.now())
   const [actionFailed, setActionFailed] = useState(false)
+  const [pending, setPending] = useState<ReadonlySet<string>>(new Set())
+  const pendingActions = useRef(new Set<string>())
+  const actionGeneration = useRef(0)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLUListElement>(null)
@@ -109,7 +112,10 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
   useEffect(() => {
     if (!open) return
     const closeOutside = (event: PointerEvent): void => {
-      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) setOpen(false)
+      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) {
+        actionGeneration.current += 1
+        setOpen(false)
+      }
     }
     document.addEventListener('pointerdown', closeOutside)
     return () => {
@@ -143,12 +149,24 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
     if (event.key !== 'Escape' || !open) return
     event.preventDefault()
+    actionGeneration.current += 1
     setOpen(false)
     triggerRef.current?.focus()
   }
-  const runAction = (action: () => Promise<unknown>): void => {
+  const runAction = (key: string, action: () => Promise<unknown>): void => {
+    if (pendingActions.current.has(key)) return
+    pendingActions.current.add(key)
+    setPending(new Set(pendingActions.current))
+    const generation = actionGeneration.current
     setActionFailed(false)
-    void action().catch(() => setActionFailed(true))
+    void action()
+      .catch(() => {
+        if (generation === actionGeneration.current) setActionFailed(true)
+      })
+      .finally(() => {
+        pendingActions.current.delete(key)
+        setPending(new Set(pendingActions.current))
+      })
   }
 
   return (
@@ -161,6 +179,8 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
         aria-label={countLabel}
         onClick={() => {
           setNow(Date.now())
+          actionGeneration.current += 1
+          setActionFailed(false)
           setOpen((current) => !current)
         }}
       >
@@ -177,6 +197,13 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
           className="dsh-jobs-popover__menu"
           aria-label={t('jobs.list.aria')}
         >
+          {actionFailed ? (
+            <li>
+              <p className="dsh-jobs-popover__error" role="alert">
+                {t('jobs.operationFailed')}
+              </p>
+            </li>
+          ) : null}
           {rows.map((job) => {
             const live = isLive(job)
             const isFollowing = following?.jobId === job.id && following.error === undefined && live
@@ -204,8 +231,11 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
                     <button
                       type="button"
                       aria-label={t(isFollowing ? 'jobs.stopFollowing' : 'jobs.follow')}
+                      disabled={pending.has(`follow:${job.id}`)}
                       onClick={() =>
-                        runAction(() => (isFollowing ? props.onStopFollowing() : props.onFollow(job.id)))
+                        runAction(`follow:${job.id}`, () =>
+                          isFollowing ? props.onStopFollowing() : props.onFollow(job.id),
+                        )
                       }
                     >
                       {t(isFollowing ? 'jobs.stopFollowing' : 'jobs.follow')}
@@ -214,7 +244,8 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
                       <button
                         type="button"
                         aria-label={t('jobs.kill')}
-                        onClick={() => runAction(() => props.onKill(job.id))}
+                        disabled={pending.has(`kill:${job.id}`)}
+                        onClick={() => runAction(`kill:${job.id}`, () => props.onKill(job.id))}
                       >
                         {t('jobs.kill')}
                       </button>
@@ -237,7 +268,6 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
           ) : null}
         </ul>
       ) : null}
-      {actionFailed ? <p role="alert">{t('jobs.operationFailed')}</p> : null}
     </div>
   )
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactElement } from 'react'
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactElement } from 'react'
 import type { ChangeDetail, ChangeReviewState, ChangeSetFile } from '@dsh-vscode/domain'
 
 import { useI18n } from '../../i18n.js'
@@ -29,6 +29,7 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
   const [reviewError, setReviewError] = useState(false)
   const [openError, setOpenError] = useState(false)
   const [refreshError, setRefreshError] = useState(false)
+  const [detailError, setDetailError] = useState(false)
   const detailRequestGeneration = useRef(0)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -45,15 +46,22 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
   /** The row control that opened the detail takes the keyboard back from it. */
   const detailTriggerRef = useRef<HTMLElement | null>(null)
   const detailWasOpen = useRef(false)
+  const closePopover = useCallback((): void => {
+    detailRequestGeneration.current += 1
+    setDetailLoading(false)
+    setDetail(undefined)
+    setDetailError(false)
+    setOpen(false)
+  }, [])
 
   useEffect(() => {
     if (!open) return
     const closeOutside = (event: PointerEvent): void => {
-      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) setOpen(false)
+      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) closePopover()
     }
     document.addEventListener('pointerdown', closeOutside)
     return () => document.removeEventListener('pointerdown', closeOutside)
-  }, [open])
+  }, [closePopover, open])
 
   useEffect(() => {
     if (detailWasOpen.current && detail === undefined) {
@@ -76,13 +84,20 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
   const openDetail = (changeId: string): void => {
     const generation = ++detailRequestGeneration.current
     setDetailLoading(true)
+    setDetailError(false)
     void props
       .onDetail(changeId)
       .then((next) => {
-        if (generation === detailRequestGeneration.current) setDetail(next)
+        if (generation === detailRequestGeneration.current) {
+          setDetail(next)
+          setDetailError(next === undefined)
+        }
       })
       .catch(() => {
-        if (generation === detailRequestGeneration.current) setDetail(undefined)
+        if (generation === detailRequestGeneration.current) {
+          setDetail(undefined)
+          setDetailError(true)
+        }
       })
       .finally(() => {
         if (generation === detailRequestGeneration.current) setDetailLoading(false)
@@ -109,6 +124,7 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
     // repopulating a preview the user has already dismissed.
     detailRequestGeneration.current += 1
     setDetail(undefined)
+    setDetailLoading(false)
   }
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
     if (event.key !== 'Escape' || !open) return
@@ -116,11 +132,11 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
     // The diff detail is the inner layer: the first Escape returns to the
     // list with its scroll position intact, and only the next one dismisses
     // the popover itself.
-    if (detail !== undefined) {
+    if (detail !== undefined || detailLoading) {
       closeDetail()
       return
     }
-    setOpen(false)
+    closePopover()
     triggerRef.current?.focus()
   }
 
@@ -136,7 +152,8 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
         aria-label={countLabel}
         onClick={() => {
           setOpenError(false)
-          setOpen((current) => !current)
+          if (open) closePopover()
+          else setOpen(true)
         }}
       >
         <Icon name="branch" />
@@ -224,6 +241,11 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
           {detailLoading ? (
             <div className="dsh-changes-popover__status" role="status">
               {t('changes.detailLoading')}
+            </div>
+          ) : null}
+          {detailError ? (
+            <div className="dsh-changes-popover__error" role="alert">
+              {t('changes.detailFailed')}
             </div>
           ) : null}
           {detail === undefined ? null : (

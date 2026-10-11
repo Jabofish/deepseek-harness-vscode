@@ -81,6 +81,7 @@
   "changes.detail": "审查 {path}",
   "changes.detailTitle": "变更详情",
   "changes.detailLoading": "正在加载变更详情…",
+  "changes.detailFailed": "无法加载变更详情，请重新打开以重试。",
   "changes.closeDetail": "关闭变更详情",
   "changes.noDiff": "没有结构化差异，当前仅报告了位置证据。",
   "changes.reviewActions": "变更审阅决定",

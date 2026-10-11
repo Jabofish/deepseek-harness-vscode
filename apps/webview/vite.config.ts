@@ -3,6 +3,8 @@ import { defineConfig } from 'vite'
 import { resolve } from 'node:path'
 
 export default defineConfig({
+  // Extension assets live below a Webview resource URI, never at the origin root.
+  base: './',
   plugins: [react()],
   resolve: {
     alias: [
@@ -13,6 +15,11 @@ export default defineConfig({
     ],
   },
   build: {
+    // Native module imports inherit the entry's nonce. Generated preload links
+    // have no nonce and cannot run under the Webview's strict script-src policy.
+    modulePreload: false,
+    // font-src only permits packaged resources, including very small KaTeX fonts.
+    assetsInlineLimit: (filePath) => (/\.(?:woff2?|ttf)$/u.test(filePath) ? false : undefined),
     outDir: resolve(import.meta.dirname, '../extension/media'),
     emptyOutDir: true,
     sourcemap: true,

@@ -81,6 +81,7 @@
   "changes.detail": "Review {path}",
   "changes.detailTitle": "Change detail",
   "changes.detailLoading": "Loading change detail…",
+  "changes.detailFailed": "The change detail could not be loaded. Try opening it again.",
   "changes.closeDetail": "Close change detail",
   "changes.noDiff": "No structured diff is available. Only location evidence was reported.",
   "changes.reviewActions": "Change review decision",

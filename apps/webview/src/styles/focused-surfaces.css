@@ -429,6 +429,51 @@
   font-size: var(--dsh-font-size-xs);
 }
 
+/* Job identity remains readable independently of progress and row actions. */
+.dsh-app[data-conversation-layout='focused'] .dsh-jobs-popover__row {
+  display: grid;
+  grid-template-columns: 8px auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto;
+  gap: 6px 8px;
+  min-width: 0;
+  padding: 10px 8px;
+  border: 0;
+  background: transparent;
+}
+.dsh-app[data-conversation-layout='focused'] .dsh-jobs-popover__row > .dsh-jobs-popover__dot {
+  grid-area: 1 / 1;
+}
+.dsh-app[data-conversation-layout='focused'] .dsh-jobs-popover__kind {
+  grid-area: 1 / 2;
+}
+.dsh-app[data-conversation-layout='focused'] .dsh-jobs-popover__label {
+  grid-area: 1 / 3;
+  color: var(--dsh-text);
+}
+.dsh-app[data-conversation-layout='focused'] .dsh-jobs-popover__duration {
+  grid-area: 1 / 4;
+}
+.dsh-app[data-conversation-layout='focused'] .dsh-jobs-popover__status {
+  grid-area: 2 / 2 / 3 / -1;
+  max-width: none;
+}
+.dsh-app[data-conversation-layout='focused'] .dsh-jobs-popover__actions {
+  grid-area: 3 / 2 / 4 / -1;
+  flex-wrap: wrap;
+}
+.dsh-app[data-conversation-layout='focused'] .dsh-jobs-popover__actions button {
+  min-height: 28px;
+  white-space: nowrap;
+}
+.dsh-app[data-conversation-layout='focused'] .dsh-jobs-popover__row + .dsh-jobs-popover__row {
+  border-top: 1px solid var(--dsh-border-color);
+}
+.dsh-jobs-popover__error {
+  padding: 8px;
+  color: var(--dsh-danger);
+  overflow-wrap: anywhere;
+}
+
 .dsh-app[data-conversation-layout='focused']
   :is(.dsh-trajectory-inspector, .dsh-session-inspector, .dsh-lightbox) {
   border-radius: 12px;

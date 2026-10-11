@@ -17,6 +17,20 @@
   flex: 1 1 auto;
 }
 
+.dsh-tasks-popover__row:has(.dsh-tasks-popover__answer) {
+  flex-wrap: wrap;
+}
+.dsh-tasks-popover__row:has(.dsh-tasks-popover__answer) > .dsh-tasks-popover__main {
+  flex-basis: 0;
+}
+.dsh-tasks-popover__answer {
+  width: 100%;
+}
+.dsh-tasks-popover__answer > button {
+  flex: none;
+  white-space: nowrap;
+}
+
 .dsh-tasks-popover__answer-button {
   flex: 0 0 auto;
   min-height: 1.75rem;
