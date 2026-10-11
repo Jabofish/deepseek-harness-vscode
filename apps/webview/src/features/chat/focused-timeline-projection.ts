@@ -41,7 +41,8 @@ function healthy(node: FocusedWorkNode): boolean {
       !terminalPresentationFailed(node.tool.presentation)
     )
   return (
-    node.turnCompleted === true &&
+    // Only the closing reply carries turnCompleted. Earlier settled steps
+    // remain healthy; completion is checked against the final transcript tail.
     !node.streaming &&
     node.reasoning?.streaming !== true &&
     node.interrupted !== true &&
@@ -152,7 +153,7 @@ export function createFocusedTimelineProjector(): (
         state.closed &&
         state.healthy &&
         uninterrupted &&
-        (finalReply !== undefined || runLast.kind === 'tool')
+        (finalReply?.turnCompleted === true || runLast.kind === 'tool')
       while (index < runEnd) {
         starts.push(index)
         const members = nodes

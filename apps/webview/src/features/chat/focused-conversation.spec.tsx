@@ -48,7 +48,12 @@ const nodes: readonly TimelineNode[] = [
   },
 ]
 
-function session(mode: TranscriptViewMode = 'standard', source = nodes, reveal?: string): ReactElement {
+function session(
+  mode: TranscriptViewMode = 'standard',
+  source = nodes,
+  reveal?: string,
+  requestId = 'reveal',
+): ReactElement {
   return (
     <ConversationLayoutProvider initialLayout="focused">
       <ConversationLayoutControl />
@@ -57,7 +62,7 @@ function session(mode: TranscriptViewMode = 'standard', source = nodes, reveal?:
         nodes={source}
         streaming={false}
         transcriptView={mode}
-        {...(reveal === undefined ? {} : { revealTarget: { nodeId: reveal, requestId: 'reveal' } })}
+        {...(reveal === undefined ? {} : { revealTarget: { nodeId: reveal, requestId } })}
       />
     </ConversationLayoutProvider>
   )
@@ -70,6 +75,51 @@ afterEach(() => {
 })
 
 describe('focused conversation interactions', () => {
+  it('lets a user close active work, retains that choice on updates, and reopens the same process', () => {
+    const live = nodes
+      .slice(0, -1)
+      .map((node) => (node.kind === 'assistant-message' ? { ...node, turnCompleted: false } : node))
+    const view = render(session('standard', live))
+    const summary = screen.getByRole<HTMLButtonElement>('button', { name: /Work details/u })
+    expect(summary.disabled).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: /Tool calls: 1/u }))
+    fireEvent.click(summary)
+    expect(summary.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByText('I am examining the implementation')).toBeNull()
+
+    const updated = live.map((node) =>
+      node.kind === 'assistant-message' ? { ...node, markdown: 'New progress from the same Turn' } : node,
+    )
+    view.rerender(session('standard', updated))
+    expect(screen.queryByText('New progress from the same Turn')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /Work details/u }))
+    expect(screen.getByText('New progress from the same Turn')).toBeDefined()
+    expect(screen.getByRole('button', { name: /Tool calls: 1/u }).getAttribute('aria-expanded')).toBe('true')
+
+    fireEvent.click(screen.getByRole('button', { name: /Work details/u }))
+    view.rerender(session('standard', [...updated, nodes.at(-1)!]))
+    expect(screen.getByRole('button', { name: /Work completed/u }).getAttribute('aria-expanded')).toBe(
+      'false',
+    )
+    expect(screen.getByText('The complete result')).toBeDefined()
+  })
+
+  it('allows closing inspector-revealed work and reopens it for a new request to the same source', () => {
+    const view = render(session('standard', nodes, 'tool'))
+    const group = screen.getByRole('button', { name: /Work completed/u })
+    expect(group.getAttribute('aria-expanded')).toBe('true')
+    const tool = screen.getByRole('button', { name: /Collapse Read source details/u })
+    fireEvent.click(tool)
+    expect(tool.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(group)
+    expect(group.getAttribute('aria-expanded')).toBe('false')
+    view.rerender(session('standard', nodes, 'tool', 'reveal-again'))
+    expect(group.getAttribute('aria-expanded')).toBe('true')
+    expect(
+      screen.getByRole('button', { name: /Collapse Read source details/u }).getAttribute('aria-expanded'),
+    ).toBe('true')
+  })
+
   it('keeps a failed command visible even when the host records the call as completed', () => {
     const source = nodes.map((node) =>
       node.kind === 'tool'

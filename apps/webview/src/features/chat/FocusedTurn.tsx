@@ -45,9 +45,15 @@ export function FocusedTurn(props: {
       answer = { ...plain, turnUsage }
     }
   }
+  const revealDismissedId = `${node.id}:reveal-dismissed:${context.revealRequestId ?? context.revealSourceNodeId}`
   const revealed =
-    context.revealSourceNodeId !== undefined && node.sourceIds.includes(context.revealSourceNodeId)
-  const open = !foldable || context.expandedDetails.has(node.id) || revealed
+    context.revealSourceNodeId !== undefined &&
+    node.sourceIds.includes(context.revealSourceNodeId) &&
+    !context.expandedDetails.has(revealDismissedId)
+  const collapsedId = `${node.id}:collapsed`
+  const open =
+    revealed ||
+    (!context.expandedDetails.has(collapsedId) && (!foldable || context.expandedDetails.has(node.id)))
   const process: ReactElement[] = []
   if (open)
     for (let index = 0; index < work.length; index++) {
@@ -76,6 +82,7 @@ export function FocusedTurn(props: {
             translate={context.t}
             transcriptView={context.transcriptView}
             revealSourceNodeId={context.revealSourceNodeId}
+            revealRequestId={context.revealRequestId}
             {...(context.onOpenLink === undefined ? {} : { onOpenLink: context.requestOpenLink })}
             {...(context.onLoadImage === undefined ? {} : { onLoadImage: context.onLoadImage })}
           />
@@ -85,8 +92,14 @@ export function FocusedTurn(props: {
   const toggle = (): void =>
     context.setExpandedDetails((current) => {
       const next = new Set(current)
-      if (next.has(node.id)) next.delete(node.id)
-      else next.add(node.id)
+      if (open) {
+        next.delete(node.id)
+        next.add(collapsedId)
+        if (revealed) next.add(revealDismissedId)
+      } else {
+        next.delete(collapsedId)
+        next.add(node.id)
+      }
       return next
     })
   return (
@@ -96,7 +109,7 @@ export function FocusedTurn(props: {
           <button
             type="button"
             className="dsh-focused-turn__summary"
-            disabled={!foldable || work.length === 0}
+            disabled={work.length === 0}
             aria-expanded={work.length === 0 ? undefined : open}
             aria-controls={bodyId}
             onClick={toggle}
@@ -108,7 +121,7 @@ export function FocusedTurn(props: {
                 {context.t('timeline.focused.entries', { count: work.length })}
               </span>
             ) : null}
-            {foldable && work.length > 0 ? <Icon name={open ? 'chevron-down' : 'chevron-right'} /> : null}
+            {work.length > 0 ? <Icon name={open ? 'chevron-down' : 'chevron-right'} /> : null}
           </button>
           <div id={bodyId} hidden={!open} className="dsh-focused-turn__process">
             {process}

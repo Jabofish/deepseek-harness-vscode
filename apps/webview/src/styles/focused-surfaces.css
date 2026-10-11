@@ -72,10 +72,7 @@
 .dsh-app[data-conversation-layout='focused']
   .dsh-timeline__reasoning-preview--expanded
   > .dsh-timeline__reasoning-toggle {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  background: var(--dsh-bg);
+  position: static;
 }
 
 .dsh-app[data-conversation-layout='focused'] .dsh-timeline__reasoning-preview-content {
@@ -353,6 +350,8 @@
   padding-inline-start: 2.5em;
   gap: 10px;
   overflow-y: auto;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
 }
 
 .dsh-app[data-conversation-layout='focused'] .dsh-tool-web-preview__source {
@@ -364,6 +363,58 @@
 .dsh-app[data-conversation-layout='focused'] .dsh-tool-web-preview__link {
   font-size: var(--dsh-font-size-md);
   font-weight: 500;
+  line-height: 1.45;
+  vertical-align: top;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-tool-web-preview__sources:focus-visible {
+  outline: 2px solid var(--dsh-focus);
+  outline-offset: -2px;
+}
+
+/* Diagnostics are opt-in support detail, using the same quiet rows as tools. */
+.dsh-app[data-conversation-layout='focused'] .dsh-timeline__event-group {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-timeline__event-group-summary {
+  min-height: 24px;
+  margin: 0;
+  padding: 0;
+  border-bottom: 0;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-sm);
+  font-weight: 400;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-timeline__event-group-heading > .dsh-icon {
+  flex: 0 0 auto;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-timeline__event-group-list {
+  padding: 8px 0 0 22px;
+  gap: 8px;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-timeline__event-payload {
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--dsh-code-bg);
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-timeline__event-payload > pre {
+  max-height: min(260px, 40vh);
+  margin: 8px 0 0;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-timeline__event-payload > pre:focus-visible {
+  outline: 2px solid var(--dsh-focus);
+  outline-offset: -2px;
 }
 
 .dsh-app[data-conversation-layout='focused'] :is(.dsh-interaction__actions, .dsh-session-dialog__actions) {

@@ -33,7 +33,8 @@ function timelineRowContextEqual(
   if (previous === next) return true
   if (
     previous.conversationLayout !== next.conversationLayout ||
-    previous.revealSourceNodeId !== next.revealSourceNodeId
+    previous.revealSourceNodeId !== next.revealSourceNodeId ||
+    previous.revealRequestId !== next.revealRequestId
   )
     return false
   if (node.kind === 'focused-turn') return previous === next

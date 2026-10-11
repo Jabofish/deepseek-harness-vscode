@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 修复完成回合仍显示“工作过程”、过程或检查器定位后的工具详情无法收起、重复展开丢失状态，以及长搜索标题编号错位和思考标记漂移。会话按钮、更多菜单和事件详情统一为紧凑布局，矮窗口菜单与长结果可键盘滚动。
+- Fixed completed turns remaining open, processes and inspector-revealed tools refusing to collapse, lost disclosure state, misaligned long search titles, and floating reasoning headers. Session controls, action menus and event details use compact layouts with keyboard scrolling for short windows and long results.
+
 - 修复窄栏输入区多余换行、附件菜单名称截断、矮窗口审批按钮和长问题选项被裁切的问题；统一 Provider、预设及复制弹窗的细节，并改善附件面板的屏幕阅读器语义。
 - Fixed unnecessary composer wrapping, truncated attachment controls, clipped approval actions and long-question content in short views. Provider, preset and copy-dialog details now follow the focused layout; attachment panels use appropriate accessible semantics.
 

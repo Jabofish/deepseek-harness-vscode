@@ -583,8 +583,14 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
                     .finally(() => setMutationBusy(false))
                 }}
               >
-                <Icon name="folder" />
-                <span>+</span>
+                {focused ? (
+                  <Icon name="folder-add" />
+                ) : (
+                  <>
+                    <Icon name="folder" />
+                    <span>+</span>
+                  </>
+                )}
               </button>
               <button
                 className="dsh-icon-button"

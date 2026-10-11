@@ -5,7 +5,11 @@ import {
   FOCUSED_PROCESS_SEGMENT_SIZE,
 } from './focused-timeline-projection.js'
 
-const message = (id: string, turn: number, completed = true): DisplayTimelineNode => ({
+const message = (
+  id: string,
+  turn: number,
+  completed = true,
+): Extract<DisplayTimelineNode, { readonly kind: 'assistant-message' }> => ({
   kind: 'assistant-message',
   id,
   markdown: id,
@@ -15,6 +19,23 @@ const message = (id: string, turn: number, completed = true): DisplayTimelineNod
 })
 
 describe('focused Turn presentation', () => {
+  it('uses the completed transcript tail rather than requiring intermediate steps to close the Turn', () => {
+    // closeTurn marks only the final visible reply turnCompleted; settled
+    // commentary and reasoning deliberately keep turnCompleted: false.
+    const earlier: DisplayTimelineNode = {
+      ...message('commentary', 1),
+      turnCompleted: false,
+    }
+    const answer = message('answer', 1)
+    const project = createFocusedTimelineProjector()
+    const [completed] = project([earlier, answer])
+    expect(completed?.kind === 'focused-turn' && completed.foldable).toBe(true)
+    expect(completed?.kind === 'focused-turn' && completed.answer).toBe(answer)
+
+    const [stillOpen] = project([message('earlier-completed', 1), { ...answer, turnCompleted: false }])
+    expect(stillOpen?.kind === 'focused-turn' && stillOpen.foldable).toBe(false)
+  })
+
   it('selects only the last finalized tool-free reply and preserves original identities', () => {
     const earlier = Object.freeze(message('commentary', 1))
     const answer = Object.freeze(message('answer', 1))

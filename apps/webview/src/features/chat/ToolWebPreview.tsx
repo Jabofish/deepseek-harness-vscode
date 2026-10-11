@@ -32,9 +32,9 @@ function renderSearch(
       {empty ? (
         <div className="dsh-tool-web-preview__empty">{translate('toolrow.presentation.noResults')}</div>
       ) : (
-        <ol className="dsh-tool-web-preview__sources">
+        <ol className="dsh-tool-web-preview__sources" tabIndex={0}>
           {view.sources.map((source, index) => (
-            <li className="dsh-tool-web-preview__source" key={`${source.url}:${index}`}>
+            <li className="dsh-tool-web-preview__source" value={index + 1} key={`${source.url}:${index}`}>
               {renderLink(source.url, source.title, props.onOpenLink)}
               {source.snippet !== undefined && source.snippet.trim() !== '' ? (
                 <div className="dsh-tool-web-preview__snippet">{source.snippet}</div>

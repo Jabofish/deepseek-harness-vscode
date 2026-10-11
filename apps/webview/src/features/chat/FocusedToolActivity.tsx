@@ -1,4 +1,4 @@
-import { useId, useState, type ReactElement } from 'react'
+import { useEffect, useId, useState, type ReactElement } from 'react'
 import { toolNameLabel } from '@dsh-vscode/ui'
 import { terminalPresentationFailed } from '@dsh-vscode/domain'
 import { Icon } from '../../ui/Icon.js'
@@ -6,28 +6,41 @@ import { ToolCallCollection, type ToolCallCollectionProps } from './ToolCallColl
 import { SubmittedPlanCard } from './SubmittedPlanCard.js'
 import { focusedPresentationPolicy } from './focused-presentation-policy.js'
 import type { TranscriptViewMode } from '../../app/ui-preferences.js'
+import type { ExpandedDetailsSetter } from './timeline-shared.js'
 
 const TOOL_PAGE_SIZE = 20
 
 /** Quiet DSH-style summary; tool details mount only after an explicit disclosure. */
 export function FocusedToolActivity(
-  props: ToolCallCollectionProps & {
+  props: Omit<ToolCallCollectionProps, 'onExpandedChange'> & {
+    readonly onExpandedChange: ExpandedDetailsSetter
     readonly transcriptView: TranscriptViewMode
     readonly revealSourceNodeId?: string | undefined
+    readonly revealRequestId?: string | undefined
   },
 ): ReactElement {
   const revealIndex = props.tools.findIndex((tool) => tool.id === props.revealSourceNodeId)
+  const groupId = `focused-tools:${props.tools[0]?.id}`
+  const revealKey = props.revealRequestId ?? props.revealSourceNodeId
+  const revealHandledId = `${groupId}:reveal:${revealKey}`
   const [disclosure, setDisclosure] = useState(() => ({
-    reveal: props.revealSourceNodeId,
-    open: revealIndex >= 0,
+    reveal: revealKey,
+    open: props.expanded.has(groupId) || (revealIndex >= 0 && !props.expanded.has(revealHandledId)),
     page: revealIndex < 0 ? 0 : Math.floor(revealIndex / TOOL_PAGE_SIZE),
   }))
-  if (disclosure.reveal !== props.revealSourceNodeId)
+  if (disclosure.reveal !== revealKey)
     setDisclosure({
       ...disclosure,
-      reveal: props.revealSourceNodeId,
+      reveal: revealKey,
       ...(revealIndex < 0 ? {} : { open: true, page: Math.floor(revealIndex / TOOL_PAGE_SIZE) }),
     })
+  const revealToolId = props.tools[revealIndex]?.id
+  const { onExpandedChange } = props
+  const revealHandled = props.expanded.has(revealHandledId)
+  useEffect(() => {
+    if (revealToolId === undefined || revealHandled) return
+    onExpandedChange((current) => new Set([...current, groupId, revealToolId, revealHandledId]))
+  }, [groupId, revealHandled, revealHandledId, revealToolId, onExpandedChange])
   const { open, page } = disclosure
   const bodyId = useId()
   const policy = focusedPresentationPolicy(props.transcriptView)
@@ -65,7 +78,15 @@ export function FocusedToolActivity(
         aria-expanded={visible}
         aria-controls={bodyId}
         disabled={!policy.groupTools}
-        onClick={() => setDisclosure({ ...disclosure, open: !open })}
+        onClick={() => {
+          setDisclosure({ ...disclosure, open: !open })
+          props.onExpandedChange((current) => {
+            const next = new Set(current)
+            if (open) next.delete(groupId)
+            else next.add(groupId)
+            return next
+          })
+        }}
       >
         <Icon name="tool" />
         <span>
@@ -86,9 +107,6 @@ export function FocusedToolActivity(
           <ToolCallCollection
             {...props}
             grouped={false}
-            expanded={
-              revealIndex < 0 ? props.expanded : new Set([...props.expanded, props.tools[revealIndex]!.id])
-            }
             tools={props.tools.slice(start, start + TOOL_PAGE_SIZE).map((node) => {
               const { submittedPlan: _plan, ...tool } = node.tool
               return _plan === undefined ? node : { ...node, tool }

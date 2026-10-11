@@ -269,7 +269,7 @@ function renderNode(
                 <code title={event.name}>{event.name}</code>
                 <details className="dsh-timeline__event-payload">
                   <summary>{t('timeline.payload')}</summary>
-                  <pre>{formatEventPayload(event.payload, t)}</pre>
+                  <pre tabIndex={focused ? 0 : undefined}>{formatEventPayload(event.payload, t)}</pre>
                 </details>
               </li>
             ))}

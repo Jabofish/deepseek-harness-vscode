@@ -480,6 +480,7 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
     () => ({
       conversationLayout,
       revealSourceNodeId: props.revealTarget?.nodeId,
+      revealRequestId: props.revealTarget?.requestId,
       expandedDetails,
       setExpandedDetails,
       assistantLabel: props.assistantLabel,
@@ -504,6 +505,7 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
     [
       conversationLayout,
       props.revealTarget?.nodeId,
+      props.revealTarget?.requestId,
       expandedDetails,
       hasBranch,
       hasFeedback,
