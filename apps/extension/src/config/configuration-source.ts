@@ -34,8 +34,10 @@ export class VsCodeConfigurationSource {
       'connection.requestTimeoutMs',
     )
     const serverUrl = normalizeServerUrl(config.get<unknown>('connection.serverUrl', ''))
-    const launchToken = readOptionalString(config.get<unknown>('connection.launchToken', ''))
-    const runtimeVersion = readOptionalString(config.get<unknown>('connection.runtimeVersion', ''))
+    const runtimeVersion = readOptionalString(
+      config.get<unknown>('connection.runtimeVersion', ''),
+      'connection.runtimeVersion',
+    )
     const executablePath = readOptionalPath(config.get<unknown>('runtime.executablePath', ''))
     const preset = readString(config.get<unknown>('agent.defaultPreset', 'standard'), 'agent.defaultPreset')
     const toolMode = readEnum(
@@ -61,7 +63,6 @@ export class VsCodeConfigurationSource {
       connection: {
         mode,
         ...(serverUrl === undefined ? {} : { serverUrl }),
-        ...(launchToken === undefined ? {} : { launchToken }),
         ...(runtimeVersion === undefined ? {} : { runtimeVersion }),
         managedPort,
         attachPorts,
@@ -95,8 +96,8 @@ function readString(value: unknown, key: string): string {
   return value
 }
 
-function readOptionalString(value: unknown): string | undefined {
-  if (typeof value !== 'string') invalid('connection.launchToken', 'a string')
+function readOptionalString(value: unknown, key: string): string | undefined {
+  if (typeof value !== 'string') invalid(key, 'a string')
   if (value.trim() === '') return undefined
   return value
 }

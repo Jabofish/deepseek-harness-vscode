@@ -37,5 +37,15 @@ export function isCanonicalEndpoint(endpoint: BackendEndpoint): boolean {
   if (typeof endpoint.host !== 'string' || endpoint.host === '') return false
   if (!Number.isInteger(endpoint.port) || endpoint.port < 1 || endpoint.port > 65_535) return false
   const origin = parseServerOrigin(endpoint.baseUrl)
-  return origin !== undefined && origin.host === endpoint.host && origin.port === endpoint.port
+  return (
+    origin !== undefined &&
+    origin.host === endpoint.host &&
+    origin.port === endpoint.port &&
+    origin.baseUrl === endpoint.baseUrl
+  )
+}
+
+/** Discovery remains local even when explicitly selected custom endpoints are remote. */
+export function isLoopbackEndpoint(endpoint: BackendEndpoint): boolean {
+  return isCanonicalEndpoint(endpoint) && (endpoint.host === '127.0.0.1' || endpoint.host === 'localhost')
 }

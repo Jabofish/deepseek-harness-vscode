@@ -1,5 +1,6 @@
 import { workspaceChangeSource } from '../alpha162/workspace-changes.js'
 import {
+  AppError,
   type BackendCandidate,
   type BackendCapabilities,
   type BackendEndpoint,
@@ -61,6 +62,7 @@ import { callRpc } from '../rc6/rpc.js'
 import { deriveFeatureCapabilityProfile } from '../../feature-capabilities.js'
 
 export type AlphaAdapterOptions = Omit<Rc6AdapterOptions, 'webSocket'> & {
+  readonly allowLocalInspector?: (endpoint: BackendEndpoint) => boolean
   readonly authCookie?: (endpoint: BackendEndpoint) => string | undefined
   readonly webSocket?: AlphaWebSocketConstructor
   readonly exportFileSystem?: ExportFileSystem
@@ -173,6 +175,11 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
           )
     } catch (error) {
       if (signal?.aborted === true) throw error
+      if (
+        error instanceof AppError &&
+        ['AUTH_REQUIRED', 'PERMISSION_DENIED', 'INVALID_ENDPOINT'].includes(error.code)
+      )
+        throw error
       return undefined
     } finally {
       await transport.close()

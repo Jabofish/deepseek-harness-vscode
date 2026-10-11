@@ -378,33 +378,8 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
           style={menuPosition}
           onKeyDown={onMenuKeyDown}
         >
-          {pane === 'root' ? (
-            <>
-              <button
-                className="dsh-model-picker__row"
-                type="button"
-                role="menuitem"
-                onClick={() => setPane('models')}
-              >
-                <span>{t('model.menuModel')}</span>
-                <span className="dsh-model-picker__row-value">{routeLabel}</span>
-                <Icon name="chevron-right" />
-              </button>
-              {effortLabel === undefined ? null : (
-                <button
-                  className="dsh-model-picker__row"
-                  type="button"
-                  role="menuitem"
-                  onClick={() => setPane('effort')}
-                >
-                  <span>{t('model.menuEffort')}</span>
-                  <span className="dsh-model-picker__row-value">{effortLabel}</span>
-                  <Icon name="chevron-right" />
-                </button>
-              )}
-            </>
-          ) : (
-            <>
+          {pane === 'root' ? null : (
+            <div className="dsh-model-picker__header">
               <button
                 className="dsh-model-picker__back"
                 type="button"
@@ -414,187 +389,226 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
                 <Icon name="chevron-left" />
                 <span>{t('model.back')}</span>
               </button>
-              {pane === 'models' ? (
-                <>
-                  {showSearch ? (
-                    <div className="dsh-model-picker__search-row">
-                      <input
-                        ref={searchRef}
-                        type="text"
-                        role="searchbox"
-                        className="dsh-model-picker__search"
-                        aria-label={t('model.search')}
-                        placeholder={t('model.search')}
-                        aria-controls={`${menuId}-models`}
-                        aria-activedescendant={activeIndex < 0 ? undefined : `${menuId}-model-${activeIndex}`}
-                        value={search.query}
-                        readOnly={applying}
-                        maxLength={160}
-                        onChange={(event) => setSearch({ query: event.currentTarget.value, index: 0 })}
-                      />
-                      {search.query === '' ? null : (
-                        <button
-                          type="button"
-                          className="dsh-icon-button"
-                          aria-label={t('model.clearSearch')}
-                          disabled={applying}
-                          onClick={() => {
-                            setSearch({ query: '', index: 0 })
-                            searchRef.current?.focus()
-                          }}
-                        >
-                          <Icon name="close" />
-                        </button>
-                      )}
-                    </div>
-                  ) : null}
-                  {props.loading === true ? (
-                    <p className="dsh-model-picker__status" role="status">
-                      {t('model.loading')}
-                    </p>
-                  ) : null}
-                  {props.error === undefined ? null : (
-                    <div className="dsh-model-picker__error">
-                      <p className="dsh-model-picker__warning" role="status">
-                        {t('model.loadFailed', { message: props.error })}
-                      </p>
-                      {props.onRetry === undefined ? null : (
-                        <button
-                          className="dsh-button dsh-button--secondary dsh-button--compact"
-                          type="button"
-                          onClick={props.onRetry}
-                        >
-                          {t('model.retry')}
-                        </button>
-                      )}
-                    </div>
-                  )}
-                  {failures.length === 0 ? null : (
-                    <div className="dsh-model-picker__failures">
-                      {failures.map((failure) => (
-                        <p className="dsh-model-picker__warning" role="status" key={failure.providerId}>
-                          {t('model.groupLoadFailed', {
-                            name: failure.providerName,
-                            message: failure.message,
-                          })}
-                        </p>
-                      ))}
-                    </div>
-                  )}
-                  <div
-                    id={`${menuId}-models`}
-                    className="dsh-model-picker__groups"
-                    role={focused && groups.length > 0 ? 'menu' : undefined}
-                    aria-label={focused && groups.length > 0 ? t('model.menuModel') : undefined}
-                  >
-                    {groups.length === 0 ? (
-                      showSearch && search.query.trim() !== '' ? (
-                        <p role="status" className="dsh-model-picker__empty">
-                          {t('model.noMatches')}
-                        </p>
-                      ) : answeredEmpty ? (
-                        <p className="dsh-model-picker__empty" role="status">
-                          {t('model.noModels')}
-                        </p>
-                      ) : null
-                    ) : (
-                      groups.map((group) => (
-                        <section
-                          className="dsh-model-picker__group"
-                          key={group.id}
-                          role="group"
-                          aria-label={group.id}
-                        >
-                          {focused ? (
-                            <div className="dsh-model-picker__group-heading">{group.id}</div>
-                          ) : (
-                            <h3>{group.id}</h3>
-                          )}
-                          {group.models.map((model) => {
-                            const isSelected =
-                              model.providerId === props.value.providerId && model.id === props.value.modelId
-                            return (
-                              <button
-                                className={`dsh-select-menu__option${
-                                  isSelected ? ' dsh-select-menu__option--selected' : ''
-                                }`}
-                                key={model.id}
-                                type="button"
-                                role="menuitemradio"
-                                id={`${menuId}-model-${visibleModels.indexOf(model)}`}
-                                tabIndex={showSearch ? -1 : 0}
-                                data-highlighted={
-                                  showSearch && visibleModels.indexOf(model) === activeIndex
-                                    ? 'true'
-                                    : undefined
-                                }
-                                onMouseMove={
-                                  showSearch && !applying
-                                    ? () => setSearch({ ...search, index: visibleModels.indexOf(model) })
-                                    : undefined
-                                }
-                                aria-checked={isSelected}
-                                aria-disabled={applying}
-                                onClick={() => selectModel(model)}
-                              >
-                                <span>{model.label}</span>
-                                {isSelected ? <Icon name="check" /> : null}
-                              </button>
-                            )
-                          })}
-                        </section>
-                      ))
-                    )}
-                  </div>
-                </>
-              ) : (
-                <>
-                  {selected === undefined || selected.defaultReasoningLevel !== undefined ? null : (
+              {pane === 'models' && showSearch ? (
+                <div className="dsh-model-picker__search-row">
+                  <input
+                    ref={searchRef}
+                    type="text"
+                    role="searchbox"
+                    className="dsh-model-picker__search"
+                    aria-label={t('model.search')}
+                    placeholder={t('model.search')}
+                    aria-controls={`${menuId}-models`}
+                    aria-activedescendant={activeIndex < 0 ? undefined : `${menuId}-model-${activeIndex}`}
+                    value={search.query}
+                    readOnly={applying}
+                    maxLength={160}
+                    onChange={(event) => setSearch({ query: event.currentTarget.value, index: 0 })}
+                  />
+                  {search.query === '' ? null : (
                     <button
-                      className={`dsh-select-menu__option${
-                        effectiveReasoningLevel === undefined ? ' dsh-select-menu__option--selected' : ''
-                      }`}
                       type="button"
-                      role="menuitemradio"
-                      aria-checked={effectiveReasoningLevel === undefined}
-                      aria-disabled={applying}
-                      onClick={() => selectReasoningLevel(undefined)}
+                      className="dsh-icon-button"
+                      aria-label={t('model.clearSearch')}
+                      disabled={applying}
+                      onClick={() => {
+                        setSearch({ query: '', index: 0 })
+                        searchRef.current?.focus()
+                      }}
                     >
-                      <span>{t('model.defaultEffort')}</span>
-                      {effectiveReasoningLevel === undefined ? <Icon name="check" /> : null}
+                      <Icon name="close" />
                     </button>
                   )}
-                  {reasoningLevels.map((reasoningLevel) => {
-                    const isSelected = effectiveReasoningLevel === reasoningLevel.id
-                    return (
+                </div>
+              ) : null}
+            </div>
+          )}
+          <div className="dsh-model-picker__content">
+            {pane === 'root' ? (
+              <>
+                <button
+                  className="dsh-model-picker__row"
+                  type="button"
+                  role="menuitem"
+                  onClick={() => setPane('models')}
+                >
+                  <span>{t('model.menuModel')}</span>
+                  <span className="dsh-model-picker__row-value">{routeLabel}</span>
+                  <Icon name="chevron-right" />
+                </button>
+                {effortLabel === undefined ? null : (
+                  <button
+                    className="dsh-model-picker__row"
+                    type="button"
+                    role="menuitem"
+                    onClick={() => setPane('effort')}
+                  >
+                    <span>{t('model.menuEffort')}</span>
+                    <span className="dsh-model-picker__row-value">{effortLabel}</span>
+                    <Icon name="chevron-right" />
+                  </button>
+                )}
+              </>
+            ) : (
+              <>
+                {pane === 'models' ? (
+                  <>
+                    {props.loading === true ? (
+                      <p className="dsh-model-picker__status" role="status">
+                        {t('model.loading')}
+                      </p>
+                    ) : null}
+                    {props.error === undefined ? null : (
+                      <div className="dsh-model-picker__error">
+                        <p className="dsh-model-picker__warning" role="status">
+                          {t('model.loadFailed', { message: props.error })}
+                        </p>
+                        {props.onRetry === undefined ? null : (
+                          <button
+                            className="dsh-button dsh-button--secondary dsh-button--compact"
+                            type="button"
+                            onClick={props.onRetry}
+                          >
+                            {t('model.retry')}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    {failures.length === 0 ? null : (
+                      <div className="dsh-model-picker__failures">
+                        {failures.map((failure) => (
+                          <p className="dsh-model-picker__warning" role="status" key={failure.providerId}>
+                            {t('model.groupLoadFailed', {
+                              name: failure.providerName,
+                              message: failure.message,
+                            })}
+                          </p>
+                        ))}
+                      </div>
+                    )}
+                    <div
+                      id={`${menuId}-models`}
+                      className="dsh-model-picker__groups"
+                      role={focused && groups.length > 0 ? 'menu' : undefined}
+                      aria-label={focused && groups.length > 0 ? t('model.menuModel') : undefined}
+                    >
+                      {groups.length === 0 ? (
+                        showSearch && search.query.trim() !== '' ? (
+                          <p role="status" className="dsh-model-picker__empty">
+                            {t('model.noMatches')}
+                          </p>
+                        ) : answeredEmpty ? (
+                          <p className="dsh-model-picker__empty" role="status">
+                            {t('model.noModels')}
+                          </p>
+                        ) : null
+                      ) : (
+                        groups.map((group) => (
+                          <section
+                            className="dsh-model-picker__group"
+                            key={group.id}
+                            role="group"
+                            aria-label={group.id}
+                          >
+                            {focused ? (
+                              <div className="dsh-model-picker__group-heading" title={group.id}>
+                                {group.id}
+                              </div>
+                            ) : (
+                              <h3 title={group.id}>{group.id}</h3>
+                            )}
+                            {group.models.map((model) => {
+                              const isSelected =
+                                model.providerId === props.value.providerId &&
+                                model.id === props.value.modelId
+                              return (
+                                <button
+                                  className={`dsh-select-menu__option${
+                                    isSelected ? ' dsh-select-menu__option--selected' : ''
+                                  }`}
+                                  key={model.id}
+                                  type="button"
+                                  role="menuitemradio"
+                                  id={`${menuId}-model-${visibleModels.indexOf(model)}`}
+                                  tabIndex={showSearch ? -1 : 0}
+                                  data-highlighted={
+                                    showSearch && visibleModels.indexOf(model) === activeIndex
+                                      ? 'true'
+                                      : undefined
+                                  }
+                                  onMouseMove={
+                                    showSearch && !applying
+                                      ? () => setSearch({ ...search, index: visibleModels.indexOf(model) })
+                                      : undefined
+                                  }
+                                  aria-checked={isSelected}
+                                  aria-disabled={applying}
+                                  title={model.label}
+                                  onClick={() => selectModel(model)}
+                                >
+                                  <span>{model.label}</span>
+                                  {isSelected ? <Icon name="check" /> : null}
+                                </button>
+                              )
+                            })}
+                          </section>
+                        ))
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    {selected === undefined || selected.defaultReasoningLevel !== undefined ? null : (
                       <button
                         className={`dsh-select-menu__option${
-                          isSelected ? ' dsh-select-menu__option--selected' : ''
+                          effectiveReasoningLevel === undefined ? ' dsh-select-menu__option--selected' : ''
                         }`}
-                        key={reasoningLevel.id}
                         type="button"
                         role="menuitemradio"
-                        aria-checked={isSelected}
+                        aria-checked={effectiveReasoningLevel === undefined}
                         aria-disabled={applying}
-                        onClick={() => selectReasoningLevel(reasoningLevel.id)}
+                        onClick={() => selectReasoningLevel(undefined)}
                       >
-                        <span>{reasoningLevel.label}</span>
-                        {isSelected ? <Icon name="check" /> : null}
+                        <span>{t('model.defaultEffort')}</span>
+                        {effectiveReasoningLevel === undefined ? <Icon name="check" /> : null}
                       </button>
-                    )
-                  })}
-                </>
-              )}
-            </>
-          )}
-          {applying ? (
-            <p className="dsh-model-picker__status" role="status">
-              {t('model.applying')}
-            </p>
-          ) : applyError ? (
-            <p className="dsh-model-picker__warning" role="alert">
-              {t('model.applyFailed')}
-            </p>
+                    )}
+                    {reasoningLevels.map((reasoningLevel) => {
+                      const isSelected = effectiveReasoningLevel === reasoningLevel.id
+                      return (
+                        <button
+                          className={`dsh-select-menu__option${
+                            isSelected ? ' dsh-select-menu__option--selected' : ''
+                          }`}
+                          key={reasoningLevel.id}
+                          type="button"
+                          role="menuitemradio"
+                          aria-checked={isSelected}
+                          aria-disabled={applying}
+                          onClick={() => selectReasoningLevel(reasoningLevel.id)}
+                        >
+                          <span>{reasoningLevel.label}</span>
+                          {isSelected ? <Icon name="check" /> : null}
+                        </button>
+                      )
+                    })}
+                  </>
+                )}
+              </>
+            )}
+          </div>
+          {applying || applyError ? (
+            <div className="dsh-model-picker__feedback">
+              {applying ? (
+                <p className="dsh-model-picker__status" role="status">
+                  {t('model.applying')}
+                </p>
+              ) : applyError ? (
+                <p className="dsh-model-picker__warning" role="alert">
+                  {t('model.applyFailed')}
+                </p>
+              ) : null}
+            </div>
           ) : null}
         </div>
       ) : null}

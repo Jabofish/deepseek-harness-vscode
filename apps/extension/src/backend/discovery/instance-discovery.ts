@@ -1,5 +1,5 @@
 import type { BackendDiscovery } from '@dsh-vscode/application'
-import { isCanonicalEndpoint, type BackendCandidate } from '@dsh-vscode/domain'
+import { isLoopbackEndpoint, type BackendCandidate } from '@dsh-vscode/domain'
 import { isDshPackageVersion } from '@dsh-vscode/dsh-adapter'
 
 import { discoveryCancelled, type DiscoveryProvider } from './provider.js'
@@ -31,7 +31,7 @@ export class CompositeInstanceDiscovery implements BackendDiscovery {
     for (const result of results) {
       if (result.status !== 'fulfilled') continue
       for (const candidate of result.value) {
-        if (!isCanonicalEndpoint(candidate.endpoint)) continue
+        if (!isLoopbackEndpoint(candidate.endpoint)) continue
         const key = `${candidate.endpoint.host}:${candidate.endpoint.port}`
         const existing = byEndpoint.get(key)
         if (existing === undefined) byEndpoint.set(key, [candidate])

@@ -21,8 +21,9 @@ import { VsCodeConfigurationSource } from './config/configuration-source.js'
 import { OUTPUT_CHANNEL_NAME } from './constants.js'
 import { workspaceFolderId } from './editor/workspace-path-guard.js'
 import { DSH_CHAT_VIEW_OWNER_ID } from './editor/editor-context-provider.js'
-import { sessionWorkspaceFolderId } from './view/session-workspace-scope.js'
-import { readExtensionVersion } from './composition/runtime.js'
+import { sessionWorkspaceFolderId, hasLocalWorkspaceAuthority } from './view/session-workspace-scope.js'
+import { readExtensionVersion, endpointFromServerUrl } from './composition/runtime.js'
+import { AppError, type BackendEndpoint } from '@dsh-vscode/domain'
 import { sameWorkspacePath } from './composition/workspace-state.js'
 import { createSessionScope } from './composition/session-scope.js'
 import { createUseCasesAssembly } from './composition/use-cases-assembly.js'
@@ -46,7 +47,7 @@ export interface CompositionRoot extends vscode.Disposable {
  * moved body lives in a dedicated assembly module; the start/dispose sequence
  * in `commands-assembly.ts` preserves the original teardown order exactly.
  */
-export async function createCompositionRoot(context: vscode.ExtensionContext): Promise<CompositionRoot> {
+export function createCompositionRoot(context: vscode.ExtensionContext): CompositionRoot {
   const pluginInstallRequests = new PluginInstallRequestCoordinator()
   const configuration = new VsCodeConfigurationSource(vscode.workspace)
   const extensionVersion = readExtensionVersion(context)
@@ -86,15 +87,19 @@ export async function createCompositionRoot(context: vscode.ExtensionContext): P
     const folder = currentWorkspaceFolder()
     return folder === undefined ? undefined : workspaceFolderId(folder)
   }
-  const workspaceFolderIdForSession = (session: Pick<SessionSummary, 'cwd'>): string | undefined =>
-    sessionWorkspaceFolderId({
-      folders: currentWorkspaceFolders().map((folder) => ({
-        id: workspaceFolderId(folder),
-        path: folder.uri.fsPath,
-      })),
-      session,
-      samePath: sameWorkspacePath,
-    })
+  const workspaceFolderIdForSession = (session: Pick<SessionSummary, 'cwd'>): string | undefined => {
+    const state = coordinator.getState()
+    return hasLocalWorkspaceAuthority(state.kind === 'connected' ? state.backend : undefined)
+      ? sessionWorkspaceFolderId({
+          folders: currentWorkspaceFolders().map((folder) => ({
+            id: workspaceFolderId(folder),
+            path: folder.uri.fsPath,
+          })),
+          session,
+          samePath: sameWorkspacePath,
+        })
+      : undefined
+  }
   // The runtime update progress publisher is late-bound: the updater exists
   // before the event pipeline that owns the real implementation.
   const runtimeUpdateProgress = {
@@ -109,9 +114,8 @@ export async function createCompositionRoot(context: vscode.ExtensionContext): P
     runtimeInstaller,
     runtimeUseCases,
     endpointLaunchUrls,
-    loginWithToken,
-    hasCookie,
-  } = await createRuntimeAssembly({
+    externalConnection,
+  } = createRuntimeAssembly({
     context,
     configuration,
     diagnostics,
@@ -226,8 +230,7 @@ export async function createCompositionRoot(context: vscode.ExtensionContext): P
     coordinator,
     currentWorkspaceFolders,
     endpointLaunchUrls,
-    loginWithToken,
-    hasCookie,
+    externalConnection,
     attach,
     publishState,
     disposeAccountLifecycleHost,
@@ -339,6 +342,19 @@ export async function createCompositionRoot(context: vscode.ExtensionContext): P
     supervisor,
     attachmentTokens,
     channel,
+    authorizeExternalConnection: async () => {
+      const endpoint = selectedCustomEndpoint(configuration)
+      await externalConnection.authorize(endpoint)
+      await reconnect()
+    },
+    clearExternalCredentials: async () => {
+      await externalConnection.clear(selectedCustomEndpoint(configuration))
+      await reconnect().catch((error: unknown) => {
+        if (!(error instanceof AppError && ['AUTH_REQUIRED', 'PERMISSION_DENIED'].includes(error.code)))
+          throw error
+      })
+    },
+    disposeEndpointAccess: () => externalConnection.dispose(),
   })
 
   const root: CompositionRoot = {
@@ -346,4 +362,16 @@ export async function createCompositionRoot(context: vscode.ExtensionContext): P
     dispose: commands.dispose,
   }
   return root
+}
+
+function selectedCustomEndpoint(configuration: VsCodeConfigurationSource): BackendEndpoint {
+  const connection = configuration.read().connection
+  const endpoint = connection.mode === 'custom' ? endpointFromServerUrl(connection.serverUrl) : undefined
+  if (endpoint === undefined)
+    throw new AppError({
+      code: 'INVALID_CONFIGURATION',
+      message: 'Select a custom DSH endpoint before configuring connection credentials.',
+      retryable: false,
+    })
+  return endpoint
 }

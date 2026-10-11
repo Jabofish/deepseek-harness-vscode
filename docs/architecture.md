@@ -36,6 +36,8 @@ domain         -> nothing platform-specific
 
 PID 不证明所有权。发现先于启动、单个 in-flight 连接和显式句柄所有权同时保护用户现有 DSH。连接、订阅、socket、timer 和子进程在成功、失败、取消、超时与停用路径均须释放。
 
+远程连接仅由原生确认的 `custom` 入口授权，自动发现仍限 loopback。凭据按 origin 隔离存入 SecretStorage；失效认证只在连接前刷新，不重放业务写入。HTTP/WebSocket 禁止跳转并固定经过校验的 DNS 地址，HTTPS 强制证书与主机名校验；远程 HTTP 要求明文确认，地址变化后重新授权。远程目标拒绝元数据、环回、链路本地与非单播地址。取消、超时或凭据变更后清理旧连接；远程端点不授予本地文件及 Inspector 权限。
+
 Remote SSH、WSL 和 Dev Container 中，Extension Host 与 DSH 位于工作区一侧，Webview 显示在本地；PATH、全局包、进程、端口和文件操作均以 **Extension Host 所在平台**为准。已知实例的持久提示只保存经验证的 loopback port，不把完整 endpoint 或凭据写入工作区状态；读取旧格式时也必须重新校验 loopback。
 
 ## Host 与 Webview 消息
@@ -70,6 +72,6 @@ Checkpoint 与 Prompt Template 属于 Host 本地能力，不伪造 DSH RPC。�
 
 - **Web Host API 为主通道**：完整会话、工具、审批和 Agent 状态必须来自结构化 RPC/Event；TUI/ANSI 和模型文本不是机器契约。
 - **发现先于启动**：先验证外部候选，保留用户已有进程；只有当前扩展持有的进程可以停止。
-- **Activity Bar 默认位置**：使用 VS Code 稳定贡献点，提供把 View 移到 Secondary Side Bar 的引导；不调用私有 API，也不承诺安装后自动右置。
+- **辅助侧边栏默认位置**：使用 VS Code 稳定贡献点注册 View，升级保留编辑器已保存的布局；移动位置使用原生选择器。
 - **版本化 Adapter**：上游变化在版本边界内消化，Domain、Application 和 Webview 不依赖上游类或版本判断。
 - **Secret 留在 Host**：普通 Webview 输入框不处理 Provider Secret，诊断和协议测试必须验证无泄漏。

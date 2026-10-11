@@ -1,5 +1,5 @@
 import type { BackendEndpoint } from '@dsh-vscode/domain'
-import type { AlphaAdapterOptions } from '@dsh-vscode/dsh-adapter'
+import type { AlphaAdapterOptions, Rc6AdapterOptions } from '@dsh-vscode/dsh-adapter'
 
 export interface AdapterOptionsDependencies {
   /**
@@ -12,7 +12,10 @@ export interface AdapterOptionsDependencies {
   readonly fetch: typeof globalThis.fetch
   readonly samePath: (left: string, right: string) => boolean
   readonly exportFileSystem: NonNullable<AlphaAdapterOptions['exportFileSystem']>
+  readonly webSocket?: NonNullable<AlphaAdapterOptions['webSocket']> &
+    NonNullable<Rc6AdapterOptions['webSocket']>
   readonly authCookie: (endpoint: BackendEndpoint) => string | undefined
+  readonly allowLocalInspector?: (endpoint: BackendEndpoint) => boolean
 }
 
 /**
@@ -22,7 +25,7 @@ export interface AdapterOptionsDependencies {
  */
 export function createAdapterOptions(
   dependencies: AdapterOptionsDependencies,
-): Omit<AlphaAdapterOptions, 'webSocket'> {
+): Omit<AlphaAdapterOptions, 'webSocket'> & Pick<AdapterOptionsDependencies, 'webSocket'> {
   return {
     get requestTimeoutMs() {
       return dependencies.requestTimeoutMs()
@@ -34,5 +37,9 @@ export function createAdapterOptions(
     samePath: dependencies.samePath,
     exportFileSystem: dependencies.exportFileSystem,
     authCookie: dependencies.authCookie,
+    ...(dependencies.allowLocalInspector === undefined
+      ? {}
+      : { allowLocalInspector: dependencies.allowLocalInspector }),
+    ...(dependencies.webSocket === undefined ? {} : { webSocket: dependencies.webSocket }),
   }
 }

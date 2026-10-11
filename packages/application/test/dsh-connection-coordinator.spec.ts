@@ -74,6 +74,124 @@ function dependencies(
 }
 
 describe('DshConnectionCoordinator', () => {
+  it('prepares credentials before probing the selected custom endpoint', async () => {
+    const calls: string[] = []
+    const deps = dependencies({
+      endpointPreparation: {
+        prepare: async () => {
+          calls.push('authorize')
+        },
+      },
+      probe: {
+        probe: async () => {
+          calls.push('probe')
+          return fakeConnectedBackend()
+        },
+      },
+    })
+    const coordinator = new DshConnectionCoordinator(deps)
+    await coordinator.connect({ mode: 'custom', endpoint: endpoint(), autoStart: false })
+    expect(calls).toEqual(['authorize', 'probe'])
+    await coordinator.disconnect()
+  })
+
+  it('does not probe or start when endpoint authorization fails', async () => {
+    const deps = dependencies({
+      endpointPreparation: {
+        prepare: async () => {
+          throw new AppError({
+            code: 'PERMISSION_DENIED',
+            message: 'Fixture authorization denied',
+            retryable: false,
+          })
+        },
+      },
+    })
+    const coordinator = new DshConnectionCoordinator(deps)
+    await expect(
+      coordinator.connect({ mode: 'custom', endpoint: endpoint(), autoStart: false }),
+    ).rejects.toMatchObject({ code: 'PERMISSION_DENIED' })
+    expect(deps.probe.probe).not.toHaveBeenCalled()
+    expect(deps.processSupervisor.start).not.toHaveBeenCalled()
+    expect(coordinator.getState()).toMatchObject({ kind: 'failed', retryable: false })
+  })
+
+  it.each(['runtimeVersion', 'credentialRevision'] as const)(
+    'does not coalesce different %s values',
+    async (field) => {
+      let finish: (() => void) | undefined
+      const deps = dependencies({
+        endpointPreparation: {
+          prepare: () =>
+            new Promise<void>((resolve) => {
+              finish = resolve
+            }),
+        },
+        probe: { probe: vi.fn(async () => fakeConnectedBackend()) },
+      })
+      const coordinator = new DshConnectionCoordinator(deps)
+      const request = {
+        mode: 'custom' as const,
+        endpoint: endpoint(),
+        autoStart: false,
+        runtimeVersion: '0.2.1-alpha.1',
+        credentialRevision: 1,
+      }
+      const first = coordinator.connect(request)
+      await vi.waitFor(() => expect(finish).toBeTypeOf('function'))
+      const changed =
+        field === 'runtimeVersion'
+          ? { ...request, runtimeVersion: '0.2.1-alpha.2' }
+          : { ...request, credentialRevision: 2 }
+      await expect(coordinator.connect(changed)).rejects.toMatchObject({ code: 'BACKEND_BUSY' })
+      finish?.()
+      await first
+      await coordinator.disconnect()
+    },
+  )
+
+  it('replaces a cached connection when its credential revision changes', async () => {
+    const probe = vi.fn(async () => fakeConnectedBackend())
+    const coordinator = new DshConnectionCoordinator(dependencies({ probe: { probe } }))
+    const request = { mode: 'custom' as const, endpoint: endpoint(), autoStart: false, credentialRevision: 1 }
+    const first = await coordinator.connect(request)
+    const cached = await coordinator.connect(request)
+    expect(cached.backend).toBe(first.backend)
+    const second = await coordinator.connect({ ...request, credentialRevision: 2 })
+    expect(second.backend).not.toBe(first.backend)
+    expect(probe).toHaveBeenCalledTimes(2)
+    await coordinator.disconnect()
+  })
+
+  it('does not infer a remote runtime or PID from a local process on the same port', async () => {
+    const selected = { host: 'remote.example', port: 3939, baseUrl: 'https://remote.example:3939' }
+    const probe = vi.fn(async (_candidate: BackendCandidate) => ({
+      ...fakeConnectedBackend(),
+      endpoint: selected,
+    }))
+    const coordinator = new DshConnectionCoordinator(
+      dependencies({
+        discovery: {
+          discover: async () => [
+            {
+              ...fakeCandidate(),
+              source: 'process-scan',
+              runtimeVersion: '0.2.1-alpha.1',
+              runtimeVersionEvidence: 'process-manifest',
+              pid: 123,
+              commandLine: 'dsh',
+            },
+          ],
+        },
+        probe: { probe },
+      }),
+    )
+    await coordinator.connect({ mode: 'custom', endpoint: selected, autoStart: false })
+    expect(probe.mock.calls[0]?.[0]).not.toHaveProperty('pid')
+    expect(probe.mock.calls[0]?.[0]).not.toHaveProperty('runtimeVersion')
+    await coordinator.disconnect()
+  })
+
   it('coalesces simultaneous connect calls into a single discovery/start operation', async () => {
     let release: (() => void) | undefined
     const discovery = {

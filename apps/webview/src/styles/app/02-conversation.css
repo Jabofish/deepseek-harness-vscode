@@ -163,6 +163,55 @@
   gap: var(--dsh-space-1);
 }
 
+/* The header stays visible; every directory state shares one scrollport. */
+.dsh-model-picker__menu.dsh-select-menu__menu {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 0;
+  max-height: min(28rem, calc(100dvh - 16px));
+  overflow: hidden;
+}
+
+.dsh-model-picker__header {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding-bottom: var(--dsh-space-2);
+  border-bottom: var(--dsh-border);
+  margin-bottom: var(--dsh-space-1);
+}
+
+.dsh-model-picker__content {
+  display: grid;
+  align-content: start;
+  gap: var(--dsh-space-1);
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.dsh-model-picker__groups {
+  display: grid;
+  gap: var(--dsh-space-2);
+  min-width: 0;
+}
+
+.dsh-model-picker__feedback {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding-top: var(--dsh-space-1);
+}
+
+.dsh-model-picker__menu .dsh-select-menu__option > span:first-child {
+  flex: 1 1 auto;
+}
+
+.dsh-model-picker__menu :is(.dsh-select-menu__option, .dsh-model-picker__back) > svg {
+  flex: 0 0 auto;
+}
+
 .dsh-conversation__locale-option {
   width: 100%;
   text-align: start;
@@ -210,6 +259,7 @@
 .dsh-model-picker__group {
   display: grid;
   gap: var(--dsh-space-1);
+  min-width: 0;
 }
 
 .dsh-model-picker__group h3 {
@@ -218,6 +268,9 @@
   font-size: var(--dsh-font-size-2xs);
   font-weight: 600;
   text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .dsh-model-picker__row-value {

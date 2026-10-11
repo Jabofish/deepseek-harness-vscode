@@ -90,6 +90,11 @@ export class VersionedBackendProbe implements BackendProbe {
           }
         }
       } catch (error) {
+        if (
+          error instanceof AppError &&
+          ['AUTH_REQUIRED', 'PERMISSION_DENIED', 'INVALID_ENDPOINT'].includes(error.code)
+        )
+          throw error
         // A version-specific or compatibility probe may decline a candidate.
         // Continue with the next newest safe wire-compatible adapter unless
         // the caller cancelled the operation.

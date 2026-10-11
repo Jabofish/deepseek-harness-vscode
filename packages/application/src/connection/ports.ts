@@ -36,6 +36,12 @@ export interface BackendFactory {
   connect(backend: ConnectedBackend, signal?: AbortSignal): Promise<DshBackend>
 }
 
+/** Host-owned authorization and transport preparation; no credential enters the request. */
+export interface BackendEndpointPreparation {
+  prepare(endpoint: BackendEndpoint, signal: AbortSignal): Promise<void>
+  release?(endpoint: BackendEndpoint): Promise<void>
+}
+
 export interface ProcessSupervisor {
   start(runtime: DshRuntime, signal?: AbortSignal): Promise<ManagedProcessHandle>
 }
@@ -50,4 +56,6 @@ export interface ConnectionRequest {
    * version cannot be discovered. Overrides the probe's version inference.
    */
   readonly runtimeVersion?: string
+  /** Opaque configuration generation, never a token or cookie. */
+  readonly credentialRevision?: number
 }

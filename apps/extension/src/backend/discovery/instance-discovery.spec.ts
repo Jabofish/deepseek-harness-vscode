@@ -263,7 +263,7 @@ describe('CompositeInstanceDiscovery phases', () => {
 })
 
 describe('CompositeInstanceDiscovery canonical endpoint allow-list', () => {
-  it('keeps any canonical endpoint and drops malformed ones', async () => {
+  it('keeps only validated loopback endpoints and drops remote or malformed ones', async () => {
     const reachable: readonly BackendCandidate['endpoint'][] = [
       { host: '127.0.0.1', port: 3960, baseUrl: 'http://127.0.0.1:3960' },
       { host: 'localhost', port: 3961, baseUrl: 'http://localhost:3961' },
@@ -288,7 +288,7 @@ describe('CompositeInstanceDiscovery canonical endpoint allow-list', () => {
     const resolved = await discovery.discover()
 
     expect(resolved.map((entry) => entry.endpoint.baseUrl)).toEqual(
-      reachable.map((endpoint) => endpoint.baseUrl),
+      reachable.slice(0, 2).map((endpoint) => endpoint.baseUrl),
     )
   })
 })

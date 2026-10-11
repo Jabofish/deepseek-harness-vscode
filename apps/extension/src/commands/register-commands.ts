@@ -16,6 +16,8 @@ export function registerCommands(dependencies: CommandDependencies): void {
 
 export type CommandId = (typeof COMMANDS)[number]
 const COMMANDS = [
+  'dsh.authorizeExternalConnection',
+  'dsh.clearExternalCredentials',
   'dsh.connect',
   'dsh.reconnect',
   'dsh.newSession',

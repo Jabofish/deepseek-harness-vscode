@@ -180,6 +180,7 @@ describe('connection.configure reconnect', () => {
         mode: 'custom',
         endpoint: { host: '127.0.0.1', port: 3080, baseUrl: 'http://127.0.0.1:3080' },
         autoStart: false,
+        credentialRevision: 0,
       },
     ])
   })

@@ -15,6 +15,7 @@ import {
   HOST_FRAME_TYPES,
   type LoopbackFrameChannel,
   type LoopbackFrameParser,
+  type LoopbackWebSocketConstructor,
   MUX_FRAME_TYPES,
   readLoopbackWebSocket,
 } from './loopback-ws-stream.js'
@@ -41,7 +42,7 @@ export interface LoopbackApiClientOptions {
   readonly requestTimeoutMs: number
   readonly retryPolicy: RetryPolicy
   readonly fetch: typeof globalThis.fetch
-  readonly webSocket?: typeof globalThis.WebSocket
+  readonly webSocket?: LoopbackWebSocketConstructor
   /** Optional exact-version frame contract for an older Host API family. */
   readonly frameParser?: LoopbackFrameParser
 }

@@ -1,4 +1,4 @@
-import { parseServerOrigin, type BackendCandidate } from '@dsh-vscode/domain'
+import { parseServerOrigin, isLoopbackEndpoint, type BackendCandidate } from '@dsh-vscode/domain'
 
 import { discoveryCancelled, type DiscoveryProvider } from './provider.js'
 
@@ -23,7 +23,7 @@ export class ConfiguredPortDiscoveryProvider implements DiscoveryProvider {
     const url = this.serverUrl()
     if (url !== undefined) {
       const origin = parseServerOrigin(url)
-      if (origin !== undefined) {
+      if (origin !== undefined && isLoopbackEndpoint(origin)) {
         candidates.unshift({
           endpoint: { host: origin.host, port: origin.port, baseUrl: origin.baseUrl },
           source: 'configured',

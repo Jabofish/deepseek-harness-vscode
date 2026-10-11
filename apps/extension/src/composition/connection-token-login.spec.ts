@@ -1,91 +1,60 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { ConnectionRequest } from '@dsh-vscode/application'
-import type { BackendEndpoint } from '@dsh-vscode/domain'
 
-const trust = vi.hoisted(() => ({ isTrusted: true }))
-
-vi.mock('vscode', () => ({
-  workspace: {
-    get isTrusted() {
-      return trust.isTrusted
-    },
-  },
-}))
-
+vi.mock('vscode', () => ({ workspace: { isTrusted: true } }))
 import { createConnectionLifecycle } from './connection-assembly.js'
 
-const projectFolder = { uri: { fsPath: '/project' }, name: 'project', index: 0 }
-
-function buildLifecycle(config: Record<string, unknown>): {
-  connect: () => Promise<unknown>
-  requests: ConnectionRequest[]
-  logins: Array<{ endpoint: BackendEndpoint; token: string }>
-} {
-  const requests: ConnectionRequest[] = []
-  const logins: Array<{ endpoint: BackendEndpoint; token: string }> = []
-  const backend = { connection: { endpoint: { port: 4_321 } } }
-  const connect = createConnectionLifecycle({
-    context: { workspaceState: { update: () => Promise.resolve() } } as never,
-    configuration: {
-      read: () => config as never,
-    } as never,
-    coordinator: {
-      connect: (request: ConnectionRequest) => {
-        requests.push(request)
-        return Promise.resolve({ backend, state: {} } as never)
-      },
-      disconnect: () => Promise.resolve(),
-      getState: () => ({}) as never,
-    } as never,
-    currentWorkspaceFolders: () => [projectFolder] as never,
-    endpointLaunchUrls: new Map<string, string>(),
-    loginWithToken: (endpoint: BackendEndpoint, token: string) => {
-      logins.push({ endpoint, token })
-      return Promise.resolve()
+describe('connection credential boundary', () => {
+  it.each(['auto', 'new-isolated', 'custom'] as const)(
+    'never exchanges an ordinary configuration token in %s mode',
+    async (mode) => {
+      const requests: ConnectionRequest[] = []
+      const updates: Array<readonly [string, unknown]> = []
+      const connect = createConnectionLifecycle({
+        context: {
+          workspaceState: {
+            update: (key: string, value: unknown) => {
+              updates.push([key, value])
+              return Promise.resolve()
+            },
+          },
+        } as never,
+        configuration: {
+          read: () => ({
+            connection: {
+              mode,
+              serverUrl: 'https://dsh.example:443',
+              runtimeVersion: '0.2.1-alpha.2',
+              launchToken: 'must-not-be-used',
+            },
+            runtime: { autoStart: true },
+          }),
+        } as never,
+        coordinator: {
+          connect: (request: ConnectionRequest) => {
+            requests.push(request)
+            const endpoint =
+              mode === 'custom'
+                ? { host: 'dsh.example', port: 443, baseUrl: 'https://dsh.example:443' }
+                : { host: '127.0.0.1', port: 4321, baseUrl: 'http://127.0.0.1:4321' }
+            return Promise.resolve({ backend: { connection: { endpoint } }, state: {} })
+          },
+          disconnect: () => Promise.resolve(),
+          getState: () => ({}),
+        } as never,
+        currentWorkspaceFolders: () => [],
+        endpointLaunchUrls: new Map(),
+        attach: () => Promise.resolve(),
+        publishState: () => {},
+        disposeAccountLifecycleHost: () => Promise.resolve(),
+        detachSessionAdapters: () => {},
+      }).connect
+      await connect()
+      expect(requests).toHaveLength(1)
+      expect(requests[0]).not.toHaveProperty('launchToken')
+      expect(updates).toEqual([['dsh.lastEndpoint', mode === 'custom' ? undefined : { port: 4321 }]])
+      if (mode === 'custom')
+        expect(requests[0]).toMatchObject({ runtimeVersion: '0.2.1-alpha.2', credentialRevision: 0 })
     },
-    hasCookie: () => false,
-    attach: () => Promise.resolve(),
-    publishState: () => {},
-    disposeAccountLifecycleHost: () => Promise.resolve(),
-    detachSessionAdapters: () => {},
-  }).connect
-  return { connect, requests, logins }
-}
-
-describe('connection launch-token login', () => {
-  beforeEach(() => {
-    trust.isTrusted = true
-  })
-
-  it('exchanges a configured token for the attach port before connecting', async () => {
-    const { connect, requests, logins } = buildLifecycle({
-      connection: { mode: 'auto', launchToken: 'TOK', attachPorts: [3080] },
-      runtime: { autoStart: true },
-    })
-    await connect()
-    expect(logins).toEqual([
-      { endpoint: { host: '127.0.0.1', port: 3080, baseUrl: 'http://127.0.0.1:3080' }, token: 'TOK' },
-    ])
-    expect(requests).toHaveLength(1)
-  })
-
-  it('exchanges the token for the custom endpoint when in custom mode', async () => {
-    const { connect, logins } = buildLifecycle({
-      connection: { mode: 'custom', serverUrl: 'http://127.0.0.1:3080', launchToken: 'TOK' },
-      runtime: { autoStart: true },
-    })
-    await connect()
-    expect(logins).toEqual([
-      { endpoint: { host: '127.0.0.1', port: 3080, baseUrl: 'http://127.0.0.1:3080' }, token: 'TOK' },
-    ])
-  })
-
-  it('does not attempt login when no token is configured', async () => {
-    const { connect, logins } = buildLifecycle({
-      connection: { mode: 'auto', attachPorts: [3080] },
-      runtime: { autoStart: true },
-    })
-    await connect()
-    expect(logins).toEqual([])
-  })
+  )
 })

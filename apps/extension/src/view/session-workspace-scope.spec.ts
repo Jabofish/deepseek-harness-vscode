@@ -1,11 +1,25 @@
 import { describe, expect, it } from 'vitest'
 
-import { sessionWorkspaceFolderId } from './session-workspace-scope.js'
+import { sessionWorkspaceFolderId, hasLocalWorkspaceAuthority } from './session-workspace-scope.js'
+import type { ConnectedBackend } from '@dsh-vscode/domain'
 
 const samePath = (left: string, right: string): boolean =>
   left.replace(/\\/gu, '/').toLowerCase() === right.replace(/\\/gu, '/').toLowerCase()
 
 describe('session workspace scope', () => {
+  it('does not give remote or forwarded sessions local filesystem authority', () => {
+    const remote: ConnectedBackend = {
+      endpoint: { host: 'remote.example', port: 3080, baseUrl: 'https://remote.example:3080' },
+      ownership: 'external',
+      capabilities: { protocolVersion: 'alpha212', dshVersion: '0.2.1-alpha.2', features: new Set() },
+    }
+    expect(hasLocalWorkspaceAuthority(remote)).toBe(false)
+    expect(hasLocalWorkspaceAuthority({ ...remote, pid: 123 })).toBe(false)
+    const local = { ...remote, endpoint: { host: '127.0.0.1', port: 3080, baseUrl: 'http://127.0.0.1:3080' } }
+    expect(hasLocalWorkspaceAuthority(local)).toBe(false)
+    expect(hasLocalWorkspaceAuthority({ ...local, pid: 123 })).toBe(true)
+    expect(hasLocalWorkspaceAuthority({ ...local, ownership: 'managed' })).toBe(true)
+  })
   it('maps a session cwd to the folder that owns it', () => {
     expect(
       sessionWorkspaceFolderId({

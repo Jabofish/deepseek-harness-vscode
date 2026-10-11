@@ -543,27 +543,27 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
             <span
               className="dsh-session-switcher__panel-title"
               title={
-                selectedWorkspace === undefined
+                docked || selectedWorkspace === undefined
                   ? t('sessions.title')
                   : displayWorkspaceName(selectedWorkspace.name)
               }
             >
-              {selectedWorkspace === undefined
+              {docked || selectedWorkspace === undefined
                 ? t('sessions.title')
                 : displayWorkspaceName(selectedWorkspace.name)}
             </span>
+            {docked ? (
+              <button
+                type="button"
+                className="dsh-icon-button dsh-session-switcher__close"
+                aria-label={t('sessions.closeNavigation')}
+                title={t('sessions.closeNavigation')}
+                onClick={closeSwitcherAndRefocus}
+              >
+                <Icon name="close" />
+              </button>
+            ) : null}
             <div className="dsh-session-switcher__panel-actions">
-              {docked ? (
-                <button
-                  type="button"
-                  className="dsh-icon-button"
-                  aria-label={t('sessions.closeNavigation')}
-                  title={t('sessions.closeNavigation')}
-                  onClick={closeSwitcherAndRefocus}
-                >
-                  <Icon name="close" />
-                </button>
-              ) : null}
               <button
                 className="dsh-icon-button"
                 type="button"
@@ -622,7 +622,7 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
                 <Icon name={sorting === 'manual' ? 'list' : 'clock'} />
               </button>
               <button
-                className="dsh-button dsh-button--primary dsh-button--compact"
+                className="dsh-button dsh-button--primary dsh-button--compact dsh-session-switcher__new"
                 type="button"
                 aria-label={t('sessions.new')}
                 title={t('sessions.new')}
@@ -632,7 +632,9 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
                 }}
               >
                 <Icon name="add" />
-                <span className="dsh-sr-only">{t('sessions.new')}</span>
+                <span className={docked ? 'dsh-session-switcher__new-label' : 'dsh-sr-only'}>
+                  {t('sessions.new')}
+                </span>
               </button>
             </div>
           </header>

@@ -1,222 +1,120 @@
 # Change Log
 
-## Unreleased
+## 0.3.0
 
-- 修复设置页首次打开反复出现“重试”：延迟资源改为相对于扩展资源目录加载，关闭不符合 Webview 安全策略的脚本预加载，并保留小字体为独立资源。
-- Fixed Settings repeatedly showing Retry on first open: deferred assets resolve relative to the extension media directory, script preloads respect the Webview security policy, and small fonts remain packaged resources.
+- 新增 DSH 风格聚焦布局，统一会话、工具、输入栏、设置和插件界面；设置中可切回经典布局。
+- Adds a DSH-style focused layout across conversations, tools, the composer, Settings and Plugins, with the classic layout available in Settings.
 
-- 统计改为紧凑读数与独立明细；改善窄窗口任务回答、后台任务列表、模板编辑和检查点确认。失败后保留输入，阻止重复提交和关闭后的迟到结果，恢复或删除成功后正确关闭确认框。
-- Statistics use compact readings with separate details. Task answers, background jobs, template editors and checkpoint confirmations work in narrow views; failed requests retain input, duplicate submissions and dismissed late results are guarded, and successful restore/delete operations close their confirmation.
+- 改善模型搜索、目录滚动和会话导航，修复过程折叠、长结果、统计及窄窗口布局。
+- Improves model search, catalog scrolling and session navigation, with fixes for process disclosures, long results, statistics and narrow views.
 
-- 修复完成回合仍显示“工作过程”、过程或检查器定位后的工具详情无法收起、重复展开丢失状态，以及长搜索标题编号错位和思考标记漂移。会话按钮、更多菜单和事件详情统一为紧凑布局，矮窗口菜单与长结果可键盘滚动。
-- Fixed completed turns remaining open, processes and inspector-revealed tools refusing to collapse, lost disclosure state, misaligned long search titles, and floating reasoning headers. Session controls, action menus and event details use compact layouts with keyboard scrolling for short windows and long results.
+- 支持自定义远程 HTTP(S) 连接：原生授权、按地址隔离凭据、严格 TLS 校验；远程 HTTP 需明确确认。
+- Adds custom remote HTTP(S) connections with native authorization, per-origin credentials and strict TLS verification; remote HTTP requires explicit confirmation.
 
-- 修复窄栏输入区多余换行、附件菜单名称截断、矮窗口审批按钮和长问题选项被裁切的问题；统一 Provider、预设及复制弹窗的细节，并改善附件面板的屏幕阅读器语义。
-- Fixed unnecessary composer wrapping, truncated attachment controls, clipped approval actions and long-question content in short views. Provider, preset and copy-dialog details now follow the focused layout; attachment panels use appropriate accessible semantics.
+- 适配 DSH `0.2.1-alpha.2`，改善子代理、旧会话提示和插件安装恢复；默认引导安装保持稳定 rc.2。
+- Adds DSH `0.2.1-alpha.2` support with improved subagents, legacy-session guidance and plugin install recovery; guided installation retains stable rc.2.
 
-- 新增参考 DSH 原版源码的聚焦布局：平面正文、回合过程折叠、常驻产出文件入口、宽视图工作区导航、紧凑输入栏与统一的设置、插件、轨迹和任务界面。模型图标移除，大目录支持模糊搜索及键盘高亮，输入按钮保留草稿选区；设置记住上次分区，并允许随时切回经典布局。
-- Added a DSH-style focused layout with flat replies, collapsible turn processes, visible file actions, wide-view workspace navigation, a compact composer, and consistent Settings, Plugins, Trajectory and task surfaces. The model trigger has no icon; large catalogs support fuzzy search and keyboard highlighting. Composer actions preserve the caret, Settings remembers its last section, and the original classic layout remains selectable.
-
-- 工具和思考也采用紧凑摘要；文件和网页链接可直接打开，读取、diff、终端、搜索和插件详情按需展开，保留失败提示与复制。审批、提问、计划、队列和统计统一改版，默认输入框进一步缩小，代码结果可用键盘滚动。
-- Tool calls and reasoning now use compact summaries with direct file and web links, expandable read/diff/terminal/search/plugin results, visible failures and copy actions. Approvals, questions, plans, queues and statistics share the new presentation; the default composer is shorter and result panes support keyboard scrolling.
-
-- 改善长对话的历史加载和流式回复显示，保留历史补载后的消息顺序与会话引用。
-- Improve long-conversation history loading and streamed reply display while preserving message order and session references after older history loads.
-
-- 修复模型目录被迟到结果覆盖、目录暂时读取失败后已有 Provider 消失，以及动态命令变化未及时刷新的问题。
-- Prevent delayed model catalogs from replacing newer lists, retain known providers after temporary read failures, and refresh dynamic commands after registry changes.
-
-- 扩展改为打开 DSH 视图或执行命令时激活；设置界面首次打开时加载，后续打开复用已加载的界面。
-- Activate when a DSH view or command is requested; load Settings on first open and reuse the loaded view on subsequent opens.
-
-- 适配 DSH `0.2.1-alpha.2`，并补齐 alpha.1 子代理目录读取。支持工作目录变化后的安全文件导航、外部子代理目录展示、旧会话升级提示与官方按需插件包安装；分叉不再隐式升级旧会话，安装取消与断线恢复沿用同一请求 ID。引导安装默认保持稳定 rc.2。
-- Added exact DSH `0.2.1-alpha.2` support and repaired alpha.1 subagent discovery. File navigation uses the operation's actual path after directory changes; external executions appear without a local conversation; old sessions show an upgrade hint; official bundles install on demand with existing cancellation and recovery. Forking requires opening an old source session first. Guided installation keeps stable rc.2.
+- 修复设置页反复重试、目录刷新竞态与长会话恢复，保留失败操作后的草稿和已加载数据。
+- Fixes repeated Settings retries, catalog refresh races and long-session recovery while preserving drafts and loaded data after failures.
 
 ## 0.2.12
 
-- 修复其他消息的代码高亮完成后，本条消息的文件打开按钮和复制控件被重渲染覆盖的问题。
-- Preserve file-open actions and copy controls when code highlighting finishes in another message.
-- 补齐新版界面入口：插件页动态发现 Creator 并开启空草稿会话；可选 Claude Code mods 提供安全提示带与按钮操作；会话检查器从三点菜单打开，支持类型过滤、分页、记录匹配、聚合行拾取和虚拟列表定位，DevTools 打开/复制由 Host 执行。新增 Markdown frontmatter 字段预览及精确统计明细。精确实验包的隔离接口验证通过；新增 VS Code 界面与 Chrome 打开仍待现场验收。
-- Added a live-roster Creator shortcut, a safe optional Claude Code mods band with button actions, and a Session Inspector in the conversation tools menu with filtering, paging, record matching, grouped-row picking and virtualized conversation reveal. The Host owns DevTools open/copy. Markdown previews now show frontmatter fields, and statistics offer exact details. Isolated exact experimental-package interfaces passed validation; new VS Code UI and Chrome opening await acceptance.
-- 新增工具参数生成期预览：显示脱敏说明、工作区相对路径和解码字符数，明确标记“正在生成参数”。预览不计入执行记录或工具调用统计；支持重连回放，并在执行、中断或重试时清理。真实模型流与 VS Code 交互仍待验收。
-- Added tool argument preparation previews with redacted descriptions, workspace-relative paths and decoded character counts. Previews have a distinct preparing label, stay out of execution records/counts, recover on reconnect and clear on execution, interruption or retry. Real model streams and VS Code interaction remain pending acceptance.
-- 适配 DSH `0.2.1-alpha.1`：新增精确版本入口，接纳子代理会话的提醒拒绝，将账号 `no-response` 归一为网络故障，并保留插件实际安装版本及同 ID 恢复结果。上游 bundle 来源继续留在 Host；引导安装默认保持稳定版 rc.2。隔离 CLI 验证通过，真实 timed 问答、插件安装/OAuth 与 VS Code 交互仍待验收。
-- Added exact DSH `0.2.1-alpha.1` support: delegated-session reminder refusals, normalized account transport failures, and actual installed plugin versions through recovery. Bundle sources stay in the Host; guided installs keep stable rc.2. Isolated CLI validation passed; real timed interactions, plugin installation/OAuth and VS Code acceptance remain pending.
-- 修复面板重载后投影丢失、已移除会话复活的问题。
-- Fixed missing projections and removed sessions reappearing after a panel reload.
-- 导航或发送被取代时保留输入草稿与附件；待建首条消息被取代按取消上报。
-- Superseded navigation and sends preserve the composer draft and attachments; a superseded pending first message reports as cancelled.
-- 修复导航失败后「加载更早历史」永久失效。
-- Fixed "load older history" staying disabled after a failed navigation.
+- 新增会话检查器、Creator 入口、工具参数预览和 Markdown frontmatter 展示。
+- Adds a Session Inspector, Creator shortcut, tool argument previews and Markdown frontmatter display.
+
+- 适配 DSH `0.2.1-alpha.1`，保留稳定版默认安装。
+- Adds DSH `0.2.1-alpha.1` support while retaining the stable install default.
+
+- 修复代码高亮影响文件操作、面板重载丢失状态和历史加载失败；导航或发送被取代时保留草稿与附件。
+- Fixes highlighting disrupting file actions, lost panel state and failed history loading; superseded navigation and sends preserve drafts and attachments.
 
 ## 0.2.10
 
-- 接入 DSH `0.2.0-rc.2` timed 用户问题：等待期限由 Host claim 流托管，超时后问题从 Session projection 恢复，迟到答案以完整结构化批次排入 Inbox，入队后显示只读状态；引导安装默认版本更新为精确 rc.2。隔离 CLI live smoke 已验证精确 Adapter 选择及 `userQuestions` answer/attachWait Remote；真实 timed 问答与 VS Code 现场验收仍待完成，能力状态保留 `PARTIAL`。
-- Added DSH `0.2.0-rc.2` timed user questions: the Host owns the wait claim, Session projections restore questions after timeout, and late answers enter the Inbox as one structured batch with a read-only queued state. Guided installation now defaults to exact rc.2. The isolated CLI live smoke verifies exact adapter selection and the `userQuestions` answer/attachWait Remotes; real timed interaction and VS Code acceptance remain pending, so capability status stays `PARTIAL`.
-- 修复同一编辑器文件反复添加到上下文时出现重复芯片；「添加已打开文件」对符合条件的工作区文本文件共用编辑器上下文。其他附件也统一显示为 `file: …` 胶囊样式，文件内容变化后重新添加会更新上下文。
-- Repeatedly adding an editor file now keeps one context chip. Eligible open workspace text files use that same context path; other attachments share its compact `file: …` chip style. Re-adding a changed file refreshes its context.
-- 打开长对话的首帧不再随会话长度增长：虚拟列表首次提交时还没有测量视口，此前这一帧会渲染全部行；现在它只渲染末尾的有界行数并保留相对完整会话的索引，10,000 节点会话的首次提交工作量与其后的每一帧一致。
-- Opening a long conversation no longer renders every row in its first frame: before the virtual list has a measured viewport, that frame keeps a bounded window at the tail with indexes into the full conversation, so a 10,000-node session commits as cheaply as any later frame.
-- 修复设置页内弹窗点击内容时误关闭整个设置页；将插件搜索与其筛选的插件列表归入同一层级；查看长模式组合时，关闭按钮始终留在标题栏。
-- Fixed a bug that closed the entire Settings page when users interacted with an inner dialog. Plugin search now sits with the inventory it filters, and the close button stays visible while viewing long preset compositions.
+- 接入 DSH `0.2.0-rc.2` 限时用户问题与迟到答案入队，并更新默认安装版本。
+- Adds DSH `0.2.0-rc.2` timed questions and queued late answers, and updates the install default.
+
+- 合并重复文件上下文，改善长会话首屏渲染。
+- Deduplicates file context and improves initial rendering of long conversations.
+
+- 修复设置内弹窗误关闭，保持长插件列表的操作可见。
+- Fixes nested Settings dialogs closing the parent and keeps actions visible in long plugin lists.
 
 ## 0.2.9
 
-- Chat 视图现在默认注册在 VS Code 右侧辅助侧边栏；升级时保留原容器与视图 ID，VS Code 中用户已保存的布局选择仍可能生效。
-- The Chat view now registers in VS Code's Secondary Side Bar by default. Its container and view IDs stay the same; VS Code may retain a user's saved layout on upgrade.
-- “DSH: Move View to Secondary Side Bar” 现在打开 VS Code 的移动视图选择器；不再只是切换右侧栏的显示状态。若该命令不可用，则提示从视图标题的右键菜单手动移动。
-- “DSH: Move View to Secondary Side Bar” now opens VS Code's view-move picker instead of merely toggling the secondary sidebar. If unavailable, it explains the view-title context menu route.
+- Chat 默认放在辅助侧边栏；移动视图命令打开原生选择器，升级保留已保存布局。
+- Places Chat in the Secondary Side Bar by default and opens the native view-move picker; upgrades preserve saved layouts.
 
 ## 0.2.8
 
-- 正式适配 DSH `0.2.0-rc.1` 并将引导安装默认版本更新至这一精确 npm 包；替换临时 master 预适配入口，保持精确版本探测、Session V4、Schedule 可选能力降级和受管启动契约。真实 Schedule 创建与历史、外部附加和完整 Webview 交互仍待现场验收。
-- Added exact DSH `0.2.0-rc.1` support and made that published package the guided install default. This replaces the temporary master adapter while retaining Session V4, optional Schedule capability handling, and managed launch behavior. Live Schedule creation/history, external attach, and full Webview interaction remain pending acceptance.
+- 适配 DSH `0.2.0-rc.1`，更新默认安装版本，支持 Session V4 与可选 Schedule 能力。
+- Adds DSH `0.2.0-rc.1` support, updates the install default and supports Session V4 and optional Schedule capabilities.
 
 ## 0.2.7
 
-- 设置抽屉重新打开时读取最新配置，忽略关闭后的迟到响应；读取完成前禁止写入，避免提交过期修订。
-- The settings drawer fetches fresh values when reopened, ignores late responses after closing, and blocks writes until the read completes.
-- 队列编辑遭 Host 拒绝时恢复原提示词，可继续修改并重试；Escape 和失焦不会误报保存成功。
-- Rejected queue edits restore the original prompt for another attempt; Escape and blur no longer imply a successful save.
-- 对话工具弹层在窄侧栏中跟随触发按钮定位，加宽后恢复自然宽度；更改审阅详情关闭后不会被迟到响应重新打开。
-- Conversation popovers stay anchored in a narrow sidebar and regain their natural width when widened; late responses cannot reopen dismissed change details.
-- 确认框、图片灯箱和详情面板改进键盘焦点管理，关闭后返回触发位置；子代理树的 Tab 停靠点跟随当前行。
-- Dialogs, image lightboxes, and detail panels manage keyboard focus and return it to the trigger; the subagent tree's tab stop follows the active row.
-- 改善屏幕阅读器播报和控件语义：选中项、复制结果、上下文用量超限与目标阻塞原因更清楚；清除目标需二次确认。
-- Screen reader announcements and control semantics are clearer for selected options, copy results, context overflow, and blocked goals; clearing a goal requires confirmation.
-- 统一编辑器上下文文件大小显示，并补齐部分中文界面标签与分组语义。
-- Editor context sizes now use readable units, with additional Chinese labels and grouping semantics.
+- 设置重新打开时读取最新配置；队列保存失败后保留输入，迟到响应不再覆盖当前界面。
+- Refreshes Settings on reopen, preserves rejected queue edits and prevents late responses from replacing the current view.
+
+- 改善窄栏弹层、键盘焦点、屏幕阅读器提示和中文标签；清除目标需确认。
+- Improves narrow popovers, keyboard focus, screen reader feedback and Chinese labels; clearing a goal requires confirmation.
 
 ## 0.2.6
 
-- 工具结果以 `<path>/<type>/<content>` 纯文本信封返回时，现在解码为结果正文加带标签的文件路径字段，不再把内部标记原样打印；`file_path`、`pattern`、`offset`、`limit` 参数获得专属标签。
-- Plain-text tool result envelopes (`<path>/<type>/<content>`) now decode into the response body plus a labeled file path field instead of printing internal markup; `file_path`, `pattern`, `offset`, and `limit` arguments get dedicated labels.
-- 工具调用组折叠时，组内任一调用失败（含 Auto Review 拒绝）会在折叠摘要上显示红色圆点，无需展开即可发现。
-- A collapsed tool call batch now shows a red failure dot when any call inside failed (including Auto Review denials), visible without expanding.
-- 审批卡的放行动作改用主按钮样式，拒绝退为次要样式，两个选项不再等权重呈现。
-- The safe action on approval cards now uses the primary button treatment while deny is secondary, so the options no longer read as equal choices.
-- 待审批或提问卡片占用输入位时，原位显示虚线占位说明输入暂不可用；流式期间打字只重绘输入框本身，长会话不再被每个按键拖慢；流式状态条在宽屏下与对话同宽。
-- While a pending approval or question owns the composer slot, a dashed placeholder explains that typing is paused. Typing during streaming re-renders only the composer, so long conversations stay responsive; the streaming status tail matches the conversation width on wide screens.
-- 设置页在「仅附加/新建隔离」等本页无法表达的连接方式下不再预选 auto，Apply 保持禁用，保存不会把这些模式悄悄改写回 auto。
-- Settings no longer preselect auto for connection modes the page cannot represent (attach-only / new-isolated): Apply stays disabled until a mode is chosen, so applying never silently rewrites those modes to auto.
-- Webview 文案外置到 locales 字典，新增 `pnpm i18n` 编辑器与键对齐门禁；共享 test-support 包退役为 adapter 内共享 fixture harness，版本门独立成规格；CI 拆分为并行的 lint、format+typecheck、测试与构建任务，PR 只运行受影响的测试。
-- Webview copy moves into locale dictionaries with a `pnpm i18n` editor and a key-parity gate; the shared test-support package retires into an adapter-local fixture harness with a dedicated version-gate spec; CI splits into parallel lint, format+typecheck, test, and build jobs, with pull requests running only affected tests.
-- 修复 macOS 上清理受管临时工作区时误判目录仍存在的问题，同时保留隔离目录置换和外部链接数据保护。
-- Fixed managed temporary workspace cleanup being reported as incomplete on macOS while preserving quarantine replacement and linked external data protections.
+- 改进工具结果、折叠失败提示与审批样式，长会话输入更流畅。
+- Improves tool results, collapsed failure indicators and approvals, with smoother typing in long conversations.
+
+- 设置保存不再误改连接模式，修复 macOS 受管临时工作区清理误报。
+- Preserves connection modes when saving Settings and fixes false managed-workspace cleanup failures on macOS.
 
 ## 0.2.5
 
-- 继续完善 DSH `0.1.7-rc.2` 的 Adapter/Application 与 Webview 集成、连接生命周期和路由，并扩展隔离 harness 覆盖。
-- Continued DSH `0.1.7-rc.2` adapter/application and Webview integration, connection lifecycle and routing improvements, with broader isolated harness coverage.
-- 失败回合在实时事件和历史回放中只显示一条错误；提问卡完整展示选项，并在会话字体缩放时保持小字号可读。
-- Failed turns now show one error when live events and history repeat the same failure. Pending question cards retain all options, and small text stays legible as conversation font size changes.
-- 修复工作区外的 Windows 盘符或 UNC 绝对链接被误当作工作区相对路径；链接仍须通过真实路径归属校验。
-- Fixed Windows drive and UNC links outside the workspace being reinterpreted as relative paths; file links still require canonical workspace ownership.
-- 扩展激活时只注册命令和界面，不再提前连接或启动 DSH，也不在后台运行 npm 更新检查；首次打开 DeepSeek Harness 面板或显式连接时才连接，面板打开后仍会检查更新。
-- Extension activation now registers commands and the view without connecting to or starting DSH or checking npm for updates in the background. Opening the DeepSeek Harness view or explicitly connecting starts the connection; opening the view still checks for updates.
+- 完善 DSH `0.1.7-rc.2` 接入、提问和错误展示，修复 Windows 文件链接。
+- Improves DSH `0.1.7-rc.2` integration, questions and error display, and fixes Windows file links.
+
+- 扩展激活不再提前连接或检查更新，打开视图或显式连接后才执行。
+- Defers connections and update checks until the view opens or the user explicitly connects.
 
 ## 0.2.4
 
-- 修复提醒面板把「上游组合未启用 Schedule 服务」报成加载失败：DSH 发布的 web profile 默认关闭 `schedule` 与 `ui-schedule`，此时目录读取以 HTTP 404 结束，面板现在识别 `CAPABILITY_UNAVAILABLE`，说明原因并禁用创建入口，未确认目录时也不再显示 `0 of 0`；在 `$DSH_HOME/cordis.patch.yml` 启用后重试即可恢复。已在 `0.1.7-rc.2` 的隔离 home 上复核：未打补丁时目录返回 `CAPABILITY_UNAVAILABLE`，打补丁后同一请求返回空目录。
-- Fixed the reminder panel reporting an upstream composition without the Schedule service as a load failure: the DSH web profile ships `schedule` and `ui-schedule` disabled, so the catalog request ends in HTTP 404; the panel now recognizes `CAPABILITY_UNAVAILABLE`, states the cause, disables the create entry, and stops showing `0 of 0` for a catalog it never read. Retry recovers once the entries are enabled in `$DSH_HOME/cordis.patch.yml`. Re-verified on `0.1.7-rc.2` with an isolated home: the unpatched catalog answered `CAPABILITY_UNAVAILABLE`, and the patched one answered an empty directory.
-- 会话内容搜索超过 20 项时提示结果有上限，建议缩小搜索范围；当前视图和按工作区分组视图都会显示正文命中，包括活动会话；仅查看归档会话时按标题过滤，不会请求活动会话的内容搜索。
-- Session content search warns when more than 20 matches exist and suggests refining broad queries; current and grouped views show content matches, including the active session, while archived-only view filters titles locally instead of searching active sessions.
-- 插件设置按分组折叠，搜索时自动展开；安装进度和操作保持可见。
-- Plugin settings collapse by group and expand for search; install progress and actions stay visible.
-- 插件安装进入应用阶段后，若状态查询失败，仍可按同一安装 ID 继续查询；结果未知时不会重启安装。
-- Plugin installs remain recoverable by the same request ID after applying begins, even when a status query fails; an unknown result never starts a second install.
-- 代码块高亮支持 40 种按需加载的语法，包括 Rust、PHP 和常见围栏别名。
-- Code blocks lazily support 40 grammars, including Rust, PHP, and common fence aliases.
-- 新会话的普通消息发送前保留为草稿；Agent 模式可在空白会话中选择，工作区角标只计入实际显示的顶层对话。
-- New sessions stay drafts until the first ordinary message; Agent mode can be chosen before that message, and workspace counts reflect visible top-level conversations.
-- 修复 DSH `0.1.7-rc.2` 顶层会话快照省略 `delegationDepth` 时的误报；真实运行已验证创建、归档和恢复，VS Code 界面仍待复验。
-- Accept RC2 top-level session snapshots without `delegationDepth`; isolated create, archive, and restore were verified, while VS Code UI replay remains pending.
+- 提醒服务未启用时说明原因；改进会话搜索、空白草稿和归档恢复。
+- Explains unavailable reminder services and improves session search, blank drafts and archive restoration.
+
+- 插件设置支持分组搜索，安装状态可恢复；代码高亮支持 40 种按需语法。
+- Adds grouped plugin search and recoverable install status, with 40 lazily loaded highlighting grammars.
 
 ## 0.2.3
 
-- 修复 RC2 插件安装回包丢失与取消过晚时状态无法恢复：Webview 继续等待同一个 `installRequestId`，设置页切换后可恢复进度；同一 Host 已缓存的完成结果可直接恢复，恢复等待期间仍可取消，`not-running` 不会锁死重试，迟到响应不会覆盖终态；结果仍未知时只刷新目录，不会重复安装。安装、取消和等待按 ID 去重，并限制 Host 完成缓存的大小与有效期。新增回归覆盖丢包、`too-late`、等待失败/空结果、同 ID 取消重试、恢复期间取消和标签页卸载重挂。
-- Fixed RC2 plugin installs losing their visible state after a dropped reply or a too-late cancellation: the Webview resumes waiting on the same `installRequestId`, including after switching Settings tabs; a completed result cached by the same Host can be recovered directly, cancellation remains available while recovery is waiting, `not-running` does not lock out retries, and late responses cannot overwrite a terminal result. When the outcome remains unknown, it refreshes the catalog without reinstalling. Install, cancel, and wait requests are deduplicated by ID, with bounded Host completion caching. Regressions cover lost replies, `too-late`, failed/empty waits, same-ID cancel retry, cancellation during recovery, and tab unmount/remount.
-- 修复安装 Remote 发送前的 inspect、registry、Host 确认或 Adapter 本地验证失败被误判为结果未知的问题：确定未发送的失败现在成为可重试终态，不再等待永远返回 `null` 的恢复请求；发送 Remote 后的断线仍保持不确定，并继续按相同 ID 恢复。
-- Fixed preflight failures from inspect, registry lookup, Host confirmation, or adapter validation being mistaken for an unknown install result: known not-sent failures now settle into a retryable terminal state instead of waiting on a recovery request that returns `null`; disconnects after invoking the Remote remain indeterminate and continue recovery with the same ID.
-- 修复单个插件 entry 启用没有 Host 确认，以及 Agent turn 未结束时 Schedule 重试可能重复创建提醒的问题：启用前显示 Host 风险确认；创建重试等待对应 turn 结束并检查目录后再放行。
-- Fixed plugin entry enabling without Host confirmation and duplicate schedule creation on retry while an Agent turn is active. Enabling now requires a Host risk confirmation; schedule retry waits for the matching turn to end and the catalog to be checked.
-- 修复 RC2 插件安装取消与预检竞态：取消会中止尚未发送安装 Remote 的预检/确认；取消消息先到时会在有界期限内保留意图，避免后续继续安装；Remote 已开始时仍可按同一 ID 重试 `not-running` 取消。
-- Fixed RC2 plugin install cancellation racing with preflight: cancellation now aborts before the install Remote is sent, a bounded intent prevents a later install when cancellation arrives first, and `not-running` remains retryable by the same ID once the Remote stage is active.
-- 修复账号详情并发读取竞态：过期的未登录读取不再清除新账号的奖励确认映射；连接代际变化清空旧账号页面状态，即使新 Host 重用相同 revision 也不会复用旧提示。Schedule 抽屉隐藏的历史面板控件不再进入 Tab 焦点环。
-- Fixed an account detail read race so a stale signed-out response cannot clear the current account's bonus acknowledgement mapping. A connection epoch clears the previous account UI state even when a replacement Host restarts its local revision. Hidden schedule-history controls also no longer enter the Drawer Tab focus order.
+- 插件安装在断线或取消后可按原请求恢复，结果未知时不重复安装。
+- Recovers plugin installs after disconnection or cancellation without reinstalling when the outcome is unknown.
 
-- 聊天代码高亮改为随流增量渲染：已闭合的围栏代码块在消息仍在输出时就上色，正在书写的那一行保持纯文本、下一行闭合后立即换成高亮；每个代码块按文本缓存着色结果，只有在增长到一定步长时才重新分词，高亮不再等到整条消息输出完毕。回归覆盖「完成行切换时不闪断」与「闭合围栏提前上色」，真实 Webview 浏览器复验待补。
-- Chat code highlighting now renders incrementally while a message streams: a closed fenced block is colored while the rest of the message is still arriving, the line being written stays plaintext and switches to highlighted as soon as the next line closes, and each block caches its colors by text so it is re-tokenized only after enough growth. Highlighting no longer waits for the whole message to finish. Regressions cover the completed-line carry-over and the early highlight of a closed fence; a real-Webview browser re-check is still pending.
-
-- 同步上游至 `dsh-v0.1.7-rc.1`：新增 `0.1.5-rc.3`、`0.1.7-alpha.2`、`0.1.7-rc.1` 三个独立精确 Adapter；alpha.2/rc.1 在普通会话和子代理历史中按上游 `turnWindow` 分页，补洞等严格读取保持原语义，rc1 已核实启用 Job Controller。Installer 默认改为精确 `0.1.5-rc.3`。上游缺少历史会话与非空 Job 的可复现运行验证，相关能力保持 PARTIAL。
-- Synced upstream through `dsh-v0.1.7-rc.1`: added separate exact adapters for `0.1.5-rc.3`, `0.1.7-alpha.2`, and `0.1.7-rc.1`. Alpha.2/RC1 use the upstream `turnWindow` for ordinary session and subagent transcript paging while strict recovery reads keep their existing semantics; the shipped RC1 web profile was verified to activate Job Controller. The installer now targets exact `0.1.5-rc.3`. Live validation still lacks a historical session and non-empty Job, so those capabilities remain PARTIAL.
-
-- 连接详情不再显示能力 ID、适配/回退状态等内部信息，Extension Host 也不再将能力档案发送给 Webview；DSH 版本和连接设置入口保留。
-- Connection details no longer expose internal capability IDs or adapter/fallback statuses, and the Extension Host no longer sends the capability profile to the Webview. The DSH version and connection settings entry remain available.
+- 完善 RC2 会话升级、定时任务和后台输出支持；连接详情隐藏内部能力标识。
+- Improves RC2 session upgrades, schedules and background output; connection details hide internal capability identifiers.
 
 ## 0.2.2
 
-- 修复聊天 Markdown 中 HTML、Python 等已标记代码块仍显示为灰色：Webview CSP 放行内联 `style` 属性以承载 Shiki token 颜色，打包样式表与 nonce 脚本的限制保持不变，模型原始 HTML 仍被禁用；补充浏览器 CSP 验证和界面回归测试。
-- Fixed labeled HTML, Python, and other chat code blocks appearing monochrome: the Webview CSP permits inline `style` attributes for Shiki token colors while retaining packaged-stylesheet and nonce-script restrictions; raw model HTML stays disabled. Browser CSP and rendering regressions were checked.
+- 适配 DSH `0.1.7-alpha.1`，支持 Session V4、后台任务输出及停止，改善队列和预设恢复。
+- Adds DSH `0.1.7-alpha.1` support with Session V4, background output and stop controls, and improved queue and preset recovery.
 
-- 修复工具变更预览的新增/删除行背景在横向滚动后消失：整份 diff 共用完整可滚动宽度，短行的着色也能延伸到长行末端。
-- Fixed added/removed line backgrounds disappearing when horizontally scrolling a tool diff: all rows now share the full scrollable content width, so short rows remain colored through the end of long lines.
+- 修复代码高亮、横向滚动 diff 和构建后的激活错误，缩小高亮资源包。
+- Fixes syntax highlighting, horizontally scrolled diffs and activation after rebuilds, with smaller highlighting assets.
 
-- 修复 DSH `0.1.7-alpha.1` 适配回归：Job 跟读正常结束不再误报失败，恢复跟读保留已显示输出，立即停止可取消尚未完成的启动；Session V4 历史中的 `tool/result` 与实时流一致，`session/control` 重连基线可删除旧 projection。禁用预设选择或切换连接时不再沿用旧预设状态；归档失败会向用户提示，畸形预设元数据会在 Webview 边界被拒绝。以上有自动回归覆盖，但同一 Job、同一 offset 的旧/新 `opened` 帧尚缺协议代际标识，非空真实 Job 与 VS Code 现场验证仍未完成。
-- Fixed DSH `0.1.7-alpha.1` adaptation regressions: normal Job-follow completion no longer reports failure; resumed follow retains displayed output, and immediate stop cancels a pending start. Session V4 history now maps `tool/result` consistently with the live stream, and a reconnect control baseline removes stale projections. Disabled preset selection and connection changes no longer reuse stale preset state; archive failures are surfaced, and malformed preset metadata is rejected at the Webview boundary. Automated regressions cover these paths, but identical-offset old/new Job `opened` frames still lack a protocol generation identifier, and non-empty live Jobs plus VS Code interaction remain unverified.
-
-- 修复重新构建后在开发宿主中一激活就报错 `The argument 'filename' must be a file URL object, file URL string, or absolute path string. Received undefined`：扩展以 CJS 单文件打包，esbuild 会把 `import.meta` 置空，而上游 `@deepseek-ai/*` 模块在求值时就调用 `createRequire(import.meta.url)("../package.json")` 读取自身版本，于是激活期抛出 `ERR_INVALID_ARG_VALUE`；构建期插件现改为按上游清单内联真实版本号，遇到无法翻译的 `import.meta` 用法或产物中残留的 `import.meta.url` 读取都会直接让构建失败。
-- Fixed the error dialog shown as soon as the extension activates in a development host after a rebuild, `The argument 'filename' must be a file URL object, file URL string, or absolute path string. Received undefined`: the extension bundles to a single CJS file, where esbuild replaces `import.meta` with an empty object, while an upstream `@deepseek-ai/*` module calls `createRequire(import.meta.url)("../package.json")` during its own evaluation to read its version, so activation threw `ERR_INVALID_ARG_VALUE`. A build-time plugin now inlines the version the upstream manifest declares and fails the build on any `import.meta` use it cannot translate or on an emitted bundle that still reads `import.meta.url`.
-
-- 代码高亮改为按需语法白名单：Webview 只为 18 种常用语法生成懒加载分块（此前打包 Shiki 全量 bundle 的 300+ 个分块），其余语言与未知名按纯文本渲染；VSIX 由 693 个文件降到 97 个，Webview 的 sourcemap 不再随包发布（本地构建仍保留，供 DevTools 使用）。
-- Code highlighting now uses a bounded grammar whitelist: the Webview ships lazy chunks for 18 common languages instead of the 300+ chunks of Shiki's full bundle, and any other or unknown language falls back to plaintext. The VSIX drops from 693 files to 97 and stops publishing the Webview sourcemaps (local builds keep them for DevTools).
-
-- 修复代码高亮在真实 Webview 中一直静默失效：CSP 不含 `wasm-unsafe-eval`，浏览器拒绝 WebAssembly 编译，Shiki 的 Oniguruma 引擎从未启动，每个代码块都退化成纯文本；现改用不依赖 WebAssembly 的 JavaScript 正则引擎，18 种语法在 Chromium + 同一 CSP 下逐一验证通过，未知名仍按纯文本渲染。
-- Fixed code highlighting silently doing nothing in the real Webview: the CSP has no `wasm-unsafe-eval`, so the browser refused every WebAssembly compile, Shiki's Oniguruma engine never started, and each code block degraded to plaintext. The highlighter now uses the WebAssembly-free JavaScript regex engine; all 18 bundled grammars were verified in Chromium under the same CSP, with unknown languages still rendering as plaintext.
-
-- 接入上游 DSH `0.1.7-alpha.1` 的独立 `alpha171` Adapter：严格校验 Session V4、接入独立 Job 全量列表流、按 UTF-8 字节偏移跟读输出并支持人工停止，UI 操作由精确能力标记门控；旧版继续使用原有只读 Jobs 行为。补齐 registry-only preset/plugin inventory 字段映射与权限预设限制。Job 跟读/停止已有自动契约和界面测试，但非空真实 Job、真实跟读/停止及 VS Code 现场回放仍待验证；安装器默认保留 `0.1.5-rc.2`。
-- Added a dedicated `alpha171` adapter for upstream DSH `0.1.7-alpha.1`: it validates Session V4, streams complete Job rosters, follows output from UTF-8 byte offsets, and supports human-initiated stop. The UI gates these operations on the exact capability flag; older adapters retain their existing read-only Jobs behavior. Registry-only preset/plugin metadata and unsupported preset actions are handled explicitly. Job follow/stop have automated contract and UI coverage, while non-empty live Jobs, live follow/stop, and a real VS Code replay remain unverified. The installer default stays `0.1.5-rc.2`.
-
-- 修复右栏两处误报：检查点、提示词模板等路径作用域列表此前把 DSH workspace id 当作 VS Code 文件夹 id 送出，被宿主一律拒绝，现改由宿主在会话投影上声明所属文件夹并只以此读取；没有打开文件夹时（仅临时工作区）不再发起这类读取，也不再显示「列表可能不完整」。输入队列按上游语义读取：alpha/rc 线的队列基线来自宿主级控制流，基线之后新建的会话在其第一次入队前不会被任何帧提到，此前被当成「读不到」而永久报错，现与官方客户端一致按空队列处理（真实运行时验证：修复前等满 2s 后失败，修复后立即返回）。
-- 按运行时能力禁用 RC6/legacy 不支持的归档恢复入口，保留 Alpha 恢复；RC1 Jobs 明确提示不支持，不再伪装为空列表，RC2 任务事件不受影响。
-
-- 修正状态与操作回执：永久删除无上游接口时明确禁用；权限与 Plan 未知值不再冒充默认配置；归档状态可随上游恢复同步，Goal 清除验证真实回执。
-- 修正辅助面板的失败提示与展示：目录读取失败、变更能力缺失、检查点部分恢复明确提示；不再推测 Workflow 中断、会话完成、审批风险或模型活动，本地能力与上游能力分别标识。
-
-- alpha.2 会话与交互：恢复 Goal 激活控制、刷新插件清单并显示待处理会话交互；读取权威回合变更，将已提交的 Plan Markdown 保留为可复用聊天卡片。
-- 修复 DSH 0.1.6 alpha 权限选择器仅显示当前值：读取独立动态目录、监听目录失效，补齐 Auto 实验标记和风险确认。
-- DSH 0.1.6-alpha.2 支持通过会话上传回执发送 PDF、Office、压缩包等二进制附件，保留非图片单文件 8 MiB 限制。
-- alpha.2 的 Cordis 浏览器激活请求不再静默丢弃：可由用户明确拒绝；需要真实页面的查询提示转到 DSH Web 或停止回合。完整浏览器插件执行仍未支持。
+- 修复本地文件作用域与空工作区提示；浏览器激活请求可拒绝，完整浏览器插件仍不支持。
+- Fixes local file scopes and empty-workspace messaging; browser activation can be declined, while full browser-plugin execution remains unsupported.
 
 ## 0.2.1
 
-- 接入 DSH `0.1.6-alpha.2`（`alpha162`）与 `0.1.6-alpha.1`（`alpha161`）精确 Adapter：alpha.2 按新的 `session/control` `projections.inbox` 归约队列/Steer、严格拒绝 alpha.1 的 `queues` 基线并归一化 `session/writer-held`，alpha.1 复用已核对的 Session v3 基础 wire、`image/offload` 只作脱敏 opaque 保留；两条线补齐畸形/取消/释放 fixture 并通过 managed live smoke，真实 DSH 证据与 `docs/dsh-contract.md`、能力矩阵同步；新增 alpha surface 不冒充完成，安装器默认仍为 `0.1.5-rc.2`。
-- 连接体验与运行时定位：连接进度页重写为启动骨架屏（确定型进度条与百分比、五行会话占位骨架，失败时骨架收起换成原因框与重试/设置/诊断），连接阶段不再回退——只有本扩展已持有进程、真正附加时才宣告「正在连接」；定位失败（探测超时、已选可执行文件无法启动、候选无法上报版本）一定落到失败终态并给出原因与重试，损坏候选归类为「不可用运行时」且只向诊断写一行脱敏原文，失效的持久提示回落到常规扫描。
-- 会话与工作区：会话切换器新增「已归档」分区（按需读取、逐行恢复、永久删除须确认，被拒绝时按宿主原文说明），并可用 VS Code 原生目录选择器添加工作区文件夹（修复多根工作区已有一个注册目录时其余无法注册）；归档/删除或新建/分叉期间改选导航、分叉重命名失败都不再覆盖新的选择；`/` 菜单可打开 Skill 说明文档，路径仅由宿主从会话目录解析。
-- 配置与插件：字符串与枚举配置保留空字符串和首尾空格并与恢复默认区分，JSON 配置拒绝溢出的非有限数字，嵌套配置保留用户覆盖状态与重置入口；插件配置不再内置清单（命名空间、字段、可选值和凭据状态来自宿主 `settings.describe`，凭据只在宿主声明的引用下写入），支持非凭据对象与数组的 JSON 编辑、校验与重置，且不整体覆盖含脱敏凭据的容器，插件清单补充 Agent 预设组成、条件启用、默认预设与搜索。
-- 模型选择与会话目录：适配层按参考客户端规则从会话持久投影组合 `current`（`next ?? lastUsed`）并据此判定 `routable`，不再把部署级默认当成会话选择；目录读取按宿主原文陈述失败与进行中并提供「重新读取」，枚举失败的 Provider 保持可见、已加载分组仍可用；推理强度与默认档按适配器声明显示，目录查不到的当前选择按 `provider/model` 命名而不称「不可用」；当前模型无适配器服务时 Composer 复用宿主 `routable` 判定（输入惰性、发送被拒、停止与换模型可用）。
-- 工具卡、检查点与展示保真：结算卡由 `tool/result` 的 `meta` 形状派生、运行中的终端/变更卡由调用参数派生、已结算 shell 行结算出输出与退出码，变更行聚合文件的全部 hunk，检查点保存创建时刻的整份字节、恢复按预览选择 `abort`/`overwrite`；适配层、渲染层与 Webview 不再低于宿主契约地截断正文、失败原因、团队消息与列表尾部；持久图片引用可展开预览并重试；主题覆盖补齐插件配置下拉、模板变量框、状态药丸与工具卡读数。
-- 修复一批交互与路由缺陷：绝对路径打开文件、子会话分页与父子路由、审批命令预览、Agent Teams 消息归并、队列编辑与 Steer 收敛、Skill 目录与命令附件参数、会话改名回执，以及非绝对 `dsh.runtime.executablePath` 导致扩展无法激活；同时加固弹层键盘/焦点/IME、结构化预览与模型选择展示、导出按选项过滤。
-- 产品面陈述与清理：运行状态面板逐能力陈述「已验证/兼容回退/不可用」与整体来源，任务中心只投影契约能证明的会话取消，预设位置入口只在宿主陈述能力时区分「原生打开」与「显示路径」；移除一批无法到达的 Webview 路由与组件，协议声明与宿主分发保持一致。
-- 修复两处 Webview 布局缺陷：已配置模型列表的每一行被旧模板压成窄条、Provider 卡片把「编辑/移除」挤到单独一行；两者改为随面板宽度自适应，窄面板下折行而不溢出，并补充永久回归断言。
-- Add the exact `0.1.6-alpha.2` (`alpha162`) and `0.1.6-alpha.1` (`alpha161`) adapters: alpha.2 projects the upstream `session/control` `projections.inbox` into Queue/Steer and rejects the alpha.1 `queues` baseline, alpha.1 reuses the audited Session v3 base wire with `image/offload` kept as a redacted opaque row; both pass the managed live smoke with malformed, cancellation and disposal fixtures, updating `docs/dsh-contract.md` and the capability matrix; new alpha surfaces are not claimed done and the installer default stays `0.1.5-rc.2`.
-- Connection experience and runtime lookup: the progress page is a startup skeleton (a determinate progress bar with a percentage readout and five placeholder rows, replaced on failure by the reason and the retry / settings / diagnostics actions) and "connecting" starts only once this extension owns a process to attach to, never rolling back; a locate failure (a probe timeout, an executable that cannot run, a candidate that cannot report its version) always ends in a terminal failed state with a retry, a broken candidate becomes an unusable runtime with one redacted process line in diagnostics, and a stale hint falls through to the ordinary scan.
-- Sessions and workspaces: the session switcher gains an "Archived" section (read on demand, restored row by row, a permanent delete confirmed in a dialog, a refusal stated in the host's words) and can add a workspace folder through the native directory picker, fixing registration when a multi-root workspace already had one; a navigation switch during an archive/delete or create/fork — a failed fork rename included — is no longer overwritten by the older request; the `/` menu opens a skill's documentation, resolved by the host from the session directory only.
-- Configuration and plugins: string and enum settings keep empty strings and surrounding whitespace and stay distinct from restoring the default, JSON settings reject out-of-range non-finite numbers, and nested settings keep the user's override state and reset entries; the plugin configuration ships no built-in list (namespaces, fields, choice values and credential state come from the host's `settings.describe`, with a secret written only under the reference the host declares), validates and resets non-credential objects and arrays without overwriting a container that holds a redacted secret, and the plugin inventory adds Agent preset composition, conditional enablement, the default preset and search.
-- Model selection and the session directory: the adapter composes `current` from the session's durable projection (`next ?? lastUsed`) and derives `routable` from it the way the reference client does, not treating the deployment default as the session's choice; a directory read states its refusal and in-flight state in the host's words with a "read again" action, and an unenumerable provider stays visible while the loaded groups stay usable; reasoning levels and their defaults come from the adapter's declaration, an unlisted selection is named `provider/model` rather than called unavailable, and a session with no served model goes inert while Stop and the picker stay reachable.
-- Tool cards, checkpoints and presentation fidelity: a settled card comes from the shape of `tool/result`'s `meta`, a running terminal or mutation card from the call arguments, and a settled shell row from the output and exit status its own result states; a change row carries every hunk of a file; a checkpoint snapshots the file's whole bytes as of creation and a restore picks `abort`/`overwrite` from the preview it showed; the adapter, render layer and Webview no longer cut tool bodies, failure reasons or a list's tail below the host contract; a persistent image previews on expand and retries a failed load; the theme covers the plugin dropdowns, template variables, status pills and tool-card readouts.
-- Fix a batch of interaction and routing defects: opening an absolute path, subagent paging and parent/child routing, the approval command preview, Agent Teams message merging, queue edits and Steer convergence, the skill catalog and command attachment arguments, the rename receipt, and a non-absolute `dsh.runtime.executablePath` that kept the extension from activating; plus overlay keyboard/focus/IME handling, structured and model-selection presentation, and option-aware export filtering.
-- Product surfaces and cleanup: the runtime status panel states every capability ID's verified/fallback/unavailable verdict and the overall source, the task centre projects only the session cancel the contract can prove, and the preset location action distinguishes a native opener from a revealed path only when the host states it; a set of unreachable Webview routes and components is removed, keeping the declared protocol and host dispatch in step.
-- Fix two Webview layout defects: a configured-model row was squeezed into a narrow column and provider cards pushed their edit/remove buttons onto a line of their own; both now follow the panel width and wrap instead of overflowing, with permanent regression assertions.
+- 适配 DSH `0.1.6-alpha.1` 与 `0.1.6-alpha.2`，改进连接进度和失败重试。
+- Adds DSH `0.1.6-alpha.1` and `0.1.6-alpha.2` support with improved connection progress and retries.
+
+- 新增归档会话管理、原生工作区选择和 Skill 文档入口；完善动态插件配置、模型与预设选择。
+- Adds archived-session management, native workspace selection and Skill documentation, with improved dynamic plugin settings, models and presets.
+
+- 改善工具结果、检查点、队列、子代理和导出，修复窄栏布局及键盘交互。
+- Improves tool results, checkpoints, queues, subagents and exports, with fixes for narrow layouts and keyboard interaction.
 
 ## 0.2.0
 
-- 修复错误信息在工具卡和结构化工具行中重复展示的问题；通用回退、终端和搜索结果会复用同一份错误展示，不再生成两张错误卡。
-- 修复文件位置链接重复和不可点击的问题：每个目标只保留一个由宿主打开的入口，同时覆盖通用工具回退路径和宿主提供的顶层文件位置。
-- 修复“读取”预览在没有语言或元数据时显示整条空白复制栏的问题，并压缩插件清单的详情布局；补充对应的 Webview/UI 回归测试。
-- Fix duplicated error presentation across generic and structured tool renderers, including terminal and search results.
-- Fix duplicated, non-clickable file-location labels by routing one deduplicated target per location through the Extension Host opener.
-- Keep unlabeled read previews compact and add regression coverage for the tool-card, file-target, read-preview, and plugin-inventory layouts.
+- 修复工具错误和文件链接重复展示，压缩读取预览与插件详情布局。
+- Fixes duplicated tool errors and file links, with compact read previews and plugin details.
 
 ## 0.1.11
 

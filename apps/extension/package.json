@@ -2,7 +2,7 @@
   "name": "deepseek-harness-client",
   "displayName": "DeepSeek Harness Companion for VS Code",
   "description": "Run DSH sessions, tools, and coding tasks in VS Code.",
-  "version": "0.2.12",
+  "version": "0.3.0",
   "publisher": "Direwolf",
   "icon": "resources/dsh.png",
   "license": "MIT",
@@ -61,10 +61,13 @@
     "@dsh-vscode/domain": "workspace:*",
     "@dsh-vscode/dsh-adapter": "workspace:*",
     "@dsh-vscode/webview-protocol": "workspace:*",
+    "undici": "7.29.0",
+    "ws": "8.21.3",
     "zod": "4.4.3"
   },
   "devDependencies": {
-    "@types/vscode": "1.125.0"
+    "@types/vscode": "1.125.0",
+    "@types/ws": "8.18.1"
   },
   "contributes": {
     "viewsContainers": {
@@ -160,6 +163,16 @@
         "command": "dsh.addDiagnosticContext",
         "title": "DSH: Add Diagnostic to Context",
         "icon": "$(error)"
+      },
+      {
+        "command": "dsh.authorizeExternalConnection",
+        "title": "Authorize External Connection",
+        "category": "DSH"
+      },
+      {
+        "command": "dsh.clearExternalCredentials",
+        "title": "Clear External Connection Credentials",
+        "category": "DSH"
       }
     ],
     "menus": {
@@ -260,11 +273,6 @@
           "type": "string",
           "default": "",
           "description": "Optional existing DSH URL, an http:// or https:// origin (any host)."
-        },
-        "dsh.connection.launchToken": {
-          "type": "string",
-          "default": "",
-          "markdownDescription": "Launch token for an already-running DSH that requires browser-session authentication (for example the Dockerized DSH). The token is exchanged for a session cookie on connect. It is a secret: keep it out of shared or committed settings, and re-read it from the DSH logs after each container recreate. Leave empty when the DSH instance was started by this extension."
         },
         "dsh.connection.runtimeVersion": {
           "type": "string",

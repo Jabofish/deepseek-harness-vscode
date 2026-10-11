@@ -61,7 +61,7 @@ function createClient(
     requestTimeoutMs,
     retryPolicy: { maximumAttempts, baseDelayMs: retryDelayMs, maximumDelayMs: retryDelayMs },
     fetch,
-    webSocket: FakeWebSocket as unknown as typeof globalThis.WebSocket,
+    webSocket: FakeWebSocket,
   })
 }
 

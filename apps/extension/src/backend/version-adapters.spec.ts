@@ -6,6 +6,7 @@ import {
   LATEST_SUPPORTED_DSH_VERSION,
   Rc202VersionAdapter,
   Alpha212VersionAdapter,
+  VersionedBackendProbe,
 } from '@dsh-vscode/dsh-adapter'
 
 import { createAdapterOptions } from './adapter-options.js'
@@ -19,6 +20,33 @@ const exportFileSystem = {
 }
 
 describe('production version adapter registry', () => {
+  it.each([401, 403])(
+    'propagates HTTP %i authentication failures without trying another version',
+    async (status) => {
+      let requests = 0
+      const adapters = createVersionAdapters(
+        createAdapterOptions({
+          requestTimeoutMs: () => 1_000,
+          fetch: () => {
+            requests++
+            return Promise.resolve(new Response(null, { status }))
+          },
+          samePath: (left, right) => left === right,
+          exportFileSystem,
+          authCookie: () => 'fixture-cookie',
+        }),
+      )
+      await expect(
+        new VersionedBackendProbe(adapters).probe({
+          endpoint: { host: 'remote.example', port: 443, baseUrl: 'https://remote.example:443' },
+          source: 'configured',
+          confidence: 100,
+          runtimeVersion: '0.2.1-alpha.2',
+        }),
+      ).rejects.toMatchObject({ code: 'PERMISSION_DENIED' })
+      expect(requests).toBe(1)
+    },
+  )
   it('registers alpha.1 and alpha.2 exactly while retaining the stable guided install default', () => {
     const adapters = createVersionAdapters(
       createAdapterOptions({

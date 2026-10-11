@@ -8,6 +8,8 @@ import {
   type BackendState,
   type DshBackend,
   type DshRuntimeUpdateProgress,
+  isLoopbackEndpoint,
+  parseServerOrigin,
 } from '@dsh-vscode/domain'
 import {
   BackendService,
@@ -15,7 +17,7 @@ import {
   RuntimeUseCases,
   type ConnectionRequest,
 } from '@dsh-vscode/application'
-import { DEFAULT_DSH_WEB_PORT, VersionedBackendFactory, VersionedBackendProbe } from '@dsh-vscode/dsh-adapter'
+import { VersionedBackendFactory, VersionedBackendProbe } from '@dsh-vscode/dsh-adapter'
 import { createAdapterOptions } from '../backend/adapter-options.js'
 import { createVersionAdapters } from '../backend/version-adapters.js'
 import { CompanionRegistryDiscoveryProvider } from '../backend/discovery/companion-provider.js'
@@ -47,17 +49,12 @@ import {
 } from './runtime.js'
 import { createExportFileSystem } from './export-file-system.js'
 import { sameWorkspacePath } from './workspace-state.js'
+import { EndpointNetwork } from '../backend/endpoint-network.js'
+import { ExternalConnectionAccess } from '../backend/external-connection-access.js'
+import { hasLocalWorkspaceAuthority } from '../view/session-workspace-scope.js'
 
 const execFileAsync = promisify(execFile)
 const RUNTIME_PATH_STATE_KEY = 'dsh.runtime.lastKnownPath'
-// Persisted session cookies. The DSH signing secret is durable across process
-// restarts (it lives in the DSH home directory), so a cookie minted by one
-// process keeps authorizing later processes until its 30-day expiry. Persisting
-// the cookie lets the extension reconnect to a restarted container without
-// re-exchanging the (ephemeral) launch token. Cookies are credentials, so they
-// are stored in SecretStorage (OS keychain) rather than plain-text globalState.
-const ENDPOINT_COOKIE_STATE_KEY = 'dsh.connection.endpointCookies'
-
 export interface RuntimeAssemblyDependencies {
   readonly context: vscode.ExtensionContext
   readonly configuration: VsCodeConfigurationSource
@@ -75,14 +72,11 @@ export interface RuntimeAssembly {
   readonly runtimeInstaller: RuntimeInstaller
   readonly runtimeUseCases: RuntimeUseCases
   readonly endpointLaunchUrls: Map<string, string>
-  /** Exchange a configured launch token for a session cookie on an endpoint. */
-  readonly loginWithToken: (endpoint: BackendEndpoint, token: string, signal: AbortSignal) => Promise<void>
-  /** Whether a session cookie is already stored for an endpoint. */
-  readonly hasCookie: (endpoint: BackendEndpoint) => boolean
+  readonly externalConnection: ExternalConnectionAccess
 }
 
 /** Locate the runtime, discover endpoints, and own the connection machinery. */
-export async function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Promise<RuntimeAssembly> {
+export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): RuntimeAssembly {
   const { context, configuration, diagnostics, currentWorkspaceFolder, onRuntimeUpdateProgress } = deps
   const runtimeLocator = new DshRuntimeLocator({
     os: platform(),
@@ -159,27 +153,30 @@ export async function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): 
     new MacOsProcessDiscoveryProvider(),
   ])
   const endpointCookies = new Map<string, string>()
-  // Restore session cookies persisted across extension sessions. They remain
-  // valid as long as the DSH home directory (and its signing secret) is
-  // unchanged, so a restarted container can be reauthorized without a fresh
-  // launch-token exchange.
-  const storedEndpointCookies = await context.secrets.get(ENDPOINT_COOKIE_STATE_KEY)
-  if (storedEndpointCookies !== undefined && storedEndpointCookies !== '') {
-    try {
-      const parsed: unknown = JSON.parse(storedEndpointCookies)
-      if (typeof parsed === 'object' && parsed !== null) {
-        for (const [baseUrl, cookie] of Object.entries(parsed as Record<string, unknown>)) {
-          if (typeof cookie === 'string' && cookie !== '') endpointCookies.set(baseUrl, cookie)
-        }
-      }
-    } catch {
-      // A corrupt or non-JSON value must not block activation; drop it and
-      // re-authenticate through the launch token on the next connect.
-    }
-  }
-  const persistEndpointCookies = (): void => {
-    void context.secrets.store(ENDPOINT_COOKIE_STATE_KEY, JSON.stringify(Object.fromEntries(endpointCookies)))
-  }
+  const network = new EndpointNetwork()
+  const externalConnection = new ExternalConnectionAccess({
+    secrets: context.secrets,
+    network,
+    isTrusted: () => vscode.workspace.isTrusted,
+    requestTimeoutMs: () => configuration.read().connection.requestTimeoutMs,
+    confirm: async (endpoint, insecure) => {
+      const action = insecure ? 'Connect using unencrypted HTTP' : 'Authorize connection'
+      const message = insecure
+        ? `Connect to ${endpoint.baseUrl}? HTTP sends credentials and messages without encryption. Use HTTPS on untrusted networks.`
+        : `Authorize DSH at ${endpoint.baseUrl}? This instance will receive the tasks and files you choose to send.`
+      return (await vscode.window.showWarningMessage(message, { modal: true }, action)) === action
+    },
+    inputToken: () =>
+      Promise.resolve(
+        vscode.window.showInputBox({
+          title: 'DSH external connection credentials',
+          prompt:
+            'Enter the DSH launch token. Leave empty for an instance that does not require token login.',
+          password: true,
+          ignoreFocusOut: true,
+        }),
+      ),
+  })
   // Keep the process launch URL in the Extension Host so the browser can
   // perform its own cookie exchange. The URL is never included in Webview
   // state or messages.
@@ -188,30 +185,29 @@ export async function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): 
   // getters here, and building the composition root must never read settings.
   const adapterOptions = createAdapterOptions({
     requestTimeoutMs: () => configuration.read().connection.requestTimeoutMs,
-    fetch: globalThis.fetch,
+    fetch: network.fetch,
+    webSocket: network.webSocketConstructor(),
     samePath: sameWorkspacePath,
     exportFileSystem: createExportFileSystem(vscode),
-    authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
+    authCookie: (endpoint) =>
+      externalConnection.cookie(endpoint) ??
+      (endpointLaunchUrls.has(endpoint.baseUrl) ? endpointCookies.get(endpoint.baseUrl) : undefined),
+    allowLocalInspector: (endpoint) => {
+      const state = coordinator.getState()
+      return (
+        state.kind === 'connected' &&
+        state.backend.endpoint.baseUrl === endpoint.baseUrl &&
+        hasLocalWorkspaceAuthority(state.backend)
+      )
+    },
   })
   const rememberReadyEndpoint = createManagedEndpointLoginHandler(
     endpointCookies,
     endpointLaunchUrls,
-    globalThis.fetch,
-    persistEndpointCookies,
+    network.fetch,
   )
-  const loginWithToken = async (
-    endpoint: BackendEndpoint,
-    token: string,
-    signal: AbortSignal,
-  ): Promise<void> => {
-    // The managed-endpoint handler performs the token -> cookie exchange and
-    // records the resulting cookie. The launch URL is never shared with the
-    // Webview; endpointLaunchUrls stays in the Extension Host.
-    const launchUrl = `${endpoint.baseUrl}/?token=${encodeURIComponent(token)}`
-    await rememberReadyEndpoint(endpoint, launchUrl, signal)
-  }
   const adapters = createVersionAdapters(adapterOptions)
-  const probe = new VersionedBackendProbe(adapters, { fetch: globalThis.fetch })
+  const probe = new VersionedBackendProbe(adapters, { fetch: network.fetch })
   const factory = new VersionedBackendFactory(adapters)
   const supervisor = new DshProcessSupervisor({
     managedPort: () => configuration.read().connection.managedPort,
@@ -226,6 +222,7 @@ export async function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): 
     probe,
     backendFactory: factory,
     processSupervisor: supervisor,
+    endpointPreparation: externalConnection,
   })
   const backendService = new BackendService()
   const runtimeInstaller = new RuntimeInstaller({
@@ -302,8 +299,7 @@ export async function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): 
     runtimeInstaller,
     runtimeUseCases,
     endpointLaunchUrls,
-    loginWithToken,
-    hasCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl) !== undefined,
+    externalConnection,
   }
 }
 
@@ -313,8 +309,7 @@ export interface ConnectionLifecycleDependencies {
   readonly coordinator: DshConnectionCoordinator
   readonly currentWorkspaceFolders: () => readonly vscode.WorkspaceFolder[]
   readonly endpointLaunchUrls: Map<string, string>
-  readonly loginWithToken: (endpoint: BackendEndpoint, token: string, signal: AbortSignal) => Promise<void>
-  readonly hasCookie: (endpoint: BackendEndpoint) => boolean
+  readonly externalConnection?: ExternalConnectionAccess
   readonly attach: (backend: DshBackend) => Promise<void>
   readonly publishState: (state: BackendState) => void
   readonly disposeAccountLifecycleHost: () => Promise<void>
@@ -346,64 +341,22 @@ export function createConnectionLifecycle(deps: ConnectionLifecycleDependencies)
     coordinator,
     currentWorkspaceFolders,
     endpointLaunchUrls,
-    loginWithToken,
-    hasCookie,
+    externalConnection,
     attach,
     publishState,
     disposeAccountLifecycleHost,
     detachSessionAdapters,
   } = deps
-  const loginWithLaunchToken = async (
-    token: string,
-    customEndpoint: BackendEndpoint | undefined,
-    attachPorts: readonly number[],
-    signal?: AbortSignal,
-  ): Promise<void> => {
-    const endpoints: readonly BackendEndpoint[] =
-      customEndpoint === undefined
-        ? [...new Set([...attachPorts, DEFAULT_DSH_WEB_PORT])].map((port) => ({
-            host: '127.0.0.1',
-            port,
-            baseUrl: `http://127.0.0.1:${port}`,
-          }))
-        : [customEndpoint]
-    let lastError: unknown
-    for (const endpoint of endpoints) {
-      try {
-        await loginWithToken(endpoint, token, signal ?? new AbortController().signal)
-        return
-      } catch (error) {
-        lastError = error
-        if (signal?.aborted === true) throw error
-      }
-    }
-    throw new AppError({
-      code: 'BACKEND_UNREACHABLE',
-      message:
-        'The DSH launch token could not be exchanged for a session cookie. Check that DSH is running on the configured endpoint and that dsh.connection.launchToken is current.',
-      retryable: true,
-      cause: lastError,
-    })
-  }
   const connect = async (signal?: AbortSignal): Promise<unknown> => {
     const current = configuration.read()
     const hasWorkspaceFolder = currentWorkspaceFolders().length > 0
     const customEndpoint =
       current.connection.mode === 'custom' ? endpointFromServerUrl(current.connection.serverUrl) : undefined
-    const launchToken = current.connection.launchToken
-    if (launchToken !== undefined && launchToken !== '') {
-      // A session cookie already minted for this endpoint stays valid across
-      // DSH restarts (the signing secret lives in the DSH home directory, not
-      // the process). Reuse it instead of re-exchanging the launch token,
-      // which is regenerated on every container start and would otherwise
-      // force re-authentication.
-      const reuseCookie = customEndpoint !== undefined && hasCookie(customEndpoint)
-      if (!reuseCookie) {
-        await loginWithLaunchToken(launchToken, customEndpoint, current.connection.attachPorts, signal)
-      }
-    }
     const request: ConnectionRequest = {
       mode: current.connection.mode,
+      ...(current.connection.mode === 'custom'
+        ? { credentialRevision: externalConnection?.revision ?? 0 }
+        : {}),
       ...(customEndpoint === undefined ? {} : { endpoint: customEndpoint }),
       ...(current.connection.runtimeVersion === undefined || current.connection.runtimeVersion === ''
         ? {}
@@ -414,11 +367,13 @@ export function createConnectionLifecycle(deps: ConnectionLifecycleDependencies)
       autoStart: current.runtime.autoStart && (vscode.workspace.isTrusted || !hasWorkspaceFolder),
     }
     const result = await coordinator.connect(request, signal)
-    await context.workspaceState.update('dsh.lastEndpoint', {
-      // Discovery only needs the validated port. Keep the full endpoint in
-      // the live Host connection, not in durable workspace state.
-      port: result.backend.connection.endpoint.port,
-    })
+    // A remote port must never become a remembered local discovery candidate.
+    await context.workspaceState.update(
+      'dsh.lastEndpoint',
+      isLoopbackEndpoint(result.backend.connection.endpoint)
+        ? { port: result.backend.connection.endpoint.port }
+        : undefined,
+    )
     await attach(result.backend)
     // Commands may connect before the Webview exists. app.ready must always
     // receive a fresh authoritative snapshot even when the initial publish
@@ -434,6 +389,7 @@ export function createConnectionLifecycle(deps: ConnectionLifecycleDependencies)
       detachSessionAdapters()
       endpointLaunchUrls.clear()
       await coordinator.disconnect()
+      await externalConnection?.release()
       return connect(signal)
     })()
     reconnectOperation = operation
@@ -497,6 +453,17 @@ export function createConnectionLifecycle(deps: ConnectionLifecycleDependencies)
       signal?.throwIfAborted()
       configuringTransport = true
       try {
+        if (mode === 'custom' && externalConnection !== undefined) {
+          const selected = endpointFromServerUrl(endpoint)
+          if (selected === undefined)
+            throw new AppError({
+              code: 'INVALID_ENDPOINT',
+              message: 'Enter a valid DSH endpoint.',
+              retryable: false,
+            })
+          await externalConnection.authorize(selected, signal)
+        }
+        signal?.throwIfAborted()
         await writeTransportSettings(vscode.workspace.getConfiguration('dsh'), writes)
         // A reconnect already in flight may have read the previous settings.
         // Its failure must not suppress this new, explicit attempt either.
@@ -520,19 +487,31 @@ export function createManagedEndpointLoginHandler(
   endpointCookies: Map<string, string>,
   endpointLaunchUrls: Map<string, string>,
   fetcher: typeof globalThis.fetch = globalThis.fetch,
-  persistCookies: (cookies: Record<string, string>) => void = () => {},
 ): (endpoint: BackendEndpoint, launchUrl: string | undefined, signal: AbortSignal) => Promise<void> {
   return async (endpoint, launchUrl, signal) => {
     // A managed port can be reused by a fresh DSH process. Never let a cookie
     // from the previous process authorize the new endpoint.
     endpointCookies.delete(endpoint.baseUrl)
     endpointLaunchUrls.delete(endpoint.baseUrl)
-    persistCookies(Object.fromEntries(endpointCookies))
     signal.throwIfAborted()
     if (launchUrl === undefined) return
+    const target = new URL(launchUrl)
+    if (
+      !isLoopbackEndpoint(endpoint) ||
+      parseServerOrigin(target.origin)?.baseUrl !== endpoint.baseUrl ||
+      target.username !== '' ||
+      target.password !== ''
+    ) {
+      throw new AppError({
+        code: 'INVALID_ENDPOINT',
+        message: 'The managed launch URL does not match its local endpoint.',
+        retryable: false,
+      })
+    }
+    const loginSignal = AbortSignal.any([signal, AbortSignal.timeout(30_000)])
     let response: Response
     try {
-      response = await fetcher(launchUrl, { method: 'GET', redirect: 'manual', signal })
+      response = await fetcher(launchUrl, { method: 'GET', redirect: 'manual', signal: loginSignal })
     } catch (error) {
       signal.throwIfAborted()
       throw new AppError({
@@ -548,6 +527,7 @@ export function createManagedEndpointLoginHandler(
     const cookie = setCookies
       .map((value) => value.split(';', 1)[0]?.trim() ?? '')
       .find((value) => /^[^=;\s]+=[^;\r\n]+$/u.test(value))
+    await response.body?.cancel().catch(() => undefined)
     if (response.status < 300 || response.status >= 400 || cookie === undefined) {
       throw new AppError({
         code: 'BACKEND_UNREACHABLE',
@@ -558,6 +538,5 @@ export function createManagedEndpointLoginHandler(
     signal.throwIfAborted()
     endpointCookies.set(endpoint.baseUrl, cookie)
     endpointLaunchUrls.set(endpoint.baseUrl, launchUrl)
-    persistCookies(Object.fromEntries(endpointCookies))
   }
 }

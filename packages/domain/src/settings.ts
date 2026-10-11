@@ -5,12 +5,6 @@ export interface ConnectionSettings {
   readonly mode: ConnectionMode
   readonly serverUrl?: string
   /**
-   * DSH web launch token for an already-running instance (for example the
-   * Dockerized DSH). Exchanged for a session cookie on connect. Empty when
-   * not configured.
-   */
-  readonly launchToken?: string
-  /**
    * Optional explicit DSH wire version for an external instance whose runtime
    * version cannot be discovered (for example a containerized DSH). Bypasses
    * the compatibility-fallback probe and selects the exact adapter. Empty when

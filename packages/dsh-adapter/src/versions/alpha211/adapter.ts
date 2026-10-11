@@ -64,6 +64,11 @@ export class Alpha211VersionAdapter extends Rc202VersionAdapter {
     return new Alpha211ModsBandRepository(transport)
   }
   protected override createInspectorRepository(endpoint: BackendEndpoint): InspectorDevtoolsRepository {
-    return new Alpha211InspectorRepository(this.createTransportOptions(endpoint))
+    return new Alpha211InspectorRepository({
+      ...this.createTransportOptions(endpoint),
+      ...(this.options.allowLocalInspector === undefined
+        ? {}
+        : { allowWorkerDiscovery: () => this.options.allowLocalInspector!(endpoint) }),
+    })
   }
 }

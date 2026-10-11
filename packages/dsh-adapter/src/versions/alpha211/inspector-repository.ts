@@ -1,4 +1,9 @@
-import { AppError, type InspectorDevtoolsRepository, type InspectorDevtoolsTarget } from '@dsh-vscode/domain'
+import {
+  AppError,
+  isLoopbackEndpoint,
+  type InspectorDevtoolsRepository,
+  type InspectorDevtoolsTarget,
+} from '@dsh-vscode/domain'
 import type { AlphaLoopbackApiClientOptions } from '../alpha/transport.js'
 import { assertValidEndpoint, releaseUnreadBody } from '../../transport-internal.js'
 import { httpFailure, normalizeTransportError } from '../../transport-errors.js'
@@ -17,11 +22,13 @@ export class Alpha211InspectorRepository implements InspectorDevtoolsRepository 
     private readonly options: Pick<
       AlphaLoopbackApiClientOptions,
       'endpoint' | 'fetch' | 'authCookie' | 'requestTimeoutMs'
-    >,
+    > & { readonly allowWorkerDiscovery?: () => boolean },
   ) {
     assertValidEndpoint(options.endpoint)
   }
   public async discover(signal?: AbortSignal): Promise<InspectorDevtoolsTarget> {
+    if (!isLoopbackEndpoint(this.options.endpoint) || this.options.allowWorkerDiscovery?.() === false)
+      return { available: false }
     const combined = AbortSignal.any([
       this.closed.signal,
       AbortSignal.timeout(this.options.requestTimeoutMs),

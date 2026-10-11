@@ -7,7 +7,7 @@
 [![GitHub Release](https://img.shields.io/github/v/release/Jabofish/deepseek-harness-vscode)](https://github.com/Jabofish/deepseek-harness-vscode/releases)
 [![License](https://img.shields.io/github/license/Jabofish/deepseek-harness-vscode)](LICENSE)
 
-**DeepSeek Harness Companion for VS Code** brings local [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) sessions into the editor. It shows streaming replies, thinking, tool activity, approvals, and recoverable conversation history in a VS Code view.
+**DeepSeek Harness Companion for VS Code** brings local or remote [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) sessions into the editor. Follow streaming replies, thinking, tools, approvals, and conversation history beside your code.
 
 ## What you can do
 
@@ -41,8 +41,18 @@ The extension first looks for a compatible local DSH. It starts one only when th
 
 The General settings page can check upstream package versions and install an exact verified version. Updating a global package never stops an external DSH.
 
+## Connect to an external instance
+
+1. Select `custom` mode and set `dsh.connection.serverUrl` to the server's HTTP(S) origin, with no path, query, or embedded credentials.
+2. Set `dsh.connection.runtimeVersion` to the server's exact supported version.
+3. Run **DSH: Authorize External Connection** and enter its launch token in the native password prompt. Leave it empty for an anonymous instance, then connect.
+
+HTTPS requires a trusted certificate. Remote HTTP requires confirmation of plaintext transport and renewed authorization after DNS address changes. The server must accept the configured host; where supported, use DSH's `--trusted-host host:port` for a proxy. Remote connections do not grant access to local workspace files or the local inspector.
+
+Credentials are stored per origin in VS Code SecretStorage. Use **DSH: Clear External Connection Credentials** to remove them.
+
 ## Privacy and support
 
-DSH connections, credentials, files, and processes stay in the VS Code Extension Host. The Webview receives no secrets or direct filesystem/network access. Endpoints are limited to validated HTTP(S) origins (local discovery defaults to loopback, and `custom` mode may target a user-configured remote host); diagnostics are redacted. See the [security model](docs/architecture.md) and [support instructions](apps/extension/SUPPORT.md).
+Network connections, credentials, files, and process control stay in the Extension Host. The Webview receives no secrets or direct filesystem/network access, and diagnostics are redacted. See the [security model](docs/architecture.md) and [support instructions](apps/extension/SUPPORT.md).
 
 Developer documentation starts at the [documentation index](docs/README.md). The [contribution guide](CONTRIBUTING.md) explains validation and evidence. User-facing changes are recorded in the [extension changelog](apps/extension/CHANGELOG.md). Licensed under [MIT](LICENSE).

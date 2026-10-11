@@ -80,6 +80,12 @@ importers:
       '@dsh-vscode/webview-protocol':
         specifier: workspace:*
         version: link:../../packages/webview-protocol
+      undici:
+        specifier: 7.29.0
+        version: 7.29.0
+      ws:
+        specifier: 8.21.3
+        version: 8.21.3
       zod:
         specifier: 4.4.3
         version: 4.4.3
@@ -87,6 +93,9 @@ importers:
       '@types/vscode':
         specifier: 1.125.0
         version: 1.125.0
+      '@types/ws':
+        specifier: 8.18.1
+        version: 8.18.1
 
   apps/webview:
     dependencies:
