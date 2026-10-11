@@ -8,8 +8,8 @@
 - 改善模型搜索、目录滚动和会话导航，修复过程折叠、长结果、统计及窄窗口布局。
 - Improves model search, catalog scrolling and session navigation, with fixes for process disclosures, long results, statistics and narrow views.
 
-- 支持自定义远程 HTTP(S) 连接：原生授权、按地址隔离凭据、严格 TLS 校验；远程 HTTP 需明确确认。
-- Adds custom remote HTTP(S) connections with native authorization, per-origin credentials and strict TLS verification; remote HTTP requires explicit confirmation.
+- 支持自定义远程 HTTP(S) 连接：原生授权、按地址隔离凭据、严格 TLS 校验；远程 HTTP 需明确确认。见 [PR #2](https://github.com/Jabofish/deepseek-harness-vscode/pull/2)，感谢 [ggeorgovassilis](https://github.com/ggeorgovassilis) 的贡献。
+- Adds custom remote HTTP(S) connections with native authorization, per-origin credentials and strict TLS verification; remote HTTP requires explicit confirmation. See [PR #2](https://github.com/Jabofish/deepseek-harness-vscode/pull/2); thanks to [ggeorgovassilis](https://github.com/ggeorgovassilis).
 
 - 适配 DSH `0.2.1-alpha.2`，改善子代理、旧会话提示和插件安装恢复；默认引导安装保持稳定 rc.2。
 - Adds DSH `0.2.1-alpha.2` support with improved subagents, legacy-session guidance and plugin install recovery; guided installation retains stable rc.2.
