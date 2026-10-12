@@ -111,6 +111,29 @@ export function sequenceRanges(sequences: readonly number[]): readonly SessionSe
   return ranges
 }
 
+/** Positive facts from a page remain valid even when older turns are omitted. */
+export function sessionListFactsFromHistory(
+  history: readonly SessionHistoryEvent[],
+  rawHistory: readonly unknown[],
+): { readonly nonblank: boolean; readonly lastPromptAt?: number } {
+  const lastPrompt = [...rawHistory].reverse().find((entry) => {
+    const wrapper = asRecord(entry)
+    const event = asRecord(wrapper.event ?? wrapper)
+    return event.type === 'user/message' && asRecord(asRecord(event.data).source).kind === 'user'
+  })
+  const wrapper = asRecord(lastPrompt)
+  const time = asRecord(wrapper.event ?? wrapper).time
+  return {
+    nonblank: lastPrompt !== undefined || history.some((entry) => entry.event.type === 'turn.started'),
+    ...(typeof time === 'number' &&
+    Number.isSafeInteger(time) &&
+    time >= 0 &&
+    Number.isFinite(new Date(time).getTime())
+      ? { lastPromptAt: time }
+      : {}),
+  }
+}
+
 export function fallbackSessionSummary(
   sessionId: string,
   history: readonly SessionHistoryEvent[],
@@ -118,9 +141,11 @@ export function fallbackSessionSummary(
   workspaceId: string | undefined,
   projectionBlock: SessionDetail['projection'] | undefined,
   deriveTitleFromCwd: boolean,
+  hasMore = false,
 ): SessionSummary {
   const first = history[0]?.time
-  const last = history[history.length - 1]?.time
+  const facts = sessionListFactsFromHistory(history, rawHistory)
+  const last = facts.lastPromptAt === undefined ? undefined : new Date(facts.lastPromptAt).toISOString()
   const hasHumanMessage = history.some(
     (entry) => entry.event.type === 'message.user' && entry.event.source !== 'command',
   )
@@ -142,7 +167,7 @@ export function fallbackSessionSummary(
     workspaceId: workspaceId ?? '',
     ...(cwd === undefined ? {} : { cwd }),
     title: projectionTitle ?? derivedTitle,
-    blank: !hasHumanMessage,
+    blank: !facts.nonblank && !hasMore,
     status:
       statusEvent?.type === 'session.status'
         ? statusEvent.status === 'running'
@@ -154,13 +179,9 @@ export function fallbackSessionSummary(
               : statusEvent.status === 'completed'
                 ? 'completed'
                 : 'idle'
-        : // A history without a durable status row is either a New Session the
-          // host still calls blank, or a finished turn. `completed` is terminal
-          // for every downstream consumer (the task center drops such rows),
-          // and it contradicts the host's own list row for the same Session.
-          !hasHumanMessage
-          ? 'idle'
-          : 'completed',
+        : // Durable turns cannot prove the current Agent's runtime status.
+          // A subsequent list or live status event supplies that baseline.
+          'idle',
     createdAt: first ?? new Date().toISOString(),
     updatedAt: last ?? first ?? new Date().toISOString(),
   }

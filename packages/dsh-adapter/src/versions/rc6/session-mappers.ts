@@ -61,7 +61,9 @@ export function sessionSummary(value: unknown): SessionSummary {
       ? {}
       : {
           projection: {
-            asOfSequence: number(projections?.asOfSeq, -1),
+            // A cold cache can retain a predecessor format's watermark. It
+            // supplies hints, not a comparable cut in the live Session log.
+            asOfSequence: projections?.kind === 'cached' ? -1 : number(projections?.asOfSeq, -1),
             values: projectionValues,
           },
         }),

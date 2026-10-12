@@ -3,6 +3,7 @@ dist
 coverage
 .vscode-test
 .codegraph
+.workbuddy-ai
 apps/extension/media
 apps/extension/.vscodeignore
 pnpm-lock.yaml

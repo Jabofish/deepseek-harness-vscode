@@ -241,7 +241,7 @@ describe('Rc6SessionRepository blank session detail', () => {
     expect(calls).toEqual(['session.history'])
   })
 
-  it('still reports a finished Session with a human turn as completed', async () => {
+  it('does not infer runtime completion from a past human message', async () => {
     const repository = new Rc6SessionRepository({
       request: <TResponse>(method: string) =>
         Promise.resolve({
@@ -280,7 +280,7 @@ describe('Rc6SessionRepository blank session detail', () => {
     const detail = await repository.get('session-finished')
 
     expect(detail.blank).toBe(false)
-    expect(detail.status).toBe('completed')
+    expect(detail.status).toBe('idle')
   })
 })
 
@@ -1837,7 +1837,7 @@ describe('Rc6SessionRepository concurrent identical enqueues', () => {
 })
 
 describe('Rc6SessionRepository failed enqueue retries', () => {
-  it('lets a concurrent identical enqueue retry after the first attempt is rejected', async () => {
+  it('shares a host rejection with concurrent callers and permits a later explicit retry', async () => {
     const calls: { method: string; params: unknown }[] = []
     const resolvers: Array<(value: unknown) => void> = []
     let rpcCounter = 0
@@ -1848,7 +1848,7 @@ describe('Rc6SessionRepository failed enqueue retries', () => {
         rpcCounter += 1
         const rpcId = `rpc-${rpcCounter}`
         return new Promise<TResponse>((resolve) => {
-          resolvers.push((value) => resolve({ rpcId, result: { ok: true, value } } as TResponse))
+          resolvers.push((result) => resolve({ rpcId, result } as TResponse))
         })
       },
       remoteRequest: <TResponse>() => Promise.reject<TResponse>(new Error('unexpected Remote')),
@@ -1860,16 +1860,20 @@ describe('Rc6SessionRepository failed enqueue retries', () => {
     const repository = new Rc6SessionRepository(transport)
     const input = { sessionId: 'session-1', text: 'same text', attachments: [] }
 
-    const first = repository.enqueuePrompt(input, 'queue')
-    const second = repository.enqueuePrompt(input, 'queue')
-
-    // The first attempt is rejected by the host; the concurrent waiter must
-    // fall through and send its own prompt instead of hanging on the shared
-    // identity promise.
+    const rejected = Promise.allSettled([
+      repository.enqueuePrompt(input, 'queue'),
+      repository.enqueuePrompt(input, 'queue'),
+    ])
     resolvers[0]?.({ ok: false, error: { code: 'bad-request', message: 'rejected' } })
-    await expect(first).rejects.toBeTruthy()
+    for (const result of await rejected) {
+      expect(result.status).toBe('rejected')
+      if (result.status === 'rejected')
+        expect(result.reason as unknown).toMatchObject({ code: 'INVALID_CONFIGURATION' })
+    }
+    expect(calls.filter((call) => call.method === 'session.prompt')).toHaveLength(1)
 
-    resolvers[1]?.({ accepted: true })
+    const retry = repository.enqueuePrompt(input, 'queue')
+    resolvers[1]?.({ ok: true, value: { accepted: true } })
     repository.remember({
       type: 'queue.updated',
       sessionId: 'session-1',
@@ -1886,7 +1890,7 @@ describe('Rc6SessionRepository failed enqueue retries', () => {
         },
       ],
     })
-    await expect(second).resolves.toMatchObject({ id: 'queued-2' })
+    await expect(retry).resolves.toMatchObject({ id: 'queued-2' })
     expect(calls.filter((call) => call.method === 'session.prompt')).toHaveLength(2)
   })
 })
@@ -1920,6 +1924,53 @@ describe('Rc6SessionRepository rename receipts', () => {
     await expect(
       new Rc6SessionRepository(renameTransport({ title: '   ', seq: 1 })).rename('session-1', 'x'),
     ).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+  })
+})
+
+describe('Rc6SessionRepository authoritative titles', () => {
+  it.each([
+    { historyTitle: 'Host accepted title', expected: 'Host accepted title' },
+    { historyTitle: undefined, expected: 'Listed title' },
+    { historyTitle: '', expected: 'Listed title' },
+  ])('uses the history title $historyTitle over a cached list hint', async ({ historyTitle, expected }) => {
+    const calls: string[] = []
+    const transport: DshTransport = {
+      request: <TResponse>(method: string) => {
+        calls.push(method)
+        const value =
+          method === 'session.list'
+            ? {
+                items: [
+                  {
+                    sessionId: 'session-1',
+                    title: 'Listed title',
+                    updatedAt: 1_000,
+                    running: false,
+                    blank: false,
+                    projections: { asOfSeq: 1, values: { title: 'Listed title' } },
+                  },
+                ],
+              }
+            : {
+                events: [],
+                hasMore: false,
+                projections: {
+                  asOfSeq: 2,
+                  values: historyTitle === undefined ? {} : { title: historyTitle },
+                },
+              }
+        return Promise.resolve({ result: { ok: true, value } } as TResponse)
+      },
+      remoteRequest: <TResponse>() => Promise.reject<TResponse>(new Error('unexpected Remote')),
+      openEventStream: async function* () {
+        /* fixture stream */
+      },
+      close: () => Promise.resolve(),
+    }
+    const repository = new Rc6SessionRepository(transport)
+    expect((await repository.list()).items[0]?.title).toBe('Listed title')
+    expect((await repository.get('session-1')).title).toBe(expected)
+    expect(calls).toEqual(['session.list', 'session.history'])
   })
 })
 
