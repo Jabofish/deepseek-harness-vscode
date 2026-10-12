@@ -6,6 +6,7 @@ import type {
   ModelProvider,
   SessionModelCatalog,
 } from '@dsh-vscode/domain'
+import { AppError } from '@dsh-vscode/domain'
 
 import type { BackendService } from '../services/backend-service.js'
 import {
@@ -50,7 +51,15 @@ export class ModelSettingsUseCases {
     configuration: SessionConfigurationInput,
     signal?: AbortSignal,
   ): Promise<void> {
+    signal?.throwIfAborted()
+    const backend = this.backendService.requireBackend()
     const resolved = await this.resolveSessionConfiguration(configuration, signal)
-    return this.backendService.requireBackend().sessions.setConfiguration(sessionId, resolved, signal)
+    if (this.backendService.requireBackend() !== backend)
+      throw new AppError({
+        code: 'REQUEST_CANCELLED',
+        message: 'The DSH connection changed before the session configuration could be applied.',
+        retryable: false,
+      })
+    return backend.sessions.setConfiguration(sessionId, resolved, signal)
   }
 }

@@ -105,6 +105,7 @@ function harness(): {
   readonly list: Mock<DshBackend['presets']['list']>
   readonly setConfiguration: Mock<DshBackend['sessions']['setConfiguration']>
   readonly useCases: ModelSettingsUseCases
+  readonly service: BackendService
 } {
   const list = vi.fn<DshBackend['presets']['list']>().mockResolvedValue({
     presets: [defaultPreset],
@@ -118,7 +119,7 @@ function harness(): {
   } as unknown as DshBackend
   const service = new BackendService()
   service.attach(backend, () => undefined)
-  return { list, setConfiguration, useCases: new ModelSettingsUseCases(service) }
+  return { list, setConfiguration, useCases: new ModelSettingsUseCases(service), service }
 }
 
 describe('ModelSettingsUseCases configuration', () => {
@@ -182,5 +183,26 @@ describe('ModelSettingsUseCases configuration', () => {
       useCases.setSessionConfiguration('session', requested, controller.signal),
     ).rejects.toHaveProperty('name', 'AbortError')
     expect(setConfiguration).not.toHaveBeenCalled()
+  })
+
+  it('does not apply a late configuration to a replacement backend with the same session id', async () => {
+    const { list, setConfiguration, useCases, service } = harness()
+    const replacementWrite = vi.fn<DshBackend['sessions']['setConfiguration']>()
+    list.mockImplementation(() => {
+      service.attach(
+        {
+          events: { subscribe: () => () => undefined },
+          sessions: { setConfiguration: replacementWrite },
+        } as unknown as DshBackend,
+        () => undefined,
+      )
+      return Promise.resolve({ presets: [defaultPreset], authorable: false })
+    })
+
+    await expect(useCases.setSessionConfiguration('session', requested)).rejects.toMatchObject({
+      code: 'REQUEST_CANCELLED',
+    })
+    expect(setConfiguration).not.toHaveBeenCalled()
+    expect(replacementWrite).not.toHaveBeenCalled()
   })
 })

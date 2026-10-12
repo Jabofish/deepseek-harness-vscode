@@ -15,7 +15,76 @@ export interface SessionConfigurationDependencies {
     ((sessionId: string, command: string, signal?: AbortSignal) => Promise<void>) | undefined
   readonly get: (sessionId: string, signal?: AbortSignal) => Promise<SessionDetail>
 }
-export async function setSessionConfiguration(
+// One transport belongs to one backend connection. Independent sessions and
+// replacement backends must not share a transaction lock.
+const configurationTails = new WeakMap<DshTransport, Map<string, Promise<void>>>()
+
+export function setSessionConfiguration(
+  deps: SessionConfigurationDependencies,
+  sessionId: string,
+  configuration: AgentConfiguration,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (signal?.aborted === true) return Promise.reject(cancelledConfiguration())
+  const tails = configurationTails.get(deps.transport) ?? new Map<string, Promise<void>>()
+  configurationTails.set(deps.transport, tails)
+  const preceding = tails.get(sessionId) ?? Promise.resolve()
+  let started = false
+  const operation = preceding.then(async () => {
+    started = true
+    if (signal?.aborted === true) throw cancelledConfiguration()
+    await applySessionConfiguration(deps, sessionId, configuration, signal)
+  })
+  const tail = operation.then(
+    () => undefined,
+    () => undefined,
+  )
+  tails.set(sessionId, tail)
+  void tail.then(() => {
+    if (tails.get(sessionId) === tail) tails.delete(sessionId)
+    if (tails.size === 0 && configurationTails.get(deps.transport) === tails)
+      configurationTails.delete(deps.transport)
+  })
+  // A queued caller can cancel immediately. Active transactions finish their
+  // compensation before reporting an outcome, including restoration failures.
+  return rejectConfigurationWhileQueued(operation, signal, () => started)
+}
+
+function cancelledConfiguration(): AppError {
+  return new AppError({
+    code: 'REQUEST_CANCELLED',
+    message: 'The session configuration operation was cancelled.',
+    retryable: false,
+  })
+}
+
+function rejectConfigurationWhileQueued(
+  operation: Promise<void>,
+  signal: AbortSignal | undefined,
+  started: () => boolean,
+): Promise<void> {
+  if (signal === undefined) return operation
+  return new Promise<void>((resolve, reject) => {
+    const cleanup = (): void => signal.removeEventListener('abort', onAbort)
+    const onAbort = (): void => {
+      cleanup()
+      if (!started()) reject(cancelledConfiguration())
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    void operation.then(
+      () => {
+        cleanup()
+        resolve()
+      },
+      (error: unknown) => {
+        cleanup()
+        reject(error instanceof Error ? error : new Error(String(error)))
+      },
+    )
+  })
+}
+
+async function applySessionConfiguration(
   deps: SessionConfigurationDependencies,
   sessionId: string,
   configuration: AgentConfiguration,
@@ -38,6 +107,7 @@ export async function setSessionConfiguration(
       retryable: false,
     })
   const current = await deps.get(sessionId, signal)
+  if (signal?.aborted === true) throw cancelledConfiguration()
   const currentPermissionValue = current.configuration.permissionPreset.trim()
   const currentPermission =
     current.configuration.permissionPresetKnown === false ? undefined : currentPermissionValue
