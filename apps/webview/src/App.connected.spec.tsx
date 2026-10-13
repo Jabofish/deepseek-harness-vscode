@@ -473,6 +473,7 @@ describe('App connected rendering', () => {
 
     const input = document.querySelector('.dsh-composer textarea')
     expect(input).toBeInstanceOf(HTMLTextAreaElement)
+    expect(screen.queryByText('Welcome to DSH')).toBeNull()
     fireEvent.change(input!, { target: { value: 'Hello' } })
     const form = input?.closest('form')
     expect(form).not.toBeNull()
@@ -897,6 +898,9 @@ describe('App connected rendering', () => {
 
     const updateNotice = screen.getByText('DSH update available').closest('.dsh-app__runtime-update')
     expect(updateNotice?.classList.contains('dsh-toast')).toBe(true)
+    const notices = document.querySelector('.dsh-app__notices')
+    expect(updateNotice?.parentElement).toBe(notices)
+    expect(screen.getByText('Welcome to DSH').closest('.dsh-welcome-notice')?.parentElement).toBe(notices)
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss update notice' }))
     expect(screen.queryByText('DSH update available')).toBeNull()
     expect(window.localStorage.getItem('dsh-runtime-update-dismissed-version')).toBe('0.1.0-rc.9')

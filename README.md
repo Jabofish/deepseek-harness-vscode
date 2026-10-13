@@ -16,7 +16,7 @@
 - Follow tool progress, answer questions and approvals, and open produced files through VS Code.
 - Choose the models, providers, permissions, and agent options exposed by the connected DSH runtime.
 - Use local prompt templates, checkpoints, a Changes view, and a task center when their prerequisites are available.
-- Use the DSH-style focused layout with collapsible process details and a compact composer. Switch to the original classic layout in **Settings → General → Conversation layout**; the choice is saved locally.
+- Use the DSH-style focused layout with collapsible process details and a compact composer. Choose the focused or classic layout in **Settings → General → Conversation layout**; the choice is saved locally.
 
 The connected DSH version determines which advanced capabilities are available. Unsupported operations show a clear unavailable state. The [compatibility contract](docs/dsh-contract.md) lists exact adapter boundaries; the [capability matrix](docs/capability-matrix.md) distinguishes implementation, automated tests, and real runtime verification.
 
@@ -49,10 +49,16 @@ The General settings page can check upstream package versions and install an exa
 
 HTTPS requires a trusted certificate. Remote HTTP requires confirmation of plaintext transport and renewed authorization after DNS address changes. The server must accept the configured host; where supported, use DSH's `--trusted-host host:port` for a proxy. Remote connections do not grant access to local workspace files or the local inspector.
 
-Credentials are stored per origin in VS Code SecretStorage. Use **DSH: Clear External Connection Credentials** to remove them.
+Credentials are stored per execution environment and full origin in VS Code SecretStorage. Connections without a grant for the current execution environment require authorization. Use **DSH: Clear External Connection Credentials** to remove the current environment's grant.
+
+## Remote workspaces
+
+In Remote SSH, WSL, Dev Containers and Remote Tunnels, install the extension and DSH on the workspace side. Discovery, installation, process launch, loopback connections and files use that Extension Host's environment. A DSH installed only on your desktop is not the remote workspace's runtime.
+
+Remote file picking keeps the selected filesystem URI. Desktop Inspector actions forward the validated Worker through VS Code before opening or copying a DevTools link; native DevTools is unavailable in a browser client. Container rebuilds require runtime installation and DSH data persistence to be configured for the container.
 
 ## Privacy and support
 
 Network connections, credentials, files, and process control stay in the Extension Host. The Webview receives no secrets or direct filesystem/network access, and diagnostics are redacted. See the [security model](docs/architecture.md) and [support instructions](apps/extension/SUPPORT.md).
 
-Developer documentation starts at the [documentation index](docs/README.md). The [contribution guide](CONTRIBUTING.md) explains validation and evidence. User-facing changes are recorded in the [extension changelog](apps/extension/CHANGELOG.md). Licensed under [MIT](LICENSE).
+Developer documentation starts at the [documentation index](docs/README.md). The [contribution guide](CONTRIBUTING.md) explains validation and evidence. Release notes are recorded in the [extension changelog](apps/extension/CHANGELOG.md). Licensed under [MIT](LICENSE).

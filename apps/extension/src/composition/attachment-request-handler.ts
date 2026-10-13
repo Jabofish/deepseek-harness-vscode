@@ -1,5 +1,4 @@
 import * as vscode from 'vscode'
-import { stat, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { AppError } from '@dsh-vscode/domain'
 import type { WebviewRequest } from '@dsh-vscode/webview-protocol'
@@ -62,6 +61,7 @@ export function createAttachmentRequestHandler(
   }
   return async (request: AttachmentRequest, signal: AbortSignal): Promise<unknown> => {
     if (request.type === 'attachment.pick') {
+      signal.throwIfAborted()
       const selected = await vscode.window.showOpenDialog({
         canSelectFiles: true,
         canSelectFolders: false,
@@ -69,22 +69,29 @@ export function createAttachmentRequestHandler(
         openLabel: 'Attach file',
       })
       const uri = selected?.[0]
+      signal.throwIfAborted()
       if (uri === undefined) return { cancelled: true }
-      const info = await stat(uri.fsPath)
-      if (!info.isFile() || info.size > MAX_IMAGE_ATTACHMENT_BYTES)
+      const info = await vscode.workspace.fs.stat(uri)
+      signal.throwIfAborted()
+      if (
+        (info.type & vscode.FileType.File) === 0 ||
+        (info.type & vscode.FileType.SymbolicLink) !== 0 ||
+        info.size > MAX_IMAGE_ATTACHMENT_BYTES
+      )
         throw new AppError({
           code: 'INVALID_CONFIGURATION',
           message: 'The selected file is too large or is not a regular file.',
           retryable: false,
         })
-      const bytes = await readFile(uri.fsPath)
+      const bytes = Buffer.from(await vscode.workspace.fs.readFile(uri))
+      signal.throwIfAborted()
       if (bytes.length > MAX_IMAGE_ATTACHMENT_BYTES)
         throw new AppError({
           code: 'INVALID_CONFIGURATION',
           message: 'The selected file is too large.',
           retryable: false,
         })
-      const mimeType = attachmentMimeType(uri.fsPath, bytes)
+      const mimeType = attachmentMimeType(uri.path, bytes)
       if (mimeType === undefined)
         throw new AppError({
           code: 'INVALID_CONFIGURATION',
@@ -107,7 +114,7 @@ export function createAttachmentRequestHandler(
       return {
         cancelled: false,
         attachment: rememberSupportedAttachment({
-          name: path.basename(uri.fsPath),
+          name: path.posix.basename(uri.path),
           mimeType,
           dataUri: `data:${mimeType};base64,${bytes.toString('base64')}`,
         }),

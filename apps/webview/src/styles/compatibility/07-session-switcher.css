@@ -1,4 +1,4 @@
-.dsh-session-switcher--headless .dsh-session-switcher__panel {
+.dsh-session-switcher--headless .dsh-session-switcher__panel:not(.dsh-session-switcher__panel--docked) {
   top: 0 !important;
   right: 0 !important;
   bottom: auto !important;

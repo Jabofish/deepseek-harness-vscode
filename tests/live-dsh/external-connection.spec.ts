@@ -101,6 +101,7 @@ describe.skipIf(
         resolve: () => Promise.resolve([{ address: lanAddress!, family: 4 }]),
       })
       const access = new ExternalConnectionAccess({
+        credentialScope: () => Promise.resolve('isolated-live-host'),
         secrets: {
           get: (name) => Promise.resolve(values.get(name)),
           store: (name, value) => {

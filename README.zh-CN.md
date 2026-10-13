@@ -16,7 +16,7 @@
 - 跟进工具进度、回答问题与审批，并通过 VS Code 打开产出文件。
 - 选择当前 DSH 运行时提供的模型、Provider、权限和 Agent 选项。
 - 在满足前提时使用本地 Prompt 模板、检查点、变更视图和任务中心。
-- 使用接近 DSH 原版的聚焦布局，按需展开过程详情，并使用紧凑输入栏。在 **设置 → 常规 → 会话布局** 中可以切回原有经典布局；选择保存在本地。
+- 使用接近 DSH 原版的聚焦布局，按需展开过程详情，并使用紧凑输入栏。在 **设置 → 常规 → 会话布局** 中可以选择聚焦或经典布局；选择保存在本地。
 
 高级能力取决于连接的 DSH 版本；不支持的操作会明确显示不可用。[兼容契约](docs/dsh-contract.md)列出精确 Adapter 边界；[能力矩阵](docs/capability-matrix.md)区分代码实现、自动测试与真实运行验证。
 
@@ -49,10 +49,16 @@ DeepSeek Harness 的 Chat 视图默认注册在辅助侧边栏（VS Code 默认�
 
 HTTPS 要求可信证书。远程 HTTP 必须确认明文传输，DNS 地址变化后需重新授权。服务端也需接受配置的主机地址；支持时可用 DSH 的 `--trusted-host host:port` 允许代理地址。远程连接不授予本地工作区文件或本地检查器访问权限。
 
-凭据按地址存入 VS Code SecretStorage。使用 **DSH: Clear External Connection Credentials** 清除该地址的凭据。
+凭据按执行环境和完整 origin 存入 VS Code SecretStorage。当前执行环境没有对应授权时，需要先授权再连接。使用 **DSH: Clear External Connection Credentials** 清除当前执行环境的授权。
+
+## 远程工作区
+
+在 Remote SSH、WSL、Dev Containers 和 Remote Tunnels 下，把扩展和 DSH 安装在工作区所在的一端。发现、安装、进程启动、环回连接和文件操作都使用该 Extension Host 的环境；只装在本机桌面的 DSH 不属于远端工作区。
+
+远程窗口选择附件时保留所选文件系统的 URI。桌面客户端的 Inspector 操作先通过 VS Code 转发已验证的 Worker，再打开或复制 DevTools 链接；浏览器客户端不提供原生 DevTools。容器重建需要配置容器内的运行时安装及 DSH 数据持久化。
 
 ## 隐私与支持
 
 网络连接、凭据、文件和进程控制均由 Extension Host 处理。Webview 不接收密钥，也不能直接访问文件系统或网络，诊断会脱敏。详见[安全模型](docs/architecture.md)和[支持说明](apps/extension/SUPPORT.md)。
 
-开发者文档从[文档索引](docs/README.md)开始；[贡献指南](CONTRIBUTING.md)说明验证与证据要求。用户可见的变化记录在[扩展更新日志](apps/extension/CHANGELOG.md)。项目使用 [MIT 许可](LICENSE)。
+开发者文档从[文档索引](docs/README.md)开始；[贡献指南](CONTRIBUTING.md)说明验证与证据要求。版本更新见[扩展更新日志](apps/extension/CHANGELOG.md)。项目使用 [MIT 许可](LICENSE)。

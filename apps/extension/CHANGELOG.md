@@ -1,45 +1,15 @@
 # Change Log
 
-## Unreleased
+## 0.3.1
 
-- 改善预设、变更、检查点、模板与输入菜单的窄栏信息层级，修复暗色预设弹层遮罩、单图比例、多图排列及图片失败状态的过度留白。
-- Improves narrow preset, change, checkpoint, template and composer menus; fixes dark preset scrims, single-image proportions, gallery wrapping and excessive spacing in failed image previews.
+- 修复远程工作区的凭据作用域、附件文件系统与 Inspector 转发边界，避免不同 SSH / 容器环境复用授权。
+- Fixes credential scopes, attachment filesystem access and Inspector forwarding in remote workspaces, keeping grants isolated between SSH and container environments.
 
-- 修复并发问题等待及会话归属读取共用首个请求的取消信号，导致取消一个请求中止其他活动请求的问题；最后一个调用者离开时仍释放资源。
-- Fixes one request cancelling other active question waits or shared session ownership reads; resources are still released when the final caller leaves.
+- 改善聚焦布局和窄侧栏中的通知、导航、设置、菜单、图片、代码及表格展示，修复遮挡、裁切和多余滚动。
+- Improves focused and narrow-sidebar layouts for notices, navigation, Settings, menus, images, code and tables, with fixes for overlap, clipping and unnecessary scrolling.
 
-- 修复并发审批与问题答复互相取消、不同答复被误报成功的问题；同内容答复只发送一次，冲突答复明确拒绝，取消或未知回执不触发自动重发。
-- Fixes cancellation leaking between concurrent approval/question responses and conflicting answers being reported as successful; identical responses send once, conflicts are refused, and cancellation or unknown receipts never trigger automatic resubmission.
-
-- 改善 Goal 与任务中心的窄栏布局，保留完整操作按钮和可读任务标题；长附件在窄输入区分行展示并限制列表高度，文件差异复制按钮移至独立标题栏。
-- Improves narrow Goal and task-center layouts with reachable actions and readable task titles; long attachments stack in a bounded narrow rail, and diff copy actions move to a separate header.
-
-- 优化 Markdown 代码和表格卡片：固定复制标题栏、语言与行列统计、长行键盘滚动、窄栏最低列宽及焦点反馈；复制控件由父组件统一管理，避免嵌套 React 根的清理竞态。
-- Improves Markdown code and table cards with fixed copy headers, language and size metadata, keyboard scrolling, readable narrow columns and focus feedback; copy controls share the parent React tree to avoid nested-root cleanup races.
-
-- 修复窄侧栏设置页的单字换行与分类栏溢出、对话工具按钮被裁切，以及空会话出现多余滚动条的问题。
-- Fixes squeezed Settings values and overflowing category tabs in narrow sidebars, clipped conversation tools, and unnecessary scrolling in empty conversations.
-
-- 修复移除会话残留回放、配置补丁丢失及问题结算身份混用；增加订阅代次隔离和同步开场去重保护。
-- Fixes removed sessions remaining in replay, lost configuration patches, and mixed question resolution identities; adds subscription generation isolation and synchronous opening deduplication guards.
-
-- 修复任务取消后发布迟到输出及非持久流溢出静默丢更新；增加连接身份复核和流关闭时的握手取消保护。
-- Fixes job output publishing after cancellation and non-durable streams silently losing updates on overflow; adds connection identity checks and handshake cancellation during disposal.
-
-- 修复 Goal 旧历史响应回退修订号、移除后恢复过期状态及迟到写入回执覆盖新投影的问题。
-- Fixes delayed Goal history rolling back revision tokens or restoring removed state, and late mutation receipts overwriting newer projections.
-
-- 修复会话配置回读被历史模型请求覆盖、旧推理强度残留，以及仅修改权限时额外重写待生效模型的问题。
-- Fixes session configuration readback losing pending model intent to past requests, retaining obsolete reasoning effort, and rewriting the model during permission-only updates.
-
-- 修复配置命令已生效但取消或传输失败丢失回执时漏掉回滚的问题；无法确认状态或恢复时明确报告失败。
-- Restores confirmed configuration changes when cancellation or transport failure loses their receipt, and reports failures when state or restoration cannot be confirmed.
-
-- 修复会话未提供计划模式状态时，切换模型被多余的关闭命令阻断的问题。
-- Fixes model changes being blocked by an implicit plan-off command when the session does not expose plan state.
-
-- 修复上游错误正文中的 Bearer/Basic 凭据在两次脱敏之间漏出的问题，并统一清理诊断中的 URL 凭据及绝对路径。
-- Fixes Bearer/Basic credentials surviving layered RPC error redaction, and consistently removes URL credentials and absolute paths from diagnostics.
+- 修复并发取消互相干扰、冲突答复被误报成功及迟到输出；加固会话配置回滚、Goal 状态和重连恢复。
+- Fixes cancellation leaking across concurrent requests, conflicting answers reported as successful and late output; hardens session configuration rollback, Goal state and reconnect recovery.
 
 ## 0.3.0
 
