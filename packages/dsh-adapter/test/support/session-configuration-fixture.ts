@@ -55,9 +55,11 @@ export interface MutableConfiguration {
 }
 
 export interface ConfigurationFixtureOptions {
+  readonly planExposed?: boolean
   readonly commandOutcome?: (call: ConfigurationCall) => 'success' | 'error' | 'unknown'
   readonly afterCommand?: (call: ConfigurationCall, signal?: AbortSignal) => Promise<void>
   readonly beforeModel?: (call: ConfigurationCall, signal?: AbortSignal) => Promise<void>
+  readonly afterModel?: (call: ConfigurationCall, signal?: AbortSignal) => Promise<void>
 }
 
 export function configurationFixture(options: ConfigurationFixtureOptions = {}): {
@@ -84,7 +86,9 @@ export function configurationFixture(options: ConfigurationFixtureOptions = {}):
               data: { provider: 'old', model: 'model-old' },
             },
           },
-        ],
+        ]
+          .filter((entry) => options.planExposed !== false || entry.event.type !== 'plan/mode')
+          .map((entry, index) => ({ event: { ...entry.event, seq: index + 1 } })),
       },
     ]),
   )
@@ -130,13 +134,16 @@ export function configurationFixture(options: ConfigurationFixtureOptions = {}):
               projections: {
                 asOfSeq: events.length,
                 values: {
-                  plan: { active: session.plan, pending: false },
-                  permissions: {
-                    currentValue: session.permission,
-                  },
+                  ...(options.planExposed === false
+                    ? {}
+                    : { plan: { active: session.plan, pending: false } }),
+                  permissions: { currentValue: session.permission },
                   modelSelection: {
                     lastUsed: null,
-                    next: { provider: session.provider, model: session.model },
+                    next:
+                      session.provider === '' || session.model === ''
+                        ? null
+                        : { provider: session.provider, model: session.model },
                   },
                 },
               },
@@ -154,6 +161,8 @@ export function configurationFixture(options: ConfigurationFixtureOptions = {}):
         session.provider = String(p.provider)
         session.model = String(p.model)
         append(session, 'model/selection', { provider: session.provider, model: session.model })
+        await options.afterModel?.(call, signal)
+        assertActive(signal)
         return {
           result: { ok: true, value: { selected: { provider: session.provider, model: session.model } } },
         } as T

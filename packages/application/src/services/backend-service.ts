@@ -5,21 +5,45 @@ export class BackendService {
   private backend: DshBackend | undefined
   private unsubscribe: (() => void) | undefined
   private readonly replay = new Map<string, BackendEvent>()
+  private generation = 0
 
   public attach(backend: DshBackend, onEvent: (event: BackendEvent) => void): void {
+    const generation = ++this.generation
     if (this.backend !== backend) this.replay.clear()
-    if (this.unsubscribe !== undefined) this.unsubscribe()
+    const previousUnsubscribe = this.unsubscribe
+    this.unsubscribe = undefined
+    previousUnsubscribe?.()
     // Connection ownership belongs to DshConnectionCoordinator.  Closing the
     // previous backend here races a concurrent attach and made one logical
     // connection have two independent owners.  This service only binds the
     // application event sink; the coordinator closes the backend and any
     // managed process exactly once during disconnect.
     this.backend = backend
-    this.unsubscribe = backend.events.subscribe((event) => {
+    const replay = [...this.replay.values()]
+    const opening: BackendEvent[] = []
+    let buffering = true
+    const unsubscribe = backend.events.subscribe((event) => {
+      if (this.generation !== generation) return
       this.remember(event)
-      onEvent(event)
+      if (buffering) opening.push(event)
+      else onEvent(event)
     })
-    for (const event of this.replay.values()) onEvent(event)
+    if (this.generation !== generation) {
+      unsubscribe()
+      return
+    }
+    this.unsubscribe = unsubscribe
+    // Some event sources deliver their opening snapshot inside subscribe.
+    // Replay the preceding cache, then those new events, each exactly once.
+    for (const event of replay) {
+      if (this.generation !== generation) return
+      onEvent(event)
+    }
+    for (let index = 0; index < opening.length; index += 1) {
+      if (this.generation !== generation) return
+      onEvent(opening[index]!)
+    }
+    buffering = false
   }
 
   public requireBackend(): DshBackend {
@@ -32,6 +56,7 @@ export class BackendService {
   }
 
   public detach(): Promise<void> {
+    this.generation += 1
     const unsubscribe = this.unsubscribe
     const backend = this.backend
     this.unsubscribe = undefined
@@ -45,6 +70,16 @@ export class BackendService {
   }
 
   private remember(event: BackendEvent): void {
+    if (event.type === 'session.removed') {
+      for (const [key, remembered] of this.replay) {
+        if (remembered.type === 'session.projection.baseline') {
+          const projections = { ...remembered.projections }
+          delete projections[event.sessionId]
+          this.replay.set(key, { ...remembered, projections })
+        } else if (eventSessionId(remembered) === event.sessionId) this.replay.delete(key)
+      }
+      return
+    }
     if (event.type === 'session.projection.baseline') {
       // Whole-set replacement retires every preceding delta, including those
       // for sessions absent from this baseline. Otherwise replay resurrects
@@ -67,14 +102,13 @@ export class BackendService {
       // provider keys them by rpc id), so one resolution retires only the
       // question it names. A resolution that names none of them is the sole
       // case that may sweep the session.
-      const identity = event.questionRpcId ?? event.questionId
       for (const [key, remembered] of this.replay) {
         if (remembered.type !== 'question.requested') continue
         if (remembered.question.sessionId !== event.sessionId) continue
         if (
-          identity === undefined ||
-          remembered.question.rpcId === identity ||
-          remembered.question.id === identity
+          event.questionRpcId !== undefined
+            ? remembered.question.rpcId === event.questionRpcId
+            : event.questionId === undefined || remembered.question.id === event.questionId
         )
           this.replay.delete(key)
       }
@@ -82,7 +116,22 @@ export class BackendService {
     }
     const key = replayKey(event)
     if (key === undefined) return
-    this.replay.set(key, event)
+    const previous = this.replay.get(key)
+    this.replay.set(
+      key,
+      event.type === 'session.configuration' && previous?.type === 'session.configuration'
+        ? {
+            ...event,
+            patch: {
+              ...previous.patch,
+              ...event.patch,
+              ...(event.patch.model === undefined
+                ? {}
+                : { model: { ...previous.patch.model, ...event.patch.model } }),
+            },
+          }
+        : event,
+    )
     this.evictToBound()
   }
 
@@ -117,6 +166,12 @@ export class BackendService {
       this.replay.delete(key)
     }
   }
+}
+
+function eventSessionId(event: BackendEvent): string | undefined {
+  if (event.type === 'permission.requested') return event.request.sessionId
+  if (event.type === 'question.requested') return event.question.sessionId
+  return 'sessionId' in event ? event.sessionId : undefined
 }
 
 const REPLAY_BOUND = 256

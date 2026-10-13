@@ -1,6 +1,7 @@
 import { AppError, type AppErrorCode } from '@dsh-vscode/domain'
 
 import type { DshTransport } from '../../contracts.js'
+import { redactText } from '../../redaction.js'
 
 type RpcResult<T> =
   | { readonly ok: true; readonly value: T }
@@ -286,12 +287,11 @@ function safeRpcMessage(
  */
 function safeRpcDiagnostic(message: string | undefined): string | undefined {
   if (typeof message !== 'string') return undefined
-  const compact = message.replace(/\s+/gu, ' ').trim()
-  if (compact === '') return undefined
-  return compact.replace(
-    /\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|authorization|password|secret|private[_ -]?key|token|prompt|body|response)\b\s*[:=]\s*[^\s,;]+/giu,
-    (match) => match.replace(/[:=].*$/u, ': [redacted]'),
-  )
+  // Redact auth schemes before their labels: replacing only "Bearer" leaves
+  // an orphan token that the Host's later redaction can no longer recognize.
+  // Keep complete actionable text; the public protocol owns its length bound.
+  const safe = redactText(message, Number.MAX_SAFE_INTEGER)
+  return safe === '' ? undefined : safe
 }
 
 function publishedWorkspaceAttachSessionId(code: string, details: unknown): string | undefined {

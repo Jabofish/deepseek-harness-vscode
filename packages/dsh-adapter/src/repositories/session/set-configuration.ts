@@ -172,9 +172,41 @@ async function applySessionConfiguration(
     (previousModel.providerId !== configuration.model.providerId ||
       previousModel.modelId !== configuration.model.modelId ||
       previousModel.reasoningLevel !== configuration.model.reasoningLevel)
+  const anotherSettingChanged =
+    modelChanged ||
+    requestedPermission !== currentPermissionValue ||
+    (requestedPreset !== '' && requestedPreset !== currentPreset)
   const rollback: Array<() => Promise<void>> = []
-  const apply = async (forward: () => Promise<void>, reverse: () => Promise<void>): Promise<void> => {
-    await forward()
+  const apply = async (
+    forward: () => Promise<void>,
+    reverse: () => Promise<void>,
+    observe: (detail: SessionDetail) => boolean | undefined,
+  ): Promise<void> => {
+    if (signal?.aborted === true) throw cancelledConfiguration()
+    try {
+      await forward()
+    } catch (error) {
+      // A transport failure can lose the receipt of an already committed
+      // mutation. Never resend it: read the authoritative state without the
+      // cancelled signal, and compensate only an observed requested value.
+      if (
+        !(error instanceof AppError) ||
+        ['REQUEST_CANCELLED', 'BACKEND_UNREACHABLE', 'PROTOCOL_ERROR', 'INTERNAL_ERROR'].includes(error.code)
+      ) {
+        try {
+          const applied = observe(await deps.get(sessionId))
+          if (applied === undefined) throw unavailable('confirming the failed configuration mutation')
+          if (applied) rollback.unshift(reverse)
+        } catch (observationError) {
+          const failure =
+            observationError instanceof Error
+              ? observationError
+              : new Error('The DSH configuration state could not be confirmed.')
+          rollback.unshift(() => Promise.reject(failure))
+        }
+      }
+      throw error
+    }
     rollback.unshift(reverse)
   }
   const selectPreset = async (preset: string, operationSignal?: AbortSignal): Promise<void> => {
@@ -214,6 +246,7 @@ async function applySessionConfiguration(
       await apply(
         () => selectPreset(requestedPreset, signal),
         () => (currentPreset === '' ? Promise.resolve() : selectPreset(currentPreset)),
+        (detail) => observedChange(currentPreset, detail.configuration.preset, requestedPreset),
       )
     if (permissionChanged)
       await apply(
@@ -222,10 +255,16 @@ async function applySessionConfiguration(
           currentPermission !== undefined && isPermissionPresetId(currentPermission)
             ? command(`/permission ${currentPermission}`)
             : Promise.reject(unavailable('restoring an unknown permission setting')),
+        (detail) =>
+          detail.configuration.permissionPresetKnown === false || currentPermission === undefined
+            ? undefined
+            : observedChange(currentPermission, detail.configuration.permissionPreset, requestedPermission),
       )
+    // A full snapshot carries the unobserved plan display fallback during
+    // unrelated edits. Preserve explicit default/off writes when plan is the only edit.
     if (
-      current.configuration.planModeKnown === false ||
-      configuration.planMode !== current.configuration.planMode
+      configuration.planMode !== current.configuration.planMode ||
+      (current.configuration.planModeKnown === false && !anotherSettingChanged)
     )
       await apply(
         () => command(configuration.planMode ? '/plan' : '/plan off', signal),
@@ -233,6 +272,14 @@ async function applySessionConfiguration(
           current.configuration.planModeKnown === false
             ? Promise.reject(unavailable('restoring an unknown plan setting'))
             : command(current.configuration.planMode ? '/plan' : '/plan off'),
+        (detail) =>
+          current.configuration.planModeKnown === false || detail.configuration.planModeKnown === false
+            ? undefined
+            : observedChange(
+                current.configuration.planMode,
+                detail.configuration.planMode,
+                configuration.planMode,
+              ),
       )
     if (modelChanged)
       await apply(
@@ -240,7 +287,13 @@ async function applySessionConfiguration(
         () =>
           previousModel.providerId.trim() !== '' && previousModel.modelId.trim() !== ''
             ? selectModel(previousModel)
-            : Promise.resolve(),
+            : Promise.reject(unavailable('restoring an unknown model selection')),
+        (detail) =>
+          sameModelSelection(detail.configuration.model, configuration.model)
+            ? true
+            : sameModelSelection(detail.configuration.model, previousModel)
+              ? false
+              : undefined,
       )
   } catch (error) {
     const rollbackErrors: unknown[] = []
@@ -260,4 +313,20 @@ async function applySessionConfiguration(
       })
     throw error
   }
+}
+
+function observedChange<T extends string | boolean>(
+  before: T,
+  observed: T,
+  requested: T,
+): boolean | undefined {
+  return observed === requested ? true : observed === before ? false : undefined
+}
+
+function sameModelSelection(left: AgentConfiguration['model'], right: AgentConfiguration['model']): boolean {
+  return (
+    left.providerId === right.providerId &&
+    left.modelId === right.modelId &&
+    left.reasoningLevel === right.reasoningLevel
+  )
 }

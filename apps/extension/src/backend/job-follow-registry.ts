@@ -111,6 +111,7 @@ export async function relayJobFollowFrames(input: {
 }): Promise<void> {
   try {
     for await (const frame of input.frames) {
+      if (input.signal.aborted) return
       input.publish({
         type: 'job.follow.updated',
         sessionId: input.sessionId,

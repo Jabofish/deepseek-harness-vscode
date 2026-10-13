@@ -47,10 +47,13 @@ export function createJobFollowHost(deps: JobFollowHostDependencies): JobFollowH
       followId,
       signal,
       async (checkSignal) => {
+        const backend = backendService.requireBackend()
         await requireCurrentWorkspaceSession(sessionId, checkSignal)
+        assertCurrentBackend(backend)
         const job = (await advancedUseCases.listJobs(sessionId, checkSignal)).find(
           (entry) => entry.id === jobId,
         )
+        assertCurrentBackend(backend)
         if (job === undefined)
           throw new AppError({
             code: 'DSH_NOT_FOUND',
@@ -59,10 +62,11 @@ export function createJobFollowHost(deps: JobFollowHostDependencies): JobFollowH
           })
         const from = resolveJobFollowOffset(job, requestedFrom)
         checkSignal.throwIfAborted()
-        return { from, backend: backendService.requireBackend() }
+        return { from, backend }
       },
-      async ({ from, backend }, followSignal) => {
-        await relayJobFollowFrames({
+      ({ from, backend }, followSignal) => {
+        assertCurrentBackend(backend)
+        return relayJobFollowFrames({
           sessionId,
           jobId,
           followId,
@@ -84,6 +88,14 @@ export function createJobFollowHost(deps: JobFollowHostDependencies): JobFollowH
       },
     )
     return { started }
+  }
+  const assertCurrentBackend = (backend: ReturnType<BackendService['requireBackend']>): void => {
+    if (backendService.requireBackend() !== backend)
+      throw new AppError({
+        code: 'REQUEST_CANCELLED',
+        message: 'The DSH connection changed before job output could be observed.',
+        retryable: false,
+      })
   }
   return { startJobFollow, stopJobFollow, stopAllJobFollows }
 }

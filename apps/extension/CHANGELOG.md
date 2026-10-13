@@ -1,5 +1,28 @@
 # Change Log
 
+## Unreleased
+
+- 修复移除会话残留回放、配置补丁丢失及问题结算身份混用；增加订阅代次隔离和同步开场去重保护。
+- Fixes removed sessions remaining in replay, lost configuration patches, and mixed question resolution identities; adds subscription generation isolation and synchronous opening deduplication guards.
+
+- 修复任务取消后发布迟到输出及非持久流溢出静默丢更新；增加连接身份复核和流关闭时的握手取消保护。
+- Fixes job output publishing after cancellation and non-durable streams silently losing updates on overflow; adds connection identity checks and handshake cancellation during disposal.
+
+- 修复 Goal 旧历史响应回退修订号、移除后恢复过期状态及迟到写入回执覆盖新投影的问题。
+- Fixes delayed Goal history rolling back revision tokens or restoring removed state, and late mutation receipts overwriting newer projections.
+
+- 修复会话配置回读被历史模型请求覆盖、旧推理强度残留，以及仅修改权限时额外重写待生效模型的问题。
+- Fixes session configuration readback losing pending model intent to past requests, retaining obsolete reasoning effort, and rewriting the model during permission-only updates.
+
+- 修复配置命令已生效但取消或传输失败丢失回执时漏掉回滚的问题；无法确认状态或恢复时明确报告失败。
+- Restores confirmed configuration changes when cancellation or transport failure loses their receipt, and reports failures when state or restoration cannot be confirmed.
+
+- 修复会话未提供计划模式状态时，切换模型被多余的关闭命令阻断的问题。
+- Fixes model changes being blocked by an implicit plan-off command when the session does not expose plan state.
+
+- 修复上游错误正文中的 Bearer/Basic 凭据在两次脱敏之间漏出的问题，并统一清理诊断中的 URL 凭据及绝对路径。
+- Fixes Bearer/Basic credentials surviving layered RPC error redaction, and consistently removes URL credentials and absolute paths from diagnostics.
+
 ## 0.3.0
 
 - 新增 DSH 风格聚焦布局，统一会话、工具、输入栏、设置和插件界面；设置中可切回经典布局。

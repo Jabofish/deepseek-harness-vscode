@@ -8,6 +8,183 @@ async function flushContinuations(): Promise<void> {
 }
 
 describe('session configuration transactions', () => {
+  it('does not write an unknown plan fallback during a model-only update', async () => {
+    const h = configurationFixture({
+      planExposed: false,
+      commandOutcome: (call) => (call.line === '/plan off' ? 'unknown' : 'success'),
+    })
+    h.state.get('s1')!.plan = true
+    await h.repository.setConfiguration('s1', configuration('read-only', 'new'))
+    expect(h.calls.filter((call) => call.line)).toEqual([])
+    expect(h.state.get('s1')).toMatchObject({ permission: 'read-only', plan: true, provider: 'new' })
+  })
+
+  it.each([true, false])(
+    'preserves an explicit plan-only %s request when plan state is unknown',
+    async (plan) => {
+      const h = configurationFixture({ planExposed: false, commandOutcome: () => 'unknown' })
+      await expect(
+        h.repository.setConfiguration('s1', configuration('read-only', 'old', plan)),
+      ).rejects.toMatchObject({ code: 'INVALID_CONFIGURATION' })
+      expect(h.calls.filter((call) => call.line).map((call) => call.line)).toEqual([
+        plan ? '/plan' : '/plan off',
+      ])
+      expect(h.calls.some((call) => call.method === 'session.selectModel')).toBe(false)
+    },
+  )
+
+  it.each(['PROTOCOL_ERROR', 'BACKEND_UNREACHABLE'] as const)(
+    'compensates a committed permission command after a lost %s receipt without resending it',
+    async (code) => {
+      const error = new AppError({ code, message: 'Fixture receipt lost.', retryable: false })
+      const h = configurationFixture({
+        afterCommand: (call) =>
+          call.line === '/permission danger-full-access' ? Promise.reject(error) : Promise.resolve(),
+      })
+      await expect(h.repository.setConfiguration('s1', configuration('danger-full-access'))).rejects.toBe(
+        error,
+      )
+      expect(h.state.get('s1')?.permission).toBe('read-only')
+      expect(h.calls.filter((call) => call.line).map((call) => call.line)).toEqual([
+        '/permission danger-full-access',
+        '/permission read-only',
+      ])
+    },
+  )
+
+  it.each([true, false])(
+    'handles a lost model receipt with a known previous selection: %s',
+    async (known) => {
+      const error = new AppError({
+        code: 'BACKEND_UNREACHABLE',
+        message: 'Fixture model receipt lost.',
+        retryable: true,
+      })
+      const h = configurationFixture({
+        afterModel: (call) => (call.provider === 'new' ? Promise.reject(error) : Promise.resolve()),
+      })
+      if (!known) {
+        const state = h.state.get('s1')!
+        state.provider = ''
+        state.model = ''
+      }
+      const operation = h.repository.setConfiguration('s1', configuration('read-only', 'new'))
+      if (known) await expect(operation).rejects.toBe(error)
+      else
+        await expect(operation).rejects.toMatchObject({
+          code: 'INTERNAL_ERROR',
+          message: 'DSH configuration failed and could not be fully restored.',
+        })
+      expect(h.state.get('s1')?.provider).toBe(known ? 'old' : 'new')
+      expect(
+        h.calls.filter((call) => call.method === 'session.selectModel').map((call) => call.provider),
+      ).toEqual(known ? ['new', 'old'] : ['new'])
+    },
+  )
+
+  it('reports an unreadable receipt outcome and releases the lock for a later fresh update', async () => {
+    let loseReceipt = true
+    const error = new AppError({ code: 'PROTOCOL_ERROR', message: 'Fixture receipt lost.', retryable: false })
+    const h = configurationFixture({
+      afterCommand: () => {
+        if (loseReceipt) {
+          loseReceipt = false
+          return Promise.reject(error)
+        }
+        return Promise.resolve()
+      },
+    })
+    const read = h.repository.get.bind(h.repository)
+    let reads = 0
+    const spy = vi
+      .spyOn(h.repository, 'get')
+      .mockImplementation((id, signal) => (++reads === 2 ? Promise.reject(error) : read(id, signal)))
+    try {
+      await expect(
+        h.repository.setConfiguration('s1', configuration('danger-full-access')),
+      ).rejects.toMatchObject({ code: 'INTERNAL_ERROR' })
+      expect(h.state.get('s1')?.permission).toBe('danger-full-access')
+      await h.repository.setConfiguration('s1', configuration('workspace-write', 'new'))
+      expect(h.state.get('s1')).toMatchObject({ permission: 'workspace-write', provider: 'new' })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('does not compensate over an unrelated authoritative permission value after receipt loss', async () => {
+    const error = new AppError({ code: 'PROTOCOL_ERROR', message: 'Fixture receipt lost.', retryable: false })
+    const h = configurationFixture({
+      afterCommand: (call) => {
+        if (call.line !== '/permission danger-full-access') return Promise.resolve()
+        const state = h.state.get('s1')!
+        state.permission = 'workspace-write'
+        state.events.push({
+          event: {
+            type: 'permission/preset',
+            seq: state.events.length + 1,
+            time: 1010,
+            data: { preset: 'workspace-write' },
+          },
+        })
+        return Promise.reject(error)
+      },
+    })
+    await expect(
+      h.repository.setConfiguration('s1', configuration('danger-full-access')),
+    ).rejects.toMatchObject({ code: 'INTERNAL_ERROR' })
+    expect(h.state.get('s1')?.permission).toBe('workspace-write')
+    expect(h.calls.filter((call) => call.line).map((call) => call.line)).toEqual([
+      '/permission danger-full-access',
+    ])
+  })
+
+  it.each(['/permission danger-full-access', '/plan'])(
+    'restores a committed %s command even when cancellation loses its receipt',
+    async (line) => {
+      const controller = new AbortController()
+      const h = configurationFixture({
+        afterCommand: (call) => {
+          if (call.line === line) controller.abort()
+          return Promise.resolve()
+        },
+      })
+      const desired =
+        line === '/plan' ? configuration('read-only', 'old', true) : configuration('danger-full-access')
+      await expect(h.repository.setConfiguration('s1', desired, controller.signal)).rejects.toMatchObject({
+        code: 'REQUEST_CANCELLED',
+      })
+      expect(h.state.get('s1')).toMatchObject({ permission: 'read-only', plan: false, provider: 'old' })
+    },
+  )
+
+  it('does not rewrite pending model intent during a permission-only update', async () => {
+    const h = configurationFixture()
+    const session = h.state.get('s1')!
+    session.provider = 'pending'
+    session.model = 'model-pending'
+    session.events.push(
+      {
+        event: {
+          type: 'model/selection',
+          seq: 4,
+          time: 1003,
+          data: { provider: 'pending', model: 'model-pending' },
+        },
+      },
+      {
+        event: {
+          type: 'request/header',
+          seq: 5,
+          time: 1004,
+          data: { header: { config: { provider: 'old', model: 'model-old', reasoningEffort: 'high' } } },
+        },
+      },
+    )
+    await h.repository.setConfiguration('s1', configuration('workspace-write', 'pending'))
+    expect(h.calls.filter((call) => call.method === 'session.selectModel')).toEqual([])
+    expect(h.state.get('s1')).toMatchObject({ permission: 'workspace-write', provider: 'pending' })
+  })
+
   it.each(['/permission danger-full-access', '/plan'])(
     'rejects the command business error from %s without applying later model changes',
     async (line) => {
@@ -204,7 +381,9 @@ describe('session configuration transactions', () => {
         if (undoOutcome === 'success') {
           await undoEntered.promise
           await flushContinuations()
-          expect(h.calls.filter((call) => call.method === 'session.history')).toHaveLength(1)
+          // A's receipt reconciliation adds a read; B still cannot read its baseline.
+          expect(h.calls.filter((call) => call.method === 'session.history')).toHaveLength(2)
+          expect(h.calls.some((call) => call.provider === 'B')).toBe(false)
           expect(settledA).toBe(false)
         }
         undoRelease.resolve()
