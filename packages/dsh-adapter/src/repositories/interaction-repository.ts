@@ -9,6 +9,14 @@ import {
 
 import type { DshTransport } from '../contracts.js'
 
+interface SharedResponse {
+  readonly intent: string
+  readonly controller: AbortController
+  readonly promise: Promise<void>
+  callers: number
+  settled: boolean
+}
+
 export class Rc6InteractionRepository implements InteractionRepository {
   private readonly answered = new Map<string, number>()
   private readonly permissions = new Map<
@@ -28,7 +36,7 @@ export class Rc6InteractionRepository implements InteractionRepository {
       readonly items: readonly UserQuestionItem[]
     }
   >()
-  private readonly responding = new Map<string, Promise<void>>()
+  private readonly responding = new Map<string, SharedResponse>()
   private readonly resetPendingOnSubscribe: boolean
   private readonly onSettled: ((event: BackendEvent) => void) | undefined
   public constructor(
@@ -118,21 +126,10 @@ export class Rc6InteractionRepository implements InteractionRepository {
   }
 
   public async respondToPermission(requestId: string, optionId: string, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) throw cancelledResponse()
     if (this.answered.has(requestId)) return
-    const responseKey = `permission:${this.permissions.get(requestId)?.rpcId ?? requestId}`
-    const active = this.responding.get(responseKey)
-    if (active !== undefined) return active
-    const operation = this.respondToPermissionOnce(requestId, optionId, signal)
-    this.responding.set(responseKey, operation)
-    return operation.finally(() => this.responding.delete(responseKey))
-  }
-
-  private async respondToPermissionOnce(
-    requestId: string,
-    optionId: string,
-    signal?: AbortSignal,
-  ): Promise<void> {
-    if (this.transport.respondEnvelope === undefined)
+    const respondEnvelope = this.transport.respondEnvelope?.bind(this.transport)
+    if (respondEnvelope === undefined)
       throw new AppError({
         code: 'CAPABILITY_UNAVAILABLE',
         message: 'The connected DSH cannot answer permission requests.',
@@ -148,20 +145,24 @@ export class Rc6InteractionRepository implements InteractionRepository {
         retryable: false,
       })
     const outcome = option.kind === 'allow-once' ? 'allowed-once' : 'rejected'
-    const receipt = await this.transport.respondEnvelope(
-      pending.rpcId,
-      { ok: true, value: { sessionId: pending.sessionId, approvalId: requestId, outcome } },
+    const payload = { ok: true, value: { sessionId: pending.sessionId, approvalId: requestId, outcome } }
+    return this.shareResponse(
+      `permission:${pending.rpcId}`,
+      JSON.stringify(payload),
+      async (operationSignal) => {
+        const receipt = await respondEnvelope(pending.rpcId, payload, operationSignal)
+        assertAcceptedReceipt(receipt)
+        this.markAnswered([requestId])
+        this.permissions.delete(requestId)
+        this.onSettled?.({
+          type: 'permission.resolved',
+          sessionId: pending.sessionId,
+          requestId,
+          outcome,
+        })
+      },
       signal,
     )
-    assertAcceptedReceipt(receipt)
-    this.markAnswered([requestId])
-    this.permissions.delete(requestId)
-    this.onSettled?.({
-      type: 'permission.resolved',
-      sessionId: pending.sessionId,
-      requestId,
-      outcome,
-    })
   }
 
   public async respondToQuestion(
@@ -169,56 +170,10 @@ export class Rc6InteractionRepository implements InteractionRepository {
     response: string | readonly string[] | readonly QuestionAnswer[],
     signal?: AbortSignal,
   ): Promise<void> {
+    if (signal?.aborted) throw cancelledResponse()
     if (this.answered.has(questionId)) return
-    const responseKey = `question:${this.questions.get(questionId)?.rpcId ?? questionId}`
-    const active = this.responding.get(responseKey)
-    if (active !== undefined) return active
-    const operation = this.respondToQuestionOnce(questionId, response, signal)
-    this.responding.set(responseKey, operation)
-    return operation.finally(() => this.responding.delete(responseKey))
-  }
-
-  public async cancelQuestion(questionId: string, signal?: AbortSignal): Promise<void> {
-    if (this.answered.has(questionId)) return
-    const responseKey = `question:${this.questions.get(questionId)?.rpcId ?? questionId}`
-    const active = this.responding.get(responseKey)
-    if (active !== undefined) return active
-    const operation = this.cancelQuestionOnce(questionId, signal)
-    this.responding.set(responseKey, operation)
-    return operation.finally(() => this.responding.delete(responseKey))
-  }
-
-  private async cancelQuestionOnce(questionId: string, signal?: AbortSignal): Promise<void> {
-    if (this.transport.respondEnvelope === undefined)
-      throw new AppError({
-        code: 'CAPABILITY_UNAVAILABLE',
-        message: 'The connected DSH cannot cancel user questions.',
-        retryable: false,
-      })
-    const pending = this.questions.get(questionId)
-    if (pending === undefined) throw staleInteraction('question')
-    const receipt = await this.transport.respondEnvelope(
-      pending.rpcId,
-      {
-        ok: false,
-        error: {
-          code: 'cancelled',
-          message: 'the user closed this question request',
-          details: {},
-        },
-      },
-      signal,
-    )
-    assertAcceptedReceipt(receipt)
-    this.settleQuestion(pending, 'cancelled')
-  }
-
-  private async respondToQuestionOnce(
-    questionId: string,
-    response: string | readonly string[] | readonly QuestionAnswer[],
-    signal?: AbortSignal,
-  ): Promise<void> {
-    if (this.transport.respondEnvelope === undefined)
+    const respondEnvelope = this.transport.respondEnvelope?.bind(this.transport)
+    if (respondEnvelope === undefined)
       throw new AppError({
         code: 'CAPABILITY_UNAVAILABLE',
         message: 'The connected DSH cannot answer user questions.',
@@ -237,13 +192,119 @@ export class Rc6InteractionRepository implements InteractionRepository {
     const answers = isBatch
       ? batchAnswers(response, pending)
       : [singleAnswer({ id: questionId, response: response as string | readonly string[] }, pending.items)]
-    const receipt = await this.transport.respondEnvelope(
-      pending.rpcId,
-      { ok: true, value: { sessionId: pending.sessionId, answer: { answers } } },
+    const payload = { ok: true, value: { sessionId: pending.sessionId, answer: { answers } } }
+    return this.shareResponse(
+      `question:${pending.rpcId}`,
+      JSON.stringify(payload),
+      async (operationSignal) => {
+        const receipt = await respondEnvelope(pending.rpcId, payload, operationSignal)
+        assertAcceptedReceipt(receipt)
+        this.settleQuestion(pending, 'answered')
+      },
       signal,
     )
-    assertAcceptedReceipt(receipt)
-    this.settleQuestion(pending, 'answered')
+  }
+
+  public async cancelQuestion(questionId: string, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) throw cancelledResponse()
+    if (this.answered.has(questionId)) return
+    const respondEnvelope = this.transport.respondEnvelope?.bind(this.transport)
+    if (respondEnvelope === undefined)
+      throw new AppError({
+        code: 'CAPABILITY_UNAVAILABLE',
+        message: 'The connected DSH cannot cancel user questions.',
+        retryable: false,
+      })
+    const pending = this.questions.get(questionId)
+    if (pending === undefined) throw staleInteraction('question')
+    const payload = {
+      ok: false,
+      error: {
+        code: 'cancelled',
+        message: 'the user closed this question request',
+        details: {},
+      },
+    }
+    return this.shareResponse(
+      `question:${pending.rpcId}`,
+      JSON.stringify(payload),
+      async (operationSignal) => {
+        const receipt = await respondEnvelope(pending.rpcId, payload, operationSignal)
+        assertAcceptedReceipt(receipt)
+        this.settleQuestion(pending, 'cancelled')
+      },
+      signal,
+    )
+  }
+
+  /** Merge identical mutations while keeping each caller's cancellation local. */
+  private shareResponse(
+    key: string,
+    intent: string,
+    send: (signal: AbortSignal) => Promise<void>,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    let active = this.responding.get(key)
+    if (active !== undefined) {
+      if (active.controller.signal.aborted) return Promise.reject(cancelledResponse())
+      if (active.intent !== intent)
+        return Promise.reject(
+          new AppError({
+            code: 'BACKEND_BUSY',
+            message: 'A different response to this DSH interaction is already in progress.',
+            retryable: false,
+          }),
+        )
+    } else {
+      const controller = new AbortController()
+      const operation = send(controller.signal)
+      const shared: SharedResponse = {
+        intent,
+        controller,
+        promise: operation.finally(() => {
+          shared.settled = true
+          if (this.responding.get(key) === shared) this.responding.delete(key)
+        }),
+        callers: 0,
+        settled: false,
+      }
+      this.responding.set(key, shared)
+      active = shared
+    }
+    const shared = active
+    shared.callers += 1
+    return new Promise<void>((resolve, reject) => {
+      let finished = false
+      const leave = (): boolean => {
+        if (finished) return false
+        finished = true
+        signal?.removeEventListener('abort', abort)
+        shared.callers -= 1
+        if (!shared.settled && shared.callers === 0) shared.controller.abort()
+        return true
+      }
+      const abort = (): void => {
+        if (leave()) reject(cancelledResponse())
+      }
+      signal?.addEventListener('abort', abort, { once: true })
+      if (signal?.aborted) abort()
+      // Keep the operation registered until it actually settles: an aborted
+      // HTTP result request may already have been accepted by the server.
+      // Never turn a caller cancellation into an automatic mutation retry.
+      void shared.promise.then(
+        () => {
+          if (leave()) resolve()
+        },
+        (error: unknown) => {
+          if (leave())
+            reject(
+              error instanceof Error
+                ? error
+                : new Error('The interaction response failed.', { cause: error }),
+            )
+        },
+      )
+    })
   }
 
   /** Forget one accepted question batch and report its resolution. */
@@ -279,6 +340,14 @@ export class Rc6InteractionRepository implements InteractionRepository {
       this.answered.delete(oldest)
     }
   }
+}
+
+function cancelledResponse(): AppError {
+  return new AppError({
+    code: 'REQUEST_CANCELLED',
+    message: 'The DSH interaction response was cancelled.',
+    retryable: false,
+  })
 }
 
 function assertAcceptedReceipt(value: unknown): void {

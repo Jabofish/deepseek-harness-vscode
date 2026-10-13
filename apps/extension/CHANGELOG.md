@@ -5,6 +5,12 @@
 - 改善预设、变更、检查点、模板与输入菜单的窄栏信息层级，修复暗色预设弹层遮罩、单图比例、多图排列及图片失败状态的过度留白。
 - Improves narrow preset, change, checkpoint, template and composer menus; fixes dark preset scrims, single-image proportions, gallery wrapping and excessive spacing in failed image previews.
 
+- 修复并发问题等待及会话归属读取共用首个请求的取消信号，导致取消一个请求中止其他活动请求的问题；最后一个调用者离开时仍释放资源。
+- Fixes one request cancelling other active question waits or shared session ownership reads; resources are still released when the final caller leaves.
+
+- 修复并发审批与问题答复互相取消、不同答复被误报成功的问题；同内容答复只发送一次，冲突答复明确拒绝，取消或未知回执不触发自动重发。
+- Fixes cancellation leaking between concurrent approval/question responses and conflicting answers being reported as successful; identical responses send once, conflicts are refused, and cancellation or unknown receipts never trigger automatic resubmission.
+
 - 改善 Goal 与任务中心的窄栏布局，保留完整操作按钮和可读任务标题；长附件在窄输入区分行展示并限制列表高度，文件差异复制按钮移至独立标题栏。
 - Improves narrow Goal and task-center layouts with reachable actions and readable task titles; long attachments stack in a bounded narrow rail, and diff copy actions move to a separate header.
 

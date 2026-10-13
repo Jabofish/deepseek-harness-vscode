@@ -23,6 +23,13 @@ export interface SessionScopeDependencies {
   readonly currentWorkspaceFolder: () => vscode.WorkspaceFolder | undefined
 }
 
+interface SharedSessionLoad {
+  readonly promise: Promise<SessionDetail>
+  readonly controller: AbortController
+  callers: number
+  settled: boolean
+}
+
 /** Fork ownership must never open history: opening an old Session may migrate it. */
 export async function requireCatalogOwnedSession(
   backend: DshBackend,
@@ -110,7 +117,7 @@ export function createSessionScope(deps: SessionScopeDependencies): SessionScope
     string,
     { readonly generation: number; readonly detail: SessionDetail }
   >()
-  const currentWorkspaceSessionLoads = new Map<string, Promise<SessionDetail>>()
+  const currentWorkspaceSessionLoads = new Map<string, SharedSessionLoad>()
   let currentWorkspaceSessionGeneration = 0
   const invalidateCurrentWorkspaceSessionDetails = (): void => {
     currentWorkspaceSessionGeneration += 1
@@ -189,6 +196,7 @@ export function createSessionScope(deps: SessionScopeDependencies): SessionScope
     signal: AbortSignal,
     options: { readonly fresh?: boolean; readonly allowArchived?: boolean } = {},
   ): Promise<SessionDetail> => {
+    signal.throwIfAborted()
     if (options.fresh !== true && options.allowArchived !== true) {
       const cached = currentWorkspaceSessionDetails.get(sessionId)
       if (cached?.generation === currentWorkspaceSessionGeneration) return cached.detail
@@ -200,20 +208,30 @@ export function createSessionScope(deps: SessionScopeDependencies): SessionScope
     // ordinary load would fail a restore or delete with the archived refusal,
     // and letting an ordinary route adopt a recovery load would hand it an
     // archived session the route's own contract must refuse.
-    if (pending !== undefined && options.fresh !== true && options.allowArchived !== true) return pending
+    if (
+      pending !== undefined &&
+      !pending.controller.signal.aborted &&
+      options.fresh !== true &&
+      options.allowArchived !== true
+    )
+      return joinSessionLoad(pending, signal)
 
     const generation = currentWorkspaceSessionGeneration
+    const controller = new AbortController()
+    const loadSignal = controller.signal
     const load = (async (): Promise<SessionDetail> => {
       let workspaces: readonly WorkspaceSummary[]
       try {
-        workspaces = await listCurrentWorkspaces(signal)
+        workspaces = await listCurrentWorkspaces(loadSignal)
       } catch (error) {
         throw sessionOpenFailure('workspace discovery', error)
       }
 
       let archivedSessionIds: readonly string[]
       try {
-        archivedSessionIds = await backendService.requireBackend().workspaces.listArchivedSessionIds(signal)
+        archivedSessionIds = await backendService
+          .requireBackend()
+          .workspaces.listArchivedSessionIds(loadSignal)
       } catch (error) {
         throw sessionOpenFailure('archive state lookup', error)
       }
@@ -232,12 +250,12 @@ export function createSessionScope(deps: SessionScopeDependencies): SessionScope
         const sessions = backendService.requireBackend().sessions
         detail =
           options.fresh === true && sessions.open !== undefined
-            ? await sessions.open(sessionId, signal)
-            : await sessions.get(sessionId, signal)
+            ? await sessions.open(sessionId, loadSignal)
+            : await sessions.get(sessionId, loadSignal)
       } catch (error) {
         throw sessionOpenFailure('session summary and history read', error)
       }
-      if (!(await ownsSession(sessionId, detail, workspaces, signal)))
+      if (!(await ownsSession(sessionId, detail, workspaces, loadSignal)))
         throw sessionOpenFailure(
           'current workspace ownership check',
           new AppError({
@@ -246,6 +264,7 @@ export function createSessionScope(deps: SessionScopeDependencies): SessionScope
             retryable: false,
           }),
         )
+      loadSignal.throwIfAborted()
       if (generation === currentWorkspaceSessionGeneration && options.allowArchived !== true)
         currentWorkspaceSessionDetails.set(sessionId, { generation, detail })
       return detail
@@ -254,18 +273,15 @@ export function createSessionScope(deps: SessionScopeDependencies): SessionScope
     // policy documented above: an ordinary route must never adopt one, and two
     // overlapping recovery reads are rare, idempotent, and cheaper to reason
     // about than a variant-aware dedup key.
-    if (options.allowArchived !== true) currentWorkspaceSessionLoads.set(sessionId, load)
-    void load.then(
-      () => {
-        if (currentWorkspaceSessionLoads.get(sessionId) === load)
-          currentWorkspaceSessionLoads.delete(sessionId)
-      },
-      () => {
-        if (currentWorkspaceSessionLoads.get(sessionId) === load)
-          currentWorkspaceSessionLoads.delete(sessionId)
-      },
-    )
-    return load
+    const shared: SharedSessionLoad = { promise: load, controller, callers: 0, settled: false }
+    if (options.allowArchived !== true) currentWorkspaceSessionLoads.set(sessionId, shared)
+    const finish = (): void => {
+      shared.settled = true
+      if (currentWorkspaceSessionLoads.get(sessionId) === shared)
+        currentWorkspaceSessionLoads.delete(sessionId)
+    }
+    void load.then(finish, finish)
+    return joinSessionLoad(shared, signal)
   }
   const requireCurrentWorkspaceId = async (workspaceId: string, signal: AbortSignal): Promise<void> => {
     const workspaces = await listCurrentWorkspaces(signal)
@@ -333,4 +349,41 @@ export function createSessionScope(deps: SessionScopeDependencies): SessionScope
     requireOwnedPermission,
     requireOwnedQuestion,
   }
+}
+
+function joinSessionLoad(load: SharedSessionLoad, signal: AbortSignal): Promise<SessionDetail> {
+  load.callers += 1
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const finish = (complete: () => void): void => {
+      if (settled) return
+      settled = true
+      signal.removeEventListener('abort', onAbort)
+      load.callers -= 1
+      complete()
+    }
+    const onAbort = (): void => {
+      finish(() =>
+        reject(
+          new AppError({
+            code: 'REQUEST_CANCELLED',
+            message: 'The session ownership read was cancelled.',
+            retryable: false,
+          }),
+        ),
+      )
+      // Retire the underlying read only when no live caller needs it. Each
+      // advisory route owns its response cancellation independently.
+      if (load.callers === 0 && !load.settled) load.controller.abort(signal.reason)
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    if (signal.aborted) onAbort()
+    void load.promise.then(
+      (detail) => finish(() => resolve(detail)),
+      (error: unknown) =>
+        finish(() =>
+          reject(error instanceof Error ? error : new Error('The session read failed.', { cause: error })),
+        ),
+    )
+  })
 }
