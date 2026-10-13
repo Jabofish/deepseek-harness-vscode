@@ -1682,5 +1682,10 @@
   "stats.toolTime": "Tool time",
   "stats.uncachedInput": "Uncached input tokens",
   "settings.viewLoadFailed": "Settings could not be opened. Please try again.",
-  "settings.viewRetry": "Retry"
+  "settings.viewRetry": "Retry",
+  "markdown.codeBlock": "Code block: {language}",
+  "markdown.plainText": "Text",
+  "markdown.table": "Table",
+  "markdown.codeLines": "Lines: {count}",
+  "markdown.tableDimensions": "Rows: {rows} · Columns: {columns}"
 }

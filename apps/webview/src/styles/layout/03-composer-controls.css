@@ -354,9 +354,29 @@
 }
 
 .dsh-unified-composer .dsh-composer__attachment {
-  min-width: 0;
+  flex: 0 0 auto;
+  min-width: min(10rem, 100%);
   padding: 0;
   gap: 0;
+}
+
+.dsh-unified-composer .dsh-composer__attachment-rail:not(:has(.dsh-composer__attachment-page)) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* A narrow rail prioritizes identifying each file. Keep the list bounded so
+ * many attachments cannot displace the prompt and Send action. */
+@container dsh-composer (max-width: 22rem) {
+  .dsh-unified-composer .dsh-composer__attachments {
+    flex-wrap: wrap;
+    max-height: 7rem;
+    overflow: auto;
+  }
+
+  .dsh-unified-composer .dsh-composer__attachment {
+    flex: 0 0 100%;
+    max-width: 100%;
+  }
 }
 
 .dsh-unified-composer .dsh-composer__attachment-content {

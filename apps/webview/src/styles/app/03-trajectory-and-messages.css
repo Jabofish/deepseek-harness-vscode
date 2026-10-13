@@ -322,6 +322,12 @@
   padding: 0 var(--dsh-space-1) var(--dsh-space-2);
 }
 
+/* The empty placeholder already fills the viewport. An empty canvas's bottom
+ * padding must not create a second, scrollable strip below it. */
+.dsh-timeline__canvas:empty {
+  padding-block-end: 0;
+}
+
 .dsh-trajectory__content {
   min-width: 0;
 }

@@ -190,6 +190,14 @@
   background: var(--dsh-code-bg);
 }
 
+.dsh-app[data-conversation-layout='focused'] .dsh-markdown__copy-region {
+  border-radius: 12px;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-markdown__copy-region--code > pre {
+  border-radius: 0;
+}
+
 .dsh-app[data-conversation-layout='focused']
   :is(
     .dsh-tool-code-preview__toolbar,

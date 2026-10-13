@@ -401,7 +401,8 @@
   align-items: flex-start;
 }
 
-.dsh-message-images--grid {
+.dsh-message-images.dsh-message-images--grid {
+  display: flex;
   flex-wrap: wrap;
   gap: 6px;
 }

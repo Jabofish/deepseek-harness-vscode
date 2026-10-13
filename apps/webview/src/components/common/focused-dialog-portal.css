@@ -30,7 +30,7 @@
 }
 .dsh-focused-dialog-layer .dsh-prompt-templates-popover__variable-options {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
   gap: 6px 12px;
 }
 .dsh-focused-dialog-layer .dsh-prompt-templates-popover__variable-options input {
@@ -59,11 +59,11 @@
 }
 .dsh-focused-dialog-layer .dsh-checkpoints-popover__preview-list > li {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--dsh-space-1);
 }
 .dsh-focused-dialog-layer .dsh-checkpoints-popover__preview-list code {
-  white-space: nowrap;
+  white-space: normal;
 }
 .dsh-focused-dialog-layer .dsh-button--danger {
   color: var(--dsh-danger);

@@ -562,6 +562,12 @@
   padding: 20px;
 }
 
+@media (max-width: 24rem) {
+  .dsh-app[data-conversation-layout='focused'] :is(.dsh-settings__header, .dsh-settings__body) {
+    padding: 12px;
+  }
+}
+
 @media (min-width: 52.001rem) {
   .dsh-app[data-conversation-layout='focused'] .dsh-settings__layout {
     grid-template-columns: 188px minmax(0, 1fr);

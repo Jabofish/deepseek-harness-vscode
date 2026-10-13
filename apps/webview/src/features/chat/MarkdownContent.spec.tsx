@@ -2,6 +2,7 @@
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { StrictMode } from 'react'
 import { MarkdownContent } from './MarkdownContent.js'
 import {
   cachedCodeHighlight,
@@ -130,6 +131,67 @@ describe('MarkdownContent', () => {
     expect(copyButton).not.toBeNull()
     expect(scrollPort?.contains(copyButton ?? null)).toBe(false)
     expect(wide?.contains(copyButton ?? null)).toBe(true)
+    const filled = container.querySelector('.dsh-markdown__copy-region--table-fill')
+    const filledScrollPort = filled?.querySelector('.dsh-markdown__table-scroll')
+    expect(filledScrollPort?.getAttribute('tabindex')).toBe('0')
+    expect(filledScrollPort?.getAttribute('role')).toBe('region')
+    expect(filledScrollPort?.contains(filled?.querySelector('button') ?? null)).toBe(false)
+  })
+
+  it('labels highlighted code and tables without placing metadata inside copied content', async () => {
+    await warmHighlighter()
+    const { container } = render(
+      <MarkdownContent
+        markdown={
+          '```ts\nconst value = 1\nconst next = 2\n```\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |'
+        }
+      />,
+    )
+    const toolbar = await screen.findByRole('group', { name: 'Code block: typescript' })
+    expect(toolbar.textContent).toContain('Lines: 2')
+    const code = screen.getByRole('region', { name: 'Code block: typescript' })
+    expect(code.getAttribute('tabindex')).toBe('0')
+    expect(code.textContent).toBe('const value = 1\nconst next = 2\n')
+    expect(screen.getByRole('group', { name: 'Table' }).textContent).toContain('Rows: 2 · Columns: 2')
+    expect(container.querySelectorAll('.dsh-markdown__block-toolbar')).toHaveLength(2)
+  })
+
+  it('keeps unknown language labels bounded and treats markup-like fence metadata as text', async () => {
+    render(
+      <MarkdownContent markdown={'```custom-dsl\nvalue\n```\n\n```<img-onerror=alert(1)>\nplain\n```'} />,
+    )
+    expect(await screen.findByRole('group', { name: 'Code block: custom-dsl' })).toBeDefined()
+    expect(screen.getByRole('group', { name: 'Code block: Text' })).toBeDefined()
+    expect(document.querySelector('img')).toBeNull()
+  })
+
+  it('releases copy portals on streaming changes and Strict Mode unmount without nested-root warnings', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      const view = render(
+        <StrictMode>
+          <MarkdownContent markdown={'```\nfirst\n```'} />
+        </StrictMode>,
+      )
+      expect(await screen.findByRole('group', { name: 'Code block: Text' })).toBeDefined()
+      view.rerender(
+        <StrictMode>
+          <MarkdownContent markdown={'```\nsecond\n```'} streaming />
+        </StrictMode>,
+      )
+      await waitFor(() => expect(screen.queryByRole('group', { name: 'Code block: Text' })).toBeNull())
+      view.rerender(
+        <StrictMode>
+          <MarkdownContent markdown={'```\nsecond\n```'} />
+        </StrictMode>,
+      )
+      expect(await screen.findByRole('group', { name: 'Code block: Text' })).toBeDefined()
+      view.unmount()
+      expect(document.querySelector('.dsh-markdown__copy-mount')).toBeNull()
+      expect(error.mock.calls.flat().join(' ')).not.toMatch(/synchronously unmount|Maximum update depth/u)
+    } finally {
+      error.mockRestore()
+    }
   })
 
   it('turns unique produced-file mentions into safe open actions', async () => {

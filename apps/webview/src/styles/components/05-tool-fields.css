@@ -156,14 +156,14 @@
   contain: content;
 }
 
-/* Wide tables keep a scrollport from their first paint. The scrollbar itself
+/* Completed tables keep a scrollport from their first paint. The scrollbar itself
  * stays transparent until interaction, so revealing the affordance cannot
  * change the table's block size and move the conversation below it. The
  * scrollport is separate from the copy-region so its button stays fixed while
  * the table moves. Ordinary tables remain filled to the message width. */
 
 .dsh-markdown__copy-region--table-wide {
-  overflow: visible;
+  overflow: hidden;
 }
 
 .dsh-markdown__table-scroll {
@@ -194,11 +194,13 @@
 }
 
 .dsh-markdown__table-scroll:focus-visible {
-  outline: none;
+  outline: 2px solid var(--dsh-focus);
+  outline-offset: -2px;
   box-shadow: none;
 }
 
 .dsh-markdown__table-scroll table {
+  display: table;
   width: max-content;
   max-width: max-content;
   overflow: visible;

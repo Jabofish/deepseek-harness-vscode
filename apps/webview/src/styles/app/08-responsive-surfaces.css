@@ -22,6 +22,24 @@
   object-fit: cover;
 }
 
+/* A single image reserves its Host-provided ratio on the button. Fill that box
+ * instead of cropping a 4:3 image into the middle of a tall empty container. */
+.dsh-message-images--single .dsh-message-images__thumb {
+  position: relative;
+  display: block;
+  width: min(100%, calc(min(60vh, 32rem) * var(--dsh-image-ratio, 1.333333)));
+  max-height: min(60vh, 32rem);
+}
+
+.dsh-message-images--single .dsh-message-images__thumb > img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
+  object-fit: contain;
+}
+
 .dsh-message-images__placeholder {
   display: grid;
   place-items: center;
@@ -29,6 +47,13 @@
   color: var(--dsh-muted);
   overflow-wrap: break-word;
   word-break: normal;
+}
+
+.dsh-message-images--single > .dsh-message-images__placeholder--error {
+  aspect-ratio: auto;
+  min-height: 8rem;
+  gap: var(--dsh-space-2);
+  align-content: center;
 }
 
 .dsh-message-actions {

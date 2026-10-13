@@ -284,7 +284,9 @@
   display: grid;
   place-items: center;
   padding: 16px;
-  background: color-mix(in srgb, var(--dsh-text) 42%, transparent);
+  /* A scrim dims the inactive surface in either theme. Mixing foreground text
+   * into it would brighten the entire dark workspace behind the dialog. */
+  background: rgb(0 0 0 / 48%);
   pointer-events: auto;
 }
 

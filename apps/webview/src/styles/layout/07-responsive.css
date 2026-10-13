@@ -76,6 +76,7 @@
 
 .dsh-changes-popover__detail-header {
   justify-content: space-between;
+  align-items: flex-start;
 }
 
 .dsh-changes-popover__detail-header > strong {
@@ -83,8 +84,8 @@
   overflow: hidden;
   color: var(--dsh-text);
   font-size: var(--dsh-font-size-xs);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .dsh-changes-popover__detail-meta {
@@ -124,6 +125,7 @@
   font-size: var(--dsh-font-size-xs);
   line-height: 1.45;
   overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .dsh-checkpoints-popover__dialog > label,
@@ -189,23 +191,34 @@
 }
 
 .dsh-checkpoints-popover__preview-list li {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
-  gap: var(--dsh-space-2);
+  gap: var(--dsh-space-1);
+  padding-bottom: var(--dsh-space-2);
+  border-bottom: var(--dsh-border);
   color: var(--dsh-muted);
   font-size: var(--dsh-font-size-xs);
 }
 
 .dsh-checkpoints-popover__preview-list li > span {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  color: var(--dsh-text);
+  overflow-wrap: anywhere;
+}
+
+.dsh-checkpoints-popover__preview-list li > code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.dsh-checkpoints-popover__preview-list li[data-conflict='true'] > code {
+  color: var(--dsh-warning);
 }
 
 .dsh-prompt-templates-popover__preview-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
   min-width: 0;
@@ -214,8 +227,13 @@
 
 .dsh-prompt-templates-popover__preview-header > div:first-child {
   display: grid;
+  flex: 1 1 14rem;
   min-width: 0;
   gap: 2px;
+}
+
+.dsh-prompt-templates-popover__preview-header strong {
+  overflow-wrap: anywhere;
 }
 
 .dsh-prompt-templates-popover__preview-header span,

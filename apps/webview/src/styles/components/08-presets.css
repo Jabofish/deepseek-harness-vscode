@@ -1,6 +1,7 @@
 .dsh-preset-card {
   display: flex;
   flex-direction: column;
+  container-type: inline-size;
   min-width: 0;
   padding: 0;
   border: var(--dsh-border);
@@ -92,6 +93,7 @@
 
 .dsh-preset-card__footer {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   min-width: 0;
@@ -99,6 +101,27 @@
   margin-top: auto;
   padding: 0 var(--dsh-space-3) var(--dsh-space-3);
   text-align: start;
+}
+
+/* Keep the two icon actions together when the card cannot fit the guides beside
+ * them. Use the card width so this also applies in a narrow settings panel. */
+@container (max-width: 16rem) {
+  .dsh-preset-card__footer {
+    justify-content: flex-start;
+  }
+
+  .dsh-preset-card__footer .dsh-presets__guide-actions {
+    order: 1;
+    flex: 1 0 100%;
+    min-width: 0;
+    margin-right: 0;
+  }
+
+  .dsh-preset-card__footer .dsh-presets__guide-actions .dsh-button {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding-inline: var(--dsh-space-1);
+  }
 }
 
 .dsh-preset-card__revealed {

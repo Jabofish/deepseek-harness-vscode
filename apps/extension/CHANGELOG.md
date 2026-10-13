@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- 改善预设、变更、检查点、模板与输入菜单的窄栏信息层级，修复暗色预设弹层遮罩、单图比例、多图排列及图片失败状态的过度留白。
+- Improves narrow preset, change, checkpoint, template and composer menus; fixes dark preset scrims, single-image proportions, gallery wrapping and excessive spacing in failed image previews.
+
+- 改善 Goal 与任务中心的窄栏布局，保留完整操作按钮和可读任务标题；长附件在窄输入区分行展示并限制列表高度，文件差异复制按钮移至独立标题栏。
+- Improves narrow Goal and task-center layouts with reachable actions and readable task titles; long attachments stack in a bounded narrow rail, and diff copy actions move to a separate header.
+
+- 优化 Markdown 代码和表格卡片：固定复制标题栏、语言与行列统计、长行键盘滚动、窄栏最低列宽及焦点反馈；复制控件由父组件统一管理，避免嵌套 React 根的清理竞态。
+- Improves Markdown code and table cards with fixed copy headers, language and size metadata, keyboard scrolling, readable narrow columns and focus feedback; copy controls share the parent React tree to avoid nested-root cleanup races.
+
+- 修复窄侧栏设置页的单字换行与分类栏溢出、对话工具按钮被裁切，以及空会话出现多余滚动条的问题。
+- Fixes squeezed Settings values and overflowing category tabs in narrow sidebars, clipped conversation tools, and unnecessary scrolling in empty conversations.
+
 - 修复移除会话残留回放、配置补丁丢失及问题结算身份混用；增加订阅代次隔离和同步开场去重保护。
 - Fixes removed sessions remaining in replay, lost configuration patches, and mixed question resolution identities; adds subscription generation isolation and synchronous opening deduplication guards.
 

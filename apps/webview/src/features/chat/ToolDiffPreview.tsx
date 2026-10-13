@@ -40,11 +40,14 @@ export function ToolDiffPreview(props: ToolDiffRenderProps): ReactElement {
 
   return (
     <div className="dsh-tool-diff-preview" data-diff="">
-      <CopyButton
-        text={copyText(projection.rows)}
-        className="dsh-tool-diff-preview__copy"
-        translate={translate}
-      />
+      <div className="dsh-tool-diff-preview__header">
+        <span>{translate('toolrow.presentation.diffFiles', { count: projection.files })}</span>
+        <CopyButton
+          text={copyText(projection.rows)}
+          className="dsh-tool-diff-preview__copy"
+          translate={translate}
+        />
+      </div>
       <div className="dsh-tool-diff-preview__body" tabIndex={0}>
         <div className="dsh-tool-diff-preview__content">
           {head.map((row, index) => renderRow(row, index))}
