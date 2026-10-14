@@ -43,6 +43,7 @@ import {
   presentedSourceNodeIds,
   type PresentedTimelineNode,
 } from './focused-timeline-projection.js'
+import { useTranscriptCopyFallback } from './useTranscriptCopyFallback.js'
 import { useConversationLayout } from '../../app/ConversationLayoutProvider.js'
 import type { ConversationLayout } from '../../app/conversation-layout.js'
 
@@ -194,6 +195,9 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
       conversationLayout === 'focused' ? focusedProjector(displayProjection.nodes) : displayProjection.nodes,
     [conversationLayout, displayProjection.nodes, focusedProjector],
   )
+  // The Webview's own "Copy" copies nothing without a selection; this fills it
+  // with the addressed row's Markdown instead of an empty clipboard.
+  const copyFallbackAnnounced = useTranscriptCopyFallback(displayNodes)
   const running = props.running ?? props.streaming
   const hasMoreHistory = props.hasMoreHistory
   const loadingOlderHistory = props.loadingOlderHistory
@@ -647,6 +651,12 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
         {props.streaming ? (
           <span className="dsh-sr-only" aria-live="polite">
             {t('timeline.streaming')}
+          </span>
+        ) : null}
+        {/* Mounted only while an outcome is up, like the per-row copy button. */}
+        {copyFallbackAnnounced ? (
+          <span className="dsh-sr-only" role="status">
+            {t('message.copied')}
           </span>
         ) : null}
       </div>

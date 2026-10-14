@@ -1,5 +1,10 @@
 # Change Log
 
+## Unreleased
+
+- 修复 Webview 上下文菜单的“复制”在未选中文本时无任何效果：现在复制所指行（助手回答或用户提问）的 Markdown，不含思考、工具调用和通知；该行没有可读文本时保持剪贴板不变。
+- Fixes the Webview context menu's Copy doing nothing without a selection: it copies the Markdown of the addressed row (assistant answer or user prompt) without reasoning, tool calls or notices, and leaves the clipboard untouched when that row has no readable text.
+
 ## 0.3.0
 
 - 新增 DSH 风格聚焦布局，统一会话、工具、输入栏、设置和插件界面；设置中可切回经典布局。

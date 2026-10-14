@@ -20,3 +20,5 @@ apps/extension/media/
 
 # Local working notes that must never be committed (see AGENTS.md).
 LOCAL_*.md
+.dsh/agents/
+.github/agents/dsh-maintainer.agent.md
