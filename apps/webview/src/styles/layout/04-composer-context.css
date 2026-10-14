@@ -386,6 +386,48 @@
   min-height: 2.25rem;
 }
 
+@container dsh-composer (max-width: 28rem) {
+  .dsh-composer__command-item {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--dsh-space-1);
+  }
+
+  .dsh-composer__command-item > :is(strong, span) {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow-wrap: anywhere;
+    white-space: normal;
+    line-height: var(--dsh-line-height-body);
+  }
+
+  .dsh-open-file-picker__option {
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: var(--dsh-space-1);
+    row-gap: 2px;
+  }
+
+  .dsh-open-file-picker__option .dsh-open-file-picker__icon {
+    grid-area: 1 / 1;
+    align-self: start;
+    margin-top: 2px;
+  }
+
+  .dsh-open-file-picker__option .dsh-open-file-picker__name {
+    grid-area: 1 / 2;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow-wrap: anywhere;
+    white-space: normal;
+    line-height: var(--dsh-line-height-body);
+  }
+
+  .dsh-open-file-picker__option .dsh-open-file-picker__status {
+    grid-area: 2 / 2;
+  }
+}
+
 /* The keyboard hint is secondary metadata. Give the model, permission and
  * context status the space first in a narrow composer; the hint remains
  * available through the input's accessible description/title. */

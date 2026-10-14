@@ -51,6 +51,7 @@ import { createExportFileSystem } from './export-file-system.js'
 import { sameWorkspacePath } from './workspace-state.js'
 import { EndpointNetwork } from '../backend/endpoint-network.js'
 import { ExternalConnectionAccess } from '../backend/external-connection-access.js'
+import { createCredentialScope } from '../backend/credential-scope.js'
 import { hasLocalWorkspaceAuthority } from '../view/session-workspace-scope.js'
 
 const execFileAsync = promisify(execFile)
@@ -156,6 +157,7 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
   const network = new EndpointNetwork()
   const externalConnection = new ExternalConnectionAccess({
     secrets: context.secrets,
+    credentialScope: createCredentialScope(context.globalStorageUri.fsPath),
     network,
     isTrusted: () => vscode.workspace.isTrusted,
     requestTimeoutMs: () => configuration.read().connection.requestTimeoutMs,

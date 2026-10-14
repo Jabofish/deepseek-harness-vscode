@@ -413,6 +413,50 @@
   background: var(--dsh-danger);
 }
 
+/* Separate the task's identity from its metadata before status and actions
+ * can consume the title's entire width. The floating menu measures its
+ * intrinsic width, so it must not use inline-size containment. */
+.dsh-tasks-popover__main {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  column-gap: var(--dsh-space-1);
+  row-gap: var(--dsh-space-1);
+  text-align: start;
+}
+
+.dsh-tasks-popover__status-dot {
+  grid-area: 1 / 1;
+}
+
+.dsh-tasks-popover__kind {
+  grid-area: 1 / 2;
+}
+
+.dsh-tasks-popover__main > .dsh-tasks-popover__status {
+  grid-area: 1 / 3;
+  margin: 0;
+  padding: 0;
+}
+
+.dsh-tasks-popover__title {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  color: var(--dsh-text);
+  font-size: var(--dsh-font-size-sm);
+  line-height: var(--dsh-line-height-body);
+}
+
+.dsh-tasks-popover__session {
+  grid-column: 1 / -1;
+  grid-row: 3;
+  max-width: 100%;
+}
+
 /* Domain `CheckpointState`: metadata-only | content-ready | stale | corrupt |
  * partial-restore | deleted. `deleted` keeps the neutral dot from the base rule. */
 .dsh-checkpoints-popover__state[data-state='content-ready'] {
@@ -488,6 +532,122 @@
   flex: 1 1 auto;
   gap: 2px;
   text-align: start;
+}
+
+/* Names own the reading width; supporting status follows on another line.
+ * These fixed menus measure intrinsic width, so keep containment off them. */
+.dsh-changes-popover__row-main {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  column-gap: var(--dsh-space-1);
+  row-gap: var(--dsh-space-1);
+}
+
+.dsh-changes-popover__row-main > .dsh-icon {
+  grid-area: 1 / 1;
+  align-self: start;
+  margin-top: 2px;
+}
+
+.dsh-changes-popover__path {
+  grid-area: 1 / 2 / 2 / -1;
+  display: grid;
+  gap: 2px;
+  white-space: normal;
+}
+
+.dsh-changes-popover__path strong {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  font-size: var(--dsh-font-size-xs);
+  font-weight: 600;
+  line-height: var(--dsh-line-height-body);
+}
+
+.dsh-changes-popover__path small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-2xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-changes-popover__status-label {
+  grid-area: 2 / 2;
+}
+
+.dsh-changes-popover__evidence {
+  grid-area: 2 / 3;
+}
+
+.dsh-prompt-templates-popover__row-main {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: var(--dsh-space-1);
+  row-gap: 2px;
+}
+
+.dsh-prompt-templates-popover__row-main > .dsh-icon {
+  grid-area: 1 / 1;
+  align-self: start;
+  margin-top: 2px;
+}
+
+.dsh-prompt-templates-popover__row-main > span {
+  grid-area: 1 / 2;
+  white-space: normal;
+}
+
+.dsh-prompt-templates-popover__row-main strong,
+.dsh-prompt-templates-popover__row-main small,
+.dsh-checkpoints-popover__summary strong {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  line-height: var(--dsh-line-height-body);
+}
+
+.dsh-prompt-templates-popover__row-main em {
+  grid-area: 2 / 2;
+}
+
+.dsh-checkpoints-popover__row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  column-gap: var(--dsh-space-1);
+  row-gap: 2px;
+}
+
+.dsh-checkpoints-popover__state {
+  grid-area: 1 / 1;
+  align-self: start;
+  margin-top: 5px;
+}
+
+.dsh-checkpoints-popover__summary {
+  display: contents;
+}
+
+.dsh-checkpoints-popover__summary strong {
+  grid-area: 1 / 2 / 2 / -1;
+}
+
+.dsh-checkpoints-popover__summary > span {
+  grid-area: 2 / 2 / 3 / -1;
+}
+
+.dsh-checkpoints-popover__summary > .dsh-checkpoints-popover__time {
+  grid-area: 3 / 2;
+}
+
+.dsh-checkpoints-popover__row-actions {
+  grid-area: 3 / 3;
 }
 
 .dsh-prompt-templates-popover__search {

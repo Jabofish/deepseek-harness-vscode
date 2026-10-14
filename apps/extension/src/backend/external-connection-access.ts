@@ -18,6 +18,7 @@ export interface ExternalConnectionAccessDependencies {
     store(key: string, value: string): PromiseLike<void>
     delete(key: string): PromiseLike<void>
   }
+  readonly credentialScope: () => Promise<string>
   readonly network: EndpointNetwork
   readonly isTrusted: () => boolean
   readonly requestTimeoutMs: () => number
@@ -26,7 +27,7 @@ export interface ExternalConnectionAccessDependencies {
   readonly now?: () => number
 }
 
-/** Only the Host holds endpoint grants, launch tokens and cookies. Persistent storage is per origin. */
+/** Only the Host holds credentials; grants are scoped to the executing environment and full origin. */
 export class ExternalConnectionAccess {
   private readonly cookies = new Map<string, string>()
   private readonly closed = new AbortController()
@@ -99,7 +100,7 @@ export class ExternalConnectionAccess {
     await this.dependencies.network.release(endpoint)
     try {
       await this.enqueue(endpoint, async () => {
-        await this.dependencies.secrets.delete(storageKey(endpoint))
+        await this.dependencies.secrets.delete(await this.storageKey(endpoint))
       })
     } catch {
       throw new AppError({
@@ -224,7 +225,7 @@ export class ExternalConnectionAccess {
   private async read(endpoint: BackendEndpoint): Promise<EndpointCredentials | undefined> {
     try {
       await this.writes.get(endpoint.baseUrl)
-      const value = await this.dependencies.secrets.get(storageKey(endpoint))
+      const value = await this.dependencies.secrets.get(await this.storageKey(endpoint))
       if (value === undefined) return undefined
       let parsed: unknown
       try {
@@ -292,8 +293,12 @@ export class ExternalConnectionAccess {
         signal.throwIfAborted()
         if (generation !== this.generation) throw cancelled()
         try {
-          await this.dependencies.secrets.store(storageKey(endpoint), JSON.stringify(value))
+          const key = await waitForSignal(this.storageKey(endpoint), signal)
+          signal.throwIfAborted()
+          if (generation !== this.generation) throw cancelled()
+          await this.dependencies.secrets.store(key, JSON.stringify(value))
         } catch (error) {
+          signal.throwIfAborted()
           throw new AppError({
             code: 'AUTH_REQUIRED',
             message: 'The connection credentials could not be saved securely.',
@@ -322,10 +327,14 @@ export class ExternalConnectionAccess {
     )
     return next
   }
-}
 
-function storageKey(endpoint: BackendEndpoint): string {
-  return `dsh.connection.external.${createHash('sha256').update(endpoint.baseUrl).digest('hex')}`
+  private async storageKey(endpoint: BackendEndpoint): Promise<string> {
+    const scope = await this.dependencies.credentialScope()
+    if (!/^[A-Za-z0-9_-]{1,128}$/u.test(scope)) throw new Error('Invalid execution environment identity.')
+    return `dsh.connection.external.v2.${createHash('sha256')
+      .update(JSON.stringify([scope, endpoint.baseUrl]))
+      .digest('hex')}`
+  }
 }
 
 function denied(): AppError {

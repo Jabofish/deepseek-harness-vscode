@@ -243,7 +243,11 @@ function areMessageImagesEqual(previous: MessageImagesProps, next: MessageImages
 
 function imageRatioStyle(image: MessageImageReference): CSSProperties {
   const ratio = Math.max(0.25, Math.min(4, image.width / image.height))
-  return { aspectRatio: `${ratio}` }
+  const style: CSSProperties & { readonly '--dsh-image-ratio': number } = {
+    aspectRatio: `${ratio}`,
+    '--dsh-image-ratio': ratio,
+  }
+  return style
 }
 
 function without(values: ReadonlySet<string>, value: string): ReadonlySet<string> {

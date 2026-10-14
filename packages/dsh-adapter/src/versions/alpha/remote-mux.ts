@@ -7,7 +7,7 @@ import { AppError, type BackendEndpoint } from '@dsh-vscode/domain'
 
 import type { RetryPolicy } from '../../contracts.js'
 import { cancelled, normalizeTransportError } from '../../transport-errors.js'
-import { closedConnectionError as closedError } from '../../transport-internal.js'
+import { closedConnectionError as closedError, signalIsAborted } from '../../transport-internal.js'
 import { unwrapRpcResultValue } from '../rc6/rpc.js'
 import type { SubagentAddressRegistry } from '../../repositories/shared/subagent-addresses.js'
 
@@ -86,6 +86,7 @@ export class AlphaRemoteMux {
   private connectingSocket: AlphaWebSocket | undefined
   private socketCleanup: (() => void) | undefined
   private connecting: Promise<AlphaWebSocket> | undefined
+  private cancelConnecting: (() => void) | undefined
   private readonly streams = new Map<string, AlphaMuxStream>()
   private closed = false
 
@@ -101,7 +102,7 @@ export class AlphaRemoteMux {
 
     const state: AlphaMuxStream = {
       endpoint,
-      queue: new AsyncQueue<unknown>(RECEIVE_QUEUE_LIMIT),
+      queue: new AsyncQueue<unknown>(RECEIVE_QUEUE_LIMIT, endpoint === 'session/follow'),
       terminal: false,
     }
     const streamId = randomUUID()
@@ -149,6 +150,7 @@ export class AlphaRemoteMux {
         }, this.options.requestTimeoutMs)
       }
       for await (const item of state.queue) {
+        if (this.closed || signalIsAborted(signal)) return
         clearTimeout(firstFrameTimer)
         firstFrameTimer = undefined
         yield item
@@ -167,6 +169,7 @@ export class AlphaRemoteMux {
 
   public close(): Promise<void> {
     this.closed = true
+    this.cancelConnecting?.()
     for (const state of this.streams.values()) {
       state.terminal = true
       state.queue.end()
@@ -241,6 +244,7 @@ export class AlphaRemoteMux {
         socket.removeEventListener('error', handleError)
         socket.removeEventListener('close', handleClose)
         if (this.socketCleanup === removeListeners) this.socketCleanup = undefined
+        if (this.cancelConnecting === cancelConnecting) this.cancelConnecting = undefined
       }
       const failBeforeOpen = (error: unknown): void => {
         if (settled) return
@@ -256,6 +260,8 @@ export class AlphaRemoteMux {
           error instanceof Error ? error : new Error('The alpha DSH handshake failed.', { cause: error }),
         )
       }
+      const cancelConnecting = (): void => failBeforeOpen(closedError())
+      this.cancelConnecting = cancelConnecting
       const handleOpen = (): void => {
         if (settled) return
         if (this.closed) {
@@ -267,6 +273,7 @@ export class AlphaRemoteMux {
         if (this.connectingSocket === socket) this.connectingSocket = undefined
         if (timerState.timer !== undefined) clearTimeout(timerState.timer)
         this.socket = socket
+        if (this.cancelConnecting === cancelConnecting) this.cancelConnecting = undefined
         this.socketCleanup = removeListeners
         resolve(socket)
       }
@@ -343,7 +350,10 @@ export class AlphaRemoteMux {
           this.failSocket(socket, malformedResponse('remote.mux'), cleanup)
           return
         }
-        if (state !== undefined && !state.terminal) state.queue.push(frame.value)
+        if (state !== undefined && !state.terminal && !state.queue.push(frame.value)) {
+          state.terminal = true
+          this.sendCancel(streamId, state)
+        }
         return
       case 'end':
         if (!hasExactKeys(frame, ['type', 'streamId'])) {
@@ -450,10 +460,13 @@ class AsyncQueue<T> implements AsyncIterable<T> {
   private finished = false
   private failure: unknown
 
-  public constructor(private readonly capacity: number) {}
+  public constructor(
+    private readonly capacity: number,
+    private readonly recoverableSequenceGaps: boolean,
+  ) {}
 
-  public push(value: T): void {
-    if (this.finished) return
+  public push(value: T): boolean {
+    if (this.finished) return false
     const waiter = this.waiters.shift()
     if (waiter === undefined) {
       // The stream consumer can await inside its read loop (history recovery
@@ -464,11 +477,26 @@ class AsyncQueue<T> implements AsyncIterable<T> {
       // stream controller's gap detection and history recovery heal, while
       // failing the stream here tore down the mux generation mid-answer and
       // cascaded into reconnect storms that lost whole turns.
-      if (this.values.length >= this.capacity) this.values.length = 0
+      if (this.values.length >= this.capacity) {
+        this.values.length = 0
+        // Control projections, jobs and interaction streams have no durable
+        // sequence recovery. Force a fresh baseline rather than lose updates.
+        if (!this.recoverableSequenceGaps) {
+          this.fail(
+            new AppError({
+              code: 'PROTOCOL_ERROR',
+              message: 'The DSH logical stream exceeded its receive queue limit.',
+              retryable: true,
+            }),
+          )
+          return false
+        }
+      }
       this.values.push(value)
-      return
+      return true
     }
     waiter.resolve({ value, done: false })
+    return true
   }
 
   public end(): void {

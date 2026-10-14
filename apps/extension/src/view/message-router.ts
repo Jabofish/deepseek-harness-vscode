@@ -49,7 +49,7 @@ interface QuestionWaitRoute {
 
 export class WebviewMessageRouter {
   private readonly inFlight = new Map<string, InFlightRequest>()
-  private readonly questionWaits = new Map<string, AbortController>()
+  private readonly questionWaits = new Map<string, Set<AbortController>>()
 
   public constructor(private readonly dependencies: MessageRouterDependencies) {}
 
@@ -151,16 +151,22 @@ export class WebviewMessageRouter {
     for (const operation of this.inFlight.values())
       if (operation.kind === 'request' && operation.phase === 'running') operation.controller.abort()
     this.inFlight.clear()
-    for (const controller of this.questionWaits.values()) controller.abort()
+    for (const controllers of this.questionWaits.values())
+      for (const controller of [...controllers]) controller.abort()
     this.questionWaits.clear()
   }
 
   private beginQuestionWait(sessionId: string, callId: string, request: AbortController): QuestionWaitRoute {
     const key = questionWaitKey(sessionId, callId)
-    const lifetime = this.questionWaits.get(key) ?? new AbortController()
-    this.questionWaits.set(key, lifetime)
-    const linked = new AbortController()
-    const abortLifetime = (): void => linked.abort(lifetime.signal.reason)
+    const lifetimes = this.questionWaits.get(key) ?? new Set<AbortController>()
+    const lifetime = new AbortController()
+    lifetimes.add(lifetime)
+    this.questionWaits.set(key, lifetimes)
+    const abortLifetime = (): void => {
+      request.signal.removeEventListener('abort', abortRequest)
+      lifetimes.delete(lifetime)
+      if (lifetimes.size === 0 && this.questionWaits.get(key) === lifetimes) this.questionWaits.delete(key)
+    }
     const abortRequest = (): void => lifetime.abort(request.signal.reason)
     lifetime.signal.addEventListener('abort', abortLifetime, { once: true })
     request.signal.addEventListener('abort', abortRequest, { once: true })
@@ -169,7 +175,7 @@ export class WebviewMessageRouter {
     return {
       key,
       lifetime,
-      signal: linked.signal,
+      signal: lifetime.signal,
       unlinkRequest: () => request.signal.removeEventListener('abort', abortRequest),
       unlink: () => {
         lifetime.signal.removeEventListener('abort', abortLifetime)
@@ -179,10 +185,17 @@ export class WebviewMessageRouter {
   }
 
   private abortQuestionWait(key: string, expected?: AbortController): void {
-    const controller = this.questionWaits.get(key)
-    if (controller === undefined || (expected !== undefined && controller !== expected)) return
-    this.questionWaits.delete(key)
-    controller.abort()
+    const controllers = this.questionWaits.get(key)
+    if (controllers === undefined) return
+    if (expected !== undefined) {
+      if (!controllers.has(expected)) return
+      controllers.delete(expected)
+      expected.abort()
+    } else {
+      this.questionWaits.delete(key)
+      for (const controller of [...controllers]) controller.abort()
+    }
+    if (controllers.size === 0 && this.questionWaits.get(key) === controllers) this.questionWaits.delete(key)
   }
 
   private async complete(

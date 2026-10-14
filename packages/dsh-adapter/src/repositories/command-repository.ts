@@ -99,6 +99,12 @@ export async function executeSessionConfigCommand(
       message: 'The DSH slash command is not available in this session.',
       retryable: false,
     })
+  if (result.kind === 'error')
+    throw new AppError({
+      code: 'INVALID_CONFIGURATION',
+      message: 'DSH rejected the session configuration command.',
+      retryable: false,
+    })
 }
 
 async function executeCommand(

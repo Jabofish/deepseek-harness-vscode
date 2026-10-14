@@ -52,6 +52,7 @@ import { featureContextItem, featureContextKinds } from './editor-files.js'
 import type { SessionScope } from './session-scope.js'
 import type { PostFeatureEvent } from './host-event-pipeline.js'
 import type { TaskFocusState } from './change-checkpoint-task-assembly.js'
+import { inspectorClientUrl } from './inspector-client-url.js'
 
 export interface FeatureRequestHandlerDependencies {
   readonly getAccountLifecycleHost: () => AccountLifecycleHost | undefined
@@ -115,6 +116,8 @@ export function createFeatureRequestHandler(deps: FeatureRequestHandlerDependenc
       request.type === 'inspector.devtools.copy'
     ) {
       const backend = backendService.requireBackend()
+      if (vscode.env.remoteName !== undefined && vscode.env.uiKind === vscode.UIKind.Web)
+        return { kind: 'inspector.devtools', available: false, outcome: 'unavailable' }
       const target =
         backend.inspectorDevtools === undefined
           ? { available: false as const }
@@ -126,12 +129,21 @@ export function createFeatureRequestHandler(deps: FeatureRequestHandlerDependenc
           retryable: false,
         })
       if (!target.available) return { kind: 'inspector.devtools', available: false, outcome: 'unavailable' }
+      if (request.type === 'inspector.devtools.status')
+        return { kind: 'inspector.devtools', available: true, outcome: 'status' }
+      const frontendUrl = await inspectorClientUrl(target.frontendUrl, signal)
+      if (signal.aborted || backendService.requireBackend() !== backend)
+        throw new AppError({
+          code: 'REQUEST_CANCELLED',
+          message: 'Inspector forwarding was cancelled.',
+          retryable: false,
+        })
       if (request.type === 'inspector.devtools.copy') {
-        await vscode.env.clipboard.writeText(target.frontendUrl)
+        await vscode.env.clipboard.writeText(frontendUrl)
         return { kind: 'inspector.devtools', available: true, outcome: 'copied' }
       }
       if (request.type === 'inspector.devtools.open') {
-        const opened = await vscode.env.openExternal(vscode.Uri.parse(target.frontendUrl))
+        const opened = await vscode.env.openExternal(vscode.Uri.parse(frontendUrl))
         if (!opened)
           throw new AppError({
             code: 'PROCESS_FAILED',

@@ -264,7 +264,8 @@
   background: var(--dsh-surface-soft);
 }
 
-.dsh-app[data-conversation-layout='focused']:has(.dsh-session-switcher__panel--docked) .dsh-conversation {
+.dsh-app[data-conversation-layout='focused']:has(.dsh-session-switcher__panel--docked)
+  :is(.dsh-conversation, .dsh-app__notices) {
   width: calc(100% - 264px);
   margin-inline-start: 264px;
 }
@@ -560,6 +561,12 @@
 .dsh-app[data-conversation-layout='focused'] .dsh-settings__body {
   gap: 24px;
   padding: 20px;
+}
+
+@media (max-width: 24rem) {
+  .dsh-app[data-conversation-layout='focused'] :is(.dsh-settings__header, .dsh-settings__body) {
+    padding: 12px;
+  }
 }
 
 @media (min-width: 52.001rem) {

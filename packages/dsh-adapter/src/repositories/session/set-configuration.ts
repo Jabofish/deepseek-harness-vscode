@@ -15,7 +15,76 @@ export interface SessionConfigurationDependencies {
     ((sessionId: string, command: string, signal?: AbortSignal) => Promise<void>) | undefined
   readonly get: (sessionId: string, signal?: AbortSignal) => Promise<SessionDetail>
 }
-export async function setSessionConfiguration(
+// One transport belongs to one backend connection. Independent sessions and
+// replacement backends must not share a transaction lock.
+const configurationTails = new WeakMap<DshTransport, Map<string, Promise<void>>>()
+
+export function setSessionConfiguration(
+  deps: SessionConfigurationDependencies,
+  sessionId: string,
+  configuration: AgentConfiguration,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (signal?.aborted === true) return Promise.reject(cancelledConfiguration())
+  const tails = configurationTails.get(deps.transport) ?? new Map<string, Promise<void>>()
+  configurationTails.set(deps.transport, tails)
+  const preceding = tails.get(sessionId) ?? Promise.resolve()
+  let started = false
+  const operation = preceding.then(async () => {
+    started = true
+    if (signal?.aborted === true) throw cancelledConfiguration()
+    await applySessionConfiguration(deps, sessionId, configuration, signal)
+  })
+  const tail = operation.then(
+    () => undefined,
+    () => undefined,
+  )
+  tails.set(sessionId, tail)
+  void tail.then(() => {
+    if (tails.get(sessionId) === tail) tails.delete(sessionId)
+    if (tails.size === 0 && configurationTails.get(deps.transport) === tails)
+      configurationTails.delete(deps.transport)
+  })
+  // A queued caller can cancel immediately. Active transactions finish their
+  // compensation before reporting an outcome, including restoration failures.
+  return rejectConfigurationWhileQueued(operation, signal, () => started)
+}
+
+function cancelledConfiguration(): AppError {
+  return new AppError({
+    code: 'REQUEST_CANCELLED',
+    message: 'The session configuration operation was cancelled.',
+    retryable: false,
+  })
+}
+
+function rejectConfigurationWhileQueued(
+  operation: Promise<void>,
+  signal: AbortSignal | undefined,
+  started: () => boolean,
+): Promise<void> {
+  if (signal === undefined) return operation
+  return new Promise<void>((resolve, reject) => {
+    const cleanup = (): void => signal.removeEventListener('abort', onAbort)
+    const onAbort = (): void => {
+      cleanup()
+      if (!started()) reject(cancelledConfiguration())
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    void operation.then(
+      () => {
+        cleanup()
+        resolve()
+      },
+      (error: unknown) => {
+        cleanup()
+        reject(error instanceof Error ? error : new Error(String(error)))
+      },
+    )
+  })
+}
+
+async function applySessionConfiguration(
   deps: SessionConfigurationDependencies,
   sessionId: string,
   configuration: AgentConfiguration,
@@ -38,6 +107,7 @@ export async function setSessionConfiguration(
       retryable: false,
     })
   const current = await deps.get(sessionId, signal)
+  if (signal?.aborted === true) throw cancelledConfiguration()
   const currentPermissionValue = current.configuration.permissionPreset.trim()
   const currentPermission =
     current.configuration.permissionPresetKnown === false ? undefined : currentPermissionValue
@@ -102,9 +172,41 @@ export async function setSessionConfiguration(
     (previousModel.providerId !== configuration.model.providerId ||
       previousModel.modelId !== configuration.model.modelId ||
       previousModel.reasoningLevel !== configuration.model.reasoningLevel)
+  const anotherSettingChanged =
+    modelChanged ||
+    requestedPermission !== currentPermissionValue ||
+    (requestedPreset !== '' && requestedPreset !== currentPreset)
   const rollback: Array<() => Promise<void>> = []
-  const apply = async (forward: () => Promise<void>, reverse: () => Promise<void>): Promise<void> => {
-    await forward()
+  const apply = async (
+    forward: () => Promise<void>,
+    reverse: () => Promise<void>,
+    observe: (detail: SessionDetail) => boolean | undefined,
+  ): Promise<void> => {
+    if (signal?.aborted === true) throw cancelledConfiguration()
+    try {
+      await forward()
+    } catch (error) {
+      // A transport failure can lose the receipt of an already committed
+      // mutation. Never resend it: read the authoritative state without the
+      // cancelled signal, and compensate only an observed requested value.
+      if (
+        !(error instanceof AppError) ||
+        ['REQUEST_CANCELLED', 'BACKEND_UNREACHABLE', 'PROTOCOL_ERROR', 'INTERNAL_ERROR'].includes(error.code)
+      ) {
+        try {
+          const applied = observe(await deps.get(sessionId))
+          if (applied === undefined) throw unavailable('confirming the failed configuration mutation')
+          if (applied) rollback.unshift(reverse)
+        } catch (observationError) {
+          const failure =
+            observationError instanceof Error
+              ? observationError
+              : new Error('The DSH configuration state could not be confirmed.')
+          rollback.unshift(() => Promise.reject(failure))
+        }
+      }
+      throw error
+    }
     rollback.unshift(reverse)
   }
   const selectPreset = async (preset: string, operationSignal?: AbortSignal): Promise<void> => {
@@ -144,6 +246,7 @@ export async function setSessionConfiguration(
       await apply(
         () => selectPreset(requestedPreset, signal),
         () => (currentPreset === '' ? Promise.resolve() : selectPreset(currentPreset)),
+        (detail) => observedChange(currentPreset, detail.configuration.preset, requestedPreset),
       )
     if (permissionChanged)
       await apply(
@@ -152,10 +255,16 @@ export async function setSessionConfiguration(
           currentPermission !== undefined && isPermissionPresetId(currentPermission)
             ? command(`/permission ${currentPermission}`)
             : Promise.reject(unavailable('restoring an unknown permission setting')),
+        (detail) =>
+          detail.configuration.permissionPresetKnown === false || currentPermission === undefined
+            ? undefined
+            : observedChange(currentPermission, detail.configuration.permissionPreset, requestedPermission),
       )
+    // A full snapshot carries the unobserved plan display fallback during
+    // unrelated edits. Preserve explicit default/off writes when plan is the only edit.
     if (
-      current.configuration.planModeKnown === false ||
-      configuration.planMode !== current.configuration.planMode
+      configuration.planMode !== current.configuration.planMode ||
+      (current.configuration.planModeKnown === false && !anotherSettingChanged)
     )
       await apply(
         () => command(configuration.planMode ? '/plan' : '/plan off', signal),
@@ -163,6 +272,14 @@ export async function setSessionConfiguration(
           current.configuration.planModeKnown === false
             ? Promise.reject(unavailable('restoring an unknown plan setting'))
             : command(current.configuration.planMode ? '/plan' : '/plan off'),
+        (detail) =>
+          current.configuration.planModeKnown === false || detail.configuration.planModeKnown === false
+            ? undefined
+            : observedChange(
+                current.configuration.planMode,
+                detail.configuration.planMode,
+                configuration.planMode,
+              ),
       )
     if (modelChanged)
       await apply(
@@ -170,7 +287,13 @@ export async function setSessionConfiguration(
         () =>
           previousModel.providerId.trim() !== '' && previousModel.modelId.trim() !== ''
             ? selectModel(previousModel)
-            : Promise.resolve(),
+            : Promise.reject(unavailable('restoring an unknown model selection')),
+        (detail) =>
+          sameModelSelection(detail.configuration.model, configuration.model)
+            ? true
+            : sameModelSelection(detail.configuration.model, previousModel)
+              ? false
+              : undefined,
       )
   } catch (error) {
     const rollbackErrors: unknown[] = []
@@ -190,4 +313,20 @@ export async function setSessionConfiguration(
       })
     throw error
   }
+}
+
+function observedChange<T extends string | boolean>(
+  before: T,
+  observed: T,
+  requested: T,
+): boolean | undefined {
+  return observed === requested ? true : observed === before ? false : undefined
+}
+
+function sameModelSelection(left: AgentConfiguration['model'], right: AgentConfiguration['model']): boolean {
+  return (
+    left.providerId === right.providerId &&
+    left.modelId === right.modelId &&
+    left.reasoningLevel === right.reasoningLevel
+  )
 }

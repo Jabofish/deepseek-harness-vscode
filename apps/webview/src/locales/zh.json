@@ -1682,5 +1682,10 @@
   "stats.toolTime": "工具耗时",
   "stats.uncachedInput": "未缓存输入 Token",
   "settings.viewLoadFailed": "设置暂时无法打开，请重试。",
-  "settings.viewRetry": "重试"
+  "settings.viewRetry": "重试",
+  "markdown.codeBlock": "代码块：{language}",
+  "markdown.plainText": "文本",
+  "markdown.table": "表格",
+  "markdown.codeLines": "{count} 行",
+  "markdown.tableDimensions": "{rows} 行 · {columns} 列"
 }

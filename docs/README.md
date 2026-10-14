@@ -1,6 +1,6 @@
 # 开发者文档
 
-本目录只描述**当前有效的规范、边界和验收条件**。一次实现经过了什么、某次门禁的输出和发布流水属于 PR、测试结果或更新日志，不追加到规范正文。修改规范时直接修订原规则，并检查被它取代的表述。
+本目录描述**当前有效的架构、契约、功能边界和验收条件**。
 
 ## 唯一职责
 
@@ -8,24 +8,25 @@
 | -------------------------------------------- | ------------------------------------------------------------------------------------------ |
 | [architecture.md](architecture.md)           | 分层、连接与进程所有权、Extension Host/Webview 协议、安全边界及其决策理由                  |
 | [dsh-contract.md](dsh-contract.md)           | DSH 版本身份、上游来源、wire 差异、启动参数与兼容策略；开发文档中唯一列出 DSH 版本号的文件 |
-| [capability-matrix.md](capability-matrix.md) | 每项能力的当前范围、尚缺的验收条件、证据入口和状态                                         |
+| [capability-matrix.md](capability-matrix.md) | 按功能分组列出当前范围、已有证据、验收缺口和状态                                           |
 | [ui.md](ui.md)                               | Webview 的颜色、排版、布局、动效及可访问性规则                                             |
 | [quality.md](quality.md)                     | 开发环境、垂直切片、测试、联调、PR 和发布门禁                                              |
 
-[AGENTS.md](../AGENTS.md) 是实现代理必须先遵守的短规则；[CONTRIBUTING.md](../CONTRIBUTING.md) 是 GitHub 贡献入口。用户说明分别见 [README.md](../README.md)、[README.zh-CN.md](../README.zh-CN.md) 和 Marketplace 使用的 [扩展说明](../apps/extension/README.md)。用户可见的版本变化只写入 [扩展更新日志](../apps/extension/CHANGELOG.md)；旧决定与旧实现可从 Git 历史追溯，无需在当前规范中复制一份。
+[AGENTS.md](../AGENTS.md) 是实现代理的操作规则；[CONTRIBUTING.md](../CONTRIBUTING.md) 是 GitHub 贡献入口。用户说明分别见 [README.md](../README.md)、[README.zh-CN.md](../README.zh-CN.md) 和 Marketplace 使用的 [扩展说明](../apps/extension/README.md)。发布内容见[扩展更新日志](../apps/extension/CHANGELOG.md)。
 
-## 修改时更新哪里
+## 文档范围
 
-| 改动                             | 必须核对的文档                                                       |
-| -------------------------------- | -------------------------------------------------------------------- |
-| 上游 DSH 契约或适配器            | `dsh-contract.md`；能力验收或证据变化时再更新 `capability-matrix.md` |
-| 跨层、进程、文件、凭据或消息边界 | `architecture.md`；涉及 UI 约束时再核对 `ui.md`                      |
-| 能力实现或验证结果               | 仅更新矩阵中对应 ID 的当前事实与证据入口；用户可见变化另写更新日志   |
-| 工作流、测试或发布要求           | `quality.md`；代理强制规则发生变化时同步 `AGENTS.md`                 |
-| 用户操作、安装或支持信息         | 对应的用户入口；英文与中文 README 保持语义一致                       |
+| 主题                             | 事实来源                                     |
+| -------------------------------- | -------------------------------------------- |
+| 上游 DSH 契约或适配器            | `dsh-contract.md`                            |
+| 跨层、进程、文件、凭据或消息边界 | `architecture.md`                            |
+| UI 布局与可访问性                | `ui.md`                                      |
+| 能力范围、完成度与验证缺口       | `capability-matrix.md`                       |
+| 工作流、测试或发布要求           | `quality.md`；实现代理操作规则见 `AGENTS.md` |
+| 用户操作、安装或支持信息         | 英文、中文 README 与 Marketplace 扩展说明    |
 
-现有文档中的重要条件迁移时保留为可执行规则。每项规则应写明**适用范围、必须或禁止的行为、失败时的行为、验证入口**；只记录已经核对的事实。`DONE` 需要代码、自动测试以及该能力要求的真实 DSH/VS Code 验证，不能用构建成功代替现场证据。无法确认的能力维持 `PARTIAL`。
+能力矩阵中的 `DONE` 表示代码、适用的自动测试以及该能力要求的真实 DSH/VS Code 验证均有证据。`PARTIAL` 表示仍缺矩阵列出的验收条件；构建成功只证明构建结果。
 
 ## 防退化门禁
 
-`pnpm docs:check` 检查本地链接、文档结构、能力 ID、版本事实来源及安装默认与代码的一致性，并作为 `pnpm check` 的一部分运行。自动检查不能替代契约审阅：改上游行为时仍须核对目标 tag 的源码和脱敏 fixture；改用户行为时须核对英文、中文与 Marketplace 文案；改完成状态时须给出可复现的证据入口。
+`pnpm docs:check` 检查本地链接、文档结构、能力 ID、版本事实来源及安装默认与代码的一致性，并作为 `pnpm check` 的一部分运行。上游契约以目标 tag 的源码和脱敏 fixture 为依据；英文、中文与 Marketplace 文案描述相同的产品行为。

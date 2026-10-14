@@ -5,6 +5,43 @@
   justify-content: space-between;
 }
 
+.dsh-goal-bar {
+  container: dsh-goal / inline-size;
+}
+
+.dsh-goal-bar__title {
+  flex: 1 1 0;
+}
+
+.dsh-goal-bar__actions {
+  flex: 0 0 auto;
+}
+
+/* The actions keep their hit areas when the bar sits in a narrow rail,
+ * including a narrow rail inside a wide editor window. */
+@container dsh-goal (max-width: 22rem) {
+  .dsh-goal-bar__content {
+    flex-wrap: wrap;
+    row-gap: var(--dsh-space-2);
+  }
+
+  .dsh-goal-bar__phase {
+    flex: 0 1 auto;
+    max-width: calc(100% - 2rem);
+    overflow-wrap: break-word;
+  }
+
+  .dsh-goal-bar__blocked,
+  .dsh-goal-bar__actions {
+    flex: 0 0 100%;
+  }
+
+  .dsh-goal-bar__actions {
+    justify-content: flex-end;
+    gap: var(--dsh-space-2);
+  }
+}
+
 /* Goal titles, approval subjects and question prompts come from the model, so any of them can be
  * one unbroken token longer than the panel. A nowrap title keeps the whole string as its
  * min-content width, and a flex item's min-content width propagates through every content-sized

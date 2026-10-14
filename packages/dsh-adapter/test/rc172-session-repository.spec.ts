@@ -230,18 +230,36 @@ describe('Rc172SessionRepository.initializeDefaultModel', () => {
         return Promise.resolve({ ok: true, value: 'minimal' })
       }),
     )
-    vi.spyOn(cancelled.repository, 'get').mockResolvedValue(current)
+    const cancelledRead = vi.spyOn(cancelled.repository, 'get').mockResolvedValue(current)
     controller.abort()
 
     await expect(
       cancelled.repository.setConfiguration('session-1', configuration, controller.signal),
     ).rejects.toMatchObject({
-      name: 'AbortError',
+      code: 'REQUEST_CANCELLED',
+      retryable: false,
     })
-    expect(cancelled.remoteRequest).toHaveBeenCalledExactlyOnceWith(
+    expect(cancelledRead).not.toHaveBeenCalled()
+    expect(cancelled.request).not.toHaveBeenCalled()
+    expect(cancelled.remoteRequest).not.toHaveBeenCalled()
+
+    const inFlightController = new AbortController()
+    const inFlight = repository(
+      vi.fn((_endpoint: string, _args: Readonly<Record<string, unknown>>, signal?: AbortSignal) => {
+        inFlightController.abort()
+        signal?.throwIfAborted()
+        return Promise.resolve({ ok: true, value: 'minimal' })
+      }),
+    )
+    vi.spyOn(inFlight.repository, 'get').mockResolvedValue(current)
+    await expect(
+      inFlight.repository.setConfiguration('session-1', configuration, inFlightController.signal),
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect(inFlight.request).not.toHaveBeenCalled()
+    expect(inFlight.remoteRequest).toHaveBeenCalledExactlyOnceWith(
       'agentPresets/select',
       { agentId: 'session-1', agentPreset: 'minimal' },
-      controller.signal,
+      inFlightController.signal,
     )
   })
 

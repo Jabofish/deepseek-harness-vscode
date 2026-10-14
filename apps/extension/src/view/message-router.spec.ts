@@ -648,6 +648,113 @@ describe('WebviewMessageRouter command diagnostics', () => {
 })
 
 describe('WebviewMessageRouter timed question wait ownership', () => {
+  it('releases a refused attach response without cancelling a successfully delivered sibling', async () => {
+    const attachedSignals: AbortSignal[] = []
+    const router = new WebviewMessageRouter({
+      postMessage: (message) => Promise.resolve(!('requestId' in message && message.requestId === 'refused')),
+      handleFeatureRequest: (_request, signal) => {
+        attachedSignals.push(signal)
+        return Promise.resolve({ kind: 'question.wait', remainingMs: 2_000 })
+      },
+    })
+    await router.handle({
+      protocolVersion: 1,
+      message: {
+        type: 'user-question.wait.attach',
+        requestId: 'held',
+        payload: { sessionId: 's', callId: 'c' },
+      },
+    })
+    await router.handle({
+      protocolVersion: 1,
+      message: {
+        type: 'user-question.wait.attach',
+        requestId: 'refused',
+        payload: { sessionId: 's', callId: 'c' },
+      },
+    })
+    expect(attachedSignals[0]?.aborted).toBe(false)
+    expect(attachedSignals[1]?.aborted).toBe(true)
+    router.cancelAll()
+    expect(attachedSignals[0]?.aborted).toBe(true)
+  })
+
+  it('cancels only the requested pending attach while another UI holds the same question', async () => {
+    const attachedSignals: AbortSignal[] = []
+    let rejectPending!: (reason: unknown) => void
+    const posted: unknown[] = []
+    const router = new WebviewMessageRouter({
+      postMessage: (message) => {
+        posted.push(message)
+        return Promise.resolve(true)
+      },
+      handleFeatureRequest: (request, signal) => {
+        if (request.type !== 'user-question.wait.attach') return Promise.resolve({ kind: 'empty' })
+        attachedSignals.push(signal)
+        if (request.requestId === 'attach-pending')
+          return new Promise((_resolve, reject) => {
+            rejectPending = reject
+            signal.addEventListener(
+              'abort',
+              () =>
+                reject(
+                  new AppError({
+                    code: 'REQUEST_CANCELLED',
+                    message: 'Cancelled',
+                    retryable: false,
+                  }),
+                ),
+              { once: true },
+            )
+          })
+        return Promise.resolve({ kind: 'question.wait', remainingMs: 2_000 })
+      },
+    })
+    const pending = router.handle({
+      protocolVersion: 1,
+      message: {
+        type: 'user-question.wait.attach',
+        requestId: 'attach-pending',
+        payload: { sessionId: 's', callId: 'c' },
+      },
+    })
+    await router.handle({
+      protocolVersion: 1,
+      message: {
+        type: 'user-question.wait.attach',
+        requestId: 'attach-held',
+        payload: { sessionId: 's', callId: 'c' },
+      },
+    })
+    try {
+      await router.handle({
+        protocolVersion: 1,
+        message: {
+          type: 'feature.request.cancel',
+          requestId: 'cancel-one',
+          payload: { targetRequestId: 'attach-pending' },
+        },
+      })
+      await pending
+      expect(posted).toContainEqual(expect.objectContaining({ requestId: 'attach-pending', ok: false }))
+      expect(attachedSignals[0]?.aborted).toBe(true)
+      expect(attachedSignals[1]?.aborted).toBe(false)
+      await router.handle({
+        protocolVersion: 1,
+        message: {
+          type: 'user-question.wait.release',
+          requestId: 'release-all',
+          payload: { sessionId: 's', callId: 'c' },
+        },
+      })
+      expect(attachedSignals[1]?.aborted).toBe(true)
+    } finally {
+      rejectPending(new AppError({ code: 'REQUEST_CANCELLED', message: 'Disposed', retryable: false }))
+      router.cancelAll()
+      await pending
+    }
+  })
+
   it('keeps the remote claim alive after the attach response and releases it on route or view disposal', async () => {
     const attachedSignals: AbortSignal[] = []
     const router = new WebviewMessageRouter({

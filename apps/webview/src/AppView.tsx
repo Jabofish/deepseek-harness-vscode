@@ -162,6 +162,14 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
     readonly nodeId: string
     readonly requestId: string
   }>()
+  const showWelcome =
+    backend.kind === 'connected' &&
+    active === undefined &&
+    state.pendingSession === undefined &&
+    state.sessions.length === 0 &&
+    state.workspaces.length > 0 &&
+    welcomeVisible
+  const showConnectionAlert = connectionMessage !== undefined && connectionKey !== dismissedConnection
   return (
     <AppErrorBoundary>
       <main
@@ -200,79 +208,103 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
           onOpenLinkedSession={scheduleOnOpenLinkedSession}
           connectionEpoch={state.connectionEpoch ?? 0}
         />
-        {runtimeUpdateVisible ? (
-          <div className="dsh-app__runtime-update dsh-toast" role="status">
-            <div className="dsh-app__runtime-update-copy">
-              <strong>{t('runtime.updateAvailable')}</strong>
-              <span>
-                {t('runtime.updateAvailableDetail', {
-                  version: state.dshUpdate?.latestVersion ?? '—',
-                })}
-              </span>
-              <div className="dsh-app__runtime-update-actions">
+        {runtimeUpdateVisible || error !== undefined || showConnectionAlert || showWelcome ? (
+          <div className="dsh-app__notices">
+            {runtimeUpdateVisible ? (
+              <div className="dsh-app__runtime-update dsh-toast" role="status">
+                <div className="dsh-app__runtime-update-copy">
+                  <strong>{t('runtime.updateAvailable')}</strong>
+                  <span>
+                    {t('runtime.updateAvailableDetail', {
+                      version: state.dshUpdate?.latestVersion ?? '—',
+                    })}
+                  </span>
+                  <div className="dsh-app__runtime-update-actions">
+                    <button
+                      className="dsh-button dsh-button--secondary dsh-button--compact"
+                      type="button"
+                      onClick={() => store.setDrawer('settings')}
+                    >
+                      {t('runtime.openSettings')}
+                    </button>
+                  </div>
+                </div>
                 <button
-                  className="dsh-button dsh-button--secondary dsh-button--compact"
+                  className="dsh-icon-button dsh-app__runtime-update-dismiss"
                   type="button"
-                  onClick={() => store.setDrawer('settings')}
+                  aria-label={t('runtime.dismissUpdate')}
+                  title={t('runtime.dismissUpdate')}
+                  onClick={() => {
+                    setDismissedRuntimeUpdateVersion(runtimeUpdateVersion)
+                    rememberRuntimeUpdateDismissal(runtimeUpdateVersion)
+                  }}
                 >
-                  {t('runtime.openSettings')}
+                  <Icon name="close" />
                 </button>
               </div>
-            </div>
-            <button
-              className="dsh-icon-button dsh-app__runtime-update-dismiss"
-              type="button"
-              aria-label={t('runtime.dismissUpdate')}
-              title={t('runtime.dismissUpdate')}
-              onClick={() => {
-                setDismissedRuntimeUpdateVersion(runtimeUpdateVersion)
-                rememberRuntimeUpdateDismissal(runtimeUpdateVersion)
-              }}
-            >
-              <Icon name="close" />
-            </button>
+            ) : null}
+            {error === undefined ? null : (
+              <div key={error} className="dsh-app__error dsh-toast" role="alert" aria-live="assertive">
+                <span>{error}</span>
+                <button
+                  className="dsh-icon-button"
+                  type="button"
+                  aria-label={t('app.dismissError')}
+                  title={t('app.dismissError')}
+                  onClick={() => setError(undefined)}
+                >
+                  <Icon name="close" />
+                </button>
+              </div>
+            )}
+            {!showConnectionAlert ? null : (
+              <div
+                className={`dsh-app__connection-alert dsh-toast${compatibilityWarning === undefined ? '' : ' dsh-app__connection-alert--warning'}`}
+                role="alert"
+              >
+                <div>
+                  <strong>
+                    {compatibilityWarning !== undefined
+                      ? t('app.compatibilityWarning')
+                      : backend.kind === 'port-conflict'
+                        ? t('app.portConflict')
+                        : t('app.connectionFailed')}
+                  </strong>
+                  <span>{connectionMessage}</span>
+                </div>
+                <button
+                  className="dsh-icon-button"
+                  type="button"
+                  aria-label={t('app.dismissConnectionError')}
+                  title={t('app.dismissConnectionError')}
+                  onClick={() => setDismissedConnection(connectionKey)}
+                >
+                  <Icon name="close" />
+                </button>
+              </div>
+            )}
+            {showWelcome ? (
+              <div className="dsh-welcome-notice dsh-toast" role="status">
+                <div>
+                  <strong>{t('welcome.title')}</strong>
+                  <span>{t('welcome.description')}</span>
+                </div>
+                <button
+                  className="dsh-icon-button"
+                  type="button"
+                  aria-label={t('welcome.dismiss')}
+                  title={t('welcome.dismiss')}
+                  onClick={() => {
+                    setWelcomeVisible(false)
+                    rememberWelcomeDismissal()
+                  }}
+                >
+                  <Icon name="close" />
+                </button>
+              </div>
+            ) : null}
           </div>
         ) : null}
-        {error === undefined ? null : (
-          <div key={error} className="dsh-app__error dsh-toast" role="alert" aria-live="assertive">
-            <span>{error}</span>
-            <button
-              className="dsh-icon-button"
-              type="button"
-              aria-label={t('app.dismissError')}
-              title={t('app.dismissError')}
-              onClick={() => setError(undefined)}
-            >
-              <Icon name="close" />
-            </button>
-          </div>
-        )}
-        {connectionMessage === undefined || connectionKey === dismissedConnection ? null : (
-          <div
-            className={`dsh-app__connection-alert dsh-toast${compatibilityWarning === undefined ? '' : ' dsh-app__connection-alert--warning'}`}
-            role="alert"
-          >
-            <div>
-              <strong>
-                {compatibilityWarning !== undefined
-                  ? t('app.compatibilityWarning')
-                  : backend.kind === 'port-conflict'
-                    ? t('app.portConflict')
-                    : t('app.connectionFailed')}
-              </strong>
-              <span>{connectionMessage}</span>
-            </div>
-            <button
-              className="dsh-icon-button"
-              type="button"
-              aria-label={t('app.dismissConnectionError')}
-              title={t('app.dismissConnectionError')}
-              onClick={() => setDismissedConnection(connectionKey)}
-            >
-              <Icon name="close" />
-            </button>
-          </div>
-        )}
         <section className="dsh-app__body">
           {backend.kind === 'runtime-missing' ? (
             <RuntimeMissingView
@@ -287,30 +319,6 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
             />
           ) : (
             <>
-              {backend.kind === 'connected' &&
-              active === undefined &&
-              state.sessions.length === 0 &&
-              state.workspaces.length > 0 &&
-              welcomeVisible ? (
-                <div className="dsh-welcome-notice dsh-toast" role="status">
-                  <div>
-                    <strong>{t('welcome.title')}</strong>
-                    <span>{t('welcome.description')}</span>
-                  </div>
-                  <button
-                    className="dsh-icon-button"
-                    type="button"
-                    aria-label={t('welcome.dismiss')}
-                    title={t('welcome.dismiss')}
-                    onClick={() => {
-                      setWelcomeVisible(false)
-                      rememberWelcomeDismissal()
-                    }}
-                  >
-                    <Icon name="close" />
-                  </button>
-                </div>
-              ) : null}
               {active === undefined && state.pendingSession !== undefined ? (
                 <section
                   className="dsh-conversation"

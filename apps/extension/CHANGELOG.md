@@ -5,6 +5,17 @@
 - 修复 Webview 上下文菜单的“复制”在未选中文本时无任何效果：现在复制所指行（助手回答或用户提问）的 Markdown，不含思考、工具调用和通知；该行没有可读文本时保持剪贴板不变。
 - Fixes the Webview context menu's Copy doing nothing without a selection: it copies the Markdown of the addressed row (assistant answer or user prompt) without reasoning, tool calls or notices, and leaves the clipboard untouched when that row has no readable text.
 
+## 0.3.1
+
+- 修复远程工作区的凭据作用域、附件文件系统与 Inspector 转发边界，避免不同 SSH / 容器环境复用授权。
+- Fixes credential scopes, attachment filesystem access and Inspector forwarding in remote workspaces, keeping grants isolated between SSH and container environments.
+
+- 改善聚焦布局和窄侧栏中的通知、导航、设置、菜单、图片、代码及表格展示，修复遮挡、裁切和多余滚动。
+- Improves focused and narrow-sidebar layouts for notices, navigation, Settings, menus, images, code and tables, with fixes for overlap, clipping and unnecessary scrolling.
+
+- 修复并发取消互相干扰、冲突答复被误报成功及迟到输出；加固会话配置回滚、Goal 状态和重连恢复。
+- Fixes cancellation leaking across concurrent requests, conflicting answers reported as successful and late output; hardens session configuration rollback, Goal state and reconnect recovery.
+
 ## 0.3.0
 
 - 新增 DSH 风格聚焦布局，统一会话、工具、输入栏、设置和插件界面；设置中可切回经典布局。
@@ -13,8 +24,8 @@
 - 改善模型搜索、目录滚动和会话导航，修复过程折叠、长结果、统计及窄窗口布局。
 - Improves model search, catalog scrolling and session navigation, with fixes for process disclosures, long results, statistics and narrow views.
 
-- 支持自定义远程 HTTP(S) 连接：原生授权、按地址隔离凭据、严格 TLS 校验；远程 HTTP 需明确确认。
-- Adds custom remote HTTP(S) connections with native authorization, per-origin credentials and strict TLS verification; remote HTTP requires explicit confirmation.
+- 支持自定义远程 HTTP(S) 连接：原生授权、按地址隔离凭据、严格 TLS 校验；远程 HTTP 需明确确认。见 [PR #2](https://github.com/Jabofish/deepseek-harness-vscode/pull/2)，感谢 [ggeorgovassilis](https://github.com/ggeorgovassilis) 的贡献。
+- Adds custom remote HTTP(S) connections with native authorization, per-origin credentials and strict TLS verification; remote HTTP requires explicit confirmation. See [PR #2](https://github.com/Jabofish/deepseek-harness-vscode/pull/2); thanks to [ggeorgovassilis](https://github.com/ggeorgovassilis).
 
 - 适配 DSH `0.2.1-alpha.2`，改善子代理、旧会话提示和插件安装恢复；默认引导安装保持稳定 rc.2。
 - Adds DSH `0.2.1-alpha.2` support with improved subagents, legacy-session guidance and plugin install recovery; guided installation retains stable rc.2.

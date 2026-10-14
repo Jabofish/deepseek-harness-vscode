@@ -23,7 +23,7 @@ domain         -> nothing platform-specific
 | Webview Protocol        | 双向消息的严格 schema 与安全 DTO                    | Secret、传输实现和上游原始类型       |
 | Timeline / UI / Webview | 事件归并、可见窗口和交互展示                        | 直接访问 DSH、Node 或工作区文件      |
 
-新增 DSH 版本只在 `packages/dsh-adapter/src/versions/<version>/` 建立身份及已核对的增量；新增发现来源只产出候选，Probe 负责协议验证；新 UI 按能力分组，通过用例和协议访问 Host。未知工具退回通用卡，不按工具名猜测执行或审批状态。
+DSH 版本身份及版本间契约差异位于 `packages/dsh-adapter/src/versions/<version>/`；发现来源只产出候选，Probe 负责协议验证；UI 按能力分组，通过用例和协议访问 Host。未知工具退回通用卡，不按工具名猜测执行或审批状态。
 
 ## 连接与进程
 
@@ -36,13 +36,15 @@ domain         -> nothing platform-specific
 
 PID 不证明所有权。发现先于启动、单个 in-flight 连接和显式句柄所有权同时保护用户现有 DSH。连接、订阅、socket、timer 和子进程在成功、失败、取消、超时与停用路径均须释放。
 
-远程连接仅由原生确认的 `custom` 入口授权，自动发现仍限 loopback。凭据按 origin 隔离存入 SecretStorage；失效认证只在连接前刷新，不重放业务写入。HTTP/WebSocket 禁止跳转并固定经过校验的 DNS 地址，HTTPS 强制证书与主机名校验；远程 HTTP 要求明文确认，地址变化后重新授权。远程目标拒绝元数据、环回、链路本地与非单播地址。取消、超时或凭据变更后清理旧连接；远程端点不授予本地文件及 Inspector 权限。
+远程连接仅由原生确认的 `custom` 入口授权，自动发现限 loopback。凭据按执行环境身份和完整 origin 隔离存入 SecretStorage；执行环境身份在 Host 的扩展存储中原子创建，不进入 Webview 或日志，不能用只区分连接类型的 `remoteName` 代替。缺少当前执行环境作用域的授权记录不可用于连接。失效认证只在连接前刷新，不重放业务写入。HTTP/WebSocket 禁止跳转并固定经过校验的 DNS 地址，HTTPS 强制证书与主机名校验；远程 HTTP 要求明文确认，地址变化后重新授权。远程目标拒绝元数据、环回、链路本地与非单播地址。取消、超时或凭据变更后清理旧连接；远程端点不授予本地文件及 Inspector 权限。
 
 Remote SSH、WSL 和 Dev Container 中，Extension Host 与 DSH 位于工作区一侧，Webview 显示在本地；PATH、全局包、进程、端口和文件操作均以 **Extension Host 所在平台**为准。已知实例的持久提示只保存经验证的 loopback port，不把完整 endpoint 或凭据写入工作区状态；读取旧格式时也必须重新校验 loopback。
 
+原生附件选择保留完整 URI，并通过 `workspace.fs` 读取相应文件系统；客户端路径不能交给远端 Node 文件 API。桌面远程 Inspector 只转发已验证的 loopback Worker，原生转发结果必须仍是客户端 loopback，保持固定 CDP 路径；地址仅在 Host 的打开/复制动作使用。状态查询不建立转发，取消或连接更换后不执行客户端动作；浏览器客户端明确返回原生 DevTools 不可用。
+
 ## Host 与 Webview 消息
 
-`packages/webview-protocol/src/schemas.ts` 是请求名和字段的代码事实来源。所有消息经严格 discriminated union 校验后才能产生副作用；新增消息同时更新 schema、类型、Host router、ProtocolClient 测试。禁止通用 `{ action: string, payload: any }`。Webview 请求有唯一 `requestId`，Host 最多返回一次终态；长期事件有递增 `sequence`，Store 忽略重复和旧序号。协议只传可序列化 Domain DTO，不传 Error、Map、Set、AbortSignal、VS Code 对象或上游类型。
+`packages/webview-protocol/src/schemas.ts` 是请求名和字段的代码事实来源。消息经过严格 discriminated union 校验，由对应类型、Host router 和 ProtocolClient 处理。禁止通用 `{ action: string, payload: any }`。Webview 请求有唯一 `requestId`，Host 最多返回一次终态；长期事件有递增 `sequence`，Store 忽略重复和旧序号。协议只传可序列化 Domain DTO，不传 Error、Map、Set、AbortSignal、VS Code 对象或上游类型。
 
 Webview 不接收 endpoint、PID、命令行、Cookie、launch token、Secret、绝对工作区路径、系统提示词或原始诊断 body。文件与变更卡片可显示相对文件标识，但不能据此推断文件夹归属。路径作用域操作只接受 Host 从会话 `cwd` 解析的 VS Code `workspaceFolderId`；它与 DSH workspace id 属于不同命名空间。没有打开 VS Code 文件夹时，相关本地能力不发起请求，也不把未读取显示成空列表。Host 对 enum、id、端口、路径、长度和权限再次验证。
 

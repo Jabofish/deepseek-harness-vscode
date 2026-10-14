@@ -674,3 +674,39 @@
     font-size: var(--dsh-font-size-xs);
   }
 }
+
+@media (max-width: 24rem) {
+  .dsh-settings__tabs {
+    padding: var(--dsh-space-2);
+  }
+
+  .dsh-settings__tab {
+    padding-inline: 6px;
+  }
+}
+
+/* Keep every utility reachable in the narrowest editor sidebar. View labels
+ * may truncate; their tab names remain complete for assistive technology. */
+@media (max-width: 18rem) {
+  .dsh-conversation__topbar {
+    --dsh-control-height: 24px;
+  }
+
+  .dsh-app[data-conversation-layout='focused'] .dsh-conversation__topbar {
+    padding-inline: var(--dsh-space-1);
+  }
+
+  .dsh-conversation__views {
+    flex-shrink: 1;
+    overflow: hidden;
+  }
+
+  .dsh-conversation__views .dsh-conversation__view-tab {
+    flex-shrink: 1;
+    min-width: 24px;
+    padding-inline: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}

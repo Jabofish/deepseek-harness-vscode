@@ -36,6 +36,7 @@ import {
 import type { Rc6SessionRepositoryOptions } from './session/options.js'
 import { setSessionConfiguration } from './session/set-configuration.js'
 import { SessionPromptQueue } from './session/prompt-queue.js'
+import { SessionSummaryCache } from './session/summary-cache.js'
 import { samePath } from './session/path.js'
 import {
   compactHistoryEvents,
@@ -43,7 +44,7 @@ import {
   historyCwd,
   sequenceRanges,
 } from './session/history.js'
-import { asRecord, configurationFromRawHistory, firstString } from './session/configuration.js'
+import { asRecord, configurationFromRawHistory } from './session/configuration.js'
 import { parseImageAttachmentLimits } from './session/image-limits.js'
 import {
   acceptedRenameTitle,
@@ -73,7 +74,7 @@ export class Rc6SessionRepository implements SessionRepository {
   /** The list projection is a hint that can be reused by the following open.
    * The history page remains the authoritative payload; keeping this local
    * hint avoids issuing a second session.list just to recover title/status. */
-  private readonly sessionSummaries = new Map<string, SessionSummary>()
+  private readonly sessionSummaries = new SessionSummaryCache()
   private readonly promptQueue: SessionPromptQueue
   private readonly imageLimitsBySession = new Map<string, ImageAttachmentLimits>()
   private readonly mapProjectionValues:
@@ -131,11 +132,11 @@ export class Rc6SessionRepository implements SessionRepository {
 
   public remember(event: BackendEvent): void {
     this.promptQueue.remember(event)
+    this.sessionSummaries.remember(event)
     if (event.type === 'session.subscribed') {
       this.rememberProjectionValues(event.sessionId, event.projection?.values, true)
     } else if (event.type === 'session.removed') {
       this.imageLimitsBySession.delete(event.sessionId)
-      this.sessionSummaries.delete(event.sessionId)
     } else if (event.type === 'session.projection' && event.key === 'imageLimits') {
       this.rememberImageLimitsValue(event.sessionId, event.value)
     }
@@ -158,6 +159,7 @@ export class Rc6SessionRepository implements SessionRepository {
       throw unavailable('session list pagination')
     if (query?.archived !== undefined && this.workspaceRepository === undefined)
       throw unavailable('archived session listing without workspace state')
+    const read = this.sessionSummaries.beginList()
     const value = await callRpc<unknown>(
       this.transport,
       'session.list',
@@ -238,7 +240,7 @@ export class Rc6SessionRepository implements SessionRepository {
       if (searchHasMore !== undefined && items.length > query.limit) searchHasMore = true
       items = items.slice(0, query.limit)
     }
-    for (const item of items) this.sessionSummaries.set(item.id, item)
+    items = items.map((item) => this.sessionSummaries.rememberList(item, read))
     return {
       items,
       ...(typeof list.nextCursor === 'string' && list.nextCursor.length > 0
@@ -283,6 +285,7 @@ export class Rc6SessionRepository implements SessionRepository {
         workspaceId,
         history.projection,
         this.deriveTitleFromCwd,
+        history.hasMore,
       )
     }
     if (summary === undefined)
@@ -309,7 +312,8 @@ export class Rc6SessionRepository implements SessionRepository {
         permissionPresets = []
       }
     }
-    const agentPreset = firstString(summary.agentPreset, projectionValues.agentPreset)
+    summary = this.sessionSummaries.rememberHistory(summary, history.projection, history.events, rawHistory)
+    const agentPreset = summary.agentPreset
     const projection = history.projection ?? summary.projection
     return {
       ...summary,
@@ -329,7 +333,25 @@ export class Rc6SessionRepository implements SessionRepository {
     // returned by session.open, while still restoring transient chunks that
     // were produced during the read.
     await this.onSessionOpen?.(sessionId)
-    return detail
+    // Summary facts can advance while the live baseline is being restored.
+    // Keep the detail's authoritative history/projection and refresh only the
+    // summary fields, so the reply cannot undo those newly received events.
+    const latest = this.sessionSummaries.get(sessionId)
+    if (latest === undefined) return detail
+    const refreshed = {
+      ...detail,
+      title: latest.title,
+      blank: latest.blank,
+      status: latest.status,
+      updatedAt: latest.updatedAt,
+      configuration: {
+        ...detail.configuration,
+        preset: configurationFromRawHistory([], latest.agentPreset).preset,
+      },
+    }
+    if (latest.agentPreset === undefined) delete refreshed.agentPreset
+    else refreshed.agentPreset = latest.agentPreset
+    return refreshed
   }
 
   public async history(

@@ -121,8 +121,8 @@ export class SessionPromptQueue {
         this.queueOwners.set(queued.id, input.sessionId)
         return queued
       }
-      if (this.pendingQueueIdentities.get(promptKey) === pending)
-        this.pendingQueueIdentities.delete(promptKey)
+      // A wait deadline is not proof that the original write did not commit.
+      throw queueIdentityTimeout()
     }
     const beforeIds = new Set(
       (this.queues.get(input.sessionId) ?? []).filter((item) => item.mode === mode).map((item) => item.id),
@@ -132,8 +132,10 @@ export class SessionPromptQueue {
     // must wait for this attempt's outcome instead of sending a second
     // session.prompt to the host.
     let resolveIdentity!: (value: QueuedInput | undefined) => void
-    const identityPromise = new Promise<QueuedInput | undefined>((resolve) => {
+    let rejectIdentity!: (error: unknown) => void
+    const identityPromise = new Promise<QueuedInput | undefined>((resolve, reject) => {
       resolveIdentity = resolve
+      rejectIdentity = reject
     })
     this.pendingQueueIdentities.set(promptKey, identityPromise)
     void identityPromise.then(
@@ -162,9 +164,10 @@ export class SessionPromptQueue {
       const receipt = unwrapRpcResult(response, 'session.prompt')
       assertAccepted(receipt, 'session prompt')
     } catch (error) {
-      // Settle the shared promise so concurrent waiters retry on their own
-      // instead of hanging for the whole grace window after a failed attempt.
-      resolveIdentity(undefined)
+      // Identical callers share this attempt's failure. A lost response or a
+      // malformed receipt may follow a committed write; neither authorizes a
+      // waiting caller to dispatch it again. A later explicit action can retry.
+      rejectIdentity(error)
       throw error
     }
     const queued = findNewQueuedInput(
@@ -190,12 +193,7 @@ export class SessionPromptQueue {
     // The prompt was accepted, so a missing identity within the wait window
     // is a slow host rather than a broken protocol; classify it like every
     // other transport timeout instead of signalling protocol drift.
-    throw new AppError({
-      code: 'BACKEND_UNREACHABLE',
-      message: 'DSH accepted the prompt but did not publish its queue identity in time.',
-      retryable: true,
-      context: { method: 'session.prompt', timedOut: true },
-    })
+    throw queueIdentityTimeout()
   }
 
   public async listQueue(sessionId: string, signal?: AbortSignal): Promise<readonly QueuedInput[]> {
@@ -441,4 +439,13 @@ export class SessionPromptQueue {
       )
     })
   }
+}
+
+function queueIdentityTimeout(): AppError {
+  return new AppError({
+    code: 'BACKEND_UNREACHABLE',
+    message: 'DSH did not confirm the queued prompt identity in time. Its delivery outcome is unknown.',
+    retryable: true,
+    context: { method: 'session.prompt', timedOut: true },
+  })
 }

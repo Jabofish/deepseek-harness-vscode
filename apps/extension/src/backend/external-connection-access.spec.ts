@@ -13,8 +13,12 @@ const endpoint = (url: string): BackendEndpoint => {
 }
 const first = endpoint('https://first.example:443')
 const second = endpoint('https://second.example:443')
-const key = (value: BackendEndpoint): string =>
+const legacyKey = (value: BackendEndpoint): string =>
   `dsh.connection.external.${createHash('sha256').update(value.baseUrl).digest('hex')}`
+const key = (value: BackendEndpoint): string =>
+  `dsh.connection.external.v2.${createHash('sha256')
+    .update(JSON.stringify(['host-fixture', value.baseUrl]))
+    .digest('hex')}`
 const cookie = 'dsh-auth-fixture=session-fixture'
 const login = (secure = true): Response =>
   new Response(null, {
@@ -25,8 +29,7 @@ const login = (secure = true): Response =>
     },
   })
 const accesses: ExternalConnectionAccess[] = []
-function fixture() {
-  const values = new Map<string, string>()
+function fixture(scope = 'host-fixture', values = new Map<string, string>()) {
   const secrets = {
     get: vi.fn(async (name: string) => values.get(name)),
     store: vi.fn(async (name: string, value: string) => {
@@ -48,8 +51,10 @@ function fixture() {
   const network = new EndpointNetwork({ fetch, resolve: async () => [{ address: state.address, family: 4 }] })
   const confirm = vi.fn(async () => state.confirm)
   const inputToken = vi.fn(async () => state.token)
+  const credentialScope = vi.fn(async () => scope)
   const access = new ExternalConnectionAccess({
     secrets,
+    credentialScope,
     network,
     confirm,
     inputToken,
@@ -58,13 +63,56 @@ function fixture() {
     now: () => state.now,
   })
   accesses.push(access)
-  return { values, secrets, fetch, state, network, access, confirm, inputToken }
+  return { values, secrets, fetch, state, network, access, confirm, inputToken, credentialScope }
 }
 afterEach(async () => {
   await Promise.all(accesses.splice(0).map((access) => access.dispose()))
 })
 
 describe('external connection credentials', () => {
+  it('does not persist a grant when execution environment identification is cancelled', async () => {
+    const f = fixture()
+    f.credentialScope.mockReturnValueOnce(new Promise(() => {}))
+    const controller = new AbortController()
+    const pending = f.access.authorize(first, controller.signal)
+    await vi.waitFor(() => expect(f.credentialScope).toHaveBeenCalled())
+    const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    controller.abort()
+    await rejected
+    expect(f.secrets.store).not.toHaveBeenCalled()
+  })
+  it.each([endpoint('http://127.0.0.1:3080'), first])(
+    "does not send another execution environment's credentials for $baseUrl",
+    async (target) => {
+      const hostA = fixture('ssh-host-a')
+      await hostA.access.authorize(target)
+      await hostA.access.prepare(target, new AbortController().signal)
+      const hostB = fixture('container-b', hostA.values)
+      const attempt = hostB.access.prepare(target, new AbortController().signal)
+      if (target.host === '127.0.0.1') await attempt
+      else await expect(attempt).rejects.toMatchObject({ code: 'PERMISSION_DENIED' })
+      expect(hostB.fetch).not.toHaveBeenCalled()
+      expect(hostB.access.cookie(target)).toBeUndefined()
+      await hostB.access.clear(target)
+      const reopenedA = fixture('ssh-host-a', hostA.values)
+      await reopenedA.access.prepare(target, new AbortController().signal)
+      expect(reopenedA.fetch).toHaveBeenCalledExactlyOnceWith(
+        `${target.baseUrl}/api`,
+        expect.objectContaining({ headers: { Cookie: cookie } }),
+      )
+    },
+  )
+  it('requires fresh authorization instead of adopting credentials without an environment scope', async () => {
+    const f = fixture()
+    f.values.set(
+      legacyKey(first),
+      JSON.stringify({ version: 1, approved: true, allowInsecureHttp: false, launchToken: 'old-fixture' }),
+    )
+    await expect(f.access.prepare(first, new AbortController().signal)).rejects.toMatchObject({
+      code: 'PERMISSION_DENIED',
+    })
+    expect(f.fetch).not.toHaveBeenCalled()
+  })
   it('cancels blocked secure-storage reads within the caller deadline', async () => {
     const f = fixture()
     f.secrets.get.mockImplementationOnce(() => new Promise(() => {}))

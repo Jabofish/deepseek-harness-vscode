@@ -215,7 +215,13 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
                   }}
                 >
                   <Icon name={change.applicationState === 'failed' ? 'alert' : 'file'} />
-                  <span className="dsh-changes-popover__path">{change.relativePath}</span>
+                  <span className="dsh-changes-popover__path">
+                    <span className="dsh-sr-only">{change.relativePath}</span>
+                    <strong aria-hidden="true">{change.relativePath.split(/[\\/]/u).at(-1)}</strong>
+                    <small aria-hidden="true">
+                      {change.relativePath.replace(/(?:^|[\\/])[^\\/]*$/u, '')}
+                    </small>
+                  </span>
                   <span className="dsh-changes-popover__status-label">
                     {t(`changes.status.${change.status}`)}
                   </span>

@@ -12,8 +12,8 @@ type WaitClaim = {
   readonly key: string
   readonly controller: AbortController
   readonly iterator: AsyncIterator<unknown>
-  readonly externalSignal: AbortSignal | undefined
-  readonly abortExternal: () => void
+  readonly waiters: Map<AbortSignal, () => void>
+  unscoped: boolean
   opening: Promise<number | undefined>
   completion: Promise<void>
 }
@@ -34,7 +34,7 @@ export class Rc202UserQuestionRepository implements UserQuestionRepository {
 
     const key = claimKey(sessionId, callId)
     const existing = this.claims.get(key)
-    if (existing !== undefined) return existing.opening
+    if (existing !== undefined) return this.attachCaller(existing, signal)
 
     const controller = new AbortController()
     const stream = this.transport.openRemoteStream(
@@ -47,28 +47,20 @@ export class Rc202UserQuestionRepository implements UserQuestionRepository {
       key,
       controller,
       iterator,
-      externalSignal: signal,
-      abortExternal: () => controller.abort(signal?.reason ?? cancelledError()),
+      waiters: new Map(),
+      unscoped: false,
       opening: Promise.resolve(undefined),
       completion: Promise.resolve(),
     }
     this.claims.set(key, claim)
-    signal?.addEventListener('abort', claim.abortExternal, { once: true })
     claim.opening = this.openClaim(claim)
-    return claim.opening
+    return this.attachCaller(claim, signal)
   }
 
   public async releaseWait(sessionId: string, callId: string): Promise<void> {
     const claim = this.claims.get(claimKey(sessionId, callId))
     if (claim === undefined) return
-    this.claims.delete(claim.key)
-    claim.controller.abort(cancelledError())
-    const returnStream = claim.iterator.return?.()
-    await Promise.allSettled([
-      claim.opening,
-      claim.completion,
-      ...(returnStream === undefined ? [] : [returnStream]),
-    ])
+    await this.releaseWaitByClaim(claim)
   }
 
   public async answer(
@@ -151,7 +143,7 @@ export class Rc202UserQuestionRepository implements UserQuestionRepository {
   }
 
   private async releaseWaitByClaim(claim: WaitClaim): Promise<void> {
-    this.claims.delete(claim.key)
+    this.dropClaim(claim)
     claim.controller.abort(cancelledError())
     const returnStream = claim.iterator.return?.()
     await Promise.allSettled([
@@ -162,8 +154,49 @@ export class Rc202UserQuestionRepository implements UserQuestionRepository {
   }
 
   private dropClaim(claim: WaitClaim): void {
-    claim.externalSignal?.removeEventListener('abort', claim.abortExternal)
+    for (const [signal, onAbort] of claim.waiters) signal.removeEventListener('abort', onAbort)
+    claim.waiters.clear()
     if (this.claims.get(claim.key) === claim) this.claims.delete(claim.key)
+  }
+
+  private attachCaller(claim: WaitClaim, signal?: AbortSignal): Promise<number | undefined> {
+    // One upstream stream is enough to pause this call's deadline. Its local
+    // ownership belongs to all attached UIs, not just the first request.
+    if (signal === undefined) {
+      claim.unscoped = true
+      return claim.opening
+    }
+    if (!claim.waiters.has(signal)) {
+      const onAbort = (): void => {
+        signal.removeEventListener('abort', onAbort)
+        claim.waiters.delete(signal)
+        if (claim.waiters.size === 0 && !claim.unscoped) {
+          this.dropClaim(claim)
+          claim.controller.abort(signal.reason ?? cancelledError())
+        }
+      }
+      claim.waiters.set(signal, onAbort)
+      signal.addEventListener('abort', onAbort, { once: true })
+      if (signal.aborted) onAbort()
+    }
+    return new Promise((resolve, reject) => {
+      const onAbort = (): void => {
+        signal.removeEventListener('abort', onAbort)
+        reject(cancelledError())
+      }
+      signal.addEventListener('abort', onAbort, { once: true })
+      if (signal.aborted) onAbort()
+      void claim.opening.then(
+        (value) => {
+          signal.removeEventListener('abort', onAbort)
+          resolve(value)
+        },
+        (error: unknown) => {
+          signal.removeEventListener('abort', onAbort)
+          reject(error instanceof Error ? error : new Error('The question wait failed.', { cause: error }))
+        },
+      )
+    })
   }
 }
 

@@ -20,32 +20,30 @@ export class Rc6GoalRepository implements GoalRepository {
   ) {}
 
   public remember(event: BackendEvent): void {
-    if (this.liveGoal) {
-      if (event.type === 'remote.event' && event.name === 'goal/activation-changed') {
-        const payload = asRecord(event.args[0])
-        if (typeof payload?.sessionId === 'string') {
-          const sessionId = payload.sessionId
-          this.liveEpochs.set(sessionId, (this.liveEpochs.get(sessionId) ?? 0) + 1)
-          const goal = asRecord(payload.goal)
-          const ref = typeof goal?.id === 'string' ? this.refs.get(goal.id) : undefined
-          if (
-            ref?.sessionId === sessionId &&
-            ref.revision === goal?.revision &&
-            (goal?.activation === 'armed' || goal?.activation === 'disarmed')
-          )
-            this.patchCachedGoal(sessionId, ref.id, { activation: goal.activation })
-        }
-        return
+    if (this.liveGoal && event.type === 'remote.event' && event.name === 'goal/activation-changed') {
+      const payload = asRecord(event.args[0])
+      if (typeof payload?.sessionId === 'string') {
+        const sessionId = payload.sessionId
+        this.liveEpochs.set(sessionId, (this.liveEpochs.get(sessionId) ?? 0) + 1)
+        const goal = asRecord(payload.goal)
+        const ref = typeof goal?.id === 'string' ? this.refs.get(goal.id) : undefined
+        if (
+          ref?.sessionId === sessionId &&
+          ref.revision === goal?.revision &&
+          (goal?.activation === 'armed' || goal?.activation === 'disarmed')
+        )
+          this.patchCachedGoal(sessionId, ref.id, { activation: goal.activation })
       }
-      if (
-        'sessionId' in event &&
-        (event.type === 'goal.updated' ||
-          event.type === 'session.removed' ||
-          event.type === 'session.subscribed' ||
-          (event.type === 'session.projection' && event.key === 'goal'))
-      )
-        this.liveEpochs.set(event.sessionId, (this.liveEpochs.get(event.sessionId) ?? 0) + 1)
+      return
     }
+    if (
+      'sessionId' in event &&
+      (event.type === 'goal.updated' ||
+        event.type === 'session.removed' ||
+        event.type === 'session.subscribed' ||
+        (event.type === 'session.projection' && event.key === 'goal'))
+    )
+      this.liveEpochs.set(event.sessionId, (this.liveEpochs.get(event.sessionId) ?? 0) + 1)
 
     if (event.type === 'goal.updated') this.goalCache.set(event.sessionId, event.goals)
     else if (event.type === 'session.projection' && event.key === 'goal') {
@@ -82,6 +80,8 @@ export class Rc6GoalRepository implements GoalRepository {
     if (this.liveGoal) return this.readLive(sessionId, signal)
     const cached = this.goalCache.get(sessionId)
     if (cached !== undefined) return cached
+    const epoch = this.liveEpochs.get(sessionId) ?? 0
+    let projection: unknown
     // rc.6 deliberately exposes goal state through the session projection and
     // mux events; use history only until the live stream has supplied a cache.
     const pages = await walkHistoryPages(
@@ -101,7 +101,7 @@ export class Rc6GoalRepository implements GoalRepository {
           mapped.projection !== undefined &&
           goalViewsFromProjection(mapped.projection.values) !== undefined
         )
-          replaceProjectionRefs(this.refs, sessionId, mapped.projection.values)
+          projection ??= mapped.projection.values
         return mapped
       },
       {
@@ -118,11 +118,23 @@ export class Rc6GoalRepository implements GoalRepository {
       }
     }
     const goals = latest ?? []
+    signal?.throwIfAborted()
+    if (epoch !== (this.liveEpochs.get(sessionId) ?? 0)) {
+      const current = this.goalCache.get(sessionId)
+      if (current !== undefined) return current
+      throw new AppError({
+        code: 'REQUEST_CANCELLED',
+        message: 'Goal state changed while its history was being read.',
+        retryable: true,
+      })
+    }
     // The mux observer (remember) can populate the cache while this walk is
     // in flight. Delivered event state is newer than anything derived from a
     // walk that started earlier; keep and return it instead of overwriting,
     // or the projection would stay stale until the next goal change.
-    if (!this.goalCache.has(sessionId)) this.goalCache.set(sessionId, goals)
+    if (projection !== undefined) replaceProjectionRefs(this.refs, sessionId, projection)
+    this.liveEpochs.set(sessionId, epoch + 1)
+    this.goalCache.set(sessionId, goals)
     return this.goalCache.get(sessionId) ?? goals
   }
 
@@ -163,6 +175,7 @@ export class Rc6GoalRepository implements GoalRepository {
     signal?: AbortSignal,
     maxGoalRounds?: number,
   ): Promise<GoalView> {
+    const epoch = this.liveEpochs.get(sessionId) ?? 0
     const value = assertGoalRefReceipt(
       await callRpc<unknown>(
         this.transport,
@@ -172,7 +185,6 @@ export class Rc6GoalRepository implements GoalRepository {
       ),
       'create',
     )
-    this.refs.set(value.id, { sessionId, id: value.id, revision: value.revision })
     const goal = {
       id: value.id,
       title,
@@ -180,6 +192,17 @@ export class Rc6GoalRepository implements GoalRepository {
       ...(maxGoalRounds === undefined ? {} : { maxGoalRounds }),
     }
     const cached = this.goalCache.get(sessionId)
+    const currentRef = this.refs.get(value.id)
+    // A successful HTTP acknowledgement may arrive after the stream has
+    // updated or retired this goal. It cannot roll that authority backwards.
+    if (
+      epoch !== (this.liveEpochs.get(sessionId) ?? 0) &&
+      ((currentRef === undefined && !cached?.some((existing) => existing.id === value.id)) ||
+        (currentRef !== undefined && currentRef.revision >= value.revision))
+    )
+      return cached?.find((existing) => existing.id === value.id) ?? goal
+    this.refs.set(value.id, { sessionId, id: value.id, revision: value.revision })
+    this.liveEpochs.set(sessionId, (this.liveEpochs.get(sessionId) ?? 0) + 1)
     // The host's goal.updated event can land before the HTTP receipt resolves
     // (mux vs HTTP ordering is not guaranteed); never append a second copy.
     if (cached !== undefined && !cached.some((existing) => existing.id === value.id))
@@ -192,8 +215,10 @@ export class Rc6GoalRepository implements GoalRepository {
     update: Partial<Pick<GoalView, 'title' | 'status' | 'maxGoalRounds'>>,
     signal?: AbortSignal,
   ): Promise<void> {
-    const ref = this.refs.get(goalId)
-    if (ref === undefined) throw unavailable('goal update without a current session revision')
+    const currentRef = this.refs.get(goalId)
+    if (currentRef === undefined) throw unavailable('goal update without a current session revision')
+    const ref = { ...currentRef }
+    const epoch = this.liveEpochs.get(ref.sessionId) ?? 0
     const editRequested = update.title !== undefined || update.maxGoalRounds !== undefined
     if (editRequested && update.status !== undefined)
       throw unavailable('combined goal title and status edits')
@@ -213,8 +238,7 @@ export class Rc6GoalRepository implements GoalRepository {
         'edit',
       )
       assertSameGoalRef(ref, value, 'edit')
-      ref.revision = value.revision
-      this.patchCachedGoal(ref.sessionId, ref.id, {
+      this.commitMutation(ref, value, epoch, {
         ...(update.title === undefined ? {} : { title: update.title }),
         ...(update.maxGoalRounds === undefined ? {} : { maxGoalRounds: update.maxGoalRounds }),
       })
@@ -230,8 +254,7 @@ export class Rc6GoalRepository implements GoalRepository {
         'complete',
       )
       assertSameGoalRef(ref, value, 'complete')
-      ref.revision = value.revision
-      this.patchCachedGoal(ref.sessionId, ref.id, { status: 'completed' })
+      this.commitMutation(ref, value, epoch, { status: 'completed' })
     } else if (update.status === 'in-progress') {
       const value = assertGoalRefReceipt(
         await callRpc<unknown>(
@@ -243,8 +266,7 @@ export class Rc6GoalRepository implements GoalRepository {
         'resume',
       )
       assertSameGoalRef(ref, value, 'resume')
-      ref.revision = value.revision
-      this.patchCachedGoal(ref.sessionId, ref.id, { status: 'in-progress' })
+      this.commitMutation(ref, value, epoch, { status: 'in-progress' })
     } else if (update.status === 'pending' || update.status === 'blocked') {
       const value = assertGoalRefReceipt(
         await callRpc<unknown>(
@@ -256,8 +278,7 @@ export class Rc6GoalRepository implements GoalRepository {
         'pause',
       )
       assertSameGoalRef(ref, value, 'pause')
-      ref.revision = value.revision
-      this.patchCachedGoal(ref.sessionId, ref.id, { status: update.status })
+      this.commitMutation(ref, value, epoch, { status: update.status })
     }
   }
 
@@ -273,6 +294,7 @@ export class Rc6GoalRepository implements GoalRepository {
       ),
     )
     if (value?.cleared !== true) throw malformedGoalResponse('clear receipt')
+    this.liveEpochs.set(ref.sessionId, (this.liveEpochs.get(ref.sessionId) ?? 0) + 1)
     this.refs.delete(goalId)
     const sessionGoals = this.goalCache.get(ref.sessionId)
     if (sessionGoals !== undefined)
@@ -280,6 +302,25 @@ export class Rc6GoalRepository implements GoalRepository {
         ref.sessionId,
         sessionGoals.filter((goal) => goal.id !== goalId),
       )
+  }
+
+  private commitMutation(
+    ref: { readonly id: string; readonly sessionId: string },
+    receipt: { readonly revision: number },
+    epoch: number,
+    patch: Partial<GoalView>,
+  ): void {
+    const current = this.refs.get(ref.id)
+    if (current !== undefined && current.revision >= receipt.revision) return
+    if (
+      current === undefined &&
+      epoch !== (this.liveEpochs.get(ref.sessionId) ?? 0) &&
+      !this.goalCache.get(ref.sessionId)?.some((goal) => goal.id === ref.id)
+    )
+      return
+    this.refs.set(ref.id, { ...ref, revision: receipt.revision })
+    this.liveEpochs.set(ref.sessionId, (this.liveEpochs.get(ref.sessionId) ?? 0) + 1)
+    this.patchCachedGoal(ref.sessionId, ref.id, patch)
   }
 
   private patchCachedGoal(sessionId: string, goalId: string, patch: Partial<GoalView>): void {

@@ -22,9 +22,13 @@ The Chat view is registered in VS Code's Secondary Side Bar by default (on the r
 
 The extension discovers compatible local instances before starting one. Connection modes let you attach only, start an isolated extension-owned instance, or probe one configured HTTP(S) endpoint (which may be remote). It never stops an external DSH. Runtime updates install a verified exact version and do not restart external processes.
 
-For an external instance, select `custom`, set `dsh.connection.serverUrl` to its HTTP(S) origin and `dsh.connection.runtimeVersion` to its exact supported version. Run **DSH: Authorize External Connection**, enter its launch token (leave blank for anonymous access), then connect. Credentials stay in per-origin SecretStorage; **DSH: Clear External Connection Credentials** removes them.
+For an external instance, select `custom`, set `dsh.connection.serverUrl` to its HTTP(S) origin and `dsh.connection.runtimeVersion` to its exact supported version. Run **DSH: Authorize External Connection**, enter its launch token (leave blank for anonymous access), then connect. Credentials stay in SecretStorage per execution environment and full origin; **DSH: Clear External Connection Credentials** removes the current environment's grant. Connections without a grant for the current execution environment require authorization.
 
 HTTPS requires a trusted certificate. Remote HTTP needs explicit plaintext confirmation and renewed authorization after DNS address changes. The server must accept the configured host; use `--trusted-host host:port` where supported for a proxy. Remote connections do not grant local file or inspector access. See the [connection guide](https://github.com/Jabofish/deepseek-harness-vscode#connect-to-an-external-instance).
+
+## Remote workspaces
+
+Remote SSH, WSL, Dev Containers and Remote Tunnels run the extension and DSH on the workspace side. Install DSH there, and configure executable paths for that environment. Picked attachments retain their filesystem URI; desktop Inspector links use a native loopback tunnel, while native DevTools is unavailable in a browser client. Container rebuilds require runtime installation and DSH data persistence to be configured for the container.
 
 ## Privacy and help
 
@@ -32,5 +36,5 @@ DSH connections, credentials, file access, and process ownership stay in the VS 
 
 - [Documentation and compatibility](https://github.com/Jabofish/deepseek-harness-vscode)
 - [中文说明](https://github.com/Jabofish/deepseek-harness-vscode/blob/main/README.zh-CN.md)
-- [Version history](https://github.com/Jabofish/deepseek-harness-vscode/blob/main/apps/extension/CHANGELOG.md)
+- [Extension versions](https://github.com/Jabofish/deepseek-harness-vscode/blob/main/apps/extension/CHANGELOG.md)
 - [Support](https://github.com/Jabofish/deepseek-harness-vscode/issues)

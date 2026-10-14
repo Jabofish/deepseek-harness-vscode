@@ -276,17 +276,26 @@ ul {
   border-radius: var(--dsh-radius-md);
 }
 
-/* Runtime updates are advisory chrome, not part of the application flow.
- * Keep the notice above the Webview content so it cannot steal conversation
- * height while the user decides whether to open Settings. */
-.dsh-app__runtime-update {
-  position: fixed;
-  inset-block-start: var(--dsh-space-4);
-  inset-inline-end: var(--dsh-space-4);
-  z-index: 60;
-  width: min(32rem, calc(100vw - var(--dsh-space-4) - var(--dsh-space-4)));
-  max-width: calc(100vw - var(--dsh-space-4) - var(--dsh-space-4));
-  box-shadow: var(--dsh-shadow);
+/* Notices reserve their own space. A fixed update card covered the toolbar,
+ * and the welcome row collided with the viewport-docked workspace navigation. */
+.dsh-app__notices {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  max-height: 35%;
+  gap: var(--dsh-space-2);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.dsh-app__notices > * {
+  flex: 0 0 auto;
+}
+
+.dsh-app__notices .dsh-icon-button {
+  flex: 0 0 auto;
 }
 
 .dsh-toast {

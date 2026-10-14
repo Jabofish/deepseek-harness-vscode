@@ -103,3 +103,37 @@
   font-size: var(--dsh-font-size-xs);
   text-align: start;
 }
+
+.dsh-command-palette > .dsh-button {
+  min-width: 0;
+  height: auto;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  line-height: var(--dsh-line-height-body);
+  text-align: start;
+}
+
+/* In a sidebar, the name and its explanation need the same reading width.
+ * Argument choices keep their compact value/action arrangement. */
+@container dsh-composer (max-width: 28rem) {
+  .dsh-command-palette li button.dsh-command-palette__item:not(.dsh-command-palette__item--argument) {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--dsh-space-1);
+  }
+
+  .dsh-command-palette
+    li
+    button.dsh-command-palette__item:not(.dsh-command-palette__item--argument)
+    > :is(strong, span) {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow-wrap: anywhere;
+    white-space: normal;
+    line-height: var(--dsh-line-height-body);
+  }
+
+  .dsh-command-palette li button.dsh-command-palette__item > small {
+    max-width: 100%;
+  }
+}

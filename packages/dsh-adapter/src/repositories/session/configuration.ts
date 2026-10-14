@@ -16,7 +16,7 @@ export function configurationFromRawHistory(
   agentPreset?: string,
   projectionValues?: Readonly<Record<string, unknown>>,
 ): AgentConfiguration {
-  let model = projectedModelSelection(projectionValues)
+  let model = projectedModelSelection(undefined)
   let permissionPreset = 'workspace-write'
   let permissionPresetKnown = false
   let planModeKnown = false
@@ -59,37 +59,34 @@ export function configurationFromRawHistory(
       if (policy !== undefined) approvalPolicy = policy
       continue
     }
-    if (event.type === 'model/selection') {
-      const provider = firstString(data.provider, data.providerId)
-      const modelId = firstString(data.model, data.modelId)
-      const reasoningLevel = firstString(data.reasoningEffort, data.reasoningLevel)
-      model = {
-        providerId: provider ?? model.providerId,
-        modelId: modelId ?? model.modelId,
-        reasoningLevel: reasoningLevel ?? model.reasoningLevel,
-      }
-      continue
+    const selection =
+      event.type === 'request/header'
+        ? asRecord(asRecord(data.header).config)
+        : event.type === 'model/selection' || event.type === 'request/context'
+          ? data
+          : undefined
+    if (selection === undefined) continue
+    const providerId = firstString(selection.provider, selection.providerId)
+    const modelId = firstString(selection.model, selection.modelId)
+    const reasoningLevel = firstString(selection.reasoningEffort, selection.reasoningLevel)
+    // Selection and header facts replace a complete route, including omitted
+    // effort. Request context supplies route metadata, not replacement intent.
+    model = {
+      providerId: providerId ?? model.providerId,
+      modelId: modelId ?? model.modelId,
+      reasoningLevel:
+        event.type !== 'request/context' && providerId !== undefined && modelId !== undefined
+          ? reasoningLevel
+          : (reasoningLevel ?? model.reasoningLevel),
     }
-    if (event.type === 'request/context') {
-      const provider = firstString(data.provider, data.providerId)
-      const modelId = firstString(data.model, data.modelId)
-      const reasoningLevel = firstString(data.reasoningEffort, data.reasoningLevel)
-      model = {
-        providerId: provider ?? model.providerId,
-        modelId: modelId ?? model.modelId,
-        reasoningLevel: reasoningLevel ?? model.reasoningLevel,
-      }
-      continue
-    }
-    if (event.type !== 'request/header') continue
-    const header = asRecord(data.header)
-    const config = asRecord(header.config)
-    const providerId = typeof config.provider === 'string' ? config.provider : model.providerId
-    const modelId = typeof config.model === 'string' ? config.model : model.modelId
-    const reasoningLevel =
-      typeof config.reasoningEffort === 'string' ? config.reasoningEffort : model.reasoningLevel
-    model = { providerId, modelId, reasoningLevel }
   }
+  // The host keeps pending intent even when a later request used another
+  // route. Its exact projection, including an empty selection, wins over logs.
+  if (
+    projectionValues !== undefined &&
+    Object.prototype.hasOwnProperty.call(projectionValues, 'modelSelection')
+  )
+    model = projectedModelSelection(projectionValues)
   const projectedPermission = firstString(asRecord(projectionValues?.permissions).currentValue)
   const projectedPlan = asRecord(projectionValues?.plan).active
   if (projectedPermission !== undefined) {
