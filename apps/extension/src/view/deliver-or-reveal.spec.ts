@@ -46,7 +46,9 @@ describe('deliverOrRevealView', () => {
           return { dispose: () => undefined }
         },
       },
+      visible: true,
       onDidDispose: () => ({ dispose: () => undefined }),
+      onDidChangeVisibility: () => ({ dispose: () => undefined }),
     } as never)
     expect(await provider.postMessage({ action: 'toggle' })).toBe(false)
     receive?.({ message: { type: 'app.ready' } })

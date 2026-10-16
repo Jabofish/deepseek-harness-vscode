@@ -19,6 +19,13 @@ import { publicState } from './public-projection.js'
 import { featureContextKinds, type FeatureContextKind } from './editor-files.js'
 
 export type PostHostMessage = (message: HostMessage | FeatureHostMessage) => Thenable<boolean>
+/** Deliver an event to exactly one surface (surface-owned state, not broadcasts). */
+export type PostHostMessageTo = (
+  surfaceId: string,
+  message: HostMessage | FeatureHostMessage,
+) => Thenable<boolean>
+/** Surface-directed event poster: same sequence/queue as `postEvent`, one target. */
+export type PostSurfaceEvent = (surfaceId: string, name: string, payload: unknown) => Promise<boolean>
 
 type AccountFeatureHostEvent =
   | Extract<FeatureHostEvent, { readonly name: 'account.lifecycle.updated' }>
@@ -45,6 +52,7 @@ export type PublishAccountError = (
 
 export interface HostEventPipelineDependencies {
   readonly post: PostHostMessage
+  readonly postTo: PostHostMessageTo
   readonly backendService: BackendService
   readonly diagnostics: RedactedDiagnostics
   readonly editorContextUseCases: EditorContextUseCases
@@ -62,6 +70,8 @@ export interface HostEventPipeline {
   readonly publishAccountError: PublishAccountError
   readonly postEditorContextAvailabilityEvent: () => Promise<void>
   readonly postEvent: (name: string, payload: unknown) => Promise<boolean>
+  /** Surface-directed variant: the payload is state of that surface, not a broadcast. */
+  readonly postEventTo: PostSurfaceEvent
   readonly postBackendEvent: (backend: DshBackend, event: BackendEvent) => Promise<boolean>
   readonly publishState: (state: BackendState) => void
   readonly nextFeatureLocalSequence: (this: void) => number
@@ -75,6 +85,7 @@ export interface HostEventPipeline {
 export function createHostEventPipeline(deps: HostEventPipelineDependencies): HostEventPipeline {
   const {
     post,
+    postTo,
     backendService,
     diagnostics,
     editorContextUseCases,
@@ -200,17 +211,21 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
   let eventPostQueue = Promise.resolve()
   const enqueueEvent = (
     resolve: () => Promise<{ readonly name: string; readonly payload: unknown } | undefined>,
+    surfaceId?: string,
   ): Promise<boolean> => {
     const task = eventPostQueue.then(async () => {
       const nextEvent = await resolve()
       if (nextEvent === undefined) return true
       const nextSequence = sequence + 1
-      const delivered = await post({
-        type: 'event',
+      const message = {
+        type: 'event' as const,
         name: nextEvent.name,
         sequence: nextSequence,
         payload: nextEvent.payload,
-      })
+      }
+      // A surface-directed event is that surface's own state; it must not leak
+      // another surface's kind, session or count.
+      const delivered = surfaceId === undefined ? await post(message) : await postTo(surfaceId, message)
       if (delivered) sequence = nextSequence
       return delivered
     })
@@ -223,6 +238,8 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
   const postEvent = (name: string, payload: unknown): Promise<boolean> => {
     return enqueueEvent(() => Promise.resolve({ name, payload }))
   }
+  const postEventTo: PostSurfaceEvent = (surfaceId, name, payload) =>
+    enqueueEvent(() => Promise.resolve({ name, payload }), surfaceId)
   const preparationScopes = new WeakMap<
     DshBackend,
     Map<string, { attemptId: string; cwd: Promise<string | undefined> }>
@@ -329,6 +346,7 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
     publishAccountError,
     postEditorContextAvailabilityEvent,
     postEvent,
+    postEventTo,
     postBackendEvent,
     publishState,
     nextFeatureLocalSequence,

@@ -58,6 +58,29 @@ export function readOrderDrag(dataTransfer: DataTransfer): OrderDrag | undefined
   return undefined
 }
 
+/** What the Webview observed while a session row was being dragged. */
+export interface SessionDragOutcome {
+  /** The pointer left the Webview (the panel) at least once during the drag. */
+  readonly leftPanel: boolean
+  /** A row accepted the drop as a reorder inside the list. */
+  readonly reordered: boolean
+  /** `DragEvent.dataTransfer.dropEffect` at `dragend`. */
+  readonly dropEffect: string | undefined
+}
+
+/**
+ * The tear-off gesture. VS Code does not bridge a drag that starts inside a
+ * Webview to the editor area, so a session row dragged out of the panel and
+ * released with no drop target is read as "open this session in the editor
+ * area". Every signal has to agree: the pointer left the panel, the drop was
+ * not accepted by anything, and no in-list reorder consumed the drag. An
+ * aborted drag (Esc) released outside the panel looks the same, which is why
+ * the explicit row action stays available and the tab is trivial to close.
+ */
+export function isTearOffDrag(outcome: SessionDragOutcome): boolean {
+  return outcome.leftPanel && !outcome.reordered && outcome.dropEffect === 'none'
+}
+
 export function sortSessions(
   sessions: readonly SessionSummary[],
   sorting: SessionSorting,

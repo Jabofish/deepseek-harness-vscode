@@ -3,7 +3,9 @@ import type { WebviewRequest } from '@dsh-vscode/webview-protocol'
 import * as vscode from 'vscode'
 import { openSkillDocument, publicSkills } from '../backend/skill-documents.js'
 import { resolveLinkTarget } from '../navigation/link-target.js'
+import { SIDEBAR_SURFACE_ID, VIEW_ID } from '../constants.js'
 import { DshWebviewViewProvider } from '../view/dsh-webview-view-provider.js'
+import { EditorChatSurfaceManager } from '../view/editor-chat-surface-manager.js'
 import { WebviewMessageRouter } from '../view/message-router.js'
 import { publicWorkspaceSummary } from '../view/public-value.js'
 import { requestOptionalProviderApiKey, requestProviderSecret } from '../vscode/credential-input.js'
@@ -28,12 +30,31 @@ export interface OpenLinkResult {
 export interface RequestGateway {
   readonly router: WebviewMessageRouter
   readonly provider: DshWebviewViewProvider
+  /** Editor-area chat surfaces; the composition root owns their lifecycle. */
+  readonly editorSurfaces: EditorChatSurfaceManager
+}
+
+/** Editor tab labels come from the Webview: bound them and strip control text. */
+function editorTabTitle(title: string | undefined): string | undefined {
+  if (title === undefined) return undefined
+  const printable = [...title]
+    .map((character) => {
+      const code = character.codePointAt(0) ?? 0
+      return code < 0x20 || code === 0x7f ? ' ' : character
+    })
+    .join('')
+  const cleaned = printable.replace(/\s+/gu, ' ').trim()
+  return cleaned === '' ? undefined : cleaned.slice(0, 120)
 }
 
 /** Every Webview request route plus the router and view provider that feed it. */
 export function createRequestGateway(deps: RequestGatewayDependencies): RequestGateway {
   const {
     post,
+    postTo,
+    postEvent,
+    postEventTo,
+    surfaces,
     handleFeatureRequest,
     diagnostics,
     context,
@@ -150,7 +171,29 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     requireCurrentWorkspaceSession,
   })
 
-  const handleRequest = async (request: WebviewRequest, signal: AbortSignal): Promise<unknown> => {
+  // Assigned after the router exists (the manager routes panel messages through
+  // it); no request can arrive before the gateway has finished composing.
+  const editorChatSurfaces: { current?: EditorChatSurfaceManager } = {}
+  const surfaceRoutesUnavailable = (): AppError =>
+    new AppError({
+      code: 'FEATURE_DISABLED',
+      message: 'The editor chat surface is not available in this extension build.',
+      retryable: false,
+    })
+  const focusSidebarChat = async (): Promise<void> => {
+    // The view focus command is the only stable way to reveal a view whose
+    // container has been moved; a failure must not leave the panels half-closed.
+    await vscode.commands.executeCommand(`${VIEW_ID}.focus`).then(
+      () => undefined,
+      () => undefined,
+    )
+  }
+
+  const handleRequest = async (
+    request: WebviewRequest,
+    signal: AbortSignal,
+    surfaceId: string | undefined,
+  ): Promise<unknown> => {
     if (request.type === 'app.ready') return connect(signal)
     if (request.type === 'connection.configure')
       return configureConnection(request.payload.mode, request.payload.endpoint, signal)
@@ -197,7 +240,35 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
         message: 'Trust this workspace before running DSH operations that access files or execute tools.',
         retryable: false,
       })
-    if (isSessionRequest(request)) return handleSessionRequest(request, signal)
+    if (request.type === 'surface.openInEditor') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      const manager = editorChatSurfaces.current
+      if (manager === undefined) throw surfaceRoutesUnavailable()
+      manager.open(request.payload.sessionId, editorTabTitle(request.payload.title))
+      return { surface: 'editor' as const }
+    }
+    if (request.type === 'surface.moveToSidebar') {
+      const manager = editorChatSurfaces.current
+      if (manager === undefined) throw surfaceRoutesUnavailable()
+      // An editor tab moves only itself back; the sidebar placeholder (or an
+      // unknown sender) asks for every editor chat to return.
+      if (surfaceId !== undefined && surfaceId !== SIDEBAR_SURFACE_ID) manager.close(surfaceId)
+      else manager.closeAll()
+      await focusSidebarChat()
+      return { surface: 'sidebar' as const }
+    }
+    if (isSessionRequest(request)) {
+      const result = await handleSessionRequest(request, signal)
+      // A rename is the one session mutation that changes a tab label while the
+      // tab is open; the Host applies the accepted title so a second Webview
+      // (the editor tab) does not have to observe the catalog change.
+      if (request.type === 'session.rename') {
+        const title = (result as { readonly title?: unknown } | undefined)?.title
+        const accepted = typeof title === 'string' ? editorTabTitle(title) : undefined
+        if (accepted !== undefined) editorChatSurfaces.current?.retitle(request.payload.sessionId, accepted)
+      }
+      return result
+    }
     if (isAttachmentRequest(request)) return handleAttachmentRequest(request, signal)
 
     if (request.type === 'workspace.list') {
@@ -574,7 +645,10 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     })
   }
   const router = new WebviewMessageRouter({
-    postMessage: post,
+    // One router serves every surface: answers go back to the surface that
+    // asked, and only a caller without surface identity is broadcast.
+    postMessage: (message, targetSurfaceId) =>
+      targetSurfaceId === undefined ? post(message) : postTo(targetSurfaceId, message),
     handleRequest,
     handleFeatureRequest,
     // Unexpected (non-AppError) handler failures must stay diagnosable: the
@@ -582,20 +656,62 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     // in the output channel the error message points users at.
     logUnexpectedError: (entry) => diagnostics.log('error', 'request-unexpected', { ...entry }),
   })
+  const logWebviewMessageError = (error: unknown): void => {
+    diagnostics.log('error', 'webview-message-unhandled', {
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    })
+  }
+  // Shared teardown is decided by readiness, not by whichever surface happened
+  // to disappear: as long as one surface can still receive messages, another
+  // surface's job follows and editor context must survive its sibling closing.
+  const runSharedSurfaceTeardownIfIdle = (): void => {
+    if (surfaces.list().some((surface) => surface.isReady)) return
+    stopAllJobFollows()
+    editorContextProvider.dispose()
+  }
+  const onSurfaceWorkCancelled = (disposedSurfaceId: string): void => {
+    router.cancelSurface(disposedSurfaceId)
+    runSharedSurfaceTeardownIfIdle()
+  }
+  // A surface that becomes ready after a handoff broadcast never saw it, so the
+  // current editor-tab count is re-announced together with the surface identity.
+  const announceSurface = async (
+    surfaceId: string,
+    assigned: { readonly kind: 'sidebar' | 'editor'; readonly sessionId?: string },
+  ): Promise<void> => {
+    await postEventTo(surfaceId, 'ui.surface.assigned', assigned)
+    await postEventTo(surfaceId, 'ui.surface.handoff', { editorChats: surfaces.editorCount })
+  }
   const provider = new DshWebviewViewProvider({
     extensionUri: context.extensionUri,
-    onMessage: (message) => router.handle(message),
-    onViewDisposed: () => {
-      router.cancelAll()
-      stopAllJobFollows()
-      editorContextProvider.dispose()
+    onMessage: (message) => router.handle(message, SIDEBAR_SURFACE_ID),
+    onBecameReady: () => {
+      void announceSurface(SIDEBAR_SURFACE_ID, { kind: 'sidebar' })
     },
-    onMessageError: (error) => {
-      diagnostics.log('error', 'webview-message-unhandled', {
-        message: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
+    onViewDisposed: () => onSurfaceWorkCancelled(SIDEBAR_SURFACE_ID),
+    onSurfaceClosed: () => surfaces.unregister(SIDEBAR_SURFACE_ID),
+    onMessageError: logWebviewMessageError,
+  })
+  const editorSurfaceManager = new EditorChatSurfaceManager({
+    surfaces,
+    extensionUri: context.extensionUri,
+    onMessage: (surfaceId, message) => router.handle(message, surfaceId),
+    onMessageError: logWebviewMessageError,
+    onBecameReady: (surface) => {
+      void announceSurface(surface.surfaceId, {
+        kind: 'editor',
+        ...(surface.sessionId === undefined ? {} : { sessionId: surface.sessionId }),
       })
     },
+    onDisposed: (surface) => onSurfaceWorkCancelled(surface.surfaceId),
+    onCountChanged: (count) => {
+      // The sidebar renders its "chat is open in the editor area" posture from
+      // this count; every surface may react, only the sidebar shows it.
+      void postEvent('ui.surface.handoff', { editorChats: count })
+    },
   })
-  return { router, provider }
+  editorChatSurfaces.current = editorSurfaceManager
+  surfaces.register(provider)
+  return { router, provider, editorSurfaces: editorSurfaceManager }
 }

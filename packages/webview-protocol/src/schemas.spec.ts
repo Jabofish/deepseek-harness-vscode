@@ -1311,3 +1311,40 @@ describe('RC2 Plugin Manager feature protocol', () => {
     ).toBe(false)
   })
 })
+
+describe('editor surface request protocol', () => {
+  it('accepts the documented payloads and rejects anything the host did not ask for', () => {
+    expect(
+      webviewRequestSchema.safeParse({
+        type: 'surface.openInEditor',
+        requestId: 'surface-open-1',
+        payload: { sessionId: 'session-1' },
+      }).success,
+    ).toBe(true)
+    expect(
+      webviewRequestSchema.safeParse({
+        type: 'surface.openInEditor',
+        requestId: 'surface-open-2',
+        payload: { sessionId: 'session-1', title: 'Fix login bug' },
+      }).success,
+    ).toBe(true)
+    expect(
+      webviewRequestSchema.safeParse({ type: 'surface.moveToSidebar', requestId: 'surface-move-1' }).success,
+    ).toBe(true)
+
+    for (const rejected of [
+      // An empty session id is not a handle the Host can validate.
+      { type: 'surface.openInEditor', requestId: 'r1', payload: { sessionId: '' } },
+      // The tab label is bounded on the wire as well as re-sanitized by the Host.
+      { type: 'surface.openInEditor', requestId: 'r2', payload: { sessionId: 's1', title: 'x'.repeat(121) } },
+      // The Webview never chooses its own surface identity or path.
+      {
+        type: 'surface.openInEditor',
+        requestId: 'r3',
+        payload: { sessionId: 's1', surfaceId: 'editor:s1' },
+      },
+      { type: 'surface.moveToSidebar', requestId: 'r4', payload: { sessionId: 's1' } },
+    ])
+      expect(webviewRequestSchema.safeParse(rejected).success).toBe(false)
+  })
+})

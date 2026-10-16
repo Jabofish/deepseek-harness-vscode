@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- 新增编辑器区聊天入口：命令面板的 **DSH: Open Chat in Editor Area** 将当前会话以编辑器标签打开（每个会话一个标签，窗口重载后恢复），侧边栏显示“聊天已在编辑器区打开”的占位提示并提供移回操作。
+- Adds an editor-area chat entry point: **DSH: Open Chat in Editor Area** opens the current session as an editor tab (one tab per session, restored after a window reload) while the side bar shows a "chat is open in the editor area" notice with a move-back action.
+- 新增聊天输入框命令 `/moveto:editor`（等同 `/moveto editor`）与 `/moveto:sidebar`，可在编辑器区与侧边栏之间移动聊天；未知目标只在本机报错，不会作为提示词发送。
+- Adds the composer commands `/moveto:editor` (same as `/moveto editor`) and `/moveto:sidebar` for moving the chat between the editor area and the side bar; an unknown target fails locally instead of being sent as a prompt.
+- 会话列表的每一行新增“在编辑器区打开”操作，可直接把该会话作为编辑器标签打开；重命名会话会同步更新已打开标签的标题。
+- Adds an "Open in Editor Area" action to every session row, opening that conversation as an editor tab; renaming a session now updates the title of its open tab.
+- 会话行现在始终可拖动：把它拖出面板并松开（没有任何目标接受该拖动）即可在编辑器区打开该会话；面板内重排行为不变。
+- Session rows are now always draggable: dragging one out of the panel and releasing it where no drop target accepts the drag opens that session in the editor area; in-panel reordering is unchanged.
+
 - 修复 Webview 上下文菜单的“复制”在未选中文本时无任何效果：现在复制所指行（助手回答或用户提问）的 Markdown，不含思考、工具调用和通知；该行没有可读文本时保持剪贴板不变。
 - Fixes the Webview context menu's Copy doing nothing without a selection: it copies the Markdown of the addressed row (assistant answer or user prompt) without reasoning, tool calls or notices, and leaves the clipboard untouched when that row has no readable text.
 

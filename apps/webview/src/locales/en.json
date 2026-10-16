@@ -1687,5 +1687,16 @@
   "markdown.plainText": "Text",
   "markdown.table": "Table",
   "markdown.codeLines": "Lines: {count}",
-  "markdown.tableDimensions": "Rows: {rows} · Columns: {columns}"
+  "markdown.tableDimensions": "Rows: {rows} · Columns: {columns}",
+  "surface.handoff.title": "Chat is open in the editor area",
+  "surface.handoff.description": "The conversation runs in the editor area, one tab per session ({count} open). Move it back to work in the side bar.",
+  "surface.handoff.moveBack": "Move back to side bar",
+  "surface.handoff.openSessions": "Open sessions",
+  "surface.handoff.moveFailed": "Could not move the chat back to the side bar.",
+  "commands.movetoDescription": "Move the chat into the editor area or back to the side bar",
+  "commands.movetoUnknownTarget": "Unknown /moveto target. Use /moveto:editor or /moveto:sidebar.",
+  "commands.movetoNoSession": "Select a session before moving the chat to the editor area.",
+  "sessions.openInEditor": "Open {title} in the editor area",
+  "sessions.openInEditorTitle": "Open in Editor Area",
+  "sessions.dragSessionToEditor": "Drag out of the panel to open in the editor area"
 }

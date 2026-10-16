@@ -15,8 +15,24 @@ export async function run() {
   assert.equal(extension.isActive, false, 'DSH must stay inactive until a view or command is requested')
   await extension.activate()
   const commands = await vscode.commands.getCommands(true)
-  for (const command of ['dsh.connect', 'dsh.openInSecondarySidebar', 'dsh.openWebUi'])
+  for (const command of [
+    'dsh.connect',
+    'dsh.openInSecondarySidebar',
+    'dsh.openWebUi',
+    'dsh.openChatInEditor',
+    'dsh.moveChatToSidebar',
+  ])
     assert.ok(commands.includes(command), `the extension must register ${command}`)
+  // The editor chat surface is a restored webview panel, so no tab may exist
+  // before the user asks for one; the move-back command is safe when idle.
+  assert.equal(
+    vscode.window.tabGroups.all
+      .flatMap((group) => group.tabs)
+      .some((tab) => tab.input instanceof vscode.TabInputWebview && tab.input.viewType === 'dsh.chatPanel'),
+    false,
+    'no editor chat tab may be open before the user opens one',
+  )
+  await vscode.commands.executeCommand('dsh.moveChatToSidebar')
   assert.equal(typeof globalThis.WebSocket, 'function', 'the Extension Host must provide WebSocket')
   console.log(
     `[dsh-vscode-e2e] extension-host node=${process.version} websocket=${typeof globalThis.WebSocket}`,

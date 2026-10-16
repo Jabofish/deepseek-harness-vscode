@@ -26,6 +26,11 @@ export interface SessionRowProps {
   readonly disabled: boolean
   readonly sorting: SessionSorting
   readonly onOpen: (session: SessionSummary) => void
+  /** Absent when the surface cannot host an editor tab (no such action shown). */
+  readonly onOpenInEditor?: (session: SessionSummary) => void
+  /** A drag from this row started; the panel decides whether it becomes a tear-off. */
+  readonly onDragBegin?: (session: SessionSummary) => void
+  readonly onDragEnd?: (session: SessionSummary, dropEffect: string | undefined) => void
   readonly onArchive: (session: SessionSummary) => void
   readonly onRename: (session: SessionSummary, trigger: HTMLElement) => void
   readonly onMove: (workspaceId: string, sessionId: string, beforeSessionId: string) => void
@@ -42,6 +47,9 @@ export function SessionRow({
   disabled,
   sorting,
   onOpen,
+  onOpenInEditor,
+  onDragBegin,
+  onDragEnd,
   onArchive,
   onRename,
   onMove,
@@ -61,19 +69,37 @@ export function SessionRow({
     waiting === undefined ? `sessions.status.${session.status}` : `sessions.waiting.${waiting}`,
   )
   const canReorder = sorting === 'manual' && reorderWorkspaceId !== undefined
+  // A row is always draggable: even when the list is not in manual order, the
+  // drag can leave the panel and open the session in the editor area. Only the
+  // in-list drop targets stay gated on `canReorder`, so reordering is unchanged.
+  const dragHint =
+    onOpenInEditor === undefined
+      ? canReorder
+        ? t('sessions.dragSession')
+        : undefined
+      : canReorder
+        ? t('sessions.dragSession')
+        : t('sessions.dragSessionToEditor')
   return (
     <li
       aria-busy={removing}
-      draggable={canReorder}
-      title={canReorder ? t('sessions.dragSession') : undefined}
+      draggable
+      title={dragHint}
       onDragStart={(event) => {
-        if (!canReorder) return
         event.dataTransfer.effectAllowed = 'move'
+        // A custom MIME keeps the payload unreadable to editors and other drop
+        // targets; the empty workspace id marks a row that must not reorder.
         event.dataTransfer.setData(
           ORDER_DRAG_MIME,
-          JSON.stringify({ kind: 'session', workspaceId: reorderWorkspaceId, itemId: session.id }),
+          JSON.stringify({
+            kind: 'session',
+            workspaceId: reorderWorkspaceId ?? '',
+            itemId: session.id,
+          }),
         )
+        onDragBegin?.(session)
       }}
+      onDragEnd={(event) => onDragEnd?.(session, event.dataTransfer?.dropEffect)}
       onDragOver={(event) => {
         if (!canReorder) return
         event.preventDefault()
@@ -123,6 +149,18 @@ export function SessionRow({
         </span>
       </button>
       <div className="dsh-session-item__actions">
+        {onOpenInEditor === undefined ? null : (
+          <button
+            className="dsh-icon-button dsh-session-item__open-in-editor"
+            type="button"
+            aria-label={t('sessions.openInEditor', { title })}
+            title={t('sessions.openInEditorTitle')}
+            disabled={disabled}
+            onClick={() => onOpenInEditor(session)}
+          >
+            <Icon name="open-in-editor" />
+          </button>
+        )}
         <button
           className="dsh-icon-button dsh-session-item__rename"
           type="button"

@@ -82,6 +82,8 @@ export const STATE_VIEW_KEYS_D = [
   'questions',
   'busyEnter',
   'drawer',
+  'surface',
+  'editorChats',
 ] as const
 
 export const STATE_VIEW_KEYS = [

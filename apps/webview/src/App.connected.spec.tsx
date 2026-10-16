@@ -141,6 +141,8 @@ function connectedState(activeSession: boolean): AppState {
     questions: [],
     busyEnter: 'queue',
     drawer: undefined,
+    surface: undefined,
+    editorChats: 0,
   }
 }
 
@@ -253,6 +255,8 @@ function storeFor(state: AppState): AppStore {
     searchSessions: vi.fn().mockResolvedValue({ items: [] }),
     refreshCommands: vi.fn().mockResolvedValue(undefined),
     openSession: vi.fn().mockResolvedValue(undefined),
+    openSessionInEditor: vi.fn(),
+    runMovetoCommand: vi.fn().mockResolvedValue('editor'),
     loadOlderHistory: vi.fn().mockResolvedValue(undefined),
     openSubagent: vi.fn().mockResolvedValue(undefined),
     renameSession: vi.fn().mockResolvedValue(undefined),
@@ -361,6 +365,7 @@ function storeFor(state: AppState): AppStore {
     updateGoal: vi.fn().mockResolvedValue(undefined),
     clearGoal: vi.fn().mockResolvedValue(undefined),
     exportSession: vi.fn().mockResolvedValue(undefined),
+    moveChatToSidebar: vi.fn().mockResolvedValue(undefined),
     setDrawer: vi.fn(),
     featureRequest: vi.fn().mockResolvedValue(undefined),
     subscribeFeature: vi.fn(() => () => undefined),
@@ -451,6 +456,96 @@ describe('App connected rendering', () => {
     expect(screen.getByRole('button', { name: 'New session here' })).toBeDefined()
     expect(screen.queryByText('Create a session to begin.')).toBeDefined()
     expect(document.querySelector('.dsh-empty-state')).toBeNull()
+  })
+
+  it('replaces the side-bar conversation with the editor handoff card', () => {
+    // Exactly one surface is live: while an editor tab holds the chat, the
+    // side bar must not render a second conversation behind it.
+    const moveChatToSidebar = vi.fn().mockResolvedValue(undefined)
+    const setDrawer = vi.fn()
+    currentStore = {
+      ...storeFor({ ...connectedState(true), surface: { kind: 'sidebar' }, editorChats: 2 }),
+      moveChatToSidebar,
+      setDrawer,
+    }
+    render(<App />)
+
+    expect(screen.getByRole('heading', { name: 'Chat is open in the editor area' })).toBeDefined()
+    expect(screen.getByText(/one tab per session \(2 open\)/u)).toBeDefined()
+    expect(screen.queryByTestId('timeline')).toBeNull()
+    expect(screen.queryByRole('textbox', { name: 'Prompt' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Move back to side bar' }))
+    expect(moveChatToSidebar).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+    expect(setDrawer).toHaveBeenCalledWith('sessions')
+  })
+
+  it('runs the client /moveto command instead of sending it to DSH', async () => {
+    const executeCommand = vi.fn().mockResolvedValue(true)
+    const sendPrompt = vi.fn().mockResolvedValue(undefined)
+    const runMovetoCommand = vi.fn().mockResolvedValue('editor')
+    currentStore = {
+      ...storeFor({
+        ...connectedState(true),
+        commands: [{ name: 'moveto', description: 'Move the chat', input: { hint: '[editor|sidebar]' } }],
+      }),
+      executeCommand,
+      sendPrompt,
+      runMovetoCommand,
+    }
+    render(<App />)
+
+    const prompt = screen.getByRole('textbox', { name: 'Prompt' })
+    fireEvent.change(prompt, { target: { value: '/moveto:editor' } })
+    await act(async () => {
+      fireEvent.keyDown(prompt, { key: 'Enter' })
+      await Promise.resolve()
+    })
+
+    expect(runMovetoCommand).toHaveBeenCalledWith('/moveto editor')
+    expect(executeCommand).not.toHaveBeenCalled()
+    expect(sendPrompt).not.toHaveBeenCalled()
+  })
+
+  it('reports an unusable /moveto target on the error surface', async () => {
+    const executeCommand = vi.fn().mockResolvedValue(true)
+    const sendPrompt = vi.fn().mockResolvedValue(undefined)
+    const runMovetoCommand = vi.fn().mockResolvedValue('unknown-target')
+    currentStore = {
+      ...storeFor({
+        ...connectedState(true),
+        commands: [{ name: 'moveto', description: 'Move the chat', input: { hint: '[editor|sidebar]' } }],
+      }),
+      executeCommand,
+      sendPrompt,
+      runMovetoCommand,
+    }
+    render(<App />)
+
+    const prompt = screen.getByRole('textbox', { name: 'Prompt' })
+    fireEvent.change(prompt, { target: { value: '/moveto:bogus' } })
+    await act(async () => {
+      fireEvent.keyDown(prompt, { key: 'Enter' })
+      await Promise.resolve()
+    })
+
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Unknown /moveto'))
+    expect(executeCommand).not.toHaveBeenCalled()
+    expect(sendPrompt).not.toHaveBeenCalled()
+  })
+
+  it('renders the conversation on an editor surface even while editor tabs exist', () => {
+    currentStore = storeFor({
+      ...connectedState(true),
+      surface: { kind: 'editor', sessionId: 's1' },
+      editorChats: 1,
+    })
+    render(<App />)
+
+    expect(screen.queryByRole('heading', { name: 'Chat is open in the editor area' })).toBeNull()
+    expect(screen.getByTestId('timeline')).toBeDefined()
   })
 
   it('renders a local draft and routes its first message through deferred creation', async () => {

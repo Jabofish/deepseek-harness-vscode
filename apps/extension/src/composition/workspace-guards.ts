@@ -86,6 +86,7 @@ export function requiresTrustedWorkspace(type: WebviewRequest['type']): boolean 
     case 'preset.openDocument':
     case 'preset.remove':
     case 'session.export':
+    case 'surface.openInEditor':
       return true
     default:
       return false

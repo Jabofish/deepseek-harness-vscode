@@ -12,6 +12,15 @@ import { parseNoticeEvents } from './notice-events.js'
 
 export { timelineSequenceOptions } from './sequence-rules.js'
 
+/**
+ * Surface control frames describe where the chat is hosted, not what happened
+ * in a conversation. They are Host-owned UI traffic that the store's surface
+ * actions apply, so they never become backend events or timeline rows.
+ */
+export function isSurfaceEventName(name: string): boolean {
+  return name === 'ui.surface.assigned' || name === 'ui.surface.handoff' || name === 'ui.surface.openInEditor'
+}
+
 export function domainEvent(name: string, payload: unknown): BackendEvent | undefined {
   const raw = object(payload)
   if (raw !== undefined && raw.sequence !== undefined && finiteEventSequence(raw.sequence) === undefined)
@@ -54,7 +63,8 @@ export function parseHostDomainEvent(message: HostMessage): BackendEvent | null 
     message.name === 'runtime.update.progress' ||
     message.name === 'ui.sessions.toggle' ||
     message.name === 'ui.settings.toggle' ||
-    message.name === 'connection.snapshot'
+    message.name === 'connection.snapshot' ||
+    isSurfaceEventName(message.name)
   )
     return undefined
   return domainEvent(message.name, message.payload) ?? null

@@ -9,6 +9,7 @@ Bring local or remote [DeepSeek Harness](https://github.com/deepseek-ai/deepseek
 - Use the models, providers, permissions, and agent options supplied by the connected DSH.
 - Open produced files through VS Code, and use local templates, checkpoints, Changes, and task views when available.
 - Use the compact DSH-style focused layout, or switch to the classic layout in **Settings → General → Conversation layout**.
+- Move the chat into the editor area as a full-width tab, one per session, with **DSH: Open Chat in Editor Area**, the `/moveto:editor` command, or **Open in Editor Area** on a session row; `/moveto:sidebar` moves it back. Editor tabs return with their session after a window reload, and the side bar shows a short notice instead of a second copy while a tab is open.
 
 Available operations depend on the connected DSH runtime. Unsupported capabilities are shown explicitly; [exact compatibility and evidence](https://github.com/Jabofish/deepseek-harness-vscode/tree/main/docs) are documented in the repository.
 

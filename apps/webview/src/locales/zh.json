@@ -1687,5 +1687,16 @@
   "markdown.plainText": "文本",
   "markdown.table": "表格",
   "markdown.codeLines": "{count} 行",
-  "markdown.tableDimensions": "{rows} 行 · {columns} 列"
+  "markdown.tableDimensions": "{rows} 行 · {columns} 列",
+  "surface.handoff.title": "聊天已在编辑器区打开",
+  "surface.handoff.description": "对话在编辑器区运行，每个会话一个标签（当前 {count} 个）。移回侧边栏即可在此继续。",
+  "surface.handoff.moveBack": "移回侧边栏",
+  "surface.handoff.openSessions": "打开会话列表",
+  "surface.handoff.moveFailed": "无法将聊天移回侧边栏。",
+  "commands.movetoDescription": "把聊天移动到编辑器区或移回侧边栏",
+  "commands.movetoUnknownTarget": "未知的 /moveto 目标。请使用 /moveto:editor 或 /moveto:sidebar。",
+  "commands.movetoNoSession": "请先选择会话，再将聊天移动到编辑器区。",
+  "sessions.openInEditor": "在编辑器区打开 {title}",
+  "sessions.openInEditorTitle": "在编辑器区打开",
+  "sessions.dragSessionToEditor": "拖出面板即可在编辑器区打开"
 }

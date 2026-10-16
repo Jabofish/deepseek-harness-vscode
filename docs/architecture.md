@@ -75,5 +75,6 @@ Checkpoint 与 Prompt Template 属于 Host 本地能力，不伪造 DSH RPC。�
 - **Web Host API 为主通道**：完整会话、工具、审批和 Agent 状态必须来自结构化 RPC/Event；TUI/ANSI 和模型文本不是机器契约。
 - **发现先于启动**：先验证外部候选，保留用户已有进程；只有当前扩展持有的进程可以停止。
 - **辅助侧边栏默认位置**：使用 VS Code 稳定贡献点注册 View，升级保留编辑器已保存的布局；移动位置使用原生选择器。
+- **编辑器区聊天是独立表面**：View 无法移动到编辑器区，因此编辑器区聊天由 `createWebviewPanel` 承载，每个会话一个标签并由序列化器在重载后恢复；Host 用表面注册表维护身份与路由，响应只回到发起的表面，一个表面释放不取消其他表面的请求、Job 跟读或编辑器上下文。存在编辑器标签时侧边栏只显示占位提示，避免同一会话被两个 Webview 同时渲染。
 - **版本化 Adapter**：上游变化在版本边界内消化，Domain、Application 和 Webview 不依赖上游类或版本判断。
 - **Secret 留在 Host**：普通 Webview 输入框不处理 Provider Secret，诊断和协议测试必须验证无泄漏。

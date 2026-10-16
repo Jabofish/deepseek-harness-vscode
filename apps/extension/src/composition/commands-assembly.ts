@@ -22,6 +22,11 @@ import { DSH_DOCUMENTATION_URL } from '../constants.js'
 import { deliverOrRevealView } from '../view/deliver-or-reveal.js'
 import type { WebviewMessageRouter } from '../view/message-router.js'
 import { DshWebviewViewProvider } from '../view/dsh-webview-view-provider.js'
+import { persistedEditorChatSessionId } from '../view/editor-chat-surface-manager.js'
+import type { EditorChatSurfaceManager } from '../view/editor-chat-surface-manager.js'
+import { DshWebviewPanelSurface } from '../view/dsh-webview-panel-surface.js'
+import type { WebviewSurfaceRegistry } from '../view/webview-surface-registry.js'
+import { VIEW_ID } from '../constants.js'
 import { stateSubscriptionDisposable } from './public-projection.js'
 import type { PostFeatureEvent } from './host-event-pipeline.js'
 
@@ -45,6 +50,10 @@ export interface CommandsAssemblyDependencies {
   readonly coordinator: DshConnectionCoordinator
   readonly router: WebviewMessageRouter
   readonly provider: DshWebviewViewProvider
+  /** Editor-area chat surfaces (one per session). */
+  readonly editorSurfaces: EditorChatSurfaceManager
+  /** Every live chat surface, including the sidebar view. */
+  readonly surfaces: WebviewSurfaceRegistry
   readonly runtimeLocator: DshRuntimeLocator
   readonly runtimeInstaller: RuntimeInstaller
   readonly endpointLaunchUrls: Map<string, string>
@@ -86,6 +95,8 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
     coordinator,
     router,
     provider,
+    editorSurfaces,
+    surfaces,
     runtimeLocator,
     runtimeInstaller,
     endpointLaunchUrls,
@@ -169,6 +180,15 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
         // session for a full Webview recreation.
         webviewOptions: { retainContextWhenHidden: true },
       }),
+      // Editor chat tabs survive a window reload. The serializer is only
+      // called while the extension is activating, hence the
+      // `onWebviewPanel:dsh.chatPanel` activation event in the manifest.
+      vscode.window.registerWebviewPanelSerializer(DshWebviewPanelSurface.viewType, {
+        deserializeWebviewPanel: (panel, state) => {
+          editorSurfaces.adopt(panel, persistedEditorChatSessionId(state))
+          return Promise.resolve()
+        },
+      }),
     )
     registerCommands({
       commands: vscode.commands,
@@ -210,6 +230,30 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
         'dsh.copyInstallCommand': () => runtimeInstaller.copyInstallCommand(),
         'dsh.openDocumentation': () => vscode.env.openExternal(vscode.Uri.parse(DSH_DOCUMENTATION_URL)),
         'dsh.openInSecondarySidebar': () => moveOrExplainSecondarySidebar(vscode.commands, vscode.window),
+        // The Host has no active session of its own: an already-open editor tab
+        // is revealed directly, otherwise the live chat is asked to move the
+        // session it is showing.
+        'dsh.openChatInEditor': async () => {
+          const existing = editorSurfaces.mostRecent
+          if (existing !== undefined) {
+            await existing.reveal(false)
+            return true
+          }
+          const delivered = await revealThenPost('ui.surface.openInEditor', {})
+          if (!delivered)
+            await vscode.window.showWarningMessage(
+              'Open the DSH chat and select a session before moving it to the editor area.',
+            )
+          return delivered
+        },
+        'dsh.moveChatToSidebar': async () => {
+          editorSurfaces.closeAll()
+          await vscode.commands.executeCommand(`${VIEW_ID}.focus`).then(
+            () => undefined,
+            () => undefined,
+          )
+          return true
+        },
         'dsh.showDiagnostics': () => diagnostics.show(),
         'dsh.addSelectionContext': () => captureEditorContextFromCommand('selection'),
         'dsh.addFileContext': () => captureEditorContextFromCommand('file'),
@@ -251,6 +295,8 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
       () => stopAllJobFollows(),
       () => stateSubscription(),
       () => provider.dispose(),
+      () => editorSurfaces.dispose(),
+      () => surfaces.dispose(),
       () => changeTracker.dispose(),
       () => taskRegistry.dispose(),
       () => backendService.detach(),

@@ -1,4 +1,5 @@
 import type { DynamicCommand, SkillDescriptor } from '@dsh-vscode/domain'
+import { MOVETO_COMMAND_NAME, movetoCommandRow } from '../client-commands.js'
 import { translate } from '../../i18n.js'
 import type { ProtocolClient } from '../protocol-client.js'
 import { requestId } from './ids.js'
@@ -74,15 +75,18 @@ export function mergeSkillCommands(
 export function withClientCommandContributions(
   commands: readonly DynamicCommand[],
 ): readonly DynamicCommand[] {
-  if (commands.some((command) => command.name === 'model')) return commands
-  return [
-    ...commands,
-    {
+  const contributions: DynamicCommand[] = []
+  if (!commands.some((command) => command.name === 'model'))
+    contributions.push({
       name: 'model',
       description: translate('commands.modelDescription'),
       source: 'plugin',
-    },
-  ]
+    })
+  // The palette and Enter adjudication only claim a line whose row exists, so
+  // the client-owned move command has to be advertised like any other.
+  if (!commands.some((command) => command.name === MOVETO_COMMAND_NAME))
+    contributions.push(movetoCommandRow())
+  return contributions.length === 0 ? commands : [...commands, ...contributions]
 }
 
 export function isCommandDirectoryRefresh(value: unknown): boolean {

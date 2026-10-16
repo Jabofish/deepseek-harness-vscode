@@ -17,6 +17,7 @@ import {
   type RequestGateway,
   type RequestGatewayDependencies,
 } from './request-handler.js'
+import { WebviewSurfaceRegistry } from '../view/webview-surface-registry.js'
 
 const configuration: AgentConfiguration = {
   preset: 'missing',
@@ -72,6 +73,10 @@ function harness(): {
   )
   const sent: unknown[] = []
   const gateway = createRequestGateway({
+    postTo: () => Promise.resolve(true),
+    postEvent: () => Promise.resolve(true),
+    postEventTo: () => Promise.resolve(true),
+    surfaces: new WebviewSurfaceRegistry(),
     backendService: service,
     modelUseCases: new ModelSettingsUseCases(service),
     sessionUseCases: new SessionUseCases(service),

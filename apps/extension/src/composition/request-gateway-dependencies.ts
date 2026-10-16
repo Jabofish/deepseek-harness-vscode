@@ -21,11 +21,17 @@ import type { VsCodeConfigurationSource } from '../config/configuration-source.j
 import type { RedactedDiagnostics } from '../backend/diagnostics.js'
 import type { EditorContextProvider } from '../editor/editor-context-provider.js'
 import type { AttachmentStore } from '../attachments/attachment-store.js'
+import type { WebviewSurfaceRegistry } from '../view/webview-surface-registry.js'
 import type { SessionScope } from './session-scope.js'
-import type { PostHostMessage } from './host-event-pipeline.js'
+import type { PostHostMessage, PostHostMessageTo, PostSurfaceEvent } from './host-event-pipeline.js'
 
 export interface RequestGatewayDependencies {
   readonly post: PostHostMessage
+  readonly postTo: PostHostMessageTo
+  readonly postEvent: (name: string, payload: unknown) => Promise<boolean>
+  readonly postEventTo: PostSurfaceEvent
+  /** Every live chat Webview: the sidebar view and zero or more editor panels. */
+  readonly surfaces: WebviewSurfaceRegistry
   readonly handleFeatureRequest: (request: FeatureRequest, signal: AbortSignal) => Promise<unknown>
   readonly diagnostics: RedactedDiagnostics
   readonly context: vscode.ExtensionContext

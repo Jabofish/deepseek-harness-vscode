@@ -34,6 +34,7 @@ const routesAllowedWhileUntrusted = [
   'runtime.update.install',
   'session.list',
   'settings.read',
+  'surface.moveToSidebar',
   'view.openLink',
   'view.showInFolder',
   'workspace.addFolder',

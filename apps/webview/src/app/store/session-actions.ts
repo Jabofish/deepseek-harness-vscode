@@ -7,6 +7,7 @@ import {
   type RunningInputMode,
 } from '@dsh-vscode/domain'
 
+import { isMovetoCommandLine, normalizeClientCommandText } from '../client-commands.js'
 import { translate } from '../../i18n.js'
 import type { ProtocolClient } from '../protocol-client.js'
 import { hasDynamicCommand } from './agent-config.js'
@@ -29,6 +30,11 @@ export interface SessionActionDependencies {
     mode: RunningInputMode,
     subagent: ActiveSubagent | undefined,
   ) => Promise<void>
+  /**
+   * Client-owned `/moveto` dispatch. Present so a line the composer did not
+   * claim still cannot reach DSH as a prompt.
+   */
+  readonly runMovetoCommand: (line: string) => Promise<unknown>
   readonly refreshCommands: (sessionId: string) => Promise<void>
   readonly refreshSessionModelDirectoryForSession: (sessionId: string) => Promise<void>
   readonly rememberComposerConfiguration: (configuration: AgentConfiguration) => void
@@ -59,6 +65,7 @@ export interface SessionActions {
 export function createSessionActions(dependencies: SessionActionDependencies): SessionActions {
   const {
     client,
+    runMovetoCommand,
     getState,
     setState,
     executeCommandRequest,
@@ -118,7 +125,15 @@ export function createSessionActions(dependencies: SessionActionDependencies): S
     mode: RunningInputMode,
   ): Promise<void> => {
     const subagent = activeSubagentFor(sessionId)
-    if (subagent === undefined && parseSlashCommand(text) !== undefined) {
+    // Client-owned commands are never spelled as a prompt, whatever route the
+    // text took to get here. `/<moveto>:<target>` is rewritten first so the
+    // short form is claimed exactly like the spaced form.
+    const clientText = normalizeClientCommandText(text)
+    if (subagent === undefined && isMovetoCommandLine(clientText)) {
+      await runMovetoCommand(clientText)
+      return
+    }
+    if (subagent === undefined && parseSlashCommand(clientText) !== undefined) {
       // Slash commands are control-plane operations.  Sending them through
       // session.prompt turns /plan, /permission, /compact, and every plugin
       // command into a visible model request.  The official WebUI routes
@@ -128,9 +143,9 @@ export function createSessionActions(dependencies: SessionActionDependencies): S
       // for the next message, exactly as they do on the Composer's own
       // command path.  A line DSH answers as unknown is not a command at all
       // and is submitted below as the prompt gesture it spells.
-      if ((await executeCommandRequest(sessionId, text, attachments)) === 'executed') return
+      if ((await executeCommandRequest(sessionId, clientText, attachments)) === 'executed') return
     }
-    await sendUserTurn(sessionId, text, attachments, mode, subagent)
+    await sendUserTurn(sessionId, clientText, attachments, mode, subagent)
   }
 
   const cancelSession = async (sessionId: string): Promise<void> => {

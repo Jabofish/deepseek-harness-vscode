@@ -28,6 +28,7 @@ import { useI18n } from '../../i18n.js'
 import {
   ARCHIVE_FILTERS,
   SEARCH_QUERY_MAX_CODE_UNITS,
+  isTearOffDrag,
   projectSessionLists,
   renameConflictFor,
   sanitizeSearchQuery,
@@ -53,6 +54,8 @@ export interface SessionDrawerProps {
   readonly onOpenChange?: (open: boolean) => void
   readonly showTrigger?: boolean
   readonly onOpen: (sessionId: string) => void
+  /** Open one conversation as an editor-area chat tab instead of switching here. */
+  readonly onOpenInEditor?: (sessionId: string) => void
   readonly onCreate: (workspaceId: string | undefined) => void
   readonly onArchive: (sessionId: string) => Promise<void>
   /** Archived rows the host still holds; fetched on demand by the section. */
@@ -117,6 +120,39 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
   /** Both dialogs are portalled `aria-modal` surfaces; the row control that
    * opened one takes the keyboard back when it closes. */
   const dialogTriggerRef = useRef<HTMLElement | null>(null)
+  const sessionDrag = useRef<
+    { readonly sessionId: string; readonly outcome: { leftPanel: boolean; reordered: boolean } } | undefined
+  >(undefined)
+  // The editor area is outside this Webview, so "the pointer left the panel" can
+  // only be observed from the document: a dragleave with no related target, or
+  // drag coordinates outside the viewport. Either one counts.
+  useEffect(() => {
+    const onDragLeave = (event: DragEvent): void => {
+      if (sessionDrag.current === undefined) return
+      // Entering another element inside this document means the drag is still
+      // here; a missing or foreign related target means it left the Webview.
+      const related = event.relatedTarget as Node | null | undefined
+      if (related === null || related === undefined || !document.contains(related))
+        sessionDrag.current.outcome.leftPanel = true
+    }
+    const onDrag = (event: DragEvent): void => {
+      const drag = sessionDrag.current
+      if (drag === undefined) return
+      if (
+        event.clientX < 0 ||
+        event.clientY < 0 ||
+        event.clientX >= window.innerWidth ||
+        event.clientY >= window.innerHeight
+      )
+        drag.outcome.leftPanel = true
+    }
+    document.addEventListener('dragleave', onDragLeave, true)
+    document.addEventListener('drag', onDrag, true)
+    return () => {
+      document.removeEventListener('dragleave', onDragLeave, true)
+      document.removeEventListener('drag', onDrag, true)
+    }
+  }, [])
   const panelId = useId()
   const renameDialogId = useId()
   const isControlled = props.open !== undefined
@@ -287,6 +323,30 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
     props.onOpen(session.id)
   }
 
+  const openSessionInEditor = (session: SessionSummary): void => {
+    setSelectedWorkspaceId(session.workspaceId)
+    if (!docked) setOpen(false)
+    props.onOpenInEditor?.(session.id)
+  }
+
+  /**
+   * One drag gesture at most. The Webview cannot see the editor area, so the
+   * tear-off decision is built from what it can observe: the pointer leaving
+   * the panel, a drop no target accepted, and no reorder consuming the drag.
+   */
+  const beginSessionDrag = (session: SessionSummary): void => {
+    sessionDrag.current = { sessionId: session.id, outcome: { leftPanel: false, reordered: false } }
+  }
+
+  const endSessionDrag = (session: SessionSummary, dropEffect: string | undefined): void => {
+    const drag = sessionDrag.current
+    sessionDrag.current = undefined
+    if (drag === undefined || drag.sessionId !== session.id) return
+    if (props.onOpenInEditor === undefined) return
+    if (!isTearOffDrag({ ...drag.outcome, dropEffect })) return
+    openSessionInEditor(session)
+  }
+
   const archiveSession = (session: SessionSummary): void => {
     setArchiveError(undefined)
     setRemovingSessionId(session.id)
@@ -334,6 +394,8 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
    * a no-op.
    */
   const moveSession = (workspaceId: string, sessionId: string, beforeSessionId: string): void => {
+    // A reorder consumed the drag: it must never also open an editor tab.
+    if (sessionDrag.current !== undefined) sessionDrag.current.outcome.reordered = true
     setMoveError(undefined)
     void props.onMoveSession(workspaceId, sessionId, beforeSessionId).catch((reason: unknown) => {
       setMoveError(reason instanceof Error ? reason.message : t('sessions.moveFailed'))
@@ -414,6 +476,9 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
       disabled={removingSessionId !== undefined || mutationBusy}
       sorting={sorting}
       onOpen={openSession}
+      {...(props.onOpenInEditor === undefined ? {} : { onOpenInEditor: openSessionInEditor })}
+      onDragBegin={beginSessionDrag}
+      onDragEnd={endSessionDrag}
       onArchive={archiveSession}
       onRename={(target, trigger) => {
         dialogTriggerRef.current = trigger

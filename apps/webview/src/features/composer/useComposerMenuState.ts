@@ -10,6 +10,7 @@ import {
   type CommandPaletteSelection,
 } from '../commands/CommandPalette.js'
 import { commandDispatchKind, type PopupSelectRegistry } from '../commands/popupSelectRegistry.js'
+import { normalizeClientCommandText } from '../../app/client-commands.js'
 import { permissionOptions } from './SessionControls.js'
 import {
   commandInputOptions,
@@ -211,7 +212,12 @@ export function useComposerMenuState(
         // while the command ran is a different draft and has to survive.
         () => {
           commandSubmitInFlight.current = false
-          props.onDraftChange((current) => (current === command ? '' : current))
+          // The dispatched line may be the normalized form of what the user
+          // typed (`/moveto:editor` is submitted as `/moveto editor`), so the
+          // draft is compared after the same rewrite.
+          props.onDraftChange((current) =>
+            normalizeClientCommandText(current).trim() === command ? '' : current,
+          )
         },
         () => {
           commandSubmitInFlight.current = false

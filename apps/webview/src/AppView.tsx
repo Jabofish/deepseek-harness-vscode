@@ -13,6 +13,8 @@ import { AppHeader } from './features/shell/AppHeader.js'
 import { SessionLineage } from './features/subagents/SessionLineage.js'
 import { ConversationActionsMenu } from './features/shell/ConversationActionsMenu.js'
 import { ExportDialog } from './features/export/ExportDialog.js'
+import { SurfaceHandoffPlaceholder } from './features/surface/SurfaceHandoffPlaceholder.js'
+import { isHandoffSidebar } from './app/store/surface-actions.js'
 import { GoalBar } from './features/goals/GoalBar.js'
 import { GoalTodoStrip } from './features/goals/GoalTodoStrip.js'
 import { Timeline } from './features/chat/Timeline.js'
@@ -134,6 +136,8 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
     store,
     streaming,
     subagentReadOnlyReason,
+    surfaceOnMoveToSidebar,
+    surfaceOnOpenSessions,
     t,
     themePreference,
     timelineOnBranch,
@@ -170,6 +174,10 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
     state.workspaces.length > 0 &&
     welcomeVisible
   const showConnectionAlert = connectionMessage !== undefined && connectionKey !== dismissedConnection
+  // Exactly one surface renders the conversation. While any editor chat tab
+  // exists, the side bar (and an unassigned surface, which is one) shows the
+  // handoff card; an editor surface always renders its own chat.
+  const showSurfaceHandoff = isHandoffSidebar(state)
   return (
     <AppErrorBoundary>
       <main
@@ -317,6 +325,14 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
               onReconnectDiagnostics={() => store.reconnect()}
               onShowDiagnosticsOutput={() => store.showDiagnostics()}
             />
+          ) : showSurfaceHandoff ? (
+            <div className="dsh-app__empty">
+              <SurfaceHandoffPlaceholder
+                editorChats={state.editorChats}
+                onMoveToSidebar={surfaceOnMoveToSidebar}
+                onOpenSessions={surfaceOnOpenSessions}
+              />
+            </div>
           ) : (
             <>
               {active === undefined && state.pendingSession !== undefined ? (

@@ -17,6 +17,7 @@ vi.mock('vscode', () => ({
 }))
 
 import { createRequestGateway } from './request-handler.js'
+import { WebviewSurfaceRegistry } from '../view/webview-surface-registry.js'
 
 type Sent = {
   readonly type: string
@@ -35,6 +36,10 @@ function buildGateway(isTrusted: boolean): {
   const sent: Sent[] = []
   const retries: number[] = []
   const gateway = createRequestGateway({
+    postTo: () => Promise.resolve(true),
+    postEvent: () => Promise.resolve(true),
+    postEventTo: () => Promise.resolve(true),
+    surfaces: new WebviewSurfaceRegistry(),
     post: (message: unknown) => {
       sent.push(message as Sent)
       return Promise.resolve(true)

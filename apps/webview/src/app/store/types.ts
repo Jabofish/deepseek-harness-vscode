@@ -1,3 +1,4 @@
+import type { MovetoOutcome } from '../client-commands.js'
 import type {
   FeatureHostEvent,
   FeatureRequest,
@@ -128,6 +129,18 @@ export type WebviewBackendState =
     }
   | { readonly kind: 'stopping' }
 
+/**
+ * Which Host surface this Webview instance is. The Host assigns it right after
+ * the readiness handshake and the Webview only ever reports actions back; it
+ * never chooses its own identity. `undefined` means no assignment has arrived
+ * yet and is treated as the side bar, the surface every Webview starts as.
+ */
+export interface SurfaceAssignment {
+  readonly kind: 'sidebar' | 'editor'
+  /** The session an editor tab is bound to; absent for the side bar. */
+  readonly sessionId?: string
+}
+
 export interface AppState extends SessionModelDirectoryState {
   readonly backend: WebviewBackendState
   /** Monotonic opaque counter for a newly observed connected backend epoch. */
@@ -229,6 +242,10 @@ export interface AppState extends SessionModelDirectoryState {
   /** Host-side `ui-conversation.busyEnter` preference driving the composer. */
   readonly busyEnter: RunningInputMode
   readonly drawer: 'sessions' | 'jobs' | 'subagents' | 'settings' | 'schedules' | undefined
+  /** Host-assigned surface identity; undefined until `ui.surface.assigned` arrives. */
+  readonly surface?: SurfaceAssignment | undefined
+  /** Editor-area chat tabs the Host currently holds; drives the handoff posture. */
+  readonly editorChats: number
 }
 
 /** Schema-driven DSH host settings snapshot (describe + resolved values). */
@@ -428,6 +445,15 @@ export interface AppActions {
   loadSubagentChildren(sessionId: string): Promise<SubagentCatalog | undefined>
   /** Run the host-mediated save flow for one session (`session.export`). */
   exportSession(options: SessionExportOptions): Promise<void>
+  /** Ask the Host to close every editor chat tab and make the side bar live again. */
+  moveChatToSidebar(): Promise<void>
+  /**
+   * Ask the Host to show a session in the editor area. Used while the side bar
+   * is handed off, when opening a session there would target a hidden chat.
+   */
+  openSessionInEditor(sessionId: string): void
+  /** Run the client-owned `/moveto` command; the line never reaches DSH. */
+  runMovetoCommand(line: string): Promise<MovetoOutcome>
   setDrawer(drawer: AppState['drawer']): void
 }
 
