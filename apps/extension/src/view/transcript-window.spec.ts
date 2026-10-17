@@ -6,8 +6,9 @@ import {
   TRANSCRIPT_MAX_NODES,
   transcriptWindowSchema,
   type TranscriptWindow,
+  type TranscriptPatch,
 } from '@dsh-vscode/webview-protocol'
-import { TranscriptWindowService } from './transcript-window.js'
+import { isTranscriptOnlyEvent, TranscriptWindowService } from './transcript-window.js'
 import { sanitizePublicValue } from './public-value.js'
 
 const sessionId = 'session-fixture'
@@ -57,6 +58,249 @@ function fixture(
 afterEach(() => vi.useRealTimers())
 
 describe('Host transcript windows', () => {
+  it('keeps compacted history stable when follow replays native rows below the read cut', async () => {
+    const invalidated = vi.fn()
+    const posted: TranscriptWindow[] = []
+    const service = new TranscriptWindowService({
+      read: () => Promise.resolve({ events: [], hasMore: false }),
+      publicValue: (value) => value,
+      post: (value) => {
+        posted.push(value)
+        return Promise.resolve(true)
+      },
+      invalidate: invalidated,
+    })
+    const first = service.installPage(
+      sessionId,
+      {
+        events: [message(10, 'Compacted answer')],
+        hasMore: false,
+        projection: { asOfSequence: 12, values: {} },
+      },
+      service.begin(sessionId),
+    )
+    const replay = [
+      { type: 'turn.started', sessionId, turn: 1, sequence: 2, replayed: true },
+      {
+        type: 'message.delta',
+        sessionId,
+        messageId: 'm-10',
+        delta: 'Original chunk',
+        sequence: 4,
+        replayed: true,
+      },
+      { type: 'turn.ended', sessionId, turn: 1, reason: 'completed', sequence: 12, replayed: true },
+    ] as const
+    for (const event of replay) {
+      service.accept(event)
+      expect(isTranscriptOnlyEvent(event)).toBe(true)
+    }
+    await Promise.resolve()
+    expect(invalidated).not.toHaveBeenCalled()
+    expect(posted).toHaveLength(0)
+    service.accept({
+      type: 'message.delta',
+      sessionId,
+      messageId: 'live',
+      delta: 'Next answer',
+      sequence: 13,
+    })
+    await Promise.resolve()
+    expect(posted.at(-1)?.nodes[0]).toEqual(first.nodes[0])
+    expect(posted.at(-1)?.nodes.at(-1)).toMatchObject({ markdown: 'Next answer' })
+    expect(
+      isTranscriptOnlyEvent({ type: 'turn.ended', sessionId, turn: 2, reason: 'completed', sequence: 14 }),
+    ).toBe(false)
+    service.dispose()
+  })
+
+  it('sends sanitized text suffixes and publishes terminal metadata without resending history facts per token', async () => {
+    const sent: (TranscriptWindow | TranscriptPatch)[] = []
+    const publicValue = vi.fn(
+      (value: unknown) =>
+        JSON.parse(JSON.stringify(value).replaceAll('fixture-secret', '[redacted]')) as unknown,
+    )
+    const service = new TranscriptWindowService({
+      read: () => Promise.resolve({ events: [], hasMore: false }),
+      publicValue,
+      post: (value) => {
+        sent.push(value)
+        return Promise.resolve(true)
+      },
+      postPatch: (value) => {
+        sent.push(value)
+        return Promise.resolve(true)
+      },
+    })
+    service.installPage(sessionId, { events: [message(0)], hasMore: false }, service.begin(sessionId))
+    service.accept({ type: 'turn.started', sessionId, turn: 1, sequence: 1 })
+    await Promise.resolve()
+    service.accept({
+      type: 'message.delta',
+      sessionId,
+      messageId: 'live',
+      delta: 'prefix '.repeat(400),
+      turn: 1,
+      step: 1,
+    })
+    await Promise.resolve()
+    publicValue.mockClear()
+    service.accept({
+      type: 'message.delta',
+      sessionId,
+      messageId: 'live',
+      delta: 'fixture-secret suffix',
+      turn: 1,
+      step: 1,
+    })
+    await Promise.resolve()
+    const patch = sent.at(-1) as TranscriptPatch
+    expect(patch.textUpdates?.[0]).toMatchObject({
+      markdownLength: 2800,
+      node: { markdown: '[redacted] suffix' },
+    })
+    expect(patch).not.toHaveProperty('metadata')
+    expect(publicValue.mock.calls[0]?.[0]).not.toHaveProperty('eventFacts')
+    expect(JSON.stringify(patch)).not.toContain('fixture-secret')
+    service.accept({ type: 'turn.ended', sessionId, turn: 1, reason: 'completed', sequence: 2 })
+    await Promise.resolve()
+    const terminal = sent.at(-1) as TranscriptPatch
+    expect(terminal.metadata).toHaveProperty('lastSequence', 2)
+    expect(terminal.metadata).not.toHaveProperty('activeTurn')
+    service.dispose()
+  })
+  it('sends immediately without advancing time and coalesces only after bounded credits are exhausted', async () => {
+    vi.useFakeTimers()
+    const sent: (TranscriptWindow | TranscriptPatch)[] = []
+    const service = new TranscriptWindowService({
+      read: () => Promise.resolve({ events: [], hasMore: false }),
+      publicValue: (value) => value,
+      post: (value) => {
+        sent.push(value)
+        return Promise.resolve(true)
+      },
+      postPatch: (value) => {
+        sent.push(value)
+        return Promise.resolve(true)
+      },
+    })
+    service.installPage(sessionId, { events: [message(1)], hasMore: false }, service.begin(sessionId))
+    for (let index = 0; index < 68; index++) {
+      service.accept({
+        type: 'message.delta',
+        sessionId,
+        messageId: 'live',
+        delta: String(index) + ',',
+        turn: 1,
+        step: 1,
+      })
+      expect(sent).toHaveLength(Math.min(index + 1, 64))
+      await Promise.resolve()
+    }
+    expect(sent).toHaveLength(64)
+    expect('changedNodes' in sent[1]!).toBe(true)
+    service.acknowledge('wrong-session', sent[63]!.revision)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(sent).toHaveLength(64)
+    service.acknowledge(sessionId, sent[63]!.revision)
+    expect(sent).toHaveLength(65)
+    const latest = sent[64]!
+    expect('changedNodes' in latest && latest.changedNodes.at(-1)).toMatchObject({
+      markdown: Array.from({ length: 68 }, (_, i) => `${i},`).join(''),
+    })
+    service.dispose()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('bounds outstanding streaming bytes as well as frame count', async () => {
+    vi.useFakeTimers()
+    const sent: (TranscriptWindow | TranscriptPatch)[] = []
+    const service = new TranscriptWindowService({
+      read: () => Promise.resolve({ events: [], hasMore: false }),
+      publicValue: (value) => value,
+      post: (value) => {
+        sent.push(value)
+        return Promise.resolve(true)
+      },
+      postPatch: (value) => {
+        sent.push(value)
+        return Promise.resolve(true)
+      },
+    })
+    service.installPage(
+      sessionId,
+      { events: Array.from({ length: 80 }, (_, i) => message(i, 'x'.repeat(4000))), hasMore: false },
+      service.begin(sessionId),
+    )
+    for (let index = 0; index < 12; index++) {
+      service.accept({
+        type: 'message.delta',
+        sessionId,
+        messageId: 'live',
+        delta: 'word '.repeat(5000) + String(index),
+        turn: 1,
+        step: 1,
+      })
+      await vi.advanceTimersByTimeAsync(16)
+    }
+    expect(sent.length).toBeGreaterThan(1)
+    expect(sent.length).toBeLessThan(8)
+    expect(sent.reduce((total, value) => total + JSON.stringify(value).length, 0)).toBeLessThanOrEqual(
+      TRANSCRIPT_MAX_CHARS,
+    )
+    service.acknowledge(sessionId, sent.at(-1)!.revision)
+    await vi.advanceTimersByTimeAsync(16)
+    const latest = sent.at(-1)!
+    const node = 'changedNodes' in latest ? latest.changedNodes.at(-1) : undefined
+    expect(node?.kind === 'assistant-message' && node.markdown.endsWith('11')).toBe(true)
+    service.dispose()
+  })
+
+  it('keeps a streamed patch proportional to the changed node, not to the window', async () => {
+    const sent: (TranscriptWindow | TranscriptPatch)[] = []
+    const service = new TranscriptWindowService({
+      read: () => Promise.resolve({ events: [], hasMore: false }),
+      publicValue: (value) => value,
+      post: (value) => {
+        sent.push(value)
+        return Promise.resolve(true)
+      },
+      postPatch: (value) => {
+        sent.push(value)
+        return Promise.resolve(true)
+      },
+    })
+    service.installPage(
+      sessionId,
+      { events: Array.from({ length: 800 }, (_, i) => message(i, `Answer ${String(i)} `)), hasMore: false },
+      service.begin(sessionId),
+    )
+    sent.length = 0
+    for (let index = 0; index < 5; index++) {
+      service.accept({
+        type: 'message.delta',
+        sessionId,
+        messageId: 'assistant:9:1',
+        delta: 'token ',
+        turn: 9,
+        step: 1,
+        transientSequence: index + 1,
+        transientAttemptId: 'a1',
+        transientIndex: index,
+      })
+      await Promise.resolve()
+    }
+    const patches = sent.filter((value): value is TranscriptPatch => 'changedNodes' in value)
+    expect(patches.length).toBeGreaterThan(0)
+    for (const patch of patches) {
+      // The node-id list and event facts stay in the renderer: re-sending them
+      // per token made a revision cost O(window) bytes and visibly stuttered.
+      expect(patch.changedNodes).toHaveLength(1)
+      expect(JSON.stringify(patch).length).toBeLessThan(2_048)
+    }
+    service.dispose()
+  })
+
   it('keeps legacy current Todos independent of historical pages and stops deriving them once DSH provides the projection', async () => {
     const current = [{ id: 'current', content: 'Current task', status: 'in-progress' as const }]
     const old = [{ id: 'old', content: 'Old task', status: 'completed' as const }]

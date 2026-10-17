@@ -1,15 +1,17 @@
 /**
- * Strict Session Controller wire validation for DSH 0.1.7-alpha.1.
+ * Session Controller wire validation and readable V4 history projection.
  *
  * Alpha.171 serves native Session format V4. The released V4 codec validates
- * event admission and message relationships before the adapter maps events;
- * the one internal compatibility projection converts V4's tool-role result
+ * admission for interpreted events. Reading a native session degrades individual
+ * unsupported records and leaves whole-artifact restoration to DSH. The
+ * internal compatibility projection converts V4's tool-role result
  * to the established Domain tool-result representation after validation.
  */
 
 import {
   assertReleasedV4Header,
   assertV4RowAdmission,
+  RELEASED_V3_EVENT_TYPES,
   releasedV4SessionFormatCodec,
   restoreReleasedV4Artifact,
 } from '@deepseek-ai/dsh-session-format-v3-to-v4'
@@ -33,10 +35,15 @@ export interface AlphaV4SessionProfile {
   readonly normalizeEvent?: (event: Record<string, unknown>) => Record<string, unknown>
 }
 
+const profileKnownTypes = new WeakMap<AlphaV4SessionProfile, ReadonlySet<string>>()
+
 function knownTypes(profile?: AlphaV4SessionProfile): ReadonlySet<string> {
-  return profile === undefined
-    ? KNOWN_SESSION_EVENT_TYPES
-    : new Set([...KNOWN_SESSION_EVENT_TYPES, ...Object.keys(profile.eventValidators)])
+  if (profile === undefined) return KNOWN_SESSION_EVENT_TYPES
+  const cached = profileKnownTypes.get(profile)
+  if (cached !== undefined) return cached
+  const types = new Set([...KNOWN_SESSION_EVENT_TYPES, ...Object.keys(profile.eventValidators)])
+  profileKnownTypes.set(profile, types)
+  return types
 }
 
 export interface Alpha171SessionEvent extends Record<string, unknown> {
@@ -59,6 +66,73 @@ export interface Alpha171SessionSnapshot extends Record<string, unknown> {
   readonly hasMore: boolean
   readonly projections: Record<string, unknown>
   readonly assistantStream?: unknown
+}
+
+export const UNREADABLE_HISTORY_EVENT = 'vscode/unreadable-history-record'
+
+/** Keep the upstream cursor even when this client cannot interpret one record. */
+export function readAlpha171HistoryRecord(
+  value: unknown,
+  profile?: AlphaV4SessionProfile,
+): Alpha171SessionHistoryRecord | undefined {
+  const record = plainRecord(value)
+  const source = plainRecord(record?.event)
+  if (record?.type !== 'event' || source === undefined || !isSafeSequence(source.seq)) return undefined
+  // Additional envelope metadata is not a reason to lose a known message.
+  const event = Object.fromEntries(
+    SESSION_EVENT_KEYS.filter((key) => Object.hasOwn(source, key)).map((key) => [key, source[key]]),
+  )
+  if (
+    typeof event.type === 'string' &&
+    knownTypes(profile).has(event.type) &&
+    validAlpha171SessionEvent(event, profile)
+  )
+    return { type: 'event', event }
+  // This marker has no payload or control semantics. The native projections
+  // and Job Controller remain authoritative; never replay an unknown body.
+  return {
+    type: 'event',
+    event: {
+      type: UNREADABLE_HISTORY_EVENT,
+      seq: source.seq,
+      time: isSafeTime(source.time) ? source.time : 0,
+      data: {},
+      ignorable: true,
+    },
+  }
+}
+
+/** A view reads an already restored DSH session, not a complete persisted artifact. */
+export function readAlpha171SessionSnapshot(
+  value: unknown,
+  profile?: AlphaV4SessionProfile,
+): Alpha171SessionSnapshot | undefined {
+  const record = plainRecord(value)
+  const header = plainRecord(record?.header)
+  if (
+    record?.type !== 'snapshot' ||
+    header === undefined ||
+    !validAlpha171SessionHeader(header, profile) ||
+    !isSafeCursor(record.cursor) ||
+    !Array.isArray(record.records) ||
+    typeof record.hasMore !== 'boolean' ||
+    !validAlpha171ProjectionBaseline(record.projections)
+  )
+    return undefined
+  const records: Alpha171SessionHistoryRecord[] = []
+  for (const raw of record.records) {
+    const readable = readAlpha171HistoryRecord(raw, profile)
+    if (readable !== undefined && readable.event.seq <= record.cursor) records.push(readable)
+  }
+  return {
+    type: 'snapshot',
+    header,
+    cursor: record.cursor,
+    records,
+    hasMore: record.hasMore,
+    projections: record.projections,
+    ...(record.assistantStream === undefined ? {} : { assistantStream: record.assistantStream }),
+  }
 }
 
 export function validAlpha171SessionEvent(
@@ -280,66 +354,10 @@ function isJsonLike(value: unknown, seen = new Set<object>()): boolean {
   }
 }
 
+// V4 adds developer/message to the upstream released V3 vocabulary.
 const KNOWN_SESSION_EVENT_TYPES: ReadonlySet<string> = new Set([
-  'agent-preset/selected',
-  'agent/inbox/spliced',
-  'approval/asked',
-  'approval/decided',
-  'approval/policy',
-  'assistant/attempt',
-  'assistant/message',
-  'command/done',
-  'command/run',
-  'compaction/end',
-  'compaction/prune',
-  'compaction/start',
-  'compaction/summary',
-  'deliverables/presented',
+  ...RELEASED_V3_EVENT_TYPES,
   'developer/message',
-  'feedback/message-delete',
-  'feedback/message-put',
-  'feedback/record',
-  'goal/change',
-  'hook/invoked',
-  'hook/result',
-  'image/offload',
-  'llm/retry',
-  'llm/retry-started',
-  'model/selection',
-  'permission/preset',
-  'plan/mode',
-  'request/context',
-  'request/header',
-  'sandbox/mode',
-  'schedule/change',
-  'session-log-deepseek/delivery-accepted',
-  'session/end-seed',
-  'session/title',
-  'session/title-llm-request',
-  'step/end',
-  'step/start',
-  'subagent/catalog',
-  'subagent/descriptor',
-  'subagent/model-selection-policy',
-  'system/message',
-  'team/member',
-  'team/message/delivered',
-  'team/message/queued',
-  'team/task',
-  'todo/write',
-  'tool-workflow/agent-end',
-  'tool-workflow/agent-start',
-  'tool-workflow/run-end',
-  'tool-workflow/run-start',
-  'tool/call',
-  'tool/ptc-dispatch',
-  'tool/ptc-dispatch-start',
-  'tool/result',
-  'turn/end',
-  'turn/start',
-  'user/message',
-  'web/deepseek-search-llm-request',
-  'workspace/changes',
 ])
 
 /** Event types whose model-visible effects require an explicit pure interpreter. */

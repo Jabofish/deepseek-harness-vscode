@@ -24,6 +24,8 @@ export interface ScrollFollowOptions {
    * the estimated canvas height while the reader is moving.
    */
   readonly observeContentSize?: boolean
+  /** A virtual canvas may clamp a pinned offset while its estimates settle. */
+  readonly layoutMeasurementsActive?: boolean
 }
 
 /** A reader position captured before an older history page is inserted. */
@@ -355,13 +357,17 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
     const expectedScrollTop = internalScrollTopRef.current
     const isInternalScroll =
       expectedScrollTop !== undefined && Math.abs(element.scrollTop - expectedScrollTop) <= 1
-    internalScrollTopRef.current = undefined
+    if (!isInternalScroll) internalScrollTopRef.current = undefined
     if (isInternalScroll) lastReaderScrollTopRef.current = element.scrollTop
-    // A layout replacement can only be identified safely when the browser
-    // clamps a previously pinned reader all the way to the start. Any other
-    // offset may be an intentional reader position and must release follow.
+    // Chromium can deliver several scroll events for the same internal write;
+    // retain its expected offset until a different offset or reader gesture.
+    // A measured virtual canvas can also clamp to a nonzero estimate. Limit
+    // that exception to the owning consumer's guarded layout reconciliation;
+    // ordinary readers and all captured physical gestures keep control.
     const isLayoutScroll =
-      preserveBottomOnLayoutRef.current && !userScrollActiveRef.current && element.scrollTop <= 1
+      preserveBottomOnLayoutRef.current &&
+      !userScrollActiveRef.current &&
+      (element.scrollTop <= 1 || (options.layoutMeasurementsActive === true && stickToBottomRef.current))
     if (!isInternalScroll && !isLayoutScroll) {
       // Scroll events are the final source of truth. They also cover input
       // paths that do not reliably expose wheel/pointer intent in a Webview.
@@ -389,7 +395,14 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
       const next = !atLatest && options.itemCount > 0
       return current === next ? current : next
     })
-  }, [armUserScrollLock, bottomThreshold, cancelScheduledFollow, options.itemCount, scheduleScrollToLatest])
+  }, [
+    armUserScrollLock,
+    bottomThreshold,
+    cancelScheduledFollow,
+    options.itemCount,
+    options.layoutMeasurementsActive,
+    scheduleScrollToLatest,
+  ])
 
   useLayoutEffect(() => {
     const element = scrollRef.current

@@ -14,8 +14,6 @@ import { AppHeader } from './features/shell/AppHeader.js'
 import { SessionLineage } from './features/subagents/SessionLineage.js'
 import { ConversationActionsMenu } from './features/shell/ConversationActionsMenu.js'
 import { ExportDialog } from './features/export/ExportDialog.js'
-import { SurfaceHandoffPlaceholder } from './features/surface/SurfaceHandoffPlaceholder.js'
-import { isHandoffSidebar } from './app/store/surface-actions.js'
 import { GoalBar } from './features/goals/GoalBar.js'
 import { GoalTodoStrip } from './features/goals/GoalTodoStrip.js'
 import { Timeline } from './features/chat/Timeline.js'
@@ -136,8 +134,6 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
     store,
     streaming,
     subagentReadOnlyReason,
-    surfaceOnMoveToSidebar,
-    surfaceOnOpenSessions,
     t,
     themePreference,
     timelineOnBranch,
@@ -226,9 +222,6 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
       },
     })
   }
-  // Show handoff until the user explicitly returns a conversation to the
-  // sidebar; other editor conversations can stay open during that return.
-  const showSurfaceHandoff = isHandoffSidebar(state)
   return (
     <AppErrorBoundary>
       <main
@@ -280,14 +273,6 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
               onReconnectDiagnostics={() => store.reconnect()}
               onShowDiagnosticsOutput={() => store.showDiagnostics()}
             />
-          ) : showSurfaceHandoff ? (
-            <div className="dsh-app__empty">
-              <SurfaceHandoffPlaceholder
-                editorChats={state.editorChats}
-                onMoveToSidebar={surfaceOnMoveToSidebar}
-                onOpenSessions={surfaceOnOpenSessions}
-              />
-            </div>
           ) : (
             <>
               {active === undefined && state.pendingSession !== undefined ? (
@@ -320,6 +305,8 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                       running={false}
                       attachments={attachments}
                       configuration={state.pendingSession.configuration}
+                      configurationDraft
+                      permissionPresets={state.newSessionPermissionPresets ?? []}
                       presets={state.presets}
                       presetMutable
                       {...(newSessionPresetSelectionEnabled === undefined
@@ -453,6 +440,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                       {(closeMenu) => (
                         <>
                           {conversationActionItems(closeMenu)}
+                          {state.goals.length === 0 ? null : <GoalTodoStrip goals={state.goals} />}
                           <button
                             type="button"
                             className="dsh-button dsh-button--secondary dsh-button--compact dsh-conversation__inspector-trigger"
@@ -464,74 +452,69 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                           >
                             {t('inspector.title')}
                           </button>
+                          {state.transcript === undefined ||
+                          state.transcript.omittedNodeIds.length === 0 ? null : (
+                            <details className="dsh-conversation__content-menu">
+                              <summary>{t('transcript.fullContent')}</summary>
+                              <div className="dsh-conversation__content-list">
+                                {state.transcript.omittedNodeIds.map((id) => {
+                                  const node = state.timeline.nodes.find((candidate) => candidate.id === id)
+                                  const label =
+                                    node?.kind === 'tool'
+                                      ? node.tool.title
+                                      : node !== undefined && 'markdown' in node
+                                        ? node.markdown.slice(0, 64)
+                                        : t('transcript.fullContent')
+                                  return (
+                                    <button
+                                      key={id}
+                                      type="button"
+                                      disabled={
+                                        (node?.kind === 'assistant-message' &&
+                                          (node.streaming || node.reasoning?.streaming === true)) ||
+                                        (node?.kind === 'reasoning' && node.streaming) ||
+                                        (node?.kind === 'tool' &&
+                                          (node.tool.status === 'running' || node.tool.status === 'queued'))
+                                      }
+                                      className="dsh-button dsh-button--secondary dsh-button--compact"
+                                      onClick={() => {
+                                        closeMenu()
+                                        void store
+                                          .openTranscriptContent(id)
+                                          .catch((reason) => setError(String(reason)))
+                                      }}
+                                    >
+                                      {label}
+                                    </button>
+                                  )
+                                })}
+                              </div>
+                            </details>
+                          )}
                         </>
                       )}
                     </ConversationActionsMenu>
                   </div>
-                  {state.transcript === undefined ||
-                  (!state.transcript.historical && state.transcript.omittedNodeIds.length === 0) ? null : (
+                  {state.transcript?.historical !== true ? null : (
                     <div className="dsh-timeline__history-more">
-                      {state.transcript.historical ? (
-                        <>
-                          <button
-                            type="button"
-                            className="dsh-button dsh-button--secondary dsh-button--compact"
-                            onClick={() => {
-                              void store
-                                .navigateTranscript('newer')
-                                .catch((reason) => setError(String(reason)))
-                            }}
-                          >
-                            {t('transcript.newer')}
-                          </button>
-                          <button
-                            type="button"
-                            className="dsh-button dsh-button--secondary dsh-button--compact"
-                            onClick={() => {
-                              void store
-                                .navigateTranscript('latest')
-                                .catch((reason) => setError(String(reason)))
-                            }}
-                          >
-                            {t('transcript.latest')}
-                          </button>
-                        </>
-                      ) : null}
-                      {state.transcript.omittedNodeIds.length === 0 ? null : (
-                        <details>
-                          <summary>{t('transcript.fullContent')}</summary>
-                          {state.transcript.omittedNodeIds.map((id) => {
-                            const node = state.timeline.nodes.find((candidate) => candidate.id === id)
-                            const label =
-                              node?.kind === 'tool'
-                                ? node.tool.title
-                                : node !== undefined && 'markdown' in node
-                                  ? node.markdown.slice(0, 64)
-                                  : t('transcript.fullContent')
-                            return (
-                              <button
-                                key={id}
-                                type="button"
-                                disabled={
-                                  (node?.kind === 'assistant-message' &&
-                                    (node.streaming || node.reasoning?.streaming === true)) ||
-                                  (node?.kind === 'reasoning' && node.streaming) ||
-                                  (node?.kind === 'tool' &&
-                                    (node.tool.status === 'running' || node.tool.status === 'queued'))
-                                }
-                                className="dsh-button dsh-button--secondary dsh-button--compact"
-                                onClick={() => {
-                                  void store
-                                    .openTranscriptContent(id)
-                                    .catch((reason) => setError(String(reason)))
-                                }}
-                              >
-                                {t('transcript.fullContent')}: {label}
-                              </button>
-                            )
-                          })}
-                        </details>
-                      )}
+                      <button
+                        type="button"
+                        className="dsh-button dsh-button--secondary dsh-button--compact"
+                        onClick={() => {
+                          void store.navigateTranscript('newer').catch((reason) => setError(String(reason)))
+                        }}
+                      >
+                        {t('transcript.newer')}
+                      </button>
+                      <button
+                        type="button"
+                        className="dsh-button dsh-button--secondary dsh-button--compact"
+                        onClick={() => {
+                          void store.navigateTranscript('latest').catch((reason) => setError(String(reason)))
+                        }}
+                      >
+                        {t('transcript.latest')}
+                      </button>
                     </div>
                   )}
                   <SessionInspector
@@ -570,10 +553,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                     />
                   )}
                   {state.goals.length > 0 ? (
-                    <>
-                      <GoalBar goals={state.goals} onUpdate={goalOnUpdate} onClear={goalOnClear} />
-                      <GoalTodoStrip goals={state.goals} />
-                    </>
+                    <GoalBar goals={state.goals} onUpdate={goalOnUpdate} onClear={goalOnClear} />
                   ) : null}
                   {conversationView === 'chat' ? (
                     <Timeline
@@ -649,16 +629,18 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                     // a queued reply), and the composer's own `role="status"`
                     // already reports a newly arrived question.
                     <div className="dsh-conversation__interactions">
-                      <button
-                        className="dsh-button dsh-button--danger"
-                        type="button"
-                        aria-label={t('composer.stopResponse')}
-                        disabled={backend.kind !== 'connected'}
-                        onClick={composerOnCancel}
-                      >
-                        <Icon name="stop" />
-                        {t('composer.stop')}
-                      </button>
+                      {activeRunning ? null : (
+                        <button
+                          className="dsh-button dsh-button--danger dsh-button--compact dsh-conversation__interaction-stop"
+                          type="button"
+                          aria-label={t('composer.stopResponse')}
+                          disabled={backend.kind !== 'connected'}
+                          onClick={composerOnCancel}
+                        >
+                          <Icon name="stop" />
+                          {t('composer.stop')}
+                        </button>
+                      )}
                       {pendingPermissions.map(({ request, command }) => (
                         <ApprovalCard
                           key={request.id}
@@ -694,114 +676,102 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                         featureRequest={store.featureRequest}
                       />
                     ) : null}
-                    {pendingPermissions.length === 0 &&
-                    pendingQuestions.every((question) => question.state === 'continued') ? (
-                      subagentReadOnlyReason === undefined || activeRunning ? (
-                        <>
-                          <ConnectedComposer
-                            store={store}
-                            modelScope="session"
-                            disabled={backend.kind !== 'connected'}
-                            inputDisabled={
-                              subagentReadOnlyReason !== undefined ||
-                              (activeSubagent !== undefined && activeSubagentState?.parentAvailable === false)
-                            }
-                            attachmentsDisabled={activeSubagent !== undefined && !state.subagentImagePrompts}
-                            running={activeRunning}
-                            attachments={attachments}
-                            {...(activeSubagent === undefined
-                              ? {
-                                  editorContext: state.editorContext,
-                                  editorContextAvailableKinds: state.editorContextAvailableKinds,
-                                  editorContextLoading: state.editorContextLoading,
-                                  onCaptureEditorContext: composerOnCaptureEditorContext,
-                                  onRemoveEditorContext: composerOnRemoveEditorContext,
-                                  onPreviewEditorContext: composerOnPreviewEditorContext,
-                                }
-                              : {})}
-                            configuration={state.configuration}
-                            presets={state.presets}
-                            {...(newSessionPresetSelectionEnabled === undefined
-                              ? {}
-                              : { presetSelectionEnabled: newSessionPresetSelectionEnabled })}
-                            permissionPresets={state.permissionPresets}
-                            commands={state.commands}
-                            popupSelects={popupSelects}
-                            references={visibleReferenceCandidates}
-                            referenceLoading={visibleReferenceLoading}
-                            {...(imageLimits === undefined ? {} : { imageLimits })}
-                            busyEnter={readyDshUiPreferences?.busyEnter ?? state.busyEnter}
-                            modelPickerOpenRequest={modelPickerOpenRequest}
-                            {...(estimatedContextTokens === undefined ? {} : { estimatedContextTokens })}
-                            {...(contextWindowTokens === undefined ? {} : { contextWindowTokens })}
-                            {...(contextPressure?.breakdown === undefined
-                              ? {}
-                              : { contextBreakdown: contextPressure.breakdown })}
-                            promptMode={state.promptMode}
-                            configurationDisabled={backend.kind !== 'connected'}
-                            presetMutable={
-                              activeSubagent === undefined && active.blank && active.status === 'idle'
-                            }
-                            onConfigurationChange={composerOnConfigurationChange}
-                            onPromptModeChange={composerOnPromptModeChange}
-                            onCommand={composerOnCommand}
-                            onOpenSkillDocument={(skillId) => {
-                              void store
-                                .openSkillDocument(active.id, skillId)
-                                .catch((reason: unknown) =>
-                                  setError(
-                                    reason instanceof Error
-                                      ? reason.message
-                                      : t('commands.openSkillDocumentFailed'),
-                                  ),
-                                )
-                            }}
-                            onPopupSelect={composerOnPopupSelect}
-                            onCommandQueryChange={composerOnCommandQueryChange}
-                            onReferenceQueryChange={composerOnReferenceQueryChange}
-                            onPickAttachment={composerOnPickAttachment}
-                            onIngestFiles={composerOnIngestFiles}
-                            attachmentPreviews={attachmentPreviews}
-                            attachmentPreviewFailures={attachmentPreviewFailures}
-                            openFileCandidates={visibleOpenFileCandidates}
-                            openFilePickerOpen={visibleOpenFilePickerOpen}
-                            openFilePickerLoading={visibleOpenFilePickerLoading}
-                            {...(state.preferredOpenFileId === undefined
-                              ? {}
-                              : { preferredOpenFileId: state.preferredOpenFileId })}
-                            attachedOpenFileIds={attachedOpenFileIds}
-                            {...(attachingOpenFileId === undefined ? {} : { attachingOpenFileId })}
-                            onToggleOpenFilePicker={composerOnToggleOpenFilePicker}
-                            onExtrasOpenChange={composerOnExtrasOpenChange}
-                            onSelectOpenFile={composerOnSelectOpenFile}
-                            onRemoveAttachment={composerOnRemoveAttachment}
-                            onSubmit={composerOnSubmit}
-                            onCancel={composerOnCancel}
-                            onSteerQueue={composerOnSteerQueue}
-                            queue={state.queue}
-                          />
-                          <div className="dsh-composer__status">{composerStatus}</div>
-                        </>
-                      ) : (
-                        <div className="dsh-subagent-readonly" role="status">
-                          <strong>{t('subagents.readOnly.title')}</strong>
-                          <span>
-                            {t(
-                              subagentReadOnlyReason === 'oneShot'
-                                ? 'subagents.readOnly.oneShot'
-                                : 'subagents.readOnly.parent',
-                            )}
-                          </span>
-                        </div>
-                      )
+                    {subagentReadOnlyReason === undefined || activeRunning ? (
+                      <>
+                        <ConnectedComposer
+                          store={store}
+                          modelScope="session"
+                          disabled={backend.kind !== 'connected'}
+                          inputDisabled={
+                            subagentReadOnlyReason !== undefined ||
+                            (activeSubagent !== undefined && activeSubagentState?.parentAvailable === false)
+                          }
+                          attachmentsDisabled={activeSubagent !== undefined && !state.subagentImagePrompts}
+                          running={activeRunning}
+                          attachments={attachments}
+                          {...(activeSubagent === undefined
+                            ? {
+                                editorContext: state.editorContext,
+                                editorContextAvailableKinds: state.editorContextAvailableKinds,
+                                editorContextLoading: state.editorContextLoading,
+                                onCaptureEditorContext: composerOnCaptureEditorContext,
+                                onRemoveEditorContext: composerOnRemoveEditorContext,
+                                onPreviewEditorContext: composerOnPreviewEditorContext,
+                              }
+                            : {})}
+                          configuration={state.configuration}
+                          presets={state.presets}
+                          {...(newSessionPresetSelectionEnabled === undefined
+                            ? {}
+                            : { presetSelectionEnabled: newSessionPresetSelectionEnabled })}
+                          permissionPresets={state.permissionPresets}
+                          commands={state.commands}
+                          popupSelects={popupSelects}
+                          references={visibleReferenceCandidates}
+                          referenceLoading={visibleReferenceLoading}
+                          {...(imageLimits === undefined ? {} : { imageLimits })}
+                          busyEnter={readyDshUiPreferences?.busyEnter ?? state.busyEnter}
+                          modelPickerOpenRequest={modelPickerOpenRequest}
+                          {...(estimatedContextTokens === undefined ? {} : { estimatedContextTokens })}
+                          {...(contextWindowTokens === undefined ? {} : { contextWindowTokens })}
+                          {...(contextPressure?.breakdown === undefined
+                            ? {}
+                            : { contextBreakdown: contextPressure.breakdown })}
+                          promptMode={state.promptMode}
+                          configurationDisabled={backend.kind !== 'connected'}
+                          presetMutable={
+                            activeSubagent === undefined && active.blank && active.status === 'idle'
+                          }
+                          onConfigurationChange={composerOnConfigurationChange}
+                          onPromptModeChange={composerOnPromptModeChange}
+                          onCommand={composerOnCommand}
+                          onOpenSkillDocument={(skillId) => {
+                            void store
+                              .openSkillDocument(active.id, skillId)
+                              .catch((reason: unknown) =>
+                                setError(
+                                  reason instanceof Error
+                                    ? reason.message
+                                    : t('commands.openSkillDocumentFailed'),
+                                ),
+                              )
+                          }}
+                          onPopupSelect={composerOnPopupSelect}
+                          onCommandQueryChange={composerOnCommandQueryChange}
+                          onReferenceQueryChange={composerOnReferenceQueryChange}
+                          onPickAttachment={composerOnPickAttachment}
+                          onIngestFiles={composerOnIngestFiles}
+                          attachmentPreviews={attachmentPreviews}
+                          attachmentPreviewFailures={attachmentPreviewFailures}
+                          openFileCandidates={visibleOpenFileCandidates}
+                          openFilePickerOpen={visibleOpenFilePickerOpen}
+                          openFilePickerLoading={visibleOpenFilePickerLoading}
+                          {...(state.preferredOpenFileId === undefined
+                            ? {}
+                            : { preferredOpenFileId: state.preferredOpenFileId })}
+                          attachedOpenFileIds={attachedOpenFileIds}
+                          {...(attachingOpenFileId === undefined ? {} : { attachingOpenFileId })}
+                          onToggleOpenFilePicker={composerOnToggleOpenFilePicker}
+                          onExtrasOpenChange={composerOnExtrasOpenChange}
+                          onSelectOpenFile={composerOnSelectOpenFile}
+                          onRemoveAttachment={composerOnRemoveAttachment}
+                          onSubmit={composerOnSubmit}
+                          onCancel={composerOnCancel}
+                          onSteerQueue={composerOnSteerQueue}
+                          queue={state.queue}
+                        />
+                        <div className="dsh-composer__status">{composerStatus}</div>
+                      </>
                     ) : (
-                      // The interaction cards take the composer's slot while they
-                      // wait. Queueing a message is still legitimate DSH input, so
-                      // the input surface states why it is unavailable instead of
-                      // silently disappearing.
-                      <div className="dsh-compose-hint" role="status">
-                        <Icon name="alert" />
-                        <span>{t('composer.pendingHint')}</span>
+                      <div className="dsh-subagent-readonly" role="status">
+                        <strong>{t('subagents.readOnly.title')}</strong>
+                        <span>
+                          {t(
+                            subagentReadOnlyReason === 'oneShot'
+                              ? 'subagents.readOnly.oneShot'
+                              : 'subagents.readOnly.parent',
+                          )}
+                        </span>
                       </div>
                     )}
                   </div>

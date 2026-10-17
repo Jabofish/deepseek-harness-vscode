@@ -134,7 +134,7 @@ describe('DSH 0.1.2-alpha.2 Connection/Gateway contract', () => {
     await transport.close()
   })
 
-  it('rejects a malformed non-boolean ignorable marker instead of accepting it as forward-compatible', async () => {
+  it('retains an unreadable required row as a cursor marker without exposing its unknown payload', async () => {
     FakeWebSocket.instances.length = 0
     const transport = client(
       vi.fn((_input: RequestInfo | URL, init?: RequestInit) => Promise.resolve(successResponse(init, {}))),
@@ -151,7 +151,9 @@ describe('DSH 0.1.2-alpha.2 Connection/Gateway contract', () => {
       }),
     )
 
-    await expect(next).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+    await expect(next).resolves.toMatchObject({
+      value: { type: 'session/event', event: { type: 'system/message', seq: 0, data: {} } },
+    })
     await transport.close()
   })
 

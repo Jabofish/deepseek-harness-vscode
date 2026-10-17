@@ -262,7 +262,7 @@
     inset-inline-start: var(--dsh-space-2);
     /* The positioning hook measures before writing an inline width. An auto
      * fixed width with right:auto collapses to the content on the next pass. */
-    width: min(34rem, calc(100vw - var(--dsh-space-4)));
+    width: min(var(--dsh-menu-width), calc(100vw - var(--dsh-space-4)));
     min-width: 0;
     max-width: none;
   }

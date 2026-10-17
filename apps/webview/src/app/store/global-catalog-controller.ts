@@ -6,7 +6,9 @@ import {
   sameModelDescriptorList,
   sameModelProviderList,
   samePresetDescriptorList,
+  sameStringList,
   strictListValues,
+  stringList,
 } from './list-equality.js'
 import { isModelDescriptor, isModelProvider } from './model-catalog.js'
 import type { StateSetter } from './types.js'
@@ -69,6 +71,11 @@ export function createGlobalCatalogController({
     invalidate: (): void => {
       modelGeneration += 1
       nextPresetRosterGeneration()
+      setState((current) =>
+        (current.newSessionPermissionPresets?.length ?? 0) === 0
+          ? current
+          : { ...current, newSessionPermissionPresets: [] },
+      )
     },
     refreshModels: async (): Promise<void> => {
       if (isDisposed()) return
@@ -79,9 +86,22 @@ export function createGlobalCatalogController({
       if (isDisposed() || !isCurrent()) return
       const modelsCurrent = beginModels()
       const rosterGeneration = nextPresetRosterGeneration()
+      const applyPermissions = (value: unknown): void => {
+        if (isDisposed() || !isCurrent() || !isPresetRosterCurrent(rosterGeneration)) return
+        const permissionPresets = stringList(value)
+        setState((current) => {
+          const next = permissionPresets ?? []
+          return sameStringList(current.newSessionPermissionPresets ?? [], next)
+            ? current
+            : { ...current, newSessionPermissionPresets: next }
+        })
+      }
       const results = await Promise.allSettled([
         ...readModels(),
         client.request<unknown>({ type: 'preset.list', requestId: requestId() }),
+        client
+          .request<unknown>({ type: 'permissions.presets.list', requestId: requestId() })
+          .then(applyPermissions, () => applyPermissions(undefined)),
       ])
       applyModels(results, () => isCurrent() && modelsCurrent())
       if (isDisposed() || !isCurrent() || !isPresetRosterCurrent(rosterGeneration)) return

@@ -89,6 +89,7 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
   let permissionCatalogGeneration = 0
   const unsubscribe = client.subscribe((message) => {
     if (lifecycle.isDisposed()) return
+    const previousBackendKind = getState().backend.kind
     // Surface frames are Host-owned UI control messages whose handling includes
     // store side effects (opening the bound session, asking the Host to open the
     // active session in the editor area). They own their own reduction and never
@@ -122,8 +123,10 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
     if (
       message.type === 'event' &&
       (message.name === 'connection.snapshot' || message.name === 'connection.lost')
-    )
+    ) {
+      permissionCatalogGeneration += 1
       lifecycle.invalidateGlobalCatalogs()
+    }
     if (
       message.type === 'event' &&
       (message.name === 'connection.lost' ||
@@ -150,7 +153,7 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
       turnWatchers.notify(parsedEvent)
     const messageSessionId =
       message.type === 'event' &&
-      message.name === 'session.transcript' &&
+      (message.name === 'session.transcript' || message.name === 'session.transcript.patch') &&
       typeof object(message.payload)?.sessionId === 'string'
         ? (object(message.payload)!.sessionId as string)
         : parsedEvent === undefined || parsedEvent === null
@@ -192,12 +195,14 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
       message.type === 'event' &&
       message.name === 'connection.snapshot' &&
       object(message.payload)?.kind === 'connected'
-    )
+    ) {
+      if (previousBackendKind !== 'connected') void refresh().catch(() => undefined)
       setState((current) => ({
         ...current,
         pluginInventoryRevision: current.pluginInventoryRevision + 1,
         pluginInstallProgress: undefined,
       }))
+    }
     if (
       message.type === 'event' &&
       message.name === 'remote.event' &&
@@ -231,28 +236,27 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
       const generation = ++permissionCatalogGeneration
       // Clear the stale allowlist immediately; a failed read must not keep Auto
       // selectable after its live integration has been removed.
-      setState((current) => ({ ...current, permissionPresets: [] }))
-      if (sessionId !== undefined)
-        void client
-          .request<unknown>({
-            type: 'session.open',
-            requestId: requestId(),
-            payload: { sessionId },
-          })
-          .then((value) => {
-            if (
-              lifecycle.isDisposed() ||
-              version !== lifecycle.getOpenVersion() ||
-              generation !== permissionCatalogGeneration ||
-              getState().activeSessionId !== sessionId
-            )
-              return
-            const permissionPresets = stringList(object(value)?.permissionPresets)
-            if (permissionPresets !== undefined) setState((current) => ({ ...current, permissionPresets }))
-          })
-          .catch(() => {
-            /* Preserve the fail-closed roster; reopening retries the read. */
-          })
+      setState((current) => ({ ...current, permissionPresets: [], newSessionPermissionPresets: [] }))
+      void client
+        .request<unknown>({
+          type: 'permissions.presets.list',
+          requestId: requestId(),
+        })
+        .then((value) => {
+          if (lifecycle.isDisposed() || generation !== permissionCatalogGeneration) return
+          const permissionPresets = stringList(value)
+          if (permissionPresets !== undefined)
+            setState((current) => ({
+              ...current,
+              newSessionPermissionPresets: permissionPresets,
+              ...(version === lifecycle.getOpenVersion() && current.activeSessionId === sessionId
+                ? { permissionPresets }
+                : {}),
+            }))
+        })
+        .catch(() => {
+          /* Preserve the fail-closed roster; reopening retries the read. */
+        })
     }
     if (
       message.type === 'event' &&

@@ -45,16 +45,26 @@
 /* A submitted plan is a durable artifact card: the summary stays the native
  * disclosure so the open/closed affordance is the platform's own. */
 .dsh-submitted-plan {
-  display: grid;
+  display: block;
   min-width: 0;
   gap: var(--dsh-space-2);
-  padding: var(--dsh-space-3);
+  padding: var(--dsh-space-2);
   border: var(--dsh-border);
   border-radius: var(--dsh-radius-md);
   background: var(--dsh-surface-raised);
 }
 
+.dsh-submitted-plan__body {
+  min-width: 0;
+  max-height: var(--dsh-content-panel-max-height);
+  margin-top: var(--dsh-space-2);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
 .dsh-submitted-plan > summary {
+  max-height: 2.9em;
+  overflow-y: auto;
   cursor: pointer;
   color: var(--dsh-text);
   font-weight: 600;

@@ -13,10 +13,15 @@ class StartupClient {
   public readonly requests: WebviewRequest[] = []
   private readonly listeners = new Set<(message: HostMessage) => void>()
 
-  public constructor(private readonly respond: (request: WebviewRequest) => unknown = startupResponse) {}
+  public constructor(
+    private readonly respond: (request: WebviewRequest) => unknown = startupResponse,
+    private readonly connectOnReady = true,
+  ) {}
 
   public request<T>(request: WebviewRequest): Promise<T> {
     this.requests.push(request)
+    if (request.type === 'app.ready' && this.connectOnReady)
+      this.emit({ type: 'event', name: 'connection.snapshot', sequence: 0, payload: { kind: 'connected' } })
     return Promise.resolve(this.respond(request) as T)
   }
 
@@ -153,6 +158,27 @@ function startupResponse(request: WebviewRequest): unknown {
 }
 
 describe('AppStore startup session restoration', () => {
+  it('waits for the connected snapshot before restoring and opens once across duplicate snapshots', async () => {
+    const client = new StartupClient(startupResponse, false)
+    const store = createAppStore(client as unknown as ProtocolClient)
+    try {
+      await store.initialize()
+      expect(store.activeSessionId).toBeUndefined()
+      expect(client.requests.filter((request) => request.type === 'session.open')).toHaveLength(0)
+      for (const sequence of [1, 2])
+        client.emit({
+          type: 'event',
+          name: 'connection.snapshot',
+          sequence,
+          payload: { kind: 'connected', backendInstanceId: 'fixture', connectionGeneration: 1 },
+        })
+      await vi.waitFor(() => expect(store.activeSessionId).toBe(activeSession.id))
+      expect(client.requests.filter((request) => request.type === 'session.open')).toHaveLength(1)
+    } finally {
+      store.dispose()
+    }
+  })
+
   afterEach(() => {
     persisted.state = undefined
     document.body.replaceChildren()
@@ -327,7 +353,7 @@ describe('AppStore startup session restoration', () => {
     store.dispose()
   })
 
-  it('coalesces a burst of host state updates without losing the final state', async () => {
+  it('notifies each host state update immediately without losing the final state', () => {
     const client = new StartupClient()
     const store = createAppStore(client as unknown as ProtocolClient)
     const listener = vi.fn()
@@ -339,6 +365,9 @@ describe('AppStore startup session restoration', () => {
       sequence: 1,
       payload: { kind: 'discovering' },
     })
+    expect(store.backend).toEqual({ kind: 'discovering' })
+    expect(listener).toHaveBeenCalled()
+    listener.mockClear()
     client.emit({
       type: 'event',
       name: 'connection.snapshot',
@@ -347,9 +376,7 @@ describe('AppStore startup session restoration', () => {
     })
 
     expect(store.backend).toEqual({ kind: 'connecting' })
-    expect(listener).not.toHaveBeenCalled()
-    await new Promise((resolve) => window.setTimeout(resolve, 24))
-    expect(listener).toHaveBeenCalledTimes(1)
+    expect(listener).toHaveBeenCalled()
     store.dispose()
   })
 
@@ -488,7 +515,7 @@ describe('AppStore startup session restoration', () => {
     store.dispose()
   })
 
-  it('coalesces Host windows without retaining live history', async () => {
+  it('notifies each Host window immediately without retaining live history', async () => {
     const client = new StartupClient()
     const store = createAppStore(client as unknown as ProtocolClient)
     await store.initialize()
@@ -513,9 +540,7 @@ describe('AppStore startup session restoration', () => {
       expect.objectContaining({ id: 'assistant-1', markdown: 'ab', streaming: true }),
     )
     expect(store.getState()).not.toHaveProperty('history')
-    await new Promise((resolve) => window.setTimeout(resolve, 24))
-    expect(store.getState()).not.toHaveProperty('history')
-    expect(listener).toHaveBeenCalledTimes(1)
+    expect(listener).toHaveBeenCalledTimes(2)
     store.dispose()
   })
 
@@ -1166,12 +1191,10 @@ describe('AppStore startup session restoration', () => {
   })
 
   it('opens an existing blank root session instead of showing the new-session empty state', async () => {
-    const client = new StartupClient()
-    client.request = <T>(request: WebviewRequest): Promise<T> => {
-      client.requests.push(request)
-      if (request.type === 'session.list') return Promise.resolve({ items: [blankSession] } as T)
+    const client = new StartupClient((request) => {
+      if (request.type === 'session.list') return { items: [blankSession] }
       if (request.type === 'session.open')
-        return Promise.resolve({
+        return {
           ...blankSession,
           history: [],
           permissionPresets: [],
@@ -1182,9 +1205,9 @@ describe('AppStore startup session restoration', () => {
             planMode: false,
             model: { providerId: 'deepseek', modelId: 'deepseek-chat' },
           },
-        } as T)
-      return Promise.resolve(startupResponse(request) as T)
-    }
+        }
+      return startupResponse(request)
+    })
     const store = createAppStore(client as unknown as ProtocolClient)
 
     await store.initialize()
@@ -2043,7 +2066,9 @@ it('refreshes the permission roster when its process catalog changes', async () 
   const client = new StartupClient((request) =>
     request.type === 'session.open'
       ? { ...(startupResponse(request) as object), permissionPresets: roster }
-      : startupResponse(request),
+      : request.type === 'permissions.presets.list'
+        ? roster
+        : startupResponse(request),
   )
   const store = createAppStore(client as unknown as ProtocolClient)
   await store.openSession('session-active')
@@ -2063,8 +2088,10 @@ it('keeps the permission roster fail-closed on failure and ignores superseded re
   const pending: Array<(value: unknown) => void> = []
   let invalidating = false
   const client = new StartupClient((request) => {
-    if (request.type !== 'session.open') return startupResponse(request)
-    if (!invalidating) return { ...(startupResponse(request) as object), permissionPresets: ['auto'] }
+    if (request.type === 'session.open')
+      return { ...(startupResponse(request) as object), permissionPresets: ['auto'] }
+    if (request.type !== 'permissions.presets.list') return startupResponse(request)
+    if (!invalidating) return ['auto']
     return new Promise<unknown>((resolve) => pending.push(resolve))
   })
   const store = createAppStore(client as unknown as ProtocolClient)
@@ -2080,9 +2107,9 @@ it('keeps the permission roster fail-closed on failure and ignores superseded re
   invalidate(100)
   expect(store.permissionPresets).toEqual([])
   invalidate(101)
-  pending[1]?.({ permissionPresets: ['workspace-write'] })
+  pending[1]?.(['workspace-write'])
   await vi.waitFor(() => expect(store.permissionPresets).toEqual(['workspace-write']))
-  pending[0]?.({ permissionPresets: ['auto'] })
+  pending[0]?.(['auto'])
   await new Promise((resolve) => window.setTimeout(resolve, 0))
   expect(store.permissionPresets).toEqual(['workspace-write'])
   invalidate(102)

@@ -26,6 +26,7 @@ const routesAllowedWhileUntrusted = [
   'models.discover',
   'models.list',
   'models.session.list',
+  'permissions.presets.list',
   'plugin.inventory',
   'preset.list',
   'providers.list',

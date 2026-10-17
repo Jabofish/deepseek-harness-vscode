@@ -21,6 +21,19 @@ export class ModelSettingsUseCases {
     return this.backendService.requireBackend().models.listProviders(signal)
   }
 
+  public listPermissionPresets(signal?: AbortSignal): Promise<readonly string[]> {
+    const sessions = this.backendService.requireBackend().sessions
+    if (sessions.listPermissionPresets === undefined)
+      return Promise.reject(
+        new AppError({
+          code: 'CAPABILITY_UNAVAILABLE',
+          message: 'The connected DSH does not provide a permission preset catalog.',
+          retryable: false,
+        }),
+      )
+    return sessions.listPermissionPresets(signal)
+  }
+
   public listModels(providerId?: string, signal?: AbortSignal): Promise<readonly ModelDescriptor[]> {
     return this.backendService.requireBackend().models.listModels(providerId, signal)
   }

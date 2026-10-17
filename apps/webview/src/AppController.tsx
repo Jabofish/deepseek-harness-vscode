@@ -382,7 +382,8 @@ const useAppControllerImpl = () => {
     [activeProjection?.sessionStats],
   )
   const activeRunning =
-    activeSubagent === undefined ? active?.status === 'running' : activeSubagent.activity === 'running'
+    backend.kind === 'connected' &&
+    (activeSubagent === undefined ? active?.status === 'running' : activeSubagent.activity === 'running')
   // The draft lives in the module-level draft store, not in App state: the
   // module functions are stable, so typing re-renders only the composer
   // binding, never App.
@@ -433,9 +434,8 @@ const useAppControllerImpl = () => {
     discardAttachmentDrafts()
     if (state.pendingSession !== undefined) setDraft('')
   }, [composerOwner, discardAttachmentDrafts, state.pendingSession])
-  // DSH's host/session-status is the authoritative running bit. Timeline
-  // nodes describe durable content, but a settled assistant step can remain
-  // inside an open turn while tools or a later model step are still active.
+  // Runtime status and explicit Turn boundaries come from DSH. A settled
+  // assistant step alone never closes a Turn while tools/later steps are active.
   const streaming = activeRunning
   const subagentReadOnlyReason =
     activeSubagent?.mode === 'one-shot'
@@ -788,16 +788,6 @@ const useAppControllerImpl = () => {
   const headerOnOpenSchedules = useStableCallback((): void => {
     store.setDrawer('schedules')
   })
-  const surfaceOnMoveToSidebar = useStableCallback((): void => {
-    void store
-      .moveChatToSidebar()
-      .catch((reason: unknown) =>
-        setError(reason instanceof Error ? reason.message : t('surface.handoff.moveFailed')),
-      )
-  })
-  const surfaceOnOpenSessions = useStableCallback((): void => {
-    store.setDrawer('sessions')
-  })
   const {
     getLinkedSession: getScheduleLinkedSession,
     onOpenLinkedSession: scheduleOnOpenLinkedSession,
@@ -970,8 +960,6 @@ const useAppControllerImpl = () => {
     store,
     streaming,
     subagentReadOnlyReason,
-    surfaceOnMoveToSidebar,
-    surfaceOnOpenSessions,
     t,
     themePreference,
     timelineOnBranch,

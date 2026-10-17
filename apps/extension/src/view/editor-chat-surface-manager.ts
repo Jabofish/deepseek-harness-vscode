@@ -75,16 +75,17 @@ export class EditorChatSurfaceManager implements vscode.Disposable {
   }
 
   /** Create the session's editor tab, or reveal the existing one. */
-  public open(sessionId: string, title?: string): DshWebviewPanelSurface {
+  public open(sessionId: string, title?: string, column?: vscode.ViewColumn): DshWebviewPanelSurface {
     this.requireActive()
     const existing = this.forSession(sessionId)
     if (existing !== undefined) {
-      void existing.reveal(false)
+      if (column === undefined) void existing.reveal(false)
+      else existing.panel.reveal(column, false)
       return existing
     }
     const surfaceId = this.surfaceIdForSession(sessionId)
     this.surfaceIdBySession.set(sessionId, surfaceId)
-    return this.create(surfaceId, sessionId, title ?? DEFAULT_EDITOR_CHAT_TITLE)
+    return this.create(surfaceId, sessionId, title ?? DEFAULT_EDITOR_CHAT_TITLE, column)
   }
 
   /**
@@ -131,11 +132,16 @@ export class EditorChatSurfaceManager implements vscode.Disposable {
     this.closeAll()
   }
 
-  private create(surfaceId: string, sessionId: string | undefined, title: string): DshWebviewPanelSurface {
+  private create(
+    surfaceId: string,
+    sessionId: string | undefined,
+    title: string,
+    column?: vscode.ViewColumn,
+  ): DshWebviewPanelSurface {
     const surface = DshWebviewPanelSurface.create({
       ...this.surfaceDependencies(surfaceId, sessionId),
       title,
-      viewColumn: vscode.ViewColumn.Active,
+      viewColumn: column ?? vscode.ViewColumn.Active,
       preserveFocus: false,
     })
     this.track(surfaceId, surface)

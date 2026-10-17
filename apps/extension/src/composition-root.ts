@@ -202,6 +202,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
             hasLocalWorkspaceAuthority(currentConnectedBackend()) ? cwd : undefined,
           ),
         post: (window) => postEventTo(surfaceId, 'session.transcript', window, isCurrent),
+        postPatch: (patch) => postEventTo(surfaceId, 'session.transcript.patch', patch, isCurrent),
         invalidate: (sessionId) => {
           void postEventTo(surfaceId, 'session.transcript.invalidated', { sessionId }, isCurrent)
         },
@@ -278,6 +279,10 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       publishAccountSnapshot,
       publishAccountSessionExpired,
       publishAccountError,
+      publishRecoveredState: (backend) => {
+        const state = coordinator.getState()
+        if (state.kind === 'connected' && state.backend === backend.connection) publishState(state)
+      },
     })
   const { connect, reconnect, reconnectOnTransportChange, configureConnection } = createConnectionLifecycle({
     context,
@@ -325,7 +330,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     promptTemplateUseCases,
     currentWorkspaceFolders,
   })
-  const { router, provider, editorSurfaces, moveChatToSidebar } = createRequestGateway({
+  const { router, provider, editorSurfaces, moveChatToSidebar, openDroppedSession } = createRequestGateway({
     transcript,
     resyncView: async () => {
       const backend = backendService.requireBackend()
@@ -387,6 +392,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     provider,
     editorSurfaces,
     moveChatToSidebar,
+    openDroppedSession,
     surfaces,
     runtimeLocator,
     runtimeInstaller,

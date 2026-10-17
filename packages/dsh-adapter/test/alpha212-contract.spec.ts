@@ -119,9 +119,9 @@ describe('alpha212 exact V4 delta', () => {
       sequence: 1,
     })
     expect(normalizeAlphaEvent(directory, 's1', 'v4', false, alpha212SessionProfile)).toEqual(events[0])
-    expect(() =>
+    expect(
       expandHistoryRecords([{ type: 'chunks', event: {} }], 's1', 'v4', false, alpha212SessionProfile),
-    ).toThrow()
+    ).toEqual([])
   })
 
   it('rejects malformed directories, catalog versions, envelopes and sequence relationships', () => {

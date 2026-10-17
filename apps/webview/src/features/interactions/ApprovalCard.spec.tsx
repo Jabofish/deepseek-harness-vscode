@@ -45,7 +45,7 @@ describe('ApprovalCard', () => {
 
     expect(container.querySelector('code')).toBeNull()
     expect(screen.getByText('The command needs approval.')).toBeDefined()
-    expect(screen.getByText('The agent is waiting for your decision')).toBeDefined()
+    expect(screen.queryByText('The agent is waiting for your decision')).toBeNull()
   })
 
   it('keeps decisions outside the scrollable command and description', () => {

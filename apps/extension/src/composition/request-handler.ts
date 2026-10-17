@@ -15,6 +15,7 @@ import {
   publicDiagnosticsSnapshot,
   publicExtensionSettings,
   publicList,
+  publicState,
 } from './public-projection.js'
 import type { RequestGatewayDependencies } from './request-gateway-dependencies.js'
 import { questionResponse } from './session-payload.js'
@@ -32,6 +33,11 @@ export interface RequestGateway {
   readonly provider: DshWebviewViewProvider
   /** Editor-area chat surfaces; the composition root owns their lifecycle. */
   readonly editorSurfaces: EditorChatSurfaceManager
+  readonly openDroppedSession: (
+    sessionId: string,
+    column: vscode.ViewColumn | undefined,
+    signal: AbortSignal,
+  ) => Promise<void>
   readonly moveChatToSidebar: (surfaceId?: string, signal?: AbortSignal) => Promise<void>
 }
 
@@ -219,7 +225,33 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     signal: AbortSignal,
     surfaceId: string | undefined,
   ): Promise<unknown> => {
-    if (request.type === 'app.ready') return connect(signal)
+    if (request.type === 'app.ready') {
+      if (coordinator.getState().kind !== 'connected') await connect(signal)
+      signal.throwIfAborted()
+      const current = coordinator.getState()
+      const surface = surfaceId === undefined ? undefined : surfaces.get(surfaceId)
+      if (surface !== undefined) {
+        await announceSurface(
+          surface.surfaceId,
+          {
+            kind: surface.kind,
+            ...(surface.sessionId === undefined ? {} : { sessionId: surface.sessionId }),
+          },
+          () => !signal.aborted && surfaces.get(surface.surfaceId) === surface,
+        )
+      } else {
+        await postEvent('connection.snapshot', publicState(current))
+      }
+      // Joining a surface must not reattach shared services, stop Job follows
+      // or broadcast a connection transition to existing chats.
+      if (current.kind === 'connected')
+        for (const event of backendService.replayEvents()) {
+          signal.throwIfAborted()
+          if (surfaceId === undefined) await postEvent(event.type, publicValue(event))
+          else await postEventTo(surfaceId, event.type, publicValue(event))
+        }
+      return { connected: current.kind === 'connected' }
+    }
     if (request.type === 'connection.configure')
       return configureConnection(request.payload.mode, request.payload.endpoint, signal)
     if (request.type === 'connection.retry') return reconnect(signal)
@@ -424,6 +456,8 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
         ),
       )
     }
+    if (request.type === 'permissions.presets.list')
+      return publicList(await modelUseCases.listPermissionPresets(signal))
     if (request.type === 'providers.list') return publicList(await modelUseCases.listProviders(signal))
     if (request.type === 'provider.secret.configure') {
       const backend = backendService.requireBackend()
@@ -721,16 +755,19 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
   const announceSurface = async (
     surfaceId: string,
     assigned: { readonly kind: 'sidebar' | 'editor'; readonly sessionId?: string },
+    isCurrent: () => boolean,
   ): Promise<void> => {
-    await postEventTo(surfaceId, 'ui.surface.assigned', assigned)
-    await postEventTo(surfaceId, 'ui.surface.handoff', { editorChats: surfaces.editorCount })
+    // Send the existing connection before the assignment starts session.open.
+    // A new editor should immediately show its chat instead of startup UI.
+    await postEventTo(surfaceId, 'connection.snapshot', publicState(coordinator.getState()), isCurrent)
+    await postEventTo(surfaceId, 'ui.surface.assigned', assigned, isCurrent)
+    await postEventTo(surfaceId, 'ui.surface.handoff', { editorChats: surfaces.editorCount }, isCurrent)
   }
   const provider = new DshWebviewViewProvider({
     extensionUri: context.extensionUri,
     onMessage: (message) => router.handle(message, SIDEBAR_SURFACE_ID),
     onBecameReady: () => {
       deps.transcript.setVisible(SIDEBAR_SURFACE_ID, provider.visible)
-      void announceSurface(SIDEBAR_SURFACE_ID, { kind: 'sidebar' })
     },
     onViewDisposed: () => onSurfaceWorkCancelled(SIDEBAR_SURFACE_ID),
     onSurfaceClosed: () => surfaces.unregister(SIDEBAR_SURFACE_ID),
@@ -744,21 +781,27 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     onMessageError: logWebviewMessageError,
     onBecameReady: (surface) => {
       deps.transcript.setVisible(surface.surfaceId, surface.visible)
-      void announceSurface(surface.surfaceId, {
-        kind: 'editor',
-        ...(surface.sessionId === undefined ? {} : { sessionId: surface.sessionId }),
-      })
     },
     onDisposed: (surface) => onSurfaceWorkCancelled(surface.surfaceId),
     onVisibilityChanged: (surface) =>
       deps.transcript.setVisible(surface.surfaceId, surface.visible && surface.isReady),
     onCountChanged: (count) => {
-      // The sidebar renders its "chat is open in the editor area" posture from
-      // this count; every surface may react, only the sidebar shows it.
+      // Tab counts are advisory and never take over sidebar navigation.
       void postEvent('ui.surface.handoff', { editorChats: count })
     },
   })
   editorChatSurfaces.current = editorSurfaceManager
   surfaces.register(provider)
-  return { router, provider, editorSurfaces: editorSurfaceManager, moveChatToSidebar }
+  const openDroppedSession = async (
+    sessionId: string,
+    column: vscode.ViewColumn | undefined,
+    signal: AbortSignal,
+  ): Promise<void> => {
+    if (!vscode.workspace.isTrusted) throw workspaceTrustRequired()
+    if (coordinator.getState().kind !== 'connected') await connect(signal)
+    const session = await requireCurrentWorkspaceSession(sessionId, signal)
+    if (signal.aborted) return
+    editorSurfaceManager.open(sessionId, editorTabTitle(session.title), column)
+  }
+  return { router, provider, editorSurfaces: editorSurfaceManager, moveChatToSidebar, openDroppedSession }
 }

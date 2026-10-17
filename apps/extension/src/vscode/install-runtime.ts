@@ -2,6 +2,7 @@ import type * as vscode from 'vscode'
 import { AppError } from '@dsh-vscode/domain'
 
 import { DSH_DOCUMENTATION_URL, INSTALL_COMMAND } from '../constants.js'
+import { runtimeInstallationFailureMessage } from './runtime-installation.js'
 
 export interface RuntimeInstallerDependencies {
   readonly tasks: typeof vscode.tasks
@@ -48,7 +49,8 @@ export class RuntimeInstaller {
             )
           throw runtimeInstallError(
             'install-failed',
-            'The DSH installation command failed. Check the install output and try again.',
+            runtimeInstallationFailureMessage(error) ??
+              'The DSH installation command failed. Check the npm install log and try again.',
             true,
             error,
           )

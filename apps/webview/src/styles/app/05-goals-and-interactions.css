@@ -7,6 +7,19 @@
 
 .dsh-goal-bar {
   container: dsh-goal / inline-size;
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+}
+
+.dsh-goal-bar__content,
+.dsh-goal-bar__actions {
+  gap: var(--dsh-space-1);
+}
+
+.dsh-goal-bar .dsh-icon-button {
+  width: var(--dsh-control-height-compact);
+  min-width: var(--dsh-control-height-compact);
+  height: var(--dsh-control-height-compact);
+  min-height: var(--dsh-control-height-compact);
 }
 
 .dsh-goal-bar__title {
@@ -17,28 +30,24 @@
   flex: 0 0 auto;
 }
 
-/* The actions keep their hit areas when the bar sits in a narrow rail,
- * including a narrow rail inside a wide editor window. */
-@container dsh-goal (max-width: 22rem) {
-  .dsh-goal-bar__content {
-    flex-wrap: wrap;
-    row-gap: var(--dsh-space-2);
-  }
+/* Only the blocked reason needs a second row. Keep the live controls beside
+ * the title even when this bar is hosted in a narrow editor split. */
+.dsh-goal-bar__content {
+  flex-wrap: wrap;
+}
 
-  .dsh-goal-bar__phase {
-    flex: 0 1 auto;
-    max-width: calc(100% - 2rem);
-    overflow-wrap: break-word;
-  }
+.dsh-goal-bar__actions {
+  margin-inline-start: auto;
+}
 
-  .dsh-goal-bar__blocked,
-  .dsh-goal-bar__actions {
-    flex: 0 0 100%;
-  }
+.dsh-goal-bar__blocked {
+  order: 1;
+  flex: 0 0 100%;
+}
 
-  .dsh-goal-bar__actions {
-    justify-content: flex-end;
-    gap: var(--dsh-space-2);
+@container dsh-goal (max-width: 18rem) {
+  .dsh-goal-bar__glyph {
+    display: none;
   }
 }
 
@@ -73,13 +82,8 @@
   font-size: var(--dsh-font-size-sm);
 }
 
-/* A pending question's prompt is not a label: it carries the options the model
- * inlined as text, so clamping it to two lines hid whole choices. Measured at a
- * 512px viewport a 67-character prompt needed 3 lines (60px) and only 2 (40px)
- * were laid out, with `scrollHeight === clientHeight` so no DOM test could see
- * it. The header is now the one part of the card that must never clip; the
- * questions scroll in `.dsh-interaction__body` and the actions row stays pinned.
- * It also drops to the body scale because it is read as prose, not a heading. */
+/* The header is a short label. Full question prompts and options belong to the
+ * scrolling body; none of their decision-making content is line-clamped. */
 .dsh-interaction__header h2 {
   min-width: 0;
   margin: 0;
@@ -87,6 +91,92 @@
   font-size: var(--dsh-font-size-md);
   line-height: 1.45;
   white-space: normal;
+}
+
+.dsh-interaction.dsh-interaction--approval,
+.dsh-interaction.dsh-interaction--question {
+  gap: var(--dsh-space-1);
+  padding: var(--dsh-space-2);
+}
+
+.dsh-interaction--approval .dsh-interaction__header {
+  flex-wrap: wrap;
+  gap: var(--dsh-space-2);
+}
+
+.dsh-interaction--approval .dsh-interaction__icon,
+.dsh-interaction--question .dsh-interaction__icon {
+  flex-basis: var(--dsh-icon-size);
+  width: var(--dsh-icon-size);
+  height: var(--dsh-icon-size);
+  background: transparent;
+}
+
+.dsh-interaction--approval .dsh-interaction__header h2 {
+  max-height: 2.9em;
+  overflow-y: auto;
+}
+
+.dsh-approval__risk {
+  flex: 0 0 auto;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+}
+
+/* Only the approval payload scrolls; all upstream decisions stay in view. */
+.dsh-interaction--approval .dsh-interaction__body {
+  max-height: min(8rem, 22dvh);
+  gap: var(--dsh-space-2);
+}
+
+.dsh-interaction--approval .dsh-interaction__body > * {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.dsh-interaction--question .dsh-interaction__header {
+  gap: var(--dsh-space-2);
+}
+
+.dsh-interaction--question .dsh-interaction__body {
+  max-height: var(--dsh-dock-content-max-height);
+  gap: var(--dsh-space-2);
+}
+
+.dsh-interaction__body > * {
+  flex: 0 0 auto;
+}
+
+.dsh-interaction--question .dsh-interaction__actions,
+.dsh-interaction--question .dsh-question__decision-row {
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: var(--dsh-space-1);
+  margin-top: 0;
+  padding-top: var(--dsh-space-1);
+}
+
+.dsh-approval__command {
+  min-width: 0;
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  border-inline-start: 2px solid var(--dsh-warning);
+  background: var(--dsh-surface-soft);
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  font-size: var(--dsh-font-size-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.dsh-interaction--approval .dsh-interaction__actions {
+  flex-wrap: wrap;
+  gap: var(--dsh-space-2);
+}
+
+.dsh-interaction--approval .dsh-button,
+.dsh-interaction--question .dsh-button {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .dsh-goal-bar__blocked {
@@ -162,10 +252,18 @@
 }
 
 .dsh-queue__list {
-  max-height: 11.25rem;
+  max-height: var(--dsh-dock-content-max-height);
   gap: 0;
   margin: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.dsh-goal-strip__list {
+  max-height: var(--dsh-dock-content-max-height);
+  margin-top: var(--dsh-space-1);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .dsh-queue__list[hidden] {
@@ -188,6 +286,8 @@
 }
 
 .dsh-queue__list li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   justify-content: space-between;
   min-height: 2.25rem;
   gap: var(--dsh-space-2);
@@ -201,12 +301,15 @@
 }
 
 .dsh-queue__item-main {
+  display: contents;
   flex: 1 1 auto;
   min-width: 0;
   gap: var(--dsh-space-2);
 }
 
 .dsh-queue__item-main input {
+  grid-column: 2;
+  grid-row: 1;
   width: 100%;
   min-width: 0;
   min-height: var(--dsh-control-height-compact);
@@ -215,6 +318,8 @@
 }
 
 .dsh-queue__item-actions {
+  grid-column: 3;
+  grid-row: 1;
   flex: 0 0 auto;
   flex-wrap: nowrap;
   justify-content: flex-end;
@@ -238,6 +343,8 @@
 }
 
 .dsh-queue__index {
+  grid-column: 1;
+  grid-row: 1;
   display: grid;
   place-items: center;
   width: 1.25rem;
@@ -250,10 +357,74 @@
 }
 
 .dsh-queue__files {
+  grid-column: 1 / -1;
   display: inline-flex;
-  flex-wrap: wrap;
+  width: 100%;
+  flex-wrap: nowrap;
   min-width: 0;
   gap: var(--dsh-space-1);
+  overflow-x: auto;
+}
+
+/* Queue attachments are thumbnails, not another full-size message gallery. */
+.dsh-queue .dsh-message-images {
+  grid-column: 1 / -1;
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 5rem;
+  gap: var(--dsh-space-1);
+  overflow-x: auto;
+}
+
+.dsh-queue .dsh-message-images__thumb {
+  flex: 0 0 var(--dsh-control-height-compact);
+  width: var(--dsh-control-height-compact);
+  height: var(--dsh-control-height-compact);
+  min-height: 0;
+  aspect-ratio: 1;
+}
+
+.dsh-queue .dsh-message-images__thumb img {
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Failed/pending images keep their explanation and Retry in a small scrollport. */
+.dsh-queue .dsh-message-images:has(.dsh-message-images__placeholder) {
+  width: 100%;
+  max-width: none;
+}
+
+.dsh-queue .dsh-message-images .dsh-message-images__placeholder {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  place-items: start;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  max-height: min(6rem, var(--dsh-dock-content-max-height));
+  padding: var(--dsh-space-1);
+  gap: var(--dsh-space-1);
+  overflow: auto;
+  font-size: var(--dsh-font-size-xs);
+}
+
+.dsh-queue .dsh-message-images__placeholder > span,
+.dsh-queue .dsh-message-images__placeholder > button {
+  grid-column: 2;
+}
+
+.dsh-queue .dsh-message-images__placeholder > .dsh-icon {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.dsh-queue .dsh-message-images__name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .dsh-queue__file {
@@ -561,26 +732,4 @@
   min-width: 0;
   gap: var(--dsh-space-3);
   padding-top: var(--dsh-space-2);
-}
-
-/* While a pending approval or question owns the composer slot, the input is
- * replaced by this quiet placeholder: the reader learns why typing is off and
- * that it returns, instead of finding the composer silently gone. */
-.dsh-compose-hint {
-  display: flex;
-  align-items: center;
-  gap: var(--dsh-space-2);
-  min-height: var(--dsh-control-height);
-  padding: var(--dsh-space-2) var(--dsh-space-3);
-  border: 1px dashed var(--dsh-border-color);
-  border-radius: var(--dsh-radius-md);
-  color: var(--dsh-muted);
-  font-size: var(--dsh-font-size-sm);
-}
-
-.dsh-compose-hint .dsh-icon {
-  flex: 0 0 auto;
-  width: var(--dsh-icon-size-sm);
-  height: var(--dsh-icon-size-sm);
-  color: var(--dsh-warning);
 }

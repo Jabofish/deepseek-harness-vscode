@@ -23,6 +23,7 @@ import {
   AlphaRemoteMux,
   asRecord,
   type AlphaLoopbackApiClientOptions,
+  type AssistantPreviewState,
   isJsonLike,
   isNonEmptyString,
   isNonEmptyStringArray,
@@ -37,12 +38,12 @@ import {
   alphaSessionList,
   expandHistoryRecords,
   normalizeAlphaEvent,
+  readAlphaWireEventFrame,
+  readAlphaWireSnapshot,
   validAlphaEventCancel,
   validAlphaEventEmit,
   validAlphaEventReady,
   validAlphaEventWaterfall,
-  validAlphaWireEventFrame,
-  validAlphaWireSnapshot,
 } from './session-wire.js'
 import {
   credentialDescribe,
@@ -73,6 +74,7 @@ export type {
   AlphaWebSocket,
   AlphaWebSocketConstructor,
   AlphaWorkspaceWireVersion,
+  AssistantPreviewState,
 } from './remote-mux.js'
 
 /**
@@ -663,7 +665,7 @@ export class AlphaLoopbackApiClient implements DshTransport {
               rpcId: frame.eventId,
               sessionId: frame.agentId,
             }
-          } else throw malformedResponse('$events waterfall')
+          }
           continue
         }
         if (frame?.type === 'cancel' && validAlphaEventCancel(frame)) {
@@ -688,7 +690,9 @@ export class AlphaLoopbackApiClient implements DshTransport {
           this.pendingEvents.delete(frame.eventId)
           continue
         }
-        throw malformedResponse('$events frame')
+        if (frame.type === 'emit' || frame.type === 'waterfall' || frame.type === 'cancel')
+          throw malformedResponse('$events frame')
+        // Additional notification kinds do not invalidate existing interactions.
       }
       if (!ready) throw malformedResponse('$events ready')
     } catch (error) {
@@ -707,6 +711,13 @@ export class AlphaLoopbackApiClient implements DshTransport {
 
   private async *readControl(signal: AbortSignal): AsyncGenerator<unknown> {
     for await (const item of this.openRemoteStream('session/control', {}, signal)) {
+      const frame = recordOrUndefined(item)
+      if (
+        frame !== undefined &&
+        typeof frame.type === 'string' &&
+        !['baseline', 'queue', 'jobs', 'projection'].includes(frame.type)
+      )
+        continue
       const controlWireVersion = this.options.controlWireVersion ?? 'queue-v1'
       if (controlWireVersion === 'projection-v2') {
         const frames = normalizeAlpha171ControlFrame(item)
@@ -720,7 +731,6 @@ export class AlphaLoopbackApiClient implements DshTransport {
         yield* frames
         continue
       }
-      const frame = recordOrUndefined(item)
       if (frame?.type === 'baseline') {
         const value = recordOrUndefined(frame.value)
         const queues = value === undefined ? undefined : recordOrUndefined(value.queues)
@@ -795,6 +805,12 @@ export class AlphaLoopbackApiClient implements DshTransport {
     }
   }
 
+  /**
+   * One durable follow stream per watched Session. The assistant preview is an
+   * opt-in transient channel the host never replays, so a protocol
+   * discontinuity is recovered by re-opening the stream and adopting its new
+   * compact baseline instead of silently dropping token output.
+   */
   private async *readSession(sessionId: string, signal: AbortSignal): AsyncGenerator<unknown> {
     const wireVersion = this.options.sessionWireVersion ?? 'v0'
     const v2 = wireVersion === 'v2'
@@ -811,83 +827,147 @@ export class AlphaLoopbackApiClient implements DshTransport {
       ...(assistantStream ? { assistantStream: true } : {}),
     }
     const projector = assistantStream ? new Alpha13AssistantStreamProjector() : undefined
-    for await (const item of this.openRemoteStream('session/follow', { request }, signal)) {
-      const frame = recordOrUndefined(item)
-      if (frame?.type === 'snapshot') {
-        if (!validAlphaWireSnapshot(frame, wireVersion, this.options.sessionWireProfile))
-          throw malformedResponse('session/follow snapshot')
-        let queueFrame: unknown
-        if (this.options.normalizeSessionQueueProjection !== undefined) {
-          try {
-            queueFrame = this.options.normalizeSessionQueueProjection(sessionId, frame.projections)
-          } catch (cause) {
-            // Validate the projection-derived queue before publishing any part
-            // of this snapshot so malformed Inbox state cannot partially
-            // advance the transcript or queue baseline.
-            throw malformedResponse('session/follow Inbox projection', cause)
+    let previewEnabled = projector !== undefined
+    let consecutiveRecoveries = 0
+    const stopPreview = (): readonly Alpha13ProjectorOutput[] => {
+      const pending = projector?.releaseDurable() ?? []
+      previewEnabled = false
+      return pending
+    }
+    const reportPreview = (state: AssistantPreviewState): void => {
+      try {
+        this.options.onAssistantPreview?.(state)
+      } catch {
+        // Diagnostics are advisory: a failing observer cannot break the stream.
+      }
+    }
+    while (!signal.aborted) {
+      let recovery: AssistantPreviewState['phase'] | undefined
+      try {
+        for await (const item of this.openRemoteStream('session/follow', { request }, signal)) {
+          const frame = recordOrUndefined(item)
+          if (frame?.type === 'snapshot') {
+            const snapshot = readAlphaWireSnapshot(frame, wireVersion, this.options.sessionWireProfile)
+            if (snapshot === undefined) throw malformedResponse('session/follow snapshot')
+            let queueFrame: unknown
+            if (this.options.normalizeSessionQueueProjection !== undefined) {
+              try {
+                queueFrame = this.options.normalizeSessionQueueProjection(sessionId, snapshot.projections)
+              } catch (cause) {
+                // Validate the projection-derived queue before publishing any part
+                // of this snapshot so malformed Inbox state cannot partially
+                // advance the transcript or queue baseline.
+                throw malformedResponse('session/follow Inbox projection', cause)
+              }
+            }
+            const events = expandHistoryRecords(
+              snapshot.records,
+              sessionId,
+              wireVersion,
+              this.options.autoReviewDenialContract === true,
+              this.options.sessionWireProfile,
+            )
+            if (projector !== undefined) for (const event of events) projector.rememberDurable(event)
+            for (const event of events) yield { type: 'session/event', sessionId, event }
+            if (queueFrame !== undefined) yield queueFrame
+            yield {
+              type: 'session/subscribed',
+              sessionId,
+              lastSeq: snapshot.cursor,
+              // Alpha's Session follow is separate from session/control and
+              // $events. A follow reconnect must not reset queue, jobs, or pending
+              // interactions that are still owned by those streams.
+              controlBaseline: false,
+              projections: snapshot.projections,
+            }
+            if (projector !== undefined) {
+              if (snapshot.assistantStream === undefined) {
+                // The host ignored the opt-in, so there is no baseline to adopt
+                // and re-opening cannot produce one. Stay on the durable path;
+                // the next attempt's start frame can still resume the preview.
+                for (const output of stopPreview()) yield this.alpha13ProjectorFrame(output)
+                reportPreview({ status: 'disabled', phase: 'baseline' })
+                continue
+              }
+              if (previewEnabled) {
+                let projected: readonly Alpha13ProjectorOutput[]
+                try {
+                  projected = projector.open(snapshot.assistantStream, sessionId, consecutiveRecoveries > 0)
+                } catch {
+                  recovery = 'baseline'
+                  break
+                }
+                for (const output of projected) yield this.alpha13ProjectorFrame(output)
+              }
+            }
+          } else if (frame?.type === 'event') {
+            const readable = readAlphaWireEventFrame(frame, wireVersion, this.options.sessionWireProfile)
+            if (readable === undefined) continue
+            const event = normalizeAlphaEvent(
+              readable.event,
+              sessionId,
+              wireVersion,
+              this.options.autoReviewDenialContract === true,
+              this.options.sessionWireProfile,
+            )
+            if (event === undefined) throw malformedResponse('session/follow event')
+            if (projector === undefined || !previewEnabled) yield { type: 'session/event', sessionId, event }
+            else {
+              let projected: readonly Alpha13ProjectorOutput[]
+              try {
+                projected = projector.acceptDurable(event)
+              } catch {
+                recovery = 'settlement'
+                break
+              }
+              for (const output of projected) yield this.alpha13ProjectorFrame(output)
+            }
+          } else if (projector !== undefined && frame?.type === 'assistant-stream') {
+            if (!previewEnabled) {
+              // A fresh attempt is the cheapest way back into the preview: its
+              // start frame carries everything a missing baseline would have.
+              if (recordOrUndefined(frame.frame)?.type !== 'start') continue
+              let resumed: readonly Alpha13ProjectorOutput[]
+              try {
+                resumed = projector.resumeFrame(frame.frame, sessionId)
+              } catch {
+                // Stay on the durable path instead of thrashing on a bad frame.
+                continue
+              }
+              previewEnabled = true
+              consecutiveRecoveries = 0
+              for (const output of resumed) yield this.alpha13ProjectorFrame(output)
+              continue
+            }
+            let projected: readonly Alpha13ProjectorOutput[]
+            try {
+              projected = projector.acceptFrame(frame.frame, sessionId)
+            } catch {
+              recovery = 'frame'
+              break
+            }
+            // A delivered chunk proves the preview channel is healthy again.
+            consecutiveRecoveries = 0
+            for (const output of projected) yield this.alpha13ProjectorFrame(output)
           }
         }
-        const events = expandHistoryRecords(
-          frame.records,
-          sessionId,
-          wireVersion,
-          this.options.autoReviewDenialContract === true,
-          this.options.sessionWireProfile,
-        )
-        if (projector !== undefined) for (const event of events) projector.rememberDurable(event)
-        for (const event of events) yield { type: 'session/event', sessionId, event }
-        if (queueFrame !== undefined) yield queueFrame
-        yield {
-          type: 'session/subscribed',
-          sessionId,
-          lastSeq: frame.cursor,
-          // Alpha's Session follow is separate from session/control and
-          // $events. A follow reconnect must not reset queue, jobs, or pending
-          // interactions that are still owned by those streams.
-          controlBaseline: false,
-          projections: frame.projections,
-        }
-        if (projector !== undefined) {
-          if (frame.assistantStream === undefined)
-            throw malformedResponse('session/follow assistant stream baseline')
-          let projected: readonly Alpha13ProjectorOutput[]
-          try {
-            projected = projector.open(frame.assistantStream, sessionId)
-          } catch (cause) {
-            throw malformedResponse('session/follow assistant stream baseline', cause)
-          }
-          for (const output of projected) yield this.alpha13ProjectorFrame(output)
-        }
-      } else if (frame?.type === 'event') {
-        if (!validAlphaWireEventFrame(frame, wireVersion, this.options.sessionWireProfile))
-          throw malformedResponse('session/follow event')
-        const event = normalizeAlphaEvent(
-          frame.event,
-          sessionId,
-          wireVersion,
-          this.options.autoReviewDenialContract === true,
-          this.options.sessionWireProfile,
-        )
-        if (event === undefined) throw malformedResponse('session/follow event')
-        if (projector === undefined) yield { type: 'session/event', sessionId, event }
-        else {
-          let projected: readonly Alpha13ProjectorOutput[]
-          try {
-            projected = projector.acceptDurable(event)
-          } catch (cause) {
-            throw malformedResponse('session/follow assistant settlement', cause)
-          }
-          for (const output of projected) yield this.alpha13ProjectorFrame(output)
-        }
-      } else if (projector !== undefined && frame?.type === 'assistant-stream') {
-        let projected: readonly Alpha13ProjectorOutput[]
-        try {
-          projected = projector.acceptFrame(frame.frame, sessionId)
-        } catch (cause) {
-          throw malformedResponse('session/follow assistant stream frame', cause)
-        }
-        for (const output of projected) yield this.alpha13ProjectorFrame(output)
-      } else throw malformedResponse('session/follow frame')
+        if (recovery === undefined) return
+      } catch (error) {
+        if (signal.aborted) return
+        throw error
+      }
+      if (!previewEnabled) continue
+      if (consecutiveRecoveries >= MAX_ASSISTANT_PREVIEW_RECOVERIES) {
+        // Terminal fallback: keep the durable reply path usable and make the
+        // degraded mode observable instead of failing the whole stream.
+        for (const output of stopPreview()) yield this.alpha13ProjectorFrame(output)
+        reportPreview({ status: 'disabled', phase: recovery })
+        continue
+      }
+      consecutiveRecoveries += 1
+      reportPreview({ status: 'rebased', phase: recovery })
+      await assistantPreviewBackoff(consecutiveRecoveries, signal)
+      if (signal.aborted) return
     }
   }
 
@@ -980,7 +1060,7 @@ export class AlphaLoopbackApiClient implements DshTransport {
         if (!pinnedWorkspace || !isNonEmptyStringArray(frame.pinnedSessionIds))
           throw malformedResponse('workspace/follow pinned')
         yield { type: 'host/pinned-sessions-changed', sessionIds: frame.pinnedSessionIds }
-      } else throw malformedResponse('workspace/follow frame')
+      }
     }
   }
 
@@ -1009,4 +1089,27 @@ export class AlphaLoopbackApiClient implements DshTransport {
   private isConnectionClosed(): boolean {
     return this.isClosed
   }
+}
+
+/**
+ * Consecutive preview recoveries attempted before the transport gives up on the
+ * optional transient channel and keeps the durable stream usable.
+ */
+const MAX_ASSISTANT_PREVIEW_RECOVERIES = 3
+
+/** Bounded backoff for a follow re-open that only repairs the preview channel. */
+async function assistantPreviewBackoff(attempt: number, signal: AbortSignal): Promise<void> {
+  // Like the upstream client, take the first authoritative rebaseline at once.
+  // Only repeated failures need a delay to avoid a tight recovery loop.
+  if (signal.aborted || attempt <= 1) return
+  const delayMs = Math.min(1_000, 250 * 2 ** (attempt - 2))
+  await new Promise<void>((resolve) => {
+    const finish = (): void => {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', finish)
+      resolve()
+    }
+    const timer = setTimeout(finish, delayMs)
+    signal.addEventListener('abort', finish, { once: true })
+  })
 }

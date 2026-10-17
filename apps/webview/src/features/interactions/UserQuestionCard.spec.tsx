@@ -111,7 +111,7 @@ describe('UserQuestionCard', () => {
 
     expect(screen.getByText('需要输入')).toBeDefined()
     expect(screen.getByRole('button', { name: '提交' })).toBeDefined()
-    expect(screen.getAllByText('Proceed with this plan?')).toHaveLength(2)
+    expect(screen.getAllByText('Proceed with this plan?')).toHaveLength(1)
   })
 
   it('answers all questions of one ask with a single batch submission', () => {

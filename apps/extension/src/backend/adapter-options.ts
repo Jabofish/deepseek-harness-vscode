@@ -16,6 +16,8 @@ export interface AdapterOptionsDependencies {
     NonNullable<Rc6AdapterOptions['webSocket']>
   readonly authCookie: (endpoint: BackendEndpoint) => string | undefined
   readonly allowLocalInspector?: (endpoint: BackendEndpoint) => boolean
+  /** Advisory observability for the optional transient assistant preview. */
+  readonly onAssistantPreview?: NonNullable<AlphaAdapterOptions['onAssistantPreview']>
 }
 
 /**
@@ -40,6 +42,9 @@ export function createAdapterOptions(
     ...(dependencies.allowLocalInspector === undefined
       ? {}
       : { allowLocalInspector: dependencies.allowLocalInspector }),
+    ...(dependencies.onAssistantPreview === undefined
+      ? {}
+      : { onAssistantPreview: dependencies.onAssistantPreview }),
     ...(dependencies.webSocket === undefined ? {} : { webSocket: dependencies.webSocket }),
   }
 }

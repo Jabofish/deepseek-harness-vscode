@@ -68,6 +68,18 @@ export interface AlphaLoopbackApiClientOptions {
    * published for that child.
    */
   readonly subagentAddresses?: SubagentAddressRegistry
+  /**
+   * Observes the optional assistant preview channel. `rebased` means the
+   * transport re-opened the follow stream to recover a protocol discontinuity;
+   * `disabled` is the terminal fallback that keeps the durable stream usable.
+   */
+  readonly onAssistantPreview?: (state: AssistantPreviewState) => void
+}
+
+/** Which follow step lost the transient assistant preview. */
+export interface AssistantPreviewState {
+  readonly status: 'rebased' | 'disabled'
+  readonly phase: 'baseline' | 'frame' | 'settlement'
 }
 
 interface AlphaMuxStream {
@@ -341,43 +353,36 @@ export class AlphaRemoteMux {
       return
     }
     const state = this.streams.get(streamId)
+    // A late frame for a cancelled logical stream cannot break its siblings.
+    if (state === undefined || state.terminal) return
     switch (frame.type) {
       case 'item':
-        if (
-          !hasExactKeys(frame, ['type', 'streamId']) &&
-          !hasExactKeys(frame, ['type', 'streamId', 'value'])
-        ) {
-          this.failSocket(socket, malformedResponse('remote.mux'), cleanup)
-          return
-        }
-        if (state !== undefined && !state.terminal && !state.queue.push(frame.value)) {
+        if (!state.queue.push(frame.value)) {
           state.terminal = true
           this.sendCancel(streamId, state)
         }
         return
       case 'end':
-        if (!hasExactKeys(frame, ['type', 'streamId'])) {
-          this.failSocket(socket, malformedResponse('remote.mux'), cleanup)
-          return
-        }
-        if (state !== undefined && !state.terminal) {
-          state.terminal = true
-          state.queue.end()
-        }
+        state.terminal = true
+        state.queue.end()
         return
       case 'error':
-        if (!hasExactKeys(frame, ['type', 'streamId', 'error']) || !validAlphaStreamError(frame.error)) {
-          this.failSocket(socket, malformedResponse('remote.mux'), cleanup)
+        if (!validAlphaStreamError(frame.error)) {
+          this.failStream(streamId, state, malformedResponse('remote.mux stream error'))
           return
         }
-        if (state !== undefined && !state.terminal) {
-          state.terminal = true
-          state.queue.fail(alphaStreamError(frame.error, this.options.normalizeErrorCode))
-        }
+        state.terminal = true
+        state.queue.fail(alphaStreamError(frame.error, this.options.normalizeErrorCode))
         return
       default:
-        this.failSocket(socket, malformedResponse('remote.mux'), cleanup)
+        this.failStream(streamId, state, malformedResponse('remote.mux stream frame'))
     }
+  }
+
+  private failStream(streamId: string, state: AlphaMuxStream, error: unknown): void {
+    state.terminal = true
+    this.sendCancel(streamId, state)
+    state.queue.fail(error)
   }
 
   private failAll(error: unknown): void {

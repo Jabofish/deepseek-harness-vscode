@@ -1656,7 +1656,7 @@ describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
     await transport.close()
   })
 
-  it('fails on a valid but unsupported alpha waterfall event instead of dropping it', async () => {
+  it('keeps supported global events flowing after an unsupported waterfall event', async () => {
     FakeWebSocket.instances.length = 0
     const transport = client(
       vi.fn((_input: RequestInfo | URL, init?: RequestInit) => Promise.resolve(response(init, undefined))),
@@ -1677,7 +1677,13 @@ describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
       }),
     )
 
-    await expect(next).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+    socket.message(
+      streamItem(socket, { type: 'emit', event: 'api-session/activity', args: ['s1', 1_700_000_000_000] }),
+    )
+    await expect(next).resolves.toMatchObject({
+      done: false,
+      value: { type: 'host/session-activity', sessionId: 's1' },
+    })
     await transport.close()
   })
 

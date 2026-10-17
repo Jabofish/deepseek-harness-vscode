@@ -15,6 +15,7 @@ export interface BackendAttachDependencies {
   readonly sessionUseCases: SessionUseCases
   readonly extensionVersion: string
   readonly diagnostics: RedactedDiagnostics
+  readonly publishRecoveredState?: (backend: DshBackend) => void
   readonly stopAllJobFollows: (this: void) => void
   readonly invalidateCurrentWorkspaceSessionDetails: (this: void) => void
   readonly changeTracker: ChangeSetTracker
@@ -62,25 +63,42 @@ export function createBackendAttach(deps: BackendAttachDependencies): BackendAtt
     publishAccountError,
   } = deps
   let accountLifecycleHost: AccountLifecycleHost | undefined
+  let attachedBackend: DshBackend | undefined
+  let pendingAttach: Promise<void> | undefined
   const disposeAccountLifecycleHost = async (): Promise<void> => {
     const previous = accountLifecycleHost
     accountLifecycleHost = undefined
     await previous?.dispose()
   }
   const detachSessionAdapters = (): void => {
+    attachedBackend = undefined
     changeTracker.detach()
     taskRegistry.detach()
     editorContextProvider.dispose()
     taskFocus.clearSessionId()
   }
   const getAccountLifecycleHost = (): AccountLifecycleHost | undefined => accountLifecycleHost
-  const attach = async (backend: DshBackend): Promise<void> => {
+  const attachOnce = async (backend: DshBackend): Promise<void> => {
     await disposeAccountLifecycleHost()
+    if (attachedBackend !== backend) return
     stopAllJobFollows()
     invalidateCurrentWorkspaceSessionDetails()
     changeTracker.attach(backend, currentWorkspaceFolderId)
     taskRegistry.attach(backend, currentWorkspaceFolderId)
     backendService.attach(backend, (event) => {
+      if (event.type === 'connection.restored') {
+        // The Adapter already owns bounded transport retries. A valid frame
+        // restores the existing backend; no process restart or extra client
+        // retry loop is needed.
+        void attach(backend)
+          .then(() => {
+            if (attachedBackend === backend) deps.publishRecoveredState?.(backend)
+          })
+          .catch(() => {
+            diagnostics.log('warn', 'connection-recovery-failed', { code: 'BACKEND_UNREACHABLE' })
+          })
+        return
+      }
       if (event.type === 'remote.event' && event.name === 'plugin-manager/changed') {
         void postFeatureEvent('plugin.manager.changed', {})
         return
@@ -158,6 +176,27 @@ export function createBackendAttach(deps: BackendAttachDependencies): BackendAtt
       })
       accountLifecycleHost.start()
     }
+  }
+  const attach = (backend: DshBackend): Promise<void> => {
+    if (attachedBackend === backend) return pendingAttach ?? Promise.resolve()
+    attachedBackend = backend
+    const previous = pendingAttach
+    const operation = (async (): Promise<void> => {
+      await previous?.catch(() => undefined)
+      if (attachedBackend === backend) await attachOnce(backend)
+    })()
+    pendingAttach = operation
+    void operation.then(
+      () => {
+        if (pendingAttach === operation) pendingAttach = undefined
+      },
+      () => {
+        if (pendingAttach !== operation) return
+        pendingAttach = undefined
+        if (attachedBackend === backend) attachedBackend = undefined
+      },
+    )
+    return operation
   }
   return { attach, disposeAccountLifecycleHost, getAccountLifecycleHost, detachSessionAdapters }
 }

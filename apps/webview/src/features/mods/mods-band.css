@@ -1,11 +1,18 @@
 .dsh-mods-band {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: 0;
+  gap: var(--dsh-space-1);
   overflow-wrap: anywhere;
-  max-height: 12rem;
+  max-height: min(7rem, 18dvh);
   overflow: auto;
-  padding: 0.5rem;
+  padding: var(--dsh-space-1);
+  overscroll-behavior: contain;
+}
+.dsh-mods-band > * {
+  flex-shrink: 0;
 }
 .dsh-mods-band__box {
   display: flex;

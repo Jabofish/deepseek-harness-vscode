@@ -31,7 +31,9 @@ Install [DeepSeek Harness Companion for VS Code](https://marketplace.visualstudi
 
 The DeepSeek Harness Chat view appears in VS Code's Secondary Side Bar by default (on the right in the default workbench layout). If you previously moved it, VS Code may keep your saved layout. Run **DSH: Move View to Secondary Side Bar** from the Command Palette to choose the Chat view and **New Secondary Side Bar Entry**, or right-click the view title and use **Move View**.
 
-While an editor chat tab is open, the side bar shows a short notice instead of a second copy of the conversation, so replies, approvals and questions stay in one place.
+The side bar stays available while editor chat tabs are open. Use its **+** button to start another session, or select an existing session from its session list; editor tabs keep their own sessions.
+
+Drag a session row from the session list into the editor area to open it there. Drop near an editor edge to open in a split group. Dragging within a manually sorted list still reorders sessions.
 
 The extension first looks for a compatible local DSH. It starts one only when the selected connection mode permits it and discovery has finished. It never stops a DSH process it did not create.
 

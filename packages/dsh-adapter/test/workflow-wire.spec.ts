@@ -187,6 +187,7 @@ describe('workflow/Ralph records over the alpha session follow stream', () => {
           type: 'workflow.started',
           sessionId: 's1',
           sequence: 4,
+          replayed: true,
           workflow: {
             id: 'run-1',
             sessionId: 's1',
@@ -199,6 +200,7 @@ describe('workflow/Ralph records over the alpha session follow stream', () => {
           type: 'workflow.member.started',
           sessionId: 's1',
           sequence: 5,
+          replayed: true,
           runId: 'run-1',
           phase: 'Fresh-agent rounds',
           member: {
@@ -212,6 +214,7 @@ describe('workflow/Ralph records over the alpha session follow stream', () => {
           type: 'workflow.member.started',
           sessionId: 's1',
           sequence: 6,
+          replayed: true,
           runId: 'run-1',
           phase: null,
           member: { seq: 2, label: '', childId: 'child-2', status: 'running' },

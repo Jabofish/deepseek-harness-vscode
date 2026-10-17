@@ -10,7 +10,7 @@ export function SubmittedPlanCard(props: {
   readonly onOpenLink?: ((href: string) => void) | undefined
 }): ReactElement | null {
   const { t } = useI18n()
-  const [open, setOpen] = useState(props.tool.status === 'running' || props.tool.status === 'queued')
+  const [open, setOpen] = useState(false)
   const plan = props.tool.submittedPlan
   if (plan === undefined) return null
   return (
@@ -19,14 +19,18 @@ export function SubmittedPlanCard(props: {
       open={open}
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <summary>
+      <summary title={plan.title}>
         {t('plans.submitted')}: {plan.title}
       </summary>
-      <CopyButton className="dsh-message-actions__button" text={plan.markdown} translate={t} />
-      <MarkdownContent
-        markdown={plan.markdown}
-        {...(props.onOpenLink === undefined ? {} : { onOpenLink: props.onOpenLink })}
-      />
+      {open ? (
+        <div className="dsh-submitted-plan__body" tabIndex={0}>
+          <CopyButton className="dsh-message-actions__button" text={plan.markdown} translate={t} />
+          <MarkdownContent
+            markdown={plan.markdown}
+            {...(props.onOpenLink === undefined ? {} : { onOpenLink: props.onOpenLink })}
+          />
+        </div>
+      ) : null}
     </details>
   )
 }

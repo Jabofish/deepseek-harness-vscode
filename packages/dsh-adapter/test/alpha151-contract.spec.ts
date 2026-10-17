@@ -742,7 +742,7 @@ describe('DSH 0.1.5-alpha.1 Session wire v3 contract', () => {
     }
   })
 
-  it('requires the v3 assistant baseline and rejects a malformed snapshot', async () => {
+  it('recovers a missing optional v3 preview baseline on the next valid native attempt', async () => {
     FakeWebSocket.instances.length = 0
     const client = new AlphaLoopbackApiClient({
       ...adapterOptions(
@@ -760,7 +760,29 @@ describe('DSH 0.1.5-alpha.1 Session wire v3 contract', () => {
     socket.message(streamItem(socket, snapshot([], false)))
 
     await expect(first).resolves.toMatchObject({ value: { type: 'session/subscribed' } })
-    await expect(iterator.next()).rejects.toThrow(/assistant stream baseline/u)
+    const resumed = iterator.next()
+    socket.message(
+      streamItem(socket, {
+        type: 'assistant-stream',
+        frame: { type: 'start', attemptId: 'recovered', revision: 1, startedAfterSeq: 0, turn: 2, step: 1 },
+      }),
+    )
+    socket.message(
+      streamItem(socket, {
+        type: 'assistant-stream',
+        frame: {
+          type: 'chunk',
+          attemptId: 'recovered',
+          revision: 2,
+          index: 0,
+          time: 1,
+          chunk: { type: 'text-delta', index: 0, text: 'Recovered preview' },
+        },
+      }),
+    )
+    await expect(resumed).resolves.toMatchObject({
+      value: { type: 'session/assistant-stream', frame: { chunk: { text: 'Recovered preview' } } },
+    })
     await iterator.return?.()
     await client.close()
   })

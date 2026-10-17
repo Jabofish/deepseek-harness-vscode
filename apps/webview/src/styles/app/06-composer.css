@@ -477,10 +477,13 @@ occupancy so the overflow is visible without opening the details. */
   flex: 1 1 auto;
 }
 
-.dsh-interaction__description,
+.dsh-interaction__description {
+  margin: var(--dsh-space-3) 0;
+}
+
 .dsh-question__prompt,
 .dsh-question__detail {
-  margin: var(--dsh-space-3) 0;
+  margin: 0;
 }
 
 /* Each question is a single-column grid, which stretches the skip control into
@@ -492,7 +495,7 @@ occupancy so the overflow is visible without opening the details. */
 
 .dsh-question__choices {
   display: grid;
-  gap: var(--dsh-space-2);
+  gap: var(--dsh-space-1);
 }
 
 .dsh-question__choice {
@@ -500,7 +503,7 @@ occupancy so the overflow is visible without opening the details. */
   grid-template-columns: auto minmax(0, 1fr);
   align-items: start;
   gap: var(--dsh-space-2);
-  padding: var(--dsh-space-3);
+  padding: var(--dsh-space-1) var(--dsh-space-2);
   border: var(--dsh-border);
   border-radius: var(--dsh-radius-sm);
   color: var(--dsh-text);

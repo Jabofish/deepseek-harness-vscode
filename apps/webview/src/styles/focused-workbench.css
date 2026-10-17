@@ -506,7 +506,7 @@
   width: min(280px, calc(100vw - 24px));
   min-width: 0;
   padding: 6px;
-  overflow: auto;
+  overflow: visible;
   scrollbar-width: thin;
 }
 

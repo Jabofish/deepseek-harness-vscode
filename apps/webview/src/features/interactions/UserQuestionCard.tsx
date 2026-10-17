@@ -2,7 +2,6 @@ import { memo, useEffect, useRef, useState, type ReactElement } from 'react'
 import type { QuestionAnswer, QuestionChoice, UserQuestion, UserQuestionItem } from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
 import { ContentFlow } from '../../components/common/ContentFlow.js'
-import { useConversationLayout } from '../../app/ConversationLayoutProvider.js'
 
 export interface UserQuestionCardProps {
   readonly question: UserQuestion
@@ -33,11 +32,10 @@ interface TimedWaitState {
  * item renders its header/detail/options (with per-option descriptions) and
  * a free-text slot; a plan-review intent promotes the approving option.
  */
-// A pending card docks in the composer slot for as long as the conversation
-// streams behind it; memo keeps those frames from re-rendering the card.
+// A pending card docks above the composer while the conversation streams;
+// memo keeps those frames from re-rendering the card.
 export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuestionCardProps): ReactElement {
   const { t } = useI18n()
-  const focused = useConversationLayout()?.layout === 'focused'
   const items = questionItems(props.question)
   const planReview = isPlanReview(items)
   const timedForeground = props.question.state === 'open' && props.question.timed === true
@@ -142,7 +140,7 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
   }
   return (
     <section
-      className={`dsh-interaction${planReview ? ' dsh-interaction--plan-review' : ''}`}
+      className={`dsh-interaction dsh-interaction--question${planReview ? ' dsh-interaction--plan-review' : ''}`}
       role="group"
       aria-labelledby={`question-${props.question.id}`}
     >
@@ -151,15 +149,8 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
           ?
         </span>
         <div>
-          {focused ? null : (
-            <span className="dsh-app__eyebrow">
-              {t(planReview ? 'question.planReview' : 'question.inputNeeded')}
-            </span>
-          )}
           <h2 id={`question-${props.question.id}`}>
-            {focused
-              ? t(planReview ? 'question.planReview' : 'question.inputNeeded')
-              : (items[0]?.prompt ?? '')}
+            {t(planReview ? 'question.planReview' : 'question.inputNeeded')}
           </h2>
         </div>
       </header>
@@ -205,11 +196,11 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
                 {item.header === undefined ? item.prompt : item.header}
               </h3>
             ) : null}
-            {focused || items.length > 1 ? (
+            {items.length > 1 && (item.header === undefined || item.header === item.prompt) ? null : (
               <ContentFlow as="p" className="dsh-question__prompt">
                 {item.prompt}
               </ContentFlow>
-            ) : null}
+            )}
             {item.detail === undefined ? null : (
               <ContentFlow as="p" className="dsh-question__detail">
                 {item.detail}
@@ -324,7 +315,7 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
         <div className="dsh-interaction__actions">
           {props.question.state !== 'continued' ? (
             <button
-              className="dsh-button dsh-button--secondary"
+              className="dsh-button dsh-button--secondary dsh-button--compact"
               type="button"
               disabled={props.disabled}
               onClick={props.onCancel}
@@ -338,7 +329,7 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
             </span>
           ) : (
             <button
-              className="dsh-button dsh-button--primary"
+              className="dsh-button dsh-button--primary dsh-button--compact"
               type="button"
               disabled={submitDisabled}
               onClick={() => {
@@ -424,7 +415,7 @@ function PlanDecisionRow(props: {
     >
       {props.onChat === undefined ? null : (
         <button
-          className="dsh-button dsh-button--secondary"
+          className="dsh-button dsh-button--secondary dsh-button--compact"
           type="button"
           disabled={props.disabled}
           onClick={props.onChat}
@@ -433,7 +424,7 @@ function PlanDecisionRow(props: {
         </button>
       )}
       <button
-        className="dsh-button dsh-button--secondary"
+        className="dsh-button dsh-button--secondary dsh-button--compact"
         type="button"
         disabled={props.disabled || refuse === undefined}
         onClick={() => {
@@ -443,7 +434,7 @@ function PlanDecisionRow(props: {
         {t('question.refuse')}
       </button>
       <button
-        className="dsh-button dsh-button--primary"
+        className="dsh-button dsh-button--primary dsh-button--compact"
         type="button"
         disabled={props.disabled || approve === undefined}
         onClick={() => {

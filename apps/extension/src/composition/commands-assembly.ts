@@ -28,6 +28,9 @@ import { DshWebviewPanelSurface } from '../view/dsh-webview-panel-surface.js'
 import type { WebviewSurfaceRegistry } from '../view/webview-surface-registry.js'
 import { stateSubscriptionDisposable } from './public-projection.js'
 import type { PostFeatureEvent } from './host-event-pipeline.js'
+import { SESSION_DROP_EDITOR_VIEW_TYPE } from '@dsh-vscode/webview-protocol'
+import { createSessionDropEditorProvider } from '../view/session-drop-editor.js'
+import type { RequestGateway } from './request-handler.js'
 
 const TRANSPORT_CONFIGURATION_KEYS = [
   'dsh.connection.mode',
@@ -52,6 +55,7 @@ export interface CommandsAssemblyDependencies {
   /** Editor-area chat surfaces (one per session). */
   readonly editorSurfaces: EditorChatSurfaceManager
   readonly moveChatToSidebar: () => Promise<void>
+  readonly openDroppedSession: RequestGateway['openDroppedSession']
   /** Every live chat surface, including the sidebar view. */
   readonly surfaces: WebviewSurfaceRegistry
   readonly runtimeLocator: DshRuntimeLocator
@@ -174,6 +178,12 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
     )
   const start = (): Promise<void> => {
     subscriptions.push(
+      vscode.window.registerCustomEditorProvider(
+        SESSION_DROP_EDITOR_VIEW_TYPE,
+        createSessionDropEditorProvider(deps.openDroppedSession, () => {
+          void vscode.window.showErrorMessage('Unable to open this chat in the editor area.')
+        }),
+      ),
       vscode.window.registerWebviewViewProvider(DshWebviewViewProvider.viewType, provider, {
         // Keep the React tree and scroll position alive while the user
         // changes VS Code views. The Webview store also persists the last

@@ -27,7 +27,8 @@ describe('TodoList', () => {
     expect(toggle.getAttribute('aria-expanded')).toBe('false')
 
     fireEvent.click(toggle)
-    expect(within(list).getByText('1 completed · 1 in progress · 1 pending')).toBeDefined()
+    expect(within(list).getAllByRole('listitem')).toHaveLength(3)
+    expect(within(list).getByText('1/3 completed')).toBeDefined()
   })
 
   it('toggles when the outer card surface is clicked', () => {
@@ -83,6 +84,7 @@ describe('TodoList', () => {
     expect(toggle.textContent).toContain('Pending')
 
     fireEvent.click(toggle)
-    expect(within(list).getByText('1 completed · 0 in progress · 2 pending')).toBeDefined()
+    expect(within(list).getAllByRole('listitem')).toHaveLength(3)
+    expect(within(list).getByText('完成第二项')).toBeDefined()
   })
 })

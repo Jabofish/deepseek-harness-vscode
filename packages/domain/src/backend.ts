@@ -53,6 +53,8 @@ export interface AsyncEventSource<T> {
 }
 
 export interface SessionRepository {
+  /** Runtime-owned permission choices, available before a session exists. */
+  listPermissionPresets?(signal?: AbortSignal): Promise<readonly string[]>
   /** Whether ordinary prompts accept binary upload receipts. Host-only capability. */
   readonly supportsFileUploads?: boolean
   /** Initialize the backend's default model after a supported account login. */

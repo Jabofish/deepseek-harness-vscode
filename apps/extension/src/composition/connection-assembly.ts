@@ -37,7 +37,12 @@ import type { VsCodeConfigurationSource } from '../config/configuration-source.j
 import { normalizeServerUrl } from '../config/configuration-source.js'
 import { DSH_PACKAGE } from '../constants.js'
 import { RuntimeInstaller } from '../vscode/install-runtime.js'
-import { DshRuntimeUpdater } from '../vscode/update-runtime.js'
+import {
+  DshRuntimeUpdater,
+  type ExecuteRuntimeCommand,
+  type RuntimeCommandResult,
+} from '../vscode/update-runtime.js'
+import { RUNTIME_INSTALL_MAX_BUFFER, RUNTIME_INSTALL_TIMEOUT_MS } from '../vscode/runtime-installation.js'
 import {
   endpointFromServerUrl,
   extensionRuntimePathEntries,
@@ -202,6 +207,14 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
         hasLocalWorkspaceAuthority(state.backend)
       )
     },
+    // The assistant preview is an opt-in transient channel; the Host records
+    // when it had to re-open the follow stream and when it stopped trying, so a
+    // degraded "whole reply at settlement" render is diagnosable.
+    onAssistantPreview: (state) =>
+      diagnostics.log(state.status === 'disabled' ? 'warn' : 'info', 'assistant-preview', {
+        status: state.status,
+        phase: state.phase,
+      }),
   })
   const rememberReadyEndpoint = createManagedEndpointLoginHandler(
     endpointCookies,
@@ -227,40 +240,30 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
     endpointPreparation: externalConnection,
   })
   const backendService = new BackendService()
-  const runtimeInstaller = new RuntimeInstaller({
-    tasks: vscode.tasks,
-    window: vscode.window,
-    env: vscode.env,
-    Uri: vscode.Uri,
-    workspace: vscode.workspace,
-    runInstall: async () => {
-      const os = platform()
-      const npm = resolveNpmExecutable(os, extensionRuntimePathEntries(os, process.env))
-      const resolved =
-        os === 'windows'
-          ? resolveWindowsShim(npm, os, readTextFile, windowsShimOptions(os, process.env))
-          : undefined
-      await execFileAsync(
-        resolved?.executable ?? npm,
-        [...(resolved?.prefixArgs ?? []), 'install', '--global', DSH_PACKAGE],
-        {
-          timeout: 120_000,
-          maxBuffer: 32 * 1024,
-          env: runtimeEnvironment(undefined, resolved?.executable ?? npm),
-        },
+  let runtimeInstall: { readonly key: string; readonly operation: Promise<RuntimeCommandResult> } | undefined
+  const executeRuntimeCommand: ExecuteRuntimeCommand = (executable, args, options) => {
+    const installing = args[0] === 'install'
+    const key = [executable, ...args].join('\0')
+    if (installing && runtimeInstall !== undefined) {
+      if (runtimeInstall.key === key) return runtimeInstall.operation
+      return Promise.reject(
+        new AppError({
+          code: 'BACKEND_BUSY',
+          message: 'A DSH installation is already running. Wait for it to finish before changing versions.',
+          retryable: true,
+          context: { operation: 'runtime.install', reason: 'install-in-progress' },
+        }),
       )
-    },
-    verifyInstall: async () => (await runtimeLocator.locate()).runtime?.supported === true,
-    verifyExecutable: async (executable) => (await runtimeLocator.inspectExecutable(executable)).supported,
-  })
-  const runtimeUpdater = new DshRuntimeUpdater({
-    npmExecutable: () => {
-      const os = platform()
-      return resolveNpmExecutable(os, extensionRuntimePathEntries(os, process.env))
-    },
-    locateRuntime: async (signal) => (await runtimeLocator.locate(signal)).runtime,
-    onProgress: (progress) => onRuntimeUpdateProgress(progress),
-    execute: async (executable, args, options) => {
+    }
+    if (options.signal?.aborted === true)
+      return Promise.reject(
+        new AppError({
+          code: 'REQUEST_CANCELLED',
+          message: 'The DSH installation was cancelled.',
+          retryable: true,
+        }),
+      )
+    const run = async (): Promise<RuntimeCommandResult> => {
       const resolved =
         platform() === 'windows'
           ? resolveWindowsShim(
@@ -276,13 +279,49 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
         maxBuffer: options.maxBuffer,
         encoding: 'utf8',
         env: runtimeEnvironment(options.env, resolvedExecutable),
-        ...(options.signal === undefined ? {} : { signal: options.signal }),
+        // Closing a chat must not interrupt npm while it is replacing shared files.
+        ...(!installing && options.signal !== undefined ? { signal: options.signal } : {}),
       })
-      return {
-        stdout: result.stdout,
-        stderr: result.stderr,
+      return { stdout: result.stdout, stderr: result.stderr }
+    }
+    const operation = run()
+    if (installing) {
+      runtimeInstall = { key, operation }
+      const release = (): void => {
+        if (runtimeInstall?.operation === operation) runtimeInstall = undefined
       }
+      void operation.then(release, release)
+    }
+    return operation
+  }
+  const runtimeInstaller = new RuntimeInstaller({
+    tasks: vscode.tasks,
+    window: vscode.window,
+    env: vscode.env,
+    Uri: vscode.Uri,
+    workspace: vscode.workspace,
+    runInstall: async () => {
+      const os = platform()
+      const npm = resolveNpmExecutable(os, extensionRuntimePathEntries(os, process.env))
+      await executeRuntimeCommand(npm, ['install', '--global', DSH_PACKAGE], {
+        timeout: RUNTIME_INSTALL_TIMEOUT_MS,
+        maxBuffer: RUNTIME_INSTALL_MAX_BUFFER,
+      })
     },
+    verifyInstall: async () => {
+      runtimeLocator.invalidate()
+      return (await runtimeLocator.locate()).runtime?.supported === true
+    },
+    verifyExecutable: async (executable) => (await runtimeLocator.inspectExecutable(executable)).supported,
+  })
+  const runtimeUpdater = new DshRuntimeUpdater({
+    npmExecutable: () => {
+      const os = platform()
+      return resolveNpmExecutable(os, extensionRuntimePathEntries(os, process.env))
+    },
+    locateRuntime: async (signal) => (await runtimeLocator.locate(signal)).runtime,
+    onProgress: (progress) => onRuntimeUpdateProgress(progress),
+    execute: executeRuntimeCommand,
     environment: () => runtimeEnvironment(),
   })
   const runtimeUseCases = new RuntimeUseCases({

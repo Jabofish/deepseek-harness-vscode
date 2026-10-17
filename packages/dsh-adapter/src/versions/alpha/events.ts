@@ -71,8 +71,15 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
    */
   public publish(event: BackendEvent): void {
     if (this.closed) return
+    const listeners = [...this.listeners]
     const mapped = this.handleObserved(event)
-    for (const listener of this.listeners) listener(mapped)
+    for (const listener of listeners) {
+      try {
+        listener(mapped)
+      } catch {
+        // One surface cannot prevent delivery to the remaining surfaces.
+      }
+    }
   }
 
   /** Start the durable follow stream for a Session the first time it is read. */
@@ -147,6 +154,7 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
     const deliverRaw =
       sessionId !== undefined
         ? (event: BackendEvent): void => {
+            if (event.type === 'connection.restored') return
             const failures = this.sessionFailureNotices.get(listener) ?? new Set<string>()
             this.sessionFailureNotices.set(listener, failures)
             if (event.type === 'connection.lost') {
@@ -174,7 +182,11 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
 
   private handleObserved(event: BackendEvent): BackendEvent {
     const mapped = this.mapEvent(event)
-    this.observe?.(mapped)
+    try {
+      this.observe?.(mapped)
+    } catch {
+      // Cache maintenance cannot suppress delivery or session-stream cleanup.
+    }
     // Existing sessions are lazily watched by SessionRepository.get(). A new
     // session announced by the host must also become live immediately so its
     // durable events are not missed between list refreshes.

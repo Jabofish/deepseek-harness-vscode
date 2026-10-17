@@ -189,6 +189,7 @@ export interface AppState extends SessionModelDirectoryState {
   /** Upstream preset registry may disable the mode chooser for new sessions. */
   readonly presetSelectionEnabled?: boolean | undefined
   readonly permissionPresets: readonly string[]
+  readonly newSessionPermissionPresets?: readonly string[]
   readonly commands: readonly DynamicCommand[]
   readonly pluginInventoryRevision: number
   readonly pluginInstallProgress: PluginInstallProgressView | undefined
@@ -243,10 +244,9 @@ export interface AppState extends SessionModelDirectoryState {
   readonly drawer: 'sessions' | 'jobs' | 'subagents' | 'settings' | 'schedules' | undefined
   /** Host-assigned surface identity; undefined until `ui.surface.assigned` arrives. */
   readonly surface?: SurfaceAssignment | undefined
-  /** Editor-area chat tabs the Host currently holds; drives the handoff posture. */
+  /** Editor-area chat tabs the Host currently holds. */
   readonly editorChats: number
   readonly surfaceError?: { readonly message: string } | undefined
-  readonly sidebarChatActive?: boolean
 }
 
 /** Schema-driven DSH host settings snapshot (describe + resolved values). */

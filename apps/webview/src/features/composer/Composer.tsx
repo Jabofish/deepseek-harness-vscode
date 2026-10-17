@@ -106,6 +106,7 @@ export interface ComposerProps {
   readonly presets?: readonly AgentPresetDescriptor[]
   readonly presetSelectionEnabled?: boolean
   readonly permissionPresets?: readonly string[]
+  readonly configurationDraft?: boolean
   readonly commands?: readonly DynamicCommand[]
   /** Client-owned bare-command popup decorations; host rows remain authoritative. */
   readonly popupSelects?: PopupSelectRegistry
@@ -302,6 +303,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
       modelFailures,
       presets,
       permissionPresets,
+      ...(props.configurationDraft === undefined ? {} : { configurationDraft: props.configurationDraft }),
       disabled: props.configurationDisabled ?? props.disabled,
       presetMutable: props.presetMutable === true,
       surface,
@@ -450,7 +452,6 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
     }
     if (
       commandPaletteSelection !== undefined &&
-      !props.running &&
       event.key === 'Tab' &&
       !composing.current &&
       !event.nativeEvent.isComposing
@@ -508,8 +509,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
         event.preventDefault()
         // The primary button is Stop while running (input stays free); the
         // implicit form submit only exists for the idle Send path.
-        if (props.running) props.onCancel()
-        else submit('queue')
+        if (!props.running) submit('queue')
       }}
     >
       {dropState !== undefined ? (
@@ -545,7 +545,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
       />
       <EditorContextRail
         items={editorContext}
-        disabled={props.disabled || props.running || props.attachmentsDisabled === true}
+        disabled={props.disabled || inputBlocked || props.attachmentsDisabled === true}
         availableKinds={editorContextAvailableKinds}
         loading={props.editorContextLoading ?? false}
         {...(props.onCaptureEditorContext === undefined ? {} : { onCapture: props.onCaptureEditorContext })}
@@ -564,7 +564,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
           aria-label={t('composer.prompt')}
           aria-describedby={focused ? hintId : undefined}
           value={props.draft}
-          disabled={props.disabled || inputBlocked}
+          disabled={inputBlocked}
           {...(menuOpen || referenceMenuOpen ? { 'aria-autocomplete': 'list' } : {})}
           {...(commandListboxOpen
             ? { 'aria-haspopup': 'listbox', 'aria-controls': COMMAND_MENU_ID }
@@ -655,7 +655,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
         <div className="dsh-composer__toolbar-start">
           <ComposerExtrasMenu
             open={extrasOpen}
-            disabled={props.disabled || props.running || props.attachmentsDisabled === true}
+            disabled={props.disabled || inputBlocked}
             {...(props.editorContext === undefined ? {} : { count: props.editorContext.length })}
             label={t('composer.context')}
             anchorRef={composerRef}
@@ -663,7 +663,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
           >
             <div className="dsh-composer__extras-section">
               <ComposerAttachmentActions
-                disabled={props.disabled || props.running}
+                disabled={props.disabled || inputBlocked}
                 attachmentsDisabled={props.attachmentsDisabled === true}
                 openFileCandidates={openFileCandidates}
                 defaultOpenFileId={defaultOpenFileId}
@@ -689,7 +689,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
               <div className="dsh-composer__extras-section">
                 <ComposerCommandActions
                   commands={props.commands}
-                  disabled={props.disabled || props.running}
+                  disabled={props.disabled || inputBlocked}
                   onInsert={insertCommand}
                 />
               </div>
@@ -715,7 +715,8 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
         <span className="dsh-composer__toolbar-balance" aria-hidden="true" />
         <button
           className={`dsh-button dsh-composer__submit ${props.running ? 'dsh-button--danger' : 'dsh-button--primary'}`}
-          type="submit"
+          type={props.running ? 'button' : 'submit'}
+          onClick={props.running ? props.onCancel : undefined}
           aria-label={props.running ? t('composer.stopResponse') : t('composer.sendMessage')}
           title={props.running ? t('composer.stopResponse') : t('composer.sendMessage')}
           onMouseDown={(event) => {

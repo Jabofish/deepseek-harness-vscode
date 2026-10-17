@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
 import type { SessionPage, SessionSummary, WorkspaceSummary } from '@dsh-vscode/domain'
 import { SessionDrawer } from './SessionDrawer.js'
 import { ConversationLayoutProvider } from '../../app/ConversationLayoutProvider.js'
+import { SESSION_EDITOR_DRAG_MIME, sessionEditorDragPayload } from '@dsh-vscode/webview-protocol'
 
 const workspaces: readonly WorkspaceSummary[] = [
   {
@@ -190,19 +191,21 @@ describe('session dragging respects cancellation and explicit opening', () => {
     expect(onOpenInEditor).not.toHaveBeenCalled()
   })
 
-  it('requires the explicit open action when the list cannot reorder', () => {
+  it('exports a native editor resource even when recency order prevents reordering', () => {
     const onOpenInEditor = vi.fn()
     stubWidePanel()
     renderDrawer({ onOpenInEditor }, 'focused')
 
-    // Recency order has no drag action; the explicit editor action remains.
+    // Recency order disables reordering, while opening by native drop stays available.
     fireEvent.click(screen.getByRole('button', { name: 'Sort sessions by last updated' }))
     const row = screen.getByRole('button', { name: 'Open Fix login bug in the editor area' }).closest('li')
     if (row === null) throw new Error('the session row is missing')
-    expect(row.getAttribute('draggable')).toBe('false')
+    expect(row.getAttribute('draggable')).toBe('true')
 
     const dataTransfer = createDataTransfer()
     fireEvent.dragStart(row, { dataTransfer })
+    expect(dataTransfer.getData(SESSION_EDITOR_DRAG_MIME)).toBe(sessionEditorDragPayload('s1'))
+    expect(dataTransfer.effectAllowed).toBe('copy')
     fireEvent.dragLeave(document, { relatedTarget: null })
     dataTransfer.dropEffect = 'none'
     fireEvent.dragEnd(row, { dataTransfer })
@@ -219,9 +222,10 @@ describe('session dragging respects cancellation and explicit opening', () => {
     stubWidePanel()
     renderDrawer({ onOpenInEditor, onMoveSession }, 'focused')
 
-    const rows = screen.getAllByTitle('Drag to reorder session')
+    const rows = screen.getAllByTitle(/Drag to reorder session/u)
     const dataTransfer = createDataTransfer()
     fireEvent.dragStart(rows[1]!, { dataTransfer })
+    expect(dataTransfer.getData(SESSION_EDITOR_DRAG_MIME)).toBe(sessionEditorDragPayload('s2'))
     const outside = new Event('drag', { bubbles: true })
     Object.assign(outside, { clientX: 5_000, clientY: 5_000 })
     document.dispatchEvent(outside)
@@ -232,6 +236,17 @@ describe('session dragging respects cancellation and explicit opening', () => {
 
     expect(onMoveSession).toHaveBeenCalledTimes(1)
     expect(onOpenInEditor).not.toHaveBeenCalled()
+  })
+
+  it('does not export an editor resource while a row mutation locks the list', () => {
+    stubWidePanel()
+    renderDrawer({ onOpenInEditor: vi.fn(), onArchive: () => new Promise<void>(() => undefined) }, 'focused')
+    fireEvent.click(screen.getByRole('button', { name: 'Archive session Fix login bug' }))
+    const row = sessionRow()
+    expect(row.getAttribute('draggable')).toBe('false')
+    const dataTransfer = createDataTransfer()
+    expect(fireEvent.dragStart(row, { dataTransfer })).toBe(false)
+    expect(dataTransfer.getData(SESSION_EDITOR_DRAG_MIME)).toBe('')
   })
 })
 
@@ -270,17 +285,17 @@ describe('opening a session in the editor area', () => {
 function createDataTransfer(): {
   effectAllowed: string
   dropEffect: string
-  setData: ReturnType<typeof vi.fn>
-  getData: ReturnType<typeof vi.fn>
+  setData: Mock<(type: string, value: string) => void>
+  getData: Mock<(type: string) => string>
 } {
-  let value = ''
+  const values = new Map<string, string>()
   return {
     effectAllowed: '',
     dropEffect: '',
-    setData: vi.fn((_type: string, next: string) => {
-      value = next
+    setData: vi.fn((type: string, next: string) => {
+      values.set(type, next)
     }),
-    getData: vi.fn(() => value),
+    getData: vi.fn((type: string) => values.get(type) ?? ''),
   }
 }
 

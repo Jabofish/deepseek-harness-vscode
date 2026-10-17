@@ -47,10 +47,10 @@
 
 .dsh-modal-dialog {
   box-sizing: border-box;
-  width: min(34rem, 100%);
+  width: min(28rem, 100%);
   max-width: 100%;
   max-height: calc(100dvh - 2 * var(--dsh-panel-gutter));
-  padding: var(--dsh-space-4);
+  padding: var(--dsh-space-3);
   overflow: auto;
   border: var(--dsh-border);
   border-radius: var(--dsh-radius-lg);
@@ -64,7 +64,7 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--dsh-space-3);
-  margin-bottom: var(--dsh-space-4);
+  margin-bottom: var(--dsh-space-2);
 }
 
 .dsh-modal-dialog__header h2 {

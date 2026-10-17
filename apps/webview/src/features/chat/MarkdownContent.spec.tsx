@@ -372,6 +372,7 @@ describe('MarkdownContent', () => {
     expect(container.querySelector('[data-dsh-markdown-tail="true"]')?.textContent).toContain(
       'Second paragraph',
     )
+    const frozenParagraph = container.querySelector('[data-dsh-markdown-frozen="true"] p')
 
     rerender(
       <MarkdownContent streaming markdown={'First paragraph.\n\nSecond paragraph is still growing now'} />,
@@ -380,6 +381,7 @@ describe('MarkdownContent', () => {
       'First paragraph.',
     )
     expect(container.querySelector('[data-dsh-markdown-tail="true"]')?.textContent).toContain('growing now')
+    expect(container.querySelector('[data-dsh-markdown-frozen="true"] p')).toBe(frozenParagraph)
   })
 
   it('eventually catches up long streaming Markdown after deferred renders', async () => {

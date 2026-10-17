@@ -10,15 +10,13 @@ import {
   recordOrUndefined,
 } from './remote-mux.js'
 import type { AlphaSessionWireVersion } from './remote-mux.js'
-import {
-  validAlpha151HistoryRecord,
-  validAlpha151SessionEventFrame,
-  validAlpha151SessionSnapshot,
-} from '../alpha151/session-wire.js'
+import { validAlpha151SessionEventFrame, validAlpha151SessionSnapshot } from '../alpha151/session-wire.js'
 import {
   normalizeAlpha171Event,
+  readAlpha171HistoryRecord,
+  readAlpha171SessionSnapshot,
+  UNREADABLE_HISTORY_EVENT,
   type AlphaV4SessionProfile,
-  validAlpha171HistoryRecord,
   validAlpha171SessionEventFrame,
   validAlpha171SessionSnapshot,
 } from '../alpha171/session-wire.js'
@@ -46,6 +44,8 @@ function normalizeV4Event(
   event: Record<string, unknown>,
   profile?: AlphaV4SessionProfile,
 ): Record<string, unknown> {
+  if (event.type === UNREADABLE_HISTORY_EVENT)
+    return { type: 'system/message', seq: event.seq, time: event.time, data: {} }
   const normalized = normalizeAlpha171Event(event)
   return profile?.normalizeEvent?.(normalized) ?? normalized
 }
@@ -66,6 +66,7 @@ export function normalizeAlphaEvent(
 ): Record<string, unknown> | undefined {
   const event = recordOrUndefined(value)
   if (event === undefined || typeof event.type !== 'string') return undefined
+  if (event.type === UNREADABLE_HISTORY_EVENT) return { ...historyMarker(event), sessionId }
   const normalized =
     wireVersion === 'v2'
       ? normalizeAlpha13Event(event)
@@ -101,30 +102,40 @@ export function expandHistoryRecords(
   const v4 = wireVersion === 'v4'
   const out: Record<string, unknown>[] = []
   for (const raw of records) {
+    if (v4) {
+      const readable = readAlpha171HistoryRecord(raw, profile)
+      if (readable !== undefined)
+        out.push({
+          ...withAutoReviewDenialContract(
+            normalizeV4Event(readable.event, profile),
+            autoReviewDenialContract,
+          ),
+          sessionId,
+        })
+      continue
+    }
     const record = recordOrUndefined(raw)
     if (record?.type === 'event') {
-      const event = recordOrUndefined(record.event)
-      if (
-        event === undefined ||
-        !(v3
-          ? validAlpha151HistoryRecord(record)
-          : v4
-            ? validAlpha171HistoryRecord(record, profile)
-            : v2
-              ? validAlpha13HistoryRecord(record)
-              : validAlphaSessionEvent(event))
-      )
-        throw malformedResponse('session history event')
+      const readable = readLegacyAlphaEvent(record, wireVersion)
+      if (readable === undefined) continue
+      const event = readable.event
+      if (event.type === UNREADABLE_HISTORY_EVENT) {
+        out.push({ ...historyMarker(event), sessionId })
+        continue
+      }
       out.push({
-        ...withAutoReviewDenialContract(
-          v2 ? normalizeAlpha13Event(event) : v4 ? normalizeV4Event(event, profile) : event,
-          autoReviewDenialContract,
-        ),
+        ...withAutoReviewDenialContract(v2 ? normalizeAlpha13Event(event) : event, autoReviewDenialContract),
         sessionId,
       })
-    } else if (!v2 && !v3 && !v4 && record?.type === 'chunks')
-      out.push(...expandChunkRow(record.event, sessionId))
-    else throw malformedResponse('session history record')
+    } else if (!v2 && !v3 && record?.type === 'chunks') {
+      try {
+        out.push(...expandChunkRow(record.event, sessionId))
+      } catch {
+        const event = recordOrUndefined(record.event)
+        if (event !== undefined && isSafeAlphaSequence(event.seq) && Number.isSafeInteger(event.time))
+          out.push({ ...historyMarker(event), sessionId })
+      }
+    }
   }
   // The Gateway snapshot is a set of history records, not the stream's
   // delivery order. A packed chunk row can expand to many sequence values,
@@ -158,6 +169,75 @@ export function validAlphaWireSnapshot(
     : wireVersion === 'v3'
       ? validAlpha151SessionSnapshot(value)
       : validAlphaSessionSnapshot(value, wireVersion === 'v2')
+}
+
+export function readAlphaWireSnapshot(
+  value: unknown,
+  wireVersion: AlphaSessionWireVersion,
+  profile?: AlphaV4SessionProfile,
+): AlphaSessionSnapshot | undefined {
+  if (wireVersion === 'v4') return readAlpha171SessionSnapshot(value, profile)
+  const source = recordOrUndefined(value)
+  if (source?.type !== 'snapshot' || !Array.isArray(source.records)) return undefined
+  const snapshot = {
+    type: 'snapshot',
+    header: source.header,
+    cursor: source.cursor,
+    records: [],
+    hasMore: source.hasMore,
+    projections: source.projections,
+  }
+  if (!validAlphaWireSnapshot(snapshot, wireVersion, profile)) return undefined
+  return {
+    ...snapshot,
+    records: source.records,
+    ...(source.assistantStream === undefined ? {} : { assistantStream: source.assistantStream }),
+  }
+}
+
+export function readAlphaWireEventFrame(
+  value: unknown,
+  wireVersion: AlphaSessionWireVersion,
+  profile?: AlphaV4SessionProfile,
+): AlphaSessionEventFrame | undefined {
+  if (wireVersion === 'v4') return readAlpha171HistoryRecord(value, profile)
+  return readLegacyAlphaEvent(value, wireVersion)
+}
+
+function readLegacyAlphaEvent(
+  value: unknown,
+  wireVersion: AlphaSessionWireVersion,
+): AlphaSessionEventFrame | undefined {
+  const frame = recordOrUndefined(value)
+  const source = recordOrUndefined(frame?.event)
+  if (
+    frame?.type !== 'event' ||
+    source === undefined ||
+    !isSafeAlphaSequence(source.seq) ||
+    Object.is(source.seq, -0)
+  )
+    return undefined
+  const event: Record<string, unknown> = {
+    type: source.type,
+    seq: source.seq,
+    time: source.time,
+    data: source.data,
+  }
+  for (const key of ['ignorable', 'surfaceOp', 'sourceEventSeqs'])
+    if (Object.hasOwn(source, key)) event[key] = source[key]
+  const normalized = { type: 'event' as const, event }
+  return validAlphaWireEventFrame(normalized, wireVersion)
+    ? normalized
+    : { type: 'event', event: { ...historyMarker(event), type: UNREADABLE_HISTORY_EVENT } }
+}
+
+function historyMarker(event: Record<string, unknown>): Record<string, unknown> {
+  return {
+    type: 'system/message',
+    seq: event.seq,
+    time: typeof event.time === 'number' && Number.isSafeInteger(event.time) ? event.time : 0,
+    data: {},
+  }
 }
 
 export function validAlphaWireEventFrame(
@@ -449,11 +529,9 @@ export function validAlphaEventReady(value: unknown): value is AlphaEventReady {
   const host = record?.host
   return (
     record !== undefined &&
-    hasExactKeys(record, ['type', 'clientId', 'host']) &&
     record.type === 'ready' &&
     isNonEmptyString(record.clientId) &&
     isPlainRecord(host) &&
-    hasExactKeys(host, ['home']) &&
     typeof host.home === 'string'
   )
 }
@@ -462,7 +540,6 @@ export function validAlphaEventEmit(value: unknown): value is AlphaEventEmit {
   const record = recordOrUndefined(value)
   return (
     record !== undefined &&
-    hasExactKeys(record, ['type', 'event', 'args']) &&
     record.type === 'emit' &&
     isNonEmptyString(record.event) &&
     Array.isArray(record.args) &&
@@ -475,7 +552,6 @@ export function validAlphaEventWaterfall(value: unknown): value is AlphaEventWat
   const request = record?.request
   return (
     record !== undefined &&
-    hasExactKeys(record, ['type', 'event', 'eventId', 'agentId', 'request']) &&
     record.type === 'waterfall' &&
     isNonEmptyString(record.event) &&
     isNonEmptyString(record.eventId) &&
@@ -489,12 +565,7 @@ export function validAlphaEventWaterfall(value: unknown): value is AlphaEventWat
 
 export function validAlphaEventCancel(value: unknown): value is AlphaEventCancel {
   const record = recordOrUndefined(value)
-  return (
-    record !== undefined &&
-    hasExactKeys(record, ['type', 'eventId']) &&
-    record.type === 'cancel' &&
-    isNonEmptyString(record.eventId)
-  )
+  return record !== undefined && record.type === 'cancel' && isNonEmptyString(record.eventId)
 }
 
 function workspaceTitleFromPath(value: unknown): string | undefined {

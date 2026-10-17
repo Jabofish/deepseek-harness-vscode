@@ -444,25 +444,6 @@
   background: var(--dsh-surface-hover);
 }
 
-.dsh-approval__takeover {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 10px 0;
-  padding: 8px 10px;
-  border-inline-start: 3px solid var(--dsh-warning);
-  color: var(--dsh-warning);
-  background: color-mix(in srgb, var(--dsh-warning) 9%, transparent);
-  font-size: var(--dsh-font-size-sm);
-}
-
-.dsh-approval__takeover code {
-  min-width: 0;
-  overflow: auto;
-  color: var(--dsh-text, var(--dsh-text));
-  white-space: pre-wrap;
-}
-
 .dsh-question__decision-row {
   display: flex;
   flex-wrap: wrap;

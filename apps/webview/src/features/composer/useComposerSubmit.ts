@@ -1,11 +1,25 @@
 import { useEffect, useRef, useState } from 'react'
 import type { PromptAttachment, RunningInputMode } from '@dsh-vscode/domain'
 
+interface Submission {
+  readonly draft: string
+  readonly attachments: readonly PromptAttachment[]
+}
+
+function sameSubmission(left: Submission, right: Submission): boolean {
+  return (
+    left.draft === right.draft &&
+    left.attachments.length === right.attachments.length &&
+    left.attachments.every((attachment, index) => attachment.uri === right.attachments[index]?.uri)
+  )
+}
+
 /**
  * The composer's submission latches. `submit` guards the ordinary prompt path
  * (a held-down Enter must not machine-gun sends) and `steerQueuedInputs` the
  * accelerated empty-draft chord; each latch is held until the Host request
- * settles, with a short debounce for synchronous integrations.
+ * settles, with a short debounce for synchronous integrations. Only the same
+ * draft is latched; a new instruction can be sent while an earlier one waits.
  */
 export function useComposerSubmit(props: {
   readonly disabled: boolean
@@ -20,8 +34,8 @@ export function useComposerSubmit(props: {
   readonly steerQueuedInputs: () => void
 } {
   const mounted = useRef(true)
-  const submitting = useRef(false)
-  const [isSubmitting, setIsSubmitting] = useState(false)
+  const submitting = useRef<Submission | undefined>(undefined)
+  const [pendingSubmission, setPendingSubmission] = useState<Submission>()
   const steeringQueue = useRef(false)
   useEffect(() => {
     mounted.current = true
@@ -33,15 +47,17 @@ export function useComposerSubmit(props: {
     if (
       props.disabled ||
       props.inputBlocked ||
-      submitting.current ||
+      (submitting.current !== undefined && sameSubmission(submitting.current, props)) ||
       (props.draft.trim() === '' && props.attachments.length === 0)
     )
       return
-    submitting.current = true
-    setIsSubmitting(true)
+    const submissionInput: Submission = { draft: props.draft, attachments: props.attachments }
+    submitting.current = submissionInput
+    setPendingSubmission(submissionInput)
     const resetSubmitting = (): void => {
-      submitting.current = false
-      if (mounted.current) setIsSubmitting(false)
+      if (submitting.current !== submissionInput) return
+      submitting.current = undefined
+      if (mounted.current) setPendingSubmission(undefined)
     }
     try {
       const submission = props.onSubmit(mode)
@@ -78,5 +94,9 @@ export function useComposerSubmit(props: {
       throw reason
     }
   }
-  return { isSubmitting, submit, steerQueuedInputs }
+  return {
+    isSubmitting: pendingSubmission !== undefined && sameSubmission(pendingSubmission, props),
+    submit,
+    steerQueuedInputs,
+  }
 }

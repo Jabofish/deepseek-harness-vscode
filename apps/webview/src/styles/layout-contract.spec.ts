@@ -49,13 +49,14 @@ describe('Conversation space ownership', () => {
 })
 
 describe('Conversation interaction dock', () => {
-  it('docks pending interaction cards in the composer slot with a scrolling question body', () => {
+  it('bounds the pending interaction stack above the composer without shrinking decision controls', () => {
     const interactionRule = cssRule(layoutStyles, '.dsh-conversation__interactions')
     expect(interactionRule).not.toContain('position: absolute;')
-    expect(interactionRule).toContain('flex: 0 1 auto;')
+    expect(interactionRule).toContain('flex: 0 0 auto;')
     expect(interactionRule).toContain('flex-direction: column;')
     expect(interactionRule).toContain('min-height: 0;')
-    expect(interactionRule).toContain('max-height: min(70vh, 42rem, calc(100% - 12rem));')
+    expect(interactionRule).toContain('max-height: var(--dsh-content-panel-max-height);')
+    expect(interactionRule).toContain('overflow-y: auto;')
 
     const bodyRule = cssRule(appStyles, '.dsh-interaction__body')
     expect(bodyRule).toContain('min-height: 0;')

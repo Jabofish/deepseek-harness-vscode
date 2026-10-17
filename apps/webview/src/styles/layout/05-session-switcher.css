@@ -580,11 +580,13 @@
   /* Geometry comes from useViewportMenuPosition, anchored to the trigger:
   the topbar may wrap to several lines at narrow widths. */
   position: fixed;
+  display: flex;
+  flex-direction: column;
   z-index: 55;
   box-sizing: border-box;
   width: min(28rem, calc(100vw - var(--dsh-space-4)));
   max-width: calc(100vw - var(--dsh-space-4));
-  max-height: min(32rem, calc(100vh - 5rem));
+  max-height: min(var(--dsh-menu-max-height), calc(100dvh - 5rem));
   padding: var(--dsh-space-2);
   overflow: visible;
   overflow-anchor: none;
@@ -592,14 +594,65 @@
 
 .dsh-conversation__actions-grid {
   display: grid;
+  flex: 0 1 auto;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: stretch;
   min-width: 0;
+  min-height: 0;
   gap: var(--dsh-space-1);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .dsh-conversation__actions-grid > * {
   min-width: 0;
+}
+
+.dsh-conversation__content-menu {
+  grid-column: 1 / -1;
+}
+
+.dsh-conversation__actions-grid > .dsh-goal-strip {
+  grid-column: 1 / -1;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.dsh-conversation__content-menu > summary,
+.dsh-conversation__actions-grid > .dsh-goal-strip > summary {
+  min-height: var(--dsh-menu-item-height);
+  padding: var(--dsh-space-2);
+  border-radius: var(--dsh-radius-sm);
+  color: var(--dsh-text);
+  font-size: var(--dsh-menu-font-size);
+  line-height: var(--dsh-menu-line-height);
+  cursor: pointer;
+}
+
+.dsh-conversation__actions-grid > .dsh-goal-strip .dsh-goal-strip__heading {
+  font-size: var(--dsh-menu-font-size);
+  font-weight: 400;
+}
+
+.dsh-conversation__content-menu > summary:hover,
+.dsh-conversation__actions-grid > .dsh-goal-strip > summary:hover {
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-conversation__content-list {
+  display: grid;
+  gap: var(--dsh-space-1);
+  max-height: min(8rem, 20vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.dsh-conversation__content-list > .dsh-button {
+  justify-content: flex-start;
+  text-align: start;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .dsh-conversation__actions-grid > .dsh-jobs-popover,

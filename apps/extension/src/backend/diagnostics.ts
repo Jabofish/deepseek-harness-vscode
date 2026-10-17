@@ -84,8 +84,10 @@ const DIAGNOSTIC_EVENTS = new Set([
   'host-message-rejected',
   'checkpoint-storage-unreadable',
   'connection-state',
+  'connection-recovery-failed',
   'account-default-model-initialization-failed',
   'job-follow-failed',
+  'assistant-preview',
   'request-unexpected',
   'webview-message-unhandled',
 ])

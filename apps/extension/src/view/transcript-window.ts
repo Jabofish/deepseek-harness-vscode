@@ -18,7 +18,10 @@ import {
   TRANSCRIPT_MAX_NODES,
   TRANSCRIPT_NODE_CHARS,
   transcriptNodeSchema,
+  transcriptPatchSchema,
   transcriptWindowSchema,
+  type TranscriptPatch,
+  type TranscriptTextUpdate,
   type TranscriptWindow,
   type TranscriptEventFact,
 } from '@dsh-vscode/webview-protocol'
@@ -29,6 +32,10 @@ type ReadPage = (
   signal: AbortSignal,
   child: boolean,
 ) => Promise<SessionHistoryPage>
+// One active answer/thinking pair remains bounded without freezing at the
+// historical prefix limit. The whole view still obeys TRANSCRIPT_MAX_CHARS.
+const LIVE_NODE_CHARS = 64 * 1024
+const LIVE_MARKDOWN_CHARS = 24 * 1024
 interface PendingOpen {
   readonly sessionId: string
   readonly generation: number
@@ -43,6 +50,7 @@ interface PendingOpen {
 interface Resident {
   readonly sessionId: string
   readonly child: boolean
+  readonly baselineSequence: number
   timeline: TimelineState
   hasMore: boolean
   before?: number
@@ -58,6 +66,18 @@ interface Resident {
   currentTodosOmitted?: true
   nativeTodos: boolean
 }
+interface WindowMetadataSource {
+  readonly facts: number
+  readonly lastSequence: number
+  readonly activeTurn: number | undefined
+  readonly tokenUsage: TranscriptWindow['tokenUsage']
+  readonly hasMore: boolean
+  readonly before: number | undefined
+  readonly historical: boolean
+  readonly omitted: string
+  readonly todos: readonly TodoView[] | undefined
+  readonly todosOmitted: true | undefined
+}
 
 /** A presentation cache. DSH owns durable ordering, recovery and domain projections. */
 export class TranscriptWindowService {
@@ -69,11 +89,22 @@ export class TranscriptWindowService {
   private readonly forward: (number | undefined)[] = []
   private readonly sameSequence = new Set<string>()
   private identitySequence = -1
-  private timer: ReturnType<typeof setTimeout> | undefined
   private visible = true
   private dirty = false
   private posting = false
-  private awaitingAck: number | undefined
+  private readonly pendingAcks = new Map<number, number>()
+  private pendingChars = 0
+  private budgetBlocked = false
+  private published:
+    | {
+        readonly sessionId: string
+        readonly revision: number
+        readonly cwd: string | undefined
+        readonly nodes: ReadonlyMap<string, TimelineNode>
+        readonly publicNodes: ReadonlyMap<string, TimelineNode>
+        readonly metadataSource: WindowMetadataSource
+      }
+    | undefined
   private invalidated = false
   private readonly recentEvents = new Map<string, true>()
   private hostSequence = 0
@@ -91,12 +122,14 @@ export class TranscriptWindowService {
       readonly read: ReadPage
       readonly publicValue: (value: unknown, cwd?: string) => unknown
       readonly post: (window: TranscriptWindow) => Promise<boolean>
+      readonly postPatch?: (patch: TranscriptPatch) => Promise<boolean>
       readonly invalidate?: (sessionId: string) => void
     },
   ) {}
 
   public begin(sessionId: string, child = false): number {
     const generation = ++this.generation
+    this.published = undefined
     this.pending = { sessionId, generation, child, events: [], chars: 0, overflow: false }
     return generation
   }
@@ -175,6 +208,10 @@ export class TranscriptWindowService {
       this.reduce(resident, event)
     }
     this.revision++
+    this.published = undefined
+    this.pendingAcks.clear()
+    this.pendingChars = 0
+    this.budgetBlocked = false
     return this.snapshot()
   }
 
@@ -235,8 +272,9 @@ export class TranscriptWindowService {
       }
     }
     if (this.tail !== undefined && this.tail.sessionId === sessionId) {
+      const previous = this.tail.timeline
       this.reduce(this.tail, event)
-      if (this.displayed === this.tail) {
+      if (this.displayed === this.tail && this.tail.timeline !== previous) {
         this.revision++
         this.schedule()
       }
@@ -283,6 +321,7 @@ export class TranscriptWindowService {
       this.displayed = this.tail
       this.forward.length = 0
       this.revision++
+      this.published = undefined
       return this.snapshot()
     }
     signal.throwIfAborted()
@@ -292,6 +331,7 @@ export class TranscriptWindowService {
     if (direction === 'newer' && this.forward.length === 0) {
       this.displayed = this.tail
       this.revision++
+      this.published = undefined
       return this.snapshot()
     }
     const before = direction === 'older' ? previous.before : this.forward[this.forward.length - 1]
@@ -309,6 +349,7 @@ export class TranscriptWindowService {
     } else this.forward.pop()
     this.displayed = this.project(sessionId, page, previous.child, before, previous.cwd)
     this.revision++
+    this.published = undefined
     return this.snapshot()
   }
 
@@ -370,22 +411,25 @@ export class TranscriptWindowService {
 
   public setVisible(visible: boolean): void {
     this.visible = visible
-    if (!visible && this.timer !== undefined) {
-      clearTimeout(this.timer)
-      this.timer = undefined
-    }
     if (visible && this.displayed !== undefined) {
-      this.awaitingAck = undefined
+      this.published = undefined
+      this.revision++
+      this.pendingAcks.clear()
+      this.pendingChars = 0
+      this.budgetBlocked = false
       this.schedule()
     }
   }
 
   public acknowledge(sessionId: string, revision: number): void {
     if (this.displayed?.sessionId !== sessionId || revision > this.revision) return
-    if (this.awaitingAck !== undefined && revision >= this.awaitingAck) {
-      this.awaitingAck = undefined
-      if (this.dirty) this.schedule()
-    }
+    for (const [sent, chars] of this.pendingAcks)
+      if (sent <= revision) {
+        this.pendingAcks.delete(sent)
+        this.pendingChars -= chars
+        this.budgetBlocked = false
+      }
+    if (this.dirty) this.schedule()
   }
 
   public showLatest(sessionId: string): void {
@@ -393,6 +437,7 @@ export class TranscriptWindowService {
     this.displayed = this.tail
     this.forward.length = 0
     this.revision++
+    this.published = undefined
     this.schedule()
   }
 
@@ -404,12 +449,13 @@ export class TranscriptWindowService {
     this.forward.length = 0
     this.sameSequence.clear()
     this.dirty = false
-    this.awaitingAck = undefined
+    this.pendingAcks.clear()
+    this.pendingChars = 0
+    this.budgetBlocked = false
+    this.published = undefined
     this.invalidated = false
     this.recentEvents.clear()
     this.notices.clear()
-    if (this.timer !== undefined) clearTimeout(this.timer)
-    this.timer = undefined
   }
 
   private project(
@@ -424,6 +470,10 @@ export class TranscriptWindowService {
     const resident: Resident = {
       sessionId,
       child,
+      baselineSequence: page.events.reduce(
+        (latest, entry) => Math.max(latest, entry.sequence),
+        page.projection?.asOfSequence ?? -1,
+      ),
       timeline: empty(sessionId),
       hasMore: page.hasMore,
       omitted: new Set(),
@@ -485,6 +535,9 @@ export class TranscriptWindowService {
 
   private reduce(resident: Resident, event: BackendEvent): void {
     const sequence = event.sequence ?? (event.type === 'notice' ? -++this.hostSequence : ++this.hostSequence)
+    // History may compact or omit native rows. A follow replay below this read
+    // cut is already represented; byte differences cannot prove a missed event.
+    if (event.replayed === true && sequence <= resident.baselineSequence) return
     if (event.sequence !== undefined && timelineSequenceOptions(event).advanceSequence !== false) {
       if (sequence < resident.timeline.lastSequence) {
         // An Adapter recovery may fill an already-published view. Reread its
@@ -612,7 +665,7 @@ export class TranscriptWindowService {
     const projectNode = (original: TimelineNode): { value: TimelineNode; omitted: boolean; size: number } => {
       let clipped = this.previews.get(original)
       if (clipped === undefined) {
-        const projected = preview(original, TRANSCRIPT_NODE_CHARS)
+        const projected = preview(original, isLiveText(original) ? LIVE_NODE_CHARS : TRANSCRIPT_NODE_CHARS)
         const node = projected.value
         clipped = { value: node, omitted: projected.omitted, size: JSON.stringify(node).length }
         this.previews.set(original, clipped)
@@ -628,7 +681,8 @@ export class TranscriptWindowService {
       if (size > remaining) break
       remaining -= size
       nodes.unshift(node)
-      if (clipped.omitted) resident.omitted.add(node.id)
+      if (clipped.omitted || (resident.omitted.has(node.id) && isLiveText(node)))
+        resident.omitted.add(node.id)
       else resident.omitted.delete(node.id)
     }
     // Context parents preserve supplied call identities and pairing, while
@@ -690,14 +744,17 @@ export class TranscriptWindowService {
     }
   }
 
-  private snapshot(): TranscriptWindow {
+  private snapshot(nodeIds?: ReadonlySet<string>): TranscriptWindow {
     const resident = this.displayed
     if (resident === undefined) throw stale()
     const safe = this.deps.publicValue(
       {
         sessionId: resident.sessionId,
         revision: this.revision,
-        nodes: resident.timeline.nodes,
+        nodes:
+          nodeIds === undefined
+            ? resident.timeline.nodes
+            : resident.timeline.nodes.filter((node) => nodeIds.has(node.id)),
         eventFacts: resident.facts,
         ...(this.tail?.currentTodos === undefined ? {} : { currentTodos: this.tail.currentTodos }),
         ...(this.tail?.currentTodosOmitted === true ? { currentTodosOmitted: true } : {}),
@@ -738,13 +795,30 @@ export class TranscriptWindowService {
     return transcriptWindowSchema.parse(safe) as TranscriptWindow
   }
 
+  /** Compare source identities before sanitizing unchanged metadata again. */
+  private metadataSource(resident: Resident): WindowMetadataSource {
+    return {
+      facts: resident.factCounter,
+      lastSequence: resident.timeline.lastSequence,
+      activeTurn: resident.timeline.activeTurn,
+      tokenUsage: resident.timeline.tokenUsage,
+      hasMore: resident.hasMore,
+      before: resident.before,
+      historical: resident !== this.tail,
+      omitted: JSON.stringify([...resident.omitted]),
+      todos: this.tail?.currentTodos,
+      todosOmitted: this.tail?.currentTodosOmitted,
+    }
+  }
+
   private schedule(): void {
     this.dirty = true
-    if (!this.visible || this.timer !== undefined || this.posting || this.awaitingAck !== undefined) return
-    this.timer = setTimeout(() => {
-      this.timer = undefined
-      void this.publish()
-    }, 32)
+    // A single ACK round trip must not become the streaming frame interval.
+    // Keep a small credit window; stalled/hidden renderers still retain only
+    // the newest Host state, never an unbounded queue of text deltas.
+    const credits = this.deps.postPatch === undefined ? 1 : 64
+    if (!this.visible || this.posting || this.budgetBlocked || this.pendingAcks.size >= credits) return
+    void this.publish()
   }
 
   private async publish(): Promise<void> {
@@ -752,16 +826,183 @@ export class TranscriptWindowService {
     this.dirty = false
     this.posting = true
     const sentRevision = this.revision
-    this.awaitingAck = sentRevision
+    const generation = this.generation
+    const resident = this.displayed
     try {
-      if (!(await this.deps.post(this.snapshot()))) this.awaitingAck = undefined
+      const sources = new Map(resident.timeline.nodes.map((node) => [node.id, node]))
+      const previous = this.published
+      const postPatch = this.deps.postPatch
+      const base =
+        this.deps.postPatch !== undefined &&
+        previous?.sessionId === resident.sessionId &&
+        previous.cwd === resident.cwd &&
+        previous.revision < sentRevision
+          ? previous
+          : undefined
+      const changedIds =
+        base === undefined
+          ? undefined
+          : new Set(
+              resident.timeline.nodes
+                .filter((node) => base.nodes.get(node.id) !== node)
+                .map((node) => node.id),
+            )
+      // A patch is only valid while the renderer's node order still matches:
+      // every previously published id keeps its position and new ids append.
+      // Anything else (removal, eviction, reorder) ships a full window instead.
+      const incremental =
+        base !== undefined &&
+        changedIds !== undefined &&
+        changedIds.size < sources.size &&
+        keepsNodeOrder(base.nodes, resident.timeline.nodes)
+      const metadataSource = this.metadataSource(resident)
+      const metadataChanged =
+        base === undefined ||
+        Object.entries(metadataSource).some(
+          ([key, value]) => value !== base.metadataSource[key as keyof typeof metadataSource],
+        )
+      // Sanitize and validate only changed nodes on the hot path. Unchanged
+      // public nodes already live in the acknowledged renderer window, and the
+      // patch deliberately omits the node-id list and event facts: re-sending
+      // them per token made a streamed revision cost O(window) bytes.
+      // Transient text leaves durable facts and page metadata untouched. Do not
+      // sanitize/clone that entire window for every token.
+      const window =
+        incremental && !metadataChanged
+          ? {
+              sessionId: resident.sessionId,
+              revision: sentRevision,
+              nodes: this.publicNodes(resident, changedIds),
+            }
+          : this.snapshot(incremental ? changedIds : undefined)
+      const publicNodes = new Map(incremental ? base?.publicNodes : undefined)
+      for (const node of window.nodes) publicNodes.set(node.id, node)
+      let patch: TranscriptPatch | undefined
+      if (incremental && postPatch !== undefined && base !== undefined) {
+        const changedNodes: TimelineNode[] = []
+        const textUpdates: TranscriptTextUpdate[] = []
+        for (const node of window.nodes) {
+          const update = textUpdate(base.publicNodes.get(node.id), node)
+          if (update === undefined) changedNodes.push(node)
+          else textUpdates.push(update)
+        }
+        let metadata
+        if ('eventFacts' in window) {
+          const { sessionId: _id, revision: _revision, nodes: _nodes, ...values } = window
+          void _id
+          void _revision
+          void _nodes
+          metadata = values
+        }
+        patch = transcriptPatchSchema.parse({
+          sessionId: window.sessionId,
+          revision: window.revision,
+          baseRevision: base.revision,
+          changedNodes,
+          ...(textUpdates.length === 0 ? {} : { textUpdates }),
+          ...(metadata === undefined ? {} : { metadata }),
+        }) as TranscriptPatch
+      }
+      const chars = JSON.stringify(patch ?? window).length
+      if (this.pendingAcks.size > 0 && this.pendingChars + chars > TRANSCRIPT_MAX_CHARS) {
+        this.dirty = true
+        this.budgetBlocked = true
+        return
+      }
+      this.pendingAcks.set(sentRevision, chars)
+      this.pendingChars += chars
+      const delivered =
+        patch !== undefined && postPatch !== undefined
+          ? await postPatch(patch)
+          : 'eventFacts' in window && (await this.deps.post(window))
+      if (!delivered) {
+        this.pendingAcks.clear()
+        this.pendingChars = 0
+        this.budgetBlocked = false
+        this.published = undefined
+      } else if (this.generation === generation && this.displayed === resident) {
+        this.published = {
+          sessionId: window.sessionId,
+          revision: sentRevision,
+          cwd: resident.cwd,
+          nodes: sources,
+          publicNodes,
+          metadataSource,
+        }
+      }
     } catch {
-      this.awaitingAck = undefined
+      this.pendingAcks.clear()
+      this.pendingChars = 0
+      this.budgetBlocked = false
+      this.published = undefined
     } finally {
       this.posting = false
     }
-    if (this.dirty && this.visible && this.awaitingAck === undefined && sentRevision !== this.revision)
-      this.schedule()
+    if (this.dirty && this.visible && sentRevision !== this.revision) this.schedule()
+  }
+
+  private publicNodes(resident: Resident, ids: ReadonlySet<string>): TimelineNode[] {
+    const safe = this.deps.publicValue(
+      { nodes: resident.timeline.nodes.filter((node) => ids.has(node.id)) },
+      resident.cwd,
+    )
+    if (typeof safe !== 'object' || safe === null || !('nodes' in safe) || !Array.isArray(safe.nodes))
+      throw stale()
+    return safe.nodes.map((node: unknown) => {
+      const parsed = transcriptNodeSchema.safeParse(node)
+      if (parsed.success) return parsed.data as TimelineNode
+      // Keep the same out-of-workspace tool-card fallback as full snapshots.
+      if (
+        typeof node === 'object' &&
+        node !== null &&
+        'kind' in node &&
+        node.kind === 'tool' &&
+        'tool' in node &&
+        typeof node.tool === 'object' &&
+        node.tool !== null
+      ) {
+        const { presentation: _presentation, ...tool } = node.tool as Record<string, unknown>
+        void _presentation
+        return transcriptNodeSchema.parse({ ...node, tool }) as TimelineNode
+      }
+      return transcriptNodeSchema.parse(node) as TimelineNode
+    })
+  }
+}
+
+function textUpdate(
+  previous: TimelineNode | undefined,
+  next: TimelineNode,
+): TranscriptTextUpdate | undefined {
+  if (
+    (next.kind !== 'assistant-message' && next.kind !== 'reasoning') ||
+    previous?.kind !== next.kind ||
+    !('markdown' in previous) ||
+    !next.markdown.startsWith(previous.markdown)
+  )
+    return undefined
+  const oldReasoning = previous.kind === 'assistant-message' ? (previous.reasoning?.markdown ?? '') : ''
+  if (
+    next.kind === 'assistant-message' &&
+    next.reasoning !== undefined &&
+    !next.reasoning.markdown.startsWith(oldReasoning)
+  )
+    return undefined
+  // Small new nodes cost less as replacements than as append envelopes.
+  if (previous.markdown.length + oldReasoning.length < 256) return undefined
+  const node = {
+    ...next,
+    markdown: next.markdown.slice(previous.markdown.length),
+    ...(next.kind === 'assistant-message' && next.reasoning !== undefined
+      ? { reasoning: { ...next.reasoning, markdown: next.reasoning.markdown.slice(oldReasoning.length) } }
+      : {}),
+  }
+  return {
+    node,
+    markdownLength: previous.markdown.length,
+    ...(next.kind === 'assistant-message' && next.reasoning !== undefined
+      ? { reasoningLength: oldReasoning.length }
+      : {}),
   }
 }
 
@@ -772,6 +1013,22 @@ function eventIdentity(event: BackendEvent, sequence: number): string {
   return createHash('sha256')
     .update(JSON.stringify({ ...event, sequence }))
     .digest('hex')
+}
+
+/**
+ * Whether a patch keeps the renderer's node order: every previously published
+ * id still occupies its position, and new ids only append at the tail.
+ */
+function keepsNodeOrder(
+  published: ReadonlyMap<string, TimelineNode>,
+  next: readonly TimelineNode[],
+): boolean {
+  let index = 0
+  for (const id of published.keys()) {
+    if (next[index]?.id !== id) return false
+    index += 1
+  }
+  return true
 }
 function assistantKey(
   event: Extract<
@@ -817,6 +1074,7 @@ export function isTranscriptEvent(event: BackendEvent): boolean {
     'question.requested',
     'question.resolved',
     'connection.lost',
+    'connection.restored',
     'archived.sessions.changed',
     'remote.event',
   ].includes(event.type)
@@ -825,11 +1083,19 @@ export function isTranscriptEvent(event: BackendEvent): boolean {
 export function isTranscriptOnlyEvent(event: BackendEvent): boolean {
   return (
     isTranscriptEvent(event) &&
-    !['turn.started', 'turn.ended', 'goal.updated', 'workflow.updated'].includes(event.type)
+    (!['turn.started', 'turn.ended', 'goal.updated', 'workflow.updated'].includes(event.type) ||
+      (event.replayed === true && (event.type === 'turn.started' || event.type === 'turn.ended')))
   )
 }
 
 /** Bound every body and nested collection; omission is explicit and reversible through DSH. */
+function isLiveText(node: TimelineNode): boolean {
+  return (
+    (node.kind === 'assistant-message' || node.kind === 'reasoning') &&
+    (node.streaming || (node.kind === 'assistant-message' && node.reasoning?.streaming === true))
+  )
+}
+
 function preview(value: TimelineNode, budget: number): { value: TimelineNode; omitted: boolean } {
   let remaining = budget
   let omitted = false
@@ -840,13 +1106,16 @@ function preview(value: TimelineNode, budget: number): { value: TimelineNode; om
       return null
     }
     if (typeof input === 'string') {
-      const limit = Math.max(0, Math.min(4096, remaining))
+      const liveMarkdown = isLiveText(value) && field === 'markdown'
+      const limit = Math.max(0, Math.min(liveMarkdown ? LIVE_MARKDOWN_CHARS : 4096, remaining))
       // Keep upstream recovery/overflow text at the end of tool summaries.
       // This is presentation clipping, without parsing or inventing a locator.
       const output =
-        field === 'outputSummary' && input.length > limit && limit > 16
-          ? `${input.slice(0, Math.floor((limit - 3) / 2))}\n…\n${input.slice(-Math.ceil((limit - 3) / 2))}`
-          : input.slice(0, limit)
+        liveMarkdown && input.length > limit && limit > 0
+          ? `…${input.slice(input.length - limit + 1)}`
+          : field === 'outputSummary' && input.length > limit && limit > 16
+            ? `${input.slice(0, Math.floor((limit - 3) / 2))}\n…\n${input.slice(-Math.ceil((limit - 3) / 2))}`
+            : input.slice(0, limit)
       remaining -= output.length
       if (output.length < input.length) omitted = true
       return output

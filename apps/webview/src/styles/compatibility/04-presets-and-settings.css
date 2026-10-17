@@ -35,8 +35,8 @@
   justify-content: center;
   gap: 7px;
   width: 100%;
-  min-height: 64px;
-  padding: 12px;
+  min-height: var(--dsh-control-height);
+  padding: var(--dsh-space-2);
   border: 1px dashed color-mix(in srgb, var(--dsh-accent-line) 60%, var(--dsh-border-color));
   border-radius: 6px;
   color: var(--dsh-accent-line);
@@ -86,8 +86,8 @@
 }
 
 .dsh-presets__dialog--guide {
-  width: min(600px, calc(100vw - 24px));
-  max-height: min(82vh, 720px);
+  width: min(28rem, calc(100vw - var(--dsh-space-4)));
+  max-height: min(32rem, 65dvh);
   grid-template-rows: auto auto auto minmax(0, 1fr) auto;
 }
 

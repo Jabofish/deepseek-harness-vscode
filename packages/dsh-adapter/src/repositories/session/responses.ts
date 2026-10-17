@@ -92,6 +92,51 @@ export function validHistoryResponse(
   )
 }
 
+/** One unreadable legacy row must not reject the surrounding history page. */
+export function readHistoryResponse(
+  value: unknown,
+): { readonly events: unknown[]; readonly hasMore: boolean; readonly projections?: unknown } | undefined {
+  const response = recordOrUndefined(value)
+  if (
+    response === undefined ||
+    !Array.isArray(response.events) ||
+    typeof response.hasMore !== 'boolean' ||
+    (response.projections !== undefined && !validProjectionBlock(response.projections))
+  )
+    return undefined
+  const events: unknown[] = []
+  for (const raw of response.events) {
+    const row = recordOrUndefined(raw)
+    const event = recordOrUndefined(row?.event)
+    if (
+      event === undefined ||
+      typeof event.seq !== 'number' ||
+      !Number.isSafeInteger(event.seq) ||
+      event.seq < 0 ||
+      Object.is(event.seq, -0)
+    )
+      continue
+    if (
+      validHistoryEntry({ event }) &&
+      typeof event.time === 'number' &&
+      Number.isFinite(new Date(event.time).getTime())
+    ) {
+      events.push({
+        event,
+        ...(recordOrUndefined(row?.view) === undefined ? {} : { view: row?.view }),
+      })
+    } else
+      events.push({
+        event: { type: 'system/message', seq: event.seq, time: 0, data: {} },
+      })
+  }
+  return {
+    events,
+    hasMore: response.hasMore,
+    ...(response.projections === undefined ? {} : { projections: response.projections }),
+  }
+}
+
 function validHistoryEntry(value: unknown): boolean {
   const entry = recordOrUndefined(value)
   const event = recordOrUndefined(entry?.event)

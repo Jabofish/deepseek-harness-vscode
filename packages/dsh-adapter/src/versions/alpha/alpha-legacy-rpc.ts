@@ -19,7 +19,7 @@ import {
   type AlphaCatalogSelection,
   presetRoster,
 } from './model-catalog.js'
-import { expandHistoryRecords, validAlphaProjectionBaseline, validAlphaWireSnapshot } from './session-wire.js'
+import { expandHistoryRecords, readAlphaWireSnapshot, validAlphaProjectionBaseline } from './session-wire.js'
 import {
   type AlphaConfigurableProvider,
   type AlphaResponse,
@@ -264,9 +264,12 @@ export function createAlphaLegacyRpc(dependencies: AlphaLegacyRpcDependencies): 
     signal?: AbortSignal,
   ): Promise<Record<string, unknown>> {
     for await (const item of openRemoteStream('session/follow', { request }, signal)) {
-      const frame = recordOrUndefined(item)
-      if (!validAlphaWireSnapshot(frame, options.sessionWireVersion ?? 'v0', options.sessionWireProfile))
-        throw malformedResponse('session/follow snapshot')
+      const frame = readAlphaWireSnapshot(
+        item,
+        options.sessionWireVersion ?? 'v0',
+        options.sessionWireProfile,
+      )
+      if (frame === undefined) throw malformedResponse('session/follow snapshot')
       return frame
     }
     throw malformedResponse('session/follow snapshot')

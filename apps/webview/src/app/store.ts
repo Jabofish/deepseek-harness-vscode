@@ -25,7 +25,7 @@ import { createInteractionActions } from './store/interaction-actions.js'
 import { createSessionCatalogActions } from './store/session-catalog-actions.js'
 import { createSessionOpenController } from './store/session-open-controller.js'
 import { createTurnWatchers } from './store/turn-watchers.js'
-import { createSurfaceActions, isHandoffSidebar } from './store/surface-actions.js'
+import { createSurfaceActions } from './store/surface-actions.js'
 import { subscribeHostEvents } from './store/host-event-subscription.js'
 import { createPromptActions } from './store/prompt-actions.js'
 import { createHistoryActions } from './store/history-actions.js'
@@ -57,8 +57,6 @@ export type {
 } from './store/types.js'
 export type { JobFollowState } from './store/job-follow.js'
 
-const STORE_NOTIFY_BATCH_MS = 16
-
 // A transient session.open failure (request timeout, BACKEND_UNREACHABLE while
 // the backend is still settling) leaves the panel without any conversation at
 // all. Retry the open request a bounded number of times with a short backoff;
@@ -88,14 +86,6 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   }
   const listeners = new Set<() => void>()
   const turnWatchers = createTurnWatchers({ isDisposed: () => disposed })
-  let notifyTimer: number | undefined
-  const scheduleNotify = (): void => {
-    if (disposed || notifyTimer !== undefined) return
-    notifyTimer = window.setTimeout(() => {
-      notifyTimer = undefined
-      for (const listener of listeners) listener()
-    }, STORE_NOTIFY_BATCH_MS)
-  }
   const setState: StateSetter = (next): void => {
     if (disposed) return
     const nextState = typeof next === 'function' ? next(state) : next
@@ -127,8 +117,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         })
         .catch(() => undefined)
     }
-    // Install Host windows and control facts synchronously; batch React notifications.
-    scheduleNotify()
+    // Publish installed Host state immediately; do not add a timer or frame wait.
+    for (const listener of listeners) listener()
   }
   const feedbackCache = createFeedbackCache({ client, setState, getState: () => state })
   const invalidateFeedback = feedbackCache.invalidate
@@ -564,6 +554,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     // load a different conversation into the tab.
     if (
       disposed ||
+      state.backend.kind !== 'connected' ||
       state.surface?.kind === 'editor' ||
       !startupRestorePending ||
       state.activeSessionId !== undefined
@@ -676,16 +667,12 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   })
 
   /**
-   * The public open path. While the side bar is handed off, the conversation is
-   * not rendered there, so opening a session must ask the Host for an editor
-   * tab; the internal open below stays untouched for the editor surface's own
-   * assignment, session creation and startup restore.
+   * Editor tabs stay bound to their session; picking another session there
+   * opens its own tab. The sidebar always navigates locally, independently of
+   * how many editor tabs exist.
    */
   const openSession = (sessionId: string): Promise<void> => {
-    if (
-      isHandoffSidebar(state) ||
-      (state.surface?.kind === 'editor' && state.surface.sessionId !== sessionId)
-    )
+    if (state.surface?.kind === 'editor' && state.surface.sessionId !== sessionId)
       return surfaceActions.methods.openSessionInEditor(sessionId)
     return open(sessionId)
   }
@@ -801,10 +788,6 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       if (disposed) return
       disposed = true
       retryDelays.dispose()
-      if (notifyTimer !== undefined) {
-        window.clearTimeout(notifyTimer)
-        notifyTimer = undefined
-      }
       // Retire in-flight opens and release their bounded snapshots immediately.
       pendingOpenBuffer.clear()
       turnWatchers.disposeAll()

@@ -417,6 +417,37 @@ export interface TranscriptWindow {
   readonly currentTodosOmitted?: true
 }
 
+/**
+ * Host-produced incremental view replacement. A streaming revision changes one
+ * node. Public text suffixes avoid resending accumulated Markdown; metadata
+ * is replaced only when it changes. The Host falls back to a full window
+ * whenever a change would reorder or remove nodes. Baseline mismatches always
+ * reread the Host window instead of buffering or replaying patches.
+ */
+export interface TranscriptPatch {
+  readonly sessionId: string
+  readonly revision: number
+  readonly baseRevision: number
+  /** Changed nodes in window order; an unknown id appends at the tail. */
+  readonly changedNodes: readonly TimelineNode[]
+  /** Append to an already installed public view; never an upstream event stream. */
+  readonly textUpdates?: readonly TranscriptTextUpdate[]
+  /** Complete replacement when metadata changes; absent optional fields are cleared. */
+  readonly metadata?: TranscriptMetadata
+  readonly lastSequence?: number
+  readonly hasMore?: boolean
+  readonly activeTurn?: number
+  readonly tokenUsage?: TranscriptWindow['tokenUsage']
+}
+
+export type TranscriptMetadata = Omit<TranscriptWindow, 'sessionId' | 'revision' | 'nodes'>
+export interface TranscriptTextUpdate {
+  /** All next-node fields, with only the new suffix in each Markdown field. */
+  readonly node: Extract<TimelineNode, { kind: 'assistant-message' | 'reasoning' }>
+  readonly markdownLength: number
+  readonly reasoningLength?: number
+}
+
 export interface TranscriptEventFact {
   readonly id: string
   readonly type: string
@@ -438,26 +469,82 @@ const eventFact = z
   })
   .strict()
 
+const transcriptWindowFields = {
+  sessionId: id,
+  revision: count,
+  eventFacts: z.array(eventFact).max(TRANSCRIPT_MAX_NODES),
+  currentTodos: z.array(todo).max(TRANSCRIPT_MAX_NODES).optional(),
+  currentTodosOmitted: z.literal(true).optional(),
+  lastSequence: z.number().int().min(-1),
+  hasMore: z.boolean(),
+  beforeSequence: count.optional(),
+  historical: z.boolean(),
+  omittedNodeIds: z.array(id).max(TRANSCRIPT_MAX_NODES),
+  tokenUsage: usage.optional(),
+  activeTurn: count.optional(),
+}
+
 export const transcriptWindowSchema = z
-  .object({
-    sessionId: id,
-    revision: count,
-    nodes: z.array(transcriptNodeSchema).max(TRANSCRIPT_MAX_NODES),
-    eventFacts: z.array(eventFact).max(TRANSCRIPT_MAX_NODES),
-    currentTodos: z.array(todo).max(TRANSCRIPT_MAX_NODES).optional(),
-    currentTodosOmitted: z.literal(true).optional(),
-    lastSequence: z.number().int().min(-1),
-    hasMore: z.boolean(),
-    beforeSequence: count.optional(),
-    historical: z.boolean(),
-    omittedNodeIds: z.array(id).max(TRANSCRIPT_MAX_NODES),
-    tokenUsage: usage.optional(),
-    activeTurn: count.optional(),
-  })
+  .object({ ...transcriptWindowFields, nodes: z.array(transcriptNodeSchema).max(TRANSCRIPT_MAX_NODES) })
   .strict()
   .superRefine((value, ctx) => {
     if (JSON.stringify(value).length > TRANSCRIPT_MAX_CHARS)
       ctx.addIssue({ code: 'custom', message: 'Transcript window exceeds its resident budget.' })
     if (new Set(value.nodes.map((node) => node.id)).size !== value.nodes.length)
       ctx.addIssue({ code: 'custom', message: 'Duplicate transcript node.' })
+  })
+
+export const transcriptPatchSchema = z
+  .object({
+    sessionId: id,
+    revision: count,
+    baseRevision: count,
+    changedNodes: z.array(transcriptNodeSchema).max(TRANSCRIPT_MAX_NODES),
+    textUpdates: z
+      .array(
+        z
+          .object({
+            node: z.discriminatedUnion('kind', [
+              transcriptNodeSchema.options[1],
+              transcriptNodeSchema.options[2],
+            ]),
+            markdownLength: count.max(TRANSCRIPT_MAX_CHARS),
+            reasoningLength: count.max(TRANSCRIPT_MAX_CHARS).optional(),
+          })
+          .strict(),
+      )
+      .max(TRANSCRIPT_MAX_NODES)
+      .optional(),
+    metadata: z
+      .object({
+        eventFacts: transcriptWindowFields.eventFacts,
+        currentTodos: transcriptWindowFields.currentTodos,
+        currentTodosOmitted: transcriptWindowFields.currentTodosOmitted,
+        lastSequence: transcriptWindowFields.lastSequence,
+        hasMore: transcriptWindowFields.hasMore,
+        beforeSequence: transcriptWindowFields.beforeSequence,
+        historical: transcriptWindowFields.historical,
+        omittedNodeIds: transcriptWindowFields.omittedNodeIds,
+        tokenUsage: transcriptWindowFields.tokenUsage,
+        activeTurn: transcriptWindowFields.activeTurn,
+      })
+      .strict()
+      .optional(),
+    lastSequence: z.number().int().min(-1).optional(),
+    hasMore: z.boolean().optional(),
+    activeTurn: count.optional(),
+    tokenUsage: usage.optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (JSON.stringify(value).length > TRANSCRIPT_MAX_CHARS)
+      ctx.addIssue({ code: 'custom', message: 'Transcript patch exceeds its resident budget.' })
+    if (value.revision <= value.baseRevision)
+      ctx.addIssue({ code: 'custom', message: 'Invalid transcript patch baseline.' })
+    const ids = [
+      ...value.changedNodes.map((node) => node.id),
+      ...(value.textUpdates ?? []).map((entry) => entry.node.id),
+    ]
+    if (new Set(ids).size !== ids.length)
+      ctx.addIssue({ code: 'custom', message: 'Invalid transcript patch nodes.' })
   })

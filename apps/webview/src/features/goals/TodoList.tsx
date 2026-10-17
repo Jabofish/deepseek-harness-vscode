@@ -12,9 +12,8 @@ export interface TodoListProps {
 export const TodoList = memo(function TodoList({ todos }: TodoListProps): ReactElement | null {
   const { t } = useI18n()
   const [open, setOpen] = useState(false)
-  const { completed, inProgress, pending, current } = useMemo(() => summarizeTodos(todos), [todos])
+  const { completed, current } = useMemo(() => summarizeTodos(todos), [todos])
   if (todos.length === 0) return null
-  const summary = t('todo.summary', { completed, inProgress, pending })
   return (
     <section
       className={`dsh-todo-list${open ? '' : ' dsh-todo-list--collapsed'}`}
@@ -33,48 +32,31 @@ export const TodoList = memo(function TodoList({ todos }: TodoListProps): ReactE
         aria-label={open ? t('todo.collapse') : t('todo.expand')}
         onClick={() => setOpen((currentOpen) => !currentOpen)}
       >
-        {open ? (
-          <>
-            <span className="dsh-todo-list__heading">
-              <Icon name="list" />
-              <strong>{t('todo.title')}</strong>
-            </span>
-            <span className="dsh-todo-list__progress" role="status">
-              {t('todo.progress', { completed, total: todos.length })}
-            </span>
-            <span className="dsh-todo-list__summary" title={summary}>
-              {summary}
-            </span>
-          </>
-        ) : (
-          <span className="dsh-todo-list__collapsed-copy">
-            <span className="dsh-todo-list__heading">
-              <Icon name="list" />
-              <strong>{t('todo.title')}</strong>
-            </span>
-            <span className="dsh-todo-list__progress" role="status">
-              {t('todo.progress', { completed, total: todos.length })}
-            </span>
-            {current === undefined ? (
-              <span className="dsh-todo-list__current">{t('todo.allCompleted')}</span>
-            ) : (
-              <>
-                <TodoStateIcon status={current.status} />
-                <ContentFlow as="span" className="dsh-todo-list__current">
-                  {current.content}
-                </ContentFlow>
-                <span className="dsh-todo-list__status">{t(`todo.status.${current.status}`)}</span>
-              </>
-            )}
+        <span className="dsh-todo-list__collapsed-copy">
+          <span className="dsh-todo-list__heading">
+            <Icon name="list" />
+            <strong>{t('todo.title')}</strong>
           </span>
-        )}
+          <span className="dsh-todo-list__progress" role="status">
+            {t('todo.progress', { completed, total: todos.length })}
+          </span>
+          {open || current === undefined ? null : (
+            <>
+              <TodoStateIcon status={current.status} />
+              <ContentFlow as="span" className="dsh-todo-list__current" title={current.content}>
+                {current.content}
+              </ContentFlow>
+              <span className="dsh-todo-list__status">{t(`todo.status.${current.status}`)}</span>
+            </>
+          )}
+        </span>
         <span className="dsh-todo-list__chevron" aria-hidden="true">
           <Icon name="chevron-down" />
         </span>
       </button>
       <div className="dsh-disclosure dsh-todo-list__disclosure" data-open={open}>
         <div className="dsh-disclosure__inner">
-          <ol className="dsh-todo-list__items" aria-hidden={!open}>
+          <ol className="dsh-todo-list__items" aria-hidden={!open} tabIndex={open ? 0 : -1}>
             {todos.map((todo) => (
               <li className={`dsh-todo-list__item dsh-todo-list__item--${todo.status}`} key={todo.id}>
                 <TodoStateIcon status={todo.status} />

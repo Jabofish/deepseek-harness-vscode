@@ -20,30 +20,34 @@
   margin-inline: auto;
 }
 
-/* Pending approvals and questions take the composer's slot: the input is hidden
- * while the agent waits, so the card docks at the bottom of the conversation
- * instead of floating under the topbar. Each card owns its own scrollport, so a
- * long batch scrolls its questions while the actions row stays reachable. */
+/* Pending interactions share the tail with an always-available composer. A
+ * batch scrolls as a stack; each card bounds its body without shrinking away
+ * its decision buttons or clipping later cards. */
 .dsh-conversation__interactions {
   display: flex;
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
   width: 100%;
-  max-height: min(70vh, 42rem, calc(100% - 12rem));
-  gap: var(--dsh-space-2);
-  overflow: hidden;
+  max-height: var(--dsh-content-panel-max-height);
+  gap: var(--dsh-space-1);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .dsh-conversation__interactions > .dsh-interaction {
   display: flex;
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   flex-direction: column;
   min-height: 0;
   width: min(100%, 56rem);
   margin-inline: auto;
   box-shadow: var(--dsh-shadow);
+}
+
+.dsh-conversation__interaction-stop {
+  align-self: flex-end;
 }
 
 .dsh-unified-composer {

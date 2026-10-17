@@ -472,7 +472,9 @@ describe('DSH 0.1.7-alpha.1 contract', () => {
       { type: 'tool-result', toolCallId: 'call-1' },
     ]
     malformedSocket.message(streamItem(malformedSocket, { type: 'event', event: malformedEvent }))
-    await expect(malformedFirst).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+    await expect(malformedFirst).resolves.toMatchObject({
+      value: { type: 'session/event', event: { type: 'system/message', data: {} } },
+    })
     await malformedTransport.close()
   })
 

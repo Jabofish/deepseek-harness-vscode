@@ -57,6 +57,7 @@ import {
   AlphaLoopbackApiClient,
   type AlphaLoopbackApiClientOptions,
   type AlphaWebSocketConstructor,
+  type AssistantPreviewState,
 } from './transport.js'
 import { callRpc } from '../rc6/rpc.js'
 import { deriveFeatureCapabilityProfile } from '../../feature-capabilities.js'
@@ -66,6 +67,8 @@ export type AlphaAdapterOptions = Omit<Rc6AdapterOptions, 'webSocket'> & {
   readonly authCookie?: (endpoint: BackendEndpoint) => string | undefined
   readonly webSocket?: AlphaWebSocketConstructor
   readonly exportFileSystem?: ExportFileSystem
+  /** Host-side observability for the optional transient assistant preview. */
+  readonly onAssistantPreview?: (state: AssistantPreviewState) => void
 }
 
 /** Shared adapter assembly for the verified 0.1.2 alpha Connection/Gateway contract. */

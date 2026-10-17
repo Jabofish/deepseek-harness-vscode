@@ -68,6 +68,22 @@ class Client {
 }
 
 describe('Webview installs Host windows', () => {
+  it('notifies subscribers synchronously when a Host view arrives', async () => {
+    const client = new Client()
+    const store = createAppStore(client as unknown as ProtocolClient)
+    try {
+      await store.openSession('s')
+      const revisions: number[] = []
+      const unsubscribe = store.subscribe(() => revisions.push(store.getState().transcript!.revision))
+      client.emit(window('s', 2, 'Immediate reply'))
+      expect(revisions).toEqual([2])
+      unsubscribe()
+      client.emit(window('s', 3, 'Next reply'))
+      expect(revisions).toEqual([2])
+    } finally {
+      store.dispose()
+    }
+  })
   it('applies pending interactions immediately even when an open fails', async () => {
     const client = new Client()
     let reject: ((error: Error) => void) | undefined

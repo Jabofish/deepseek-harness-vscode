@@ -50,6 +50,7 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
   private reading: Promise<void> | undefined
   private retryTimer: ReturnType<typeof setTimeout> | undefined
   private retryAttempt = 0
+  private connectionLost = false
   private restartTask: Promise<void> | undefined
   private closed = false
 
@@ -186,6 +187,7 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
   }
 
   private scheduleReconnect(lifetime: AbortController, error: unknown): void {
+    this.connectionLost = true
     this.emit({ type: 'connection.lost', reason: safeReason(error) })
     if (this.closed || this.listeners.size === 0 || this.lifetime !== lifetime) return
     const attempt = this.retryAttempt
@@ -215,6 +217,10 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
           if (!receivedFrame) {
             receivedFrame = true
             this.retryAttempt = 0
+            if (this.connectionLost) {
+              this.connectionLost = false
+              this.emit({ type: 'connection.restored' })
+            }
           }
           this.accept(event, signal)
         }
@@ -421,7 +427,7 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
         )
           continue
         emittedSnapshot.push(candidate)
-        this.emit(candidate)
+        this.emit({ ...candidate, replayed: true })
       }
       this.lastSequences.set(event.sessionId, event.lastSequence)
       if (previous === undefined)

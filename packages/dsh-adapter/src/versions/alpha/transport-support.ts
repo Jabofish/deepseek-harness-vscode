@@ -77,9 +77,9 @@ export function mapEmit(event: unknown, args: readonly unknown[]): readonly unkn
         throw malformedResponse('$events agent-preset/selected')
       return [
         {
-          type: 'session/event',
+          type: 'host/session-preset-changed',
           sessionId: args[0],
-          event: { type: 'agent-preset/selected', data: { agentPreset: args[1] } },
+          agentPreset: args[1],
         },
       ]
     default:

@@ -12,10 +12,14 @@ import {
 } from '@dsh-vscode/dsh-adapter'
 
 import { isSupportedNodeVersion } from './install-runtime.js'
+import {
+  RUNTIME_INSTALL_MAX_BUFFER,
+  RUNTIME_INSTALL_TIMEOUT_MS,
+  runtimeInstallationFailureMessage,
+} from './runtime-installation.js'
 
 const UPDATE_CHECK_TIMEOUT_MS = 30_000
-const UPDATE_INSTALL_TIMEOUT_MS = 120_000
-const UPDATE_MAX_BUFFER = 1024 * 1024
+const UPDATE_MAX_BUFFER = RUNTIME_INSTALL_MAX_BUFFER
 const ANSI_ESCAPE_PATTERN = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, 'gu')
 export interface RuntimeCommandOptions {
   readonly timeout: number
@@ -126,9 +130,10 @@ export class DshRuntimeUpdater {
       await this.dependencies.execute(
         this.dependencies.npmExecutable(),
         ['install', '--global', `${DSH_PACKAGE_NAME}@${requested}`],
-        this.commandOptions(UPDATE_INSTALL_TIMEOUT_MS, signal),
+        this.commandOptions(RUNTIME_INSTALL_TIMEOUT_MS, signal),
       )
     } catch (error) {
+      if (error instanceof AppError && error.code === 'BACKEND_BUSY') throw error
       this.emitProgress({ phase: 'failed', version: requested })
       if (isCancellation(error, signal)) throw cancelledError(error)
       if (isMissingExecutable(error))
@@ -138,12 +143,14 @@ export class DshRuntimeUpdater {
           true,
           error,
         )
+      const failureMessage = runtimeInstallationFailureMessage(error)
       throw updateError(
         'install-failed',
-        'The selected DSH version could not be installed. Check the npm output and try again.',
+        failureMessage ??
+          'The selected DSH version could not be installed. Check the npm install log and try again.',
         true,
         error,
-        runtimeCommandFailureDetail(error),
+        failureMessage === undefined ? runtimeCommandFailureDetail(error) : undefined,
       )
     }
 

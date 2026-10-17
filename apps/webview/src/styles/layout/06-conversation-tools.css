@@ -139,10 +139,10 @@
   position: fixed;
   z-index: 60;
   box-sizing: border-box;
-  width: min(34rem, calc(100vw - var(--dsh-space-4)));
+  width: min(var(--dsh-menu-width), calc(100vw - var(--dsh-space-4)));
   min-width: min(20rem, calc(100vw - var(--dsh-space-4)));
   max-width: calc(100vw - var(--dsh-space-4));
-  max-height: min(34rem, calc(100vh - var(--dsh-space-4)));
+  max-height: min(var(--dsh-menu-max-height), calc(100dvh - var(--dsh-space-4)));
   margin: 0;
   padding: var(--dsh-space-2);
   overflow: auto;

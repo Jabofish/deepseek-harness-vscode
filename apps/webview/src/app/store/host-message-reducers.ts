@@ -4,7 +4,7 @@ import type {
   SessionConfigurationPatch,
   SessionSummary,
 } from '@dsh-vscode/domain'
-import type { HostMessage } from '@dsh-vscode/webview-protocol'
+import { transcriptPatchSchema, type HostMessage, type TranscriptPatch } from '@dsh-vscode/webview-protocol'
 import { translate } from '../../i18n.js'
 import { parseHostDomainEvent, isSurfaceEventName } from './event-parser.js'
 import { parseDshUpdateProgress } from './host-settings.js'
@@ -31,7 +31,7 @@ import {
 import type { AppState, StateSetter } from './types.js'
 import { object } from './unknown-record.js'
 import { currentTodos } from './todo-state.js'
-import { installTranscript, parseTranscript } from './transcript-state.js'
+import { installTranscript, installTranscriptPatch, parseTranscript } from './transcript-state.js'
 
 export function applyHostMessage(
   message: HostMessage,
@@ -42,6 +42,16 @@ export function applyHostMessage(
   onConnectionEpoch?: () => void,
 ): void {
   if (message.type !== 'event') return
+  if (message.name === 'session.transcript.patch') {
+    try {
+      setState(installTranscriptPatch(state, transcriptPatchSchema.parse(message.payload) as TranscriptPatch))
+    } catch {
+      // A lost baseline is repaired by reading the Host's current window,
+      // never by sorting or replaying patches in the renderer.
+      if (object(message.payload)?.sessionId === state.activeSessionId) onConnectionEpoch?.()
+    }
+    return
+  }
   if (message.name === 'session.transcript') {
     try {
       setState(installTranscript(state, parseTranscript(message.payload)))
@@ -198,15 +208,30 @@ export function applyHostMessage(
   if (event === undefined || event === null) return
   // Transcript bodies are installed only through the Host window protocol.
   let next = state
-  if (event.type === 'session.status') {
-    const activity: 'running' | 'inactive' = event.status === 'running' ? 'running' : 'inactive'
-    const status = sessionStatus(event.status)
+  if (event.type === 'session.status' || event.type === 'turn.started' || event.type === 'turn.ended') {
+    if (
+      event.type !== 'session.status' &&
+      event.sessionId === next.activeSessionId &&
+      next.timeline.activeTurn !== undefined &&
+      event.turn < next.timeline.activeTurn
+    )
+      return
+    // A durable Turn end is an explicit upstream boundary, unlike an assistant
+    // step completion. It settles busy UI if the runtime notification is missed.
+    const status =
+      event.type === 'session.status'
+        ? sessionStatus(event.status)
+        : event.type === 'turn.started'
+          ? 'running'
+          : 'idle'
+    const activity: 'running' | 'inactive' = status === 'running' ? 'running' : 'inactive'
     const sessions = updateSessionById(next.sessions, event.sessionId, (session) => {
-      if (session.status === status && (event.status !== 'running' || session.blank === false)) return session
+      // Even a repeated idle notification fences an older in-flight list.
+      // Retain its receipt as a new summary identity for the read barrier.
       return {
         ...session,
         status,
-        ...(event.status === 'running' ? { blank: false } : {}),
+        ...(status === 'running' ? { blank: false } : {}),
       }
     })
     let subagents = next.subagents

@@ -113,6 +113,10 @@ describe('DshStreamController', () => {
 
     await waitFor(() => received.some((event) => event.type === 'session.subscribed'))
     expect(received.filter((event) => event.type === 'turn.started')).toHaveLength(1)
+    expect(received.find((event) => event.type === 'turn.started')).toHaveProperty('replayed', true)
+    stream.push(canonicalFrame('s1', 2, 'turn/end', { turn: 1, reason: { kind: 'completed' } }))
+    await waitFor(() => received.some((event) => event.type === 'turn.ended'))
+    expect(received.find((event) => event.type === 'turn.ended')).not.toHaveProperty('replayed')
   })
 
   it('does not drop the final assistant message when it is in the opening snapshot', async () => {

@@ -1200,7 +1200,7 @@ describe('Composer model availability notice', () => {
     const stop = screen.getByRole('button', { name: 'Stop response' })
 
     expect(stop.hasAttribute('disabled')).toBe(false)
-    fireEvent.submit(composerForm())
+    fireEvent.click(stop)
     expect(onCancel).toHaveBeenCalledTimes(1)
     expect(onSubmit).not.toHaveBeenCalled()
   })

@@ -38,11 +38,12 @@ interface FeatureBackendIdentity {
 // calls: a shorter one reports a timeout for a check the Host completes and
 // drops the version list the drawer was waiting for.
 const RUNTIME_UPDATE_CHECK_TIMEOUT_MS = 90_000
-const RUNTIME_UPDATE_INSTALL_TIMEOUT_MS = 180_000
+// Covers metadata lookup, the ten-minute npm install, verification and connection.
+const RUNTIME_UPDATE_INSTALL_TIMEOUT_MS = 13 * 60_000
 // Checkpoint work reads or writes every recorded file through the host file
-// API, which on a remote workspace is a round trip per file. It gets the same
-// budget as an install: timing out mid-restore reports a failure for work that
-// is already overwriting workspace files, and the late real result is dropped.
+// API, which on a remote workspace is a round trip per file. Timing out
+// mid-restore reports a failure for work that is already overwriting workspace
+// files, and the late real result is dropped.
 const CHECKPOINT_TIMEOUT_MS = 180_000
 // An export is size-proportional work on the Host side: the ZIP deflates the
 // whole session, and the text formats read the entire paged history (200
@@ -64,6 +65,7 @@ const EXTENDED_TIMEOUT_MS: Readonly<Record<string, number>> = {
   'plugin.bundle.install': PLUGIN_INSTALL_TIMEOUT_MS,
   'plugin.bundle.waitForInstall': PLUGIN_INSTALL_TIMEOUT_MS,
   'mods.band.read': 30_000,
+  'runtime.action': RUNTIME_UPDATE_INSTALL_TIMEOUT_MS,
   'runtime.update.check': RUNTIME_UPDATE_CHECK_TIMEOUT_MS,
   'runtime.update.install': RUNTIME_UPDATE_INSTALL_TIMEOUT_MS,
   'checkpoint.create': CHECKPOINT_TIMEOUT_MS,

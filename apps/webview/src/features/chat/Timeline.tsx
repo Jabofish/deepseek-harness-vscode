@@ -308,6 +308,7 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
     contentKey: latestSignature,
     itemCount: displayNodes.length,
     sessionId: props.sessionId,
+    layoutMeasurementsActive: virtualizeTimeline,
   })
   const getFocusedTimelineIndex = useCallback((): number | undefined => {
     const timeline = scrollRef.current

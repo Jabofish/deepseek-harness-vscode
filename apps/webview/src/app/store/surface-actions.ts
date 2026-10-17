@@ -22,24 +22,6 @@ export interface SurfaceActionHost {
   readonly openSession: (sessionId: string) => Promise<void>
 }
 
-/**
- * True while the side bar is handed off to one or more editor tabs. In that
- * posture the side bar renders a card instead of a conversation, so opening a
- * session there would switch an invisible chat: the user gesture must create
- * (or reveal) an editor tab instead.
- */
-export function isHandoffSidebar(state: {
-  readonly surface?: SurfaceAssignment | undefined
-  readonly editorChats: number
-  readonly sidebarChatActive?: boolean
-}): boolean {
-  return (
-    (state.surface?.kind ?? 'sidebar') === 'sidebar' &&
-    state.editorChats > 0 &&
-    state.sidebarChatActive !== true
-  )
-}
-
 export interface SurfaceActions {
   readonly methods: Pick<AppActions, 'moveChatToSidebar' | 'openSessionInEditor' | 'runMovetoCommand'>
   /**
@@ -115,7 +97,6 @@ export function createSurfaceActions(host: SurfaceActionHost): SurfaceActions {
         requestId: requestId(),
         payload: { sessionId, ...(title === undefined ? {} : { title }) },
       })
-      setState((current) => ({ ...current, sidebarChatActive: false }))
     } catch (error) {
       reportFailure(error)
       throw error
@@ -130,7 +111,7 @@ export function createSurfaceActions(host: SurfaceActionHost): SurfaceActions {
     void requestEditorTab(sessionId).catch(() => undefined)
   }
 
-  /** A session picked while the side bar is handed off becomes an editor tab. */
+  /** Explicitly open an editor tab without changing the sidebar selection. */
   const openSessionInEditor = (sessionId: string): Promise<void> => requestEditorTab(sessionId)
 
   /**
@@ -161,7 +142,6 @@ export function createSurfaceActions(host: SurfaceActionHost): SurfaceActions {
     else if (message.name === 'ui.surface.openInSidebar') {
       const sessionId = object(message.payload)?.sessionId
       if (getState().surface?.kind !== 'editor' && nonEmptyString(sessionId)) {
-        setState((current) => ({ ...current, sidebarChatActive: true }))
         void openSession(sessionId).catch(reportFailure)
       }
     } else requestOpenInEditor()

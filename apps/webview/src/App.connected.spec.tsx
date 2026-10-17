@@ -614,28 +614,18 @@ describe('App connected rendering', () => {
     expect(document.querySelector('.dsh-empty-state')).toBeNull()
   })
 
-  it('replaces the side-bar conversation with the editor handoff card', () => {
-    // Exactly one surface is live: while an editor tab holds the chat, the
-    // side bar must not render a second conversation behind it.
-    const moveChatToSidebar = vi.fn().mockResolvedValue(undefined)
-    const setDrawer = vi.fn()
+  it('keeps sidebar composition and new-session controls available beside editor chats', () => {
+    const stageSession = vi.fn().mockResolvedValue(undefined)
     currentStore = {
       ...storeFor({ ...connectedState(true), surface: { kind: 'sidebar' }, editorChats: 2 }),
-      moveChatToSidebar,
-      setDrawer,
+      stageSession,
     }
     render(<App />)
 
-    expect(screen.getByRole('heading', { name: 'Chat is open in the editor area' })).toBeDefined()
-    expect(screen.getByText(/one tab per session \(2 open\)/u)).toBeDefined()
-    expect(screen.queryByTestId('timeline')).toBeNull()
-    expect(screen.queryByRole('textbox', { name: 'Prompt' })).toBeNull()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Move back to side bar' }))
-    expect(moveChatToSidebar).toHaveBeenCalledTimes(1)
-
-    fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
-    expect(setDrawer).toHaveBeenCalledWith('sessions')
+    expect(screen.getByTestId('timeline')).toBeDefined()
+    expect(screen.getByRole('textbox', { name: 'Prompt' })).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: 'New Session' }))
+    expect(stageSession).toHaveBeenCalledWith('w1', undefined)
   })
 
   it('runs the client /moveto command instead of sending it to DSH', async () => {
@@ -1346,7 +1336,7 @@ describe('App connected rendering', () => {
     }
 
     render(<App />)
-    expect(screen.getByRole('button', { name: 'Editor context' }).hasAttribute('disabled')).toBe(true)
+    expect(screen.getByRole('button', { name: 'Editor context' }).hasAttribute('disabled')).toBe(false)
     fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), {
       target: { value: 'continue' },
     })

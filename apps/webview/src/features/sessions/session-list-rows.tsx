@@ -1,5 +1,11 @@
 import type { PermissionRequest, SessionSummary, UserQuestion, WorkspaceSummary } from '@dsh-vscode/domain'
 import type { ReactElement } from 'react'
+import {
+  SESSION_EDITOR_DRAG_MIME,
+  SESSION_RESOURCE_DRAG_MIME,
+  sessionEditorResource,
+  sessionEditorDragPayload,
+} from '@dsh-vscode/webview-protocol'
 
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
@@ -64,29 +70,43 @@ export function SessionRow({
     waiting === undefined ? `sessions.status.${session.status}` : `sessions.waiting.${waiting}`,
   )
   const canReorder = sorting === 'manual' && reorderWorkspaceId !== undefined
-  // A cancelled drag and an unaccepted external drop cannot be distinguished.
-  // Opening an editor requires its explicit action; drags only reorder.
-  const dragHint = canReorder ? t('sessions.dragSession') : undefined
+  const canOpenInEditor = onOpenInEditor !== undefined
+  const dragHint = canOpenInEditor
+    ? canReorder
+      ? `${t('sessions.dragSession')} · ${t('sessions.dragToEditor')}`
+      : t('sessions.dragToEditor')
+    : canReorder
+      ? t('sessions.dragSession')
+      : undefined
   return (
     <li
       aria-busy={removing}
-      draggable={canReorder}
+      draggable={!disabled && (canReorder || canOpenInEditor)}
       title={dragHint}
       onDragStart={(event) => {
-        if (!canReorder || disabled) {
+        if ((!canReorder && !canOpenInEditor) || disabled) {
           event.preventDefault()
           return
         }
-        event.dataTransfer.effectAllowed = 'move'
-        // A custom MIME keeps the payload separate from ordinary editor text.
-        event.dataTransfer.setData(
-          ORDER_DRAG_MIME,
-          JSON.stringify({
-            kind: 'session',
-            workspaceId: reorderWorkspaceId ?? '',
-            itemId: session.id,
-          }),
-        )
+        event.dataTransfer.effectAllowed = canReorder ? (canOpenInEditor ? 'copyMove' : 'move') : 'copy'
+        // The Workbench owns drop acceptance and the target editor group. Never
+        // infer an editor-open request from dragend or pointer coordinates.
+        if (canOpenInEditor) {
+          event.dataTransfer.setData(SESSION_EDITOR_DRAG_MIME, sessionEditorDragPayload(session.id))
+          event.dataTransfer.setData(
+            SESSION_RESOURCE_DRAG_MIME,
+            JSON.stringify([sessionEditorResource(session.id)]),
+          )
+        }
+        if (canReorder)
+          event.dataTransfer.setData(
+            ORDER_DRAG_MIME,
+            JSON.stringify({
+              kind: 'session',
+              workspaceId: reorderWorkspaceId ?? '',
+              itemId: session.id,
+            }),
+          )
       }}
       onDragOver={(event) => {
         if (!canReorder) return

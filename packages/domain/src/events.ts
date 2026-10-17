@@ -469,6 +469,7 @@ type BackendEventPayload =
   | { readonly type: 'archived.sessions.changed'; readonly sessionIds: readonly string[] }
   | { readonly type: 'remote.event'; readonly name: string; readonly args: readonly unknown[] }
   | { readonly type: 'connection.lost'; readonly reason: string }
+  | { readonly type: 'connection.restored' }
   | {
       readonly type: 'notice'
       readonly sessionId?: string
@@ -492,4 +493,8 @@ type BackendEventPayload =
 /** Transport sequence metadata is optional for host-level notices but is
  * mandatory at runtime for sequenced session frames. Keeping it outside the
  * payload union lets older consumers continue handling the same event kinds. */
-export type BackendEvent = BackendEventPayload & { readonly sequence?: number }
+export type BackendEvent = BackendEventPayload & {
+  readonly sequence?: number
+  /** Historical rows from an authoritative follow snapshot, rather than live activity. */
+  readonly replayed?: true
+}

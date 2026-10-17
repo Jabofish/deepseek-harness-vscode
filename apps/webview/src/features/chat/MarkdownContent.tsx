@@ -3,7 +3,6 @@ import * as katex from 'katex'
 import texmath from 'markdown-it-texmath'
 import { createPortal } from 'react-dom'
 import {
-  useDeferredValue,
   useEffect,
   memo,
   useMemo,
@@ -27,7 +26,6 @@ import {
 } from './shiki.js'
 import 'katex/dist/katex.min.css'
 
-const STREAMING_MARKDOWN_DEFER_THRESHOLD = 4_096
 const EMPTY_PRODUCED_FILES: readonly string[] = []
 
 /**
@@ -110,16 +108,11 @@ export const MarkdownContent = memo(function MarkdownContent({
   const markdownProjector = useMemo(() => createMarkdownProjector(), [])
   const highlightMemory = useRef<HighlightMemory>(new Map())
   const [copyRegions, setCopyRegions] = useState<readonly MountedCopyRegion[]>([])
-  // MarkdownIt reparses the accumulated stream. Let React keep the latest
-  // input authoritative while lowering render priority for long messages so
-  // rapid deltas do not monopolize the Webview main thread. Short messages
-  // remain synchronous for responsive first paint and deterministic tail UI.
-  const deferredMarkdown = useDeferredValue(markdown)
-  const markdownForRender =
-    streaming && markdown.length > STREAMING_MARKDOWN_DEFER_THRESHOLD ? deferredMarkdown : markdown
+  // The Host already bounds and batches live views. Render their current tail
+  // immediately; the projector memoizes completed blocks independently.
   const projection = useMemo(
-    () => markdownProjector(markdownForRender, streaming),
-    [markdownForRender, markdownProjector, streaming],
+    () => markdownProjector(markdown, streaming),
+    [markdown, markdownProjector, streaming],
   )
   // Shiki stays off the render path: a missing highlight is requested during
   // render. The highlight cache lives outside React, so the memos below read it
@@ -139,15 +132,11 @@ export const MarkdownContent = memo(function MarkdownContent({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [projection.tailHtml, highlightVersion],
   )
-  const renderedHtml = useMemo(() => {
-    if (tailHtml === null) return frozenHtml
-    const tail = tailHtml === '' ? '' : `<div data-dsh-markdown-tail="true">${tailHtml}</div>`
-    return `<div data-dsh-markdown-frozen="true">${frozenHtml}</div>${tail}`
-  }, [frozenHtml, tailHtml])
-
-  // A new innerHTML prop object rewrites the DOM even when its text is unchanged.
-  // Keep copy regions and file actions intact on unrelated highlight completions.
-  const renderedMarkup = useMemo(() => ({ __html: renderedHtml }), [renderedHtml])
+  // Keep the frozen prefix as its own React-owned DOM region. Combining it
+  // with the changing tail in one innerHTML string replaced every completed
+  // paragraph/code block on each token, despite their cached HTML.
+  const primaryMarkup = useMemo(() => ({ __html: frozenHtml }), [frozenHtml])
+  const tailMarkup = useMemo(() => ({ __html: tailHtml ?? '' }), [tailHtml])
 
   useEffect(() => {
     const container = contentRef.current
@@ -247,7 +236,7 @@ export const MarkdownContent = memo(function MarkdownContent({
           entry.region.replaceWith(entry.target)
       }
     }
-  }, [markdown, onOpenLink, producedFiles, renderedHtml, streaming, t])
+  }, [markdown, onOpenLink, producedFiles, frozenHtml, tailHtml, streaming, t])
 
   const handleClick = (event: MouseEvent<HTMLDivElement>): void => {
     const target = event.target
@@ -277,8 +266,17 @@ export const MarkdownContent = memo(function MarkdownContent({
         className={`dsh-markdown${streaming ? ' dsh-markdown--streaming' : ''}`}
         onClick={handleClick}
         onKeyDown={handleKeyDown}
-        dangerouslySetInnerHTML={renderedMarkup}
-      />
+        dangerouslySetInnerHTML={tailHtml === null ? primaryMarkup : undefined}
+      >
+        {tailHtml === null ? null : (
+          <>
+            <div data-dsh-markdown-frozen="true" dangerouslySetInnerHTML={primaryMarkup} />
+            {tailHtml === '' ? null : (
+              <div data-dsh-markdown-tail="true" dangerouslySetInnerHTML={tailMarkup} />
+            )}
+          </>
+        )}
+      </ContentFlow>
       {copyRegions.map((entry, index) =>
         createPortal(
           <div className="dsh-markdown__block-toolbar" role="group" aria-label={entry.ariaLabel}>

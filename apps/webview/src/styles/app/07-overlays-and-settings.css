@@ -16,9 +16,9 @@
 }
 
 .dsh-feedback-dialog {
-  width: min(100%, 36rem);
-  gap: var(--dsh-space-3);
-  padding: var(--dsh-space-4);
+  width: min(100%, 28rem);
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-3);
   overflow: auto;
 }
 
@@ -55,8 +55,14 @@
 }
 
 .dsh-feedback-dialog__detail {
-  min-height: 7rem;
+  min-height: 4rem;
+  max-height: var(--dsh-dock-content-max-height);
   resize: vertical;
+}
+
+.dsh-tool-error-modal,
+.dsh-session-dialog {
+  width: min(100%, 28rem);
 }
 
 .dsh-settings {

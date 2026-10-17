@@ -144,13 +144,16 @@ function buildGateway(): Harness {
     currentWorkspaceFolders: () => [{ uri: { fsPath: '/project' }, name: 'project', index: 0 }],
     stopAllJobFollows: () => teardowns.push('job-follows'),
     backendService: {
+      replayEvents: () => [],
       requireBackend: () => ({ sessions: { rename: () => Promise.resolve(host.renamedTitle) } }),
     },
     editorContextProvider: { dispose: () => teardowns.push('editor-context') },
+    connect: () => Promise.resolve(),
+    coordinator: { getState: () => ({ kind: 'idle' }) },
     requireCurrentWorkspaceSession: (sessionId: string) =>
       Promise.resolve(host.sessionGate).then(() => {
         if (rejected.has(sessionId)) throw new Error('the session is not owned by this workspace')
-        return { id: sessionId }
+        return { id: sessionId, title: 'Session title' }
       }),
   } as never)
   const openSidebar = (): void => {
@@ -196,6 +199,32 @@ describe('request gateway editor surface routes', () => {
 
   beforeEach(() => {
     harness = buildGateway()
+  })
+
+  it('authorizes native resource drops and reuses the ordinary editor manager', async () => {
+    const signal = new AbortController().signal
+    await harness.gateway.openDroppedSession('session-1', 2, signal)
+    await harness.gateway.openDroppedSession('session-1', 2, signal)
+    expect(harness.gateway.editorSurfaces.count).toBe(1)
+    expect(host.panels[0]?.title).toBe('Session title')
+    harness.rejectSession('foreign')
+    await expect(harness.gateway.openDroppedSession('foreign', 2, signal)).rejects.toThrow('not owned')
+    host.isTrusted = false
+    await expect(harness.gateway.openDroppedSession('session-2', 2, signal)).rejects.toThrow('Trust')
+    expect(harness.gateway.editorSurfaces.count).toBe(1)
+  })
+
+  it('does not open a native drop cancelled during ownership validation', async () => {
+    const abort = new AbortController()
+    let finish = (): void => undefined
+    host.sessionGate = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const pending = harness.gateway.openDroppedSession('session-1', 2, abort.signal)
+    abort.abort()
+    finish()
+    await pending
+    expect(harness.gateway.editorSurfaces.count).toBe(0)
   })
 
   it('opens one editor tab per session and answers the surface that asked', async () => {
@@ -344,6 +373,7 @@ describe('request gateway editor surface routes', () => {
     // The identity and the current editor-tab count travel together, so a
     // surface that becomes ready after a handoff broadcast still learns it.
     expect(harness.events).toEqual([
+      { surfaceId: 'sidebar', type: 'event', name: 'connection.snapshot', payload: { kind: 'idle' } },
       { surfaceId: 'sidebar', type: 'event', name: 'ui.surface.assigned', payload: { kind: 'sidebar' } },
       {
         surfaceId: 'sidebar',

@@ -288,7 +288,7 @@ describe('DSH 0.1.3-alpha.1 Session v2 contract', () => {
     await client.close()
   })
 
-  it('rejects a v2 snapshot without the assistant stream baseline', async () => {
+  it('keeps a missing optional preview baseline recoverable at the next native attempt', async () => {
     FakeWebSocket.instances.length = 0
     const client = transport(
       vi.fn((_input: RequestInfo | URL, init?: RequestInit) => Promise.resolve(response(init, {}))),
@@ -301,7 +301,29 @@ describe('DSH 0.1.3-alpha.1 Session v2 contract', () => {
     socket.message(streamItem(socket, snapshot(false)))
 
     await expect(first).resolves.toMatchObject({ value: { type: 'session/subscribed', lastSeq: 0 } })
-    await expect(iterator.next()).rejects.toThrow(/session\/follow assistant stream baseline/u)
+    const resumed = iterator.next()
+    socket.message(
+      streamItem(socket, {
+        type: 'assistant-stream',
+        frame: { type: 'start', attemptId: 'recovered', revision: 1, startedAfterSeq: 0, turn: 2, step: 1 },
+      }),
+    )
+    socket.message(
+      streamItem(socket, {
+        type: 'assistant-stream',
+        frame: {
+          type: 'chunk',
+          attemptId: 'recovered',
+          revision: 2,
+          index: 0,
+          time: 1,
+          chunk: { type: 'text-delta', index: 0, text: 'Recovered preview' },
+        },
+      }),
+    )
+    await expect(resumed).resolves.toMatchObject({
+      value: { type: 'session/assistant-stream', frame: { chunk: { text: 'Recovered preview' } } },
+    })
     await iterator.return?.()
     await client.close()
   })
@@ -405,7 +427,7 @@ describe('DSH 0.1.3-alpha.1 Session v2 contract', () => {
     expect(published.has(4_999)).toBe(true)
   })
 
-  it('rejects a replacement revision one without dropping a pending settlement', () => {
+  it('releases a pending durable settlement when a native Agent lifecycle restarts at revision one', () => {
     const projector = new Alpha13AssistantStreamProjector()
     projector.open({ revision: 0 }, 's1')
     projector.acceptFrame(
@@ -429,7 +451,7 @@ describe('DSH 0.1.3-alpha.1 Session v2 contract', () => {
     }
     expect(projector.acceptDurable(settlement)).toEqual([])
 
-    expect(() =>
+    expect(
       projector.acceptFrame(
         {
           type: 'start',
@@ -441,20 +463,21 @@ describe('DSH 0.1.3-alpha.1 Session v2 contract', () => {
         },
         's1',
       ),
-    ).toThrow(/skipped revision 2/u)
+    ).toMatchObject([{ type: 'event', event: { seq: 7 } }])
 
     expect(
       projector.acceptFrame(
         {
-          type: 'end',
-          attemptId: 'attempt-old',
+          type: 'chunk',
+          attemptId: 'attempt-new',
           revision: 2,
           index: 0,
-          outcome: { kind: 'committed', eventType: 'assistant/message', seq: 7 },
+          time: 104,
+          chunk: { type: 'text-delta', index: 0, text: 'New lifecycle' },
         },
         's1',
       ),
-    ).toMatchObject([{ type: 'event', event: { seq: 7 } }])
+    ).toMatchObject([{ type: 'chunk', attemptId: 'attempt-new', chunk: { text: 'New lifecycle' } }])
   })
 
   it('settles assistant attempts and handles abandoned attempts with strict pending checks', () => {

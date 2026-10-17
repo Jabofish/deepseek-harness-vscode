@@ -31,6 +31,7 @@ export const STATE_VIEW_KEYS_B = [
   'presets',
   'presetSelectionEnabled',
   'permissionPresets',
+  'newSessionPermissionPresets',
   'commands',
   'pluginInventoryRevision',
   'pluginInstallProgress',
@@ -84,7 +85,6 @@ export const STATE_VIEW_KEYS_D = [
   'surface',
   'editorChats',
   'surfaceError',
-  'sidebarChatActive',
 ] as const
 
 export const STATE_VIEW_KEYS = [

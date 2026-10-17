@@ -54,7 +54,7 @@ import {
   requiredRecord,
   requiredSessionId,
   validAttachmentReference,
-  validHistoryResponse,
+  readHistoryResponse,
   validSessionSummaryResponse,
 } from './session/responses.js'
 import { assertAccepted } from './session/queue-helpers.js'
@@ -113,6 +113,11 @@ export class Rc6SessionRepository implements SessionRepository {
   }
 
   private readonly readPermissionPresets: ((signal?: AbortSignal) => Promise<readonly string[]>) | undefined
+  public listPermissionPresets(signal?: AbortSignal): Promise<readonly string[]> {
+    if (this.readPermissionPresets === undefined)
+      return Promise.reject(unavailable('permission preset catalog'))
+    return this.readPermissionPresets(signal)
+  }
   public readonly supportsFileUploads: boolean
   private readonly supportsSessionRestore: boolean
   private readonly supportsPreallocatedSessionId: boolean
@@ -396,7 +401,7 @@ export class Rc6SessionRepository implements SessionRepository {
     const useTurnWindow =
       options.pagePurpose === 'transcript' && this.transport.sessionHistoryTurnWindow === true
     const requestedPageSize = validHistoryPageSize(options.pageSize)
-    const historyValue = await callRpc<unknown>(
+    const response = await callRpc<unknown>(
       this.transport,
       'session.history',
       {
@@ -407,7 +412,8 @@ export class Rc6SessionRepository implements SessionRepository {
       },
       signal,
     )
-    if (!validHistoryResponse(historyValue)) throw malformedSessionResponse('session history')
+    const historyValue = readHistoryResponse(response)
+    if (historyValue === undefined) throw malformedSessionResponse('session history')
     // Always map the internal marker rows while calculating the raw page
     // boundary. A public page omits the prompt marker, but its cursor must
     // still point at the real oldest durable record or pagination can stall

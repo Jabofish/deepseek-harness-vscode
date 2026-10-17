@@ -83,6 +83,8 @@
 
 逐提交比较 Connection/Gateway、typed Remote、Session V4、Workspace、Plugin Manager、Account 和工具目录后，五个入口按顺序继承已核对能力；Session V4 codec 源码与前一已支持入口相同，继续使用既有独立格式库。Gateway 新增 peer 专用载体不取消根客户端的 Cookie/token 交换，扩展保持已验证的根客户端路径，不把自己伪装成 peer。
 
+格式 codec 相同不代表事件目录相同：从 `0.2.1-alpha.3` 的固定提交起，`packages/jobs/jobs/src/types.ts` 增加 `job/registered` 与 `job/settled`，直到 `0.2.1-rc.2` 的原生目录均为 62 类事件。`alpha213` 的独立 Session profile 校验它们的身份、原始 owner、时间、工具归属及结束状态；后续精确入口继承该 profile，旧入口不接纳为已知事件。这两类是 log-only 审计事实，读取时保留序号但不恢复执行权或重建 Job roster；任务状态、输出和停止继续使用上游 Job Controller。
+
 Workspace `replace` 是同一 generation 的完整目录基线，必须替换旧缓存并保留 pinned/archive；旧 wire 仍拒绝这个新帧。Gateway 的 `interactions-forbidden` 映射权限拒绝，`peer-disposed` 映射连接不可达；写操作不因此自动重试。
 
 Plugin Manager 只在新入口读取并校验五种 `restartReason`，从 mutation、install 和同 ID 恢复一直传递到本地化提示。后续入口接纳 `already-installed`，旧入口继续拒绝未知业务结果。新的 requirements/incompatibility 原文和 bundle source 不跨 Webview。Plugin Market 的新增专用 Remote 尚未提供独立页面，已有 registry/spec/安装和清单能力不冒充市场功能。
@@ -102,6 +104,10 @@ rc.2 与 rc.1 的 Connection / Gateway、全部 API Remote、Session V4、Accoun
 旧 Host 家族的 RPC 与 mux 是两个逻辑流；Session 事件带 `sessionId`/序号，订阅使用 `lastSeq`，审批和问题响应使用结构化 `rpcId`。Alpha 家族的 Connection Remote 走 `POST /api/<namespace>/<method>`、Cookie 握手和 `/api/remote.mux`；mux 使用 `open`、`cancel`、`item`、`error`、`end` 帧。每个 Session 保存最后提交的服务器序号；重连先订阅，再比较序号、分页补洞、去重后归约。`system/message` 和只面向模型的 surface replacement 只留下序号水印，内容不进入人类时间线；未知事件只保留脱敏的类型、序号和摘要，不阻断后续事件。
 
 Session v2 的 `isSeeded`、event-only history 与 assistant stream 修订帧只在精确 v2 入口启用。Session v3 严格验证 event envelope、surface replacement、PTC 和 Host-only system watermark；`image/offload` 保留为脱敏 opaque 事件，持久图片引用仍可读取。Session V4 的工具结果是带 `role: 'tool'`、`toolCallId` 与 source 的 first-class message，必须先验证配对再投影。新的 projection 事件不由客户端猜成人类可见状态。
+
+读取 DSH 已恢复的 V4 会话时，客户端逐条处理可解释的记录，不重复执行完整持久日志的恢复与关系校验。未知或单条不可解释的记录降级为无正文、无控制语义的内部序号标记；无安全序号的记录不解释，不能因此拒绝其余可读历史。打开、翻页和实时跟随使用同一规则；任务、权限及其他状态继续使用原生 Controller 和投影，未知记录不触发执行操作。外层会话身份、游标和投影结构仍须校验；版本事件基线复用固定上游格式包导出的目录，不手工复制整张事件表。
+
+旧版历史同样按记录隔离不可解释的数据；识别事件时忽略未消费的新增 envelope 元数据。临时 assistant preview 不能阻断持久回复：预览帧不连续或基线畸形时先重订阅 `session/follow` 并采用其新基线继续流式（最多三次；首次立即，连续失败再退避 250–500ms），同一 attempt 的本地恢复只交付未发出的 chunk；新 follow 或不同 attempt 仍完整采用权威基线。仍失败才释放已收到的持久回复、退回 durable follow；缺失 `assistantStream` 基线表示宿主未接受 opt-in，不重试，等下一个 attempt 的 `start` 帧再恢复。任何路径都不伪造增量或正文。Remote 通知没有 durable sequence，Preset 变更经 Host 通知触发目录刷新，不包装为缺失序号的 `session/event`。共享 mux 保留消息大小、身份及 JSON 边界，能确定所属逻辑流的错误仅终止该流，不能关闭其他会话的流；未知通知不推断为审批或权限操作。
 
 Control 基线随 wire 变化：早期 alpha 是 `queues`/`jobs`；`alpha162` 是 `jobs`/`projections.<sessionId>.values.inbox`，以 `next-turn`/`next-step` 和消息 ID 投影 Queue/Steer；`alpha171` 起只接受 `projections`，Job roster 从独立 `job/list` 的 whole-set rows 流读取。旧形状不得穿过新入口。Job follow 用绝对 UTF-8 字节偏移，首次数据帧可重放跨恢复游标的完整 chunk；客户端按字节且在码点边界裁掉已显示前缀。空文本的 lossy/gap 尾标志不能显示为输出。
 

@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+- 修复打开会话时发送/停止按钮反复切换及消息区跳动：历史快照不再冒充实时运行事件，压缩历史已覆盖的记录不触发重新打开，并在连接就绪后只恢复一次会话。
+- Fixes startup flicker, Send/Stop toggling and transcript jumps by separating follow history from live activity, preserving compacted read baselines, and restoring the session after connection readiness.
+
+- 临时助手预览异常时立即重取上游基线，同一 attempt 只补上未交付的部分，避免等待和文字回退；重复失败才退避并最终降级。流式正文发送脱敏后的新增部分，扩大有界确认窗口，修复长回复补跳、回合结束状态残留及补丁预算计算。
+- Immediately rebaselines interrupted assistant previews without replaying an already delivered prefix; repeated failures back off before durable fallback. Sends sanitized text suffixes with bounded delivery credits and fixes long-reply stalls, stale completion metadata, and patch budget accounting.
+
+- 去除 Host 与前端通知的人为等待，修复逐帧等待确认、重复替换 Markdown 稳定段及长历史虚拟列表误退出尾部跟随；立即投递和通知，保留有界背压及主动滚动阅读的位置。
+- Removes artificial Host and Store notification delays and per-frame ACK waits, preserves stable streaming Markdown DOM, and keeps long virtualized conversations following live output while respecting reader scrolling and bounded backpressure.
+
+- 压缩任务、目标、提问、队列及扩展面板，完整目标列表移入“更多”；计划默认收起，长内容和多条交互内部滚动，缩小功能菜单、导出和反馈弹层。
+- Compacts task, goal, question, queue and Mods panels; moves the goal list into More, collapses plans by default, bounds long content and interaction stacks, and reduces utility menus, export and feedback dialogs.
+
+- 实时更新发送变化节点并复用未变的展示行，修复流式修订号重置、预览永久降级与活动长回复冻结；运行中可继续输入、添加附件和补充命令，停止操作独立；回合完成及断线恢复同步刷新界面状态。
+- Sends changed transcript nodes while preserving unchanged rows, restores transient streaming after revision resets, and keeps long live replies updating. Input, attachments, commands and Stop remain independently usable; Turn completion and transport recovery refresh the UI state.
+
+- 压缩权限审批卡片，合并标题与风险、移除重复等待提示；长会话的完整内容列表移至会话“更多”菜单，减少消息区占用。
+- Compacts permission approvals and removes repeated waiting notices; moves full-content links into the conversation actions menu to keep the message area clear.
+
+- 补齐 `0.2.1-alpha.3` 至 `0.2.1-rc.2` 的后台任务持久事件，修复 Preset 通知误用历史序号；旧版历史、临时回复预览及共享连接内的单流错误不再扩大为整段会话故障。
+- Adds durable Job events for `0.2.1-alpha.3` through `0.2.1-rc.2` and fixes Preset notifications being treated as sequenced history. Unreadable legacy rows, transient preview failures and logical-stream errors no longer invalidate unrelated conversation data.
+
+- 打开会话、历史翻页和实时跟随按记录兼容不支持的 V4 事件，避免单条后台任务记录导致整段历史打不开；任务与权限状态继续使用上游权威数据。
+- Session opening, paging and live following tolerate unsupported V4 records individually, so a background-job record cannot block the whole conversation; task and permission state still comes from authoritative upstream data.
+
+- 修复 DSH 安装的前后台等待时限不一致及同一宿主内重复安装；延长慢速安装预算，并区分超时和文件占用错误。
+- Fixes mismatched DSH installation timeouts and duplicate installs within one Extension Host; allows longer installs and distinguishes timeouts from files that are in use or not writable.
+
+- 新聊天标签复用已有连接，只初始化自身会话；新会话可在首条消息前选择上游提供的权限，已有会话发送后及运行中仍可随时调整。
+- New chat tabs reuse the existing connection and initialize only their own session; new-session drafts can select upstream permission presets, while existing sessions remain adjustable after sending and while running.
+
+- 支持将会话行拖到编辑器区或分栏打开；重复拖入复用已有标签，保留列表内排序，取消拖动不会打开会话。
+- Supports dragging a session row into the editor area or a split group; reuses existing chat tabs, preserves list reordering, and leaves cancelled drags unopened.
+
 - 新增 DSH `0.2.1-rc.2` 精确适配，核对固定源码并验证 Search / Fetch 实时设置、密钥隔离、非法值与过期修订拒绝、恢复默认；保留动态模型目录与已选路由。
 - Adds exact DSH `0.2.1-rc.2` support with pinned source review and Search / Fetch settings coverage, including credential isolation, invalid values, stale revisions and restoring inherited defaults; preserves authoritative model catalogs and routes.
 
@@ -21,8 +54,8 @@
 - 深入修复 [PR #4](https://github.com/Jabofish/deepseek-harness-vscode/pull/4) 的跨窗口取消串扰、会话绑定错位、关闭后的迟到消息和移动失败丢失错误；感谢 [ggeorgovassilis](https://github.com/ggeorgovassilis) 的贡献。
 - Hardens [PR #4](https://github.com/Jabofish/deepseek-harness-vscode/pull/4) against cancellation across surfaces, stale session bindings, queued messages after close, and lost move failures; thanks to [ggeorgovassilis](https://github.com/ggeorgovassilis).
 
-- 新增编辑器区聊天入口：命令面板的 **DSH: Open Chat in Editor Area** 将当前会话以编辑器标签打开（每个会话一个标签，窗口重载后恢复），侧边栏显示“聊天已在编辑器区打开”的占位提示并提供移回操作。
-- Adds an editor-area chat entry point: **DSH: Open Chat in Editor Area** opens the current session as an editor tab (one tab per session, restored after a window reload) while the side bar shows a "chat is open in the editor area" notice with a move-back action.
+- 新增编辑器区聊天入口：命令面板的 **DSH: Open Chat in Editor Area** 将当前会话以编辑器标签打开（每个会话一个标签，窗口重载后恢复）；侧边栏保持可用，可独立新建、切换和发送会话消息。
+- Adds an editor-area chat entry point: **DSH: Open Chat in Editor Area** opens the current session as an editor tab (one tab per session, restored after a window reload); the side bar remains available to create, switch and send messages in its own session.
 - 新增聊天输入框命令 `/moveto:editor`（等同 `/moveto editor`）与 `/moveto:sidebar`，可在编辑器区与侧边栏之间移动聊天；未知目标只在本机报错，不会作为提示词发送。
 - Adds the composer commands `/moveto:editor` (same as `/moveto editor`) and `/moveto:sidebar` for moving the chat between the editor area and the side bar; an unknown target fails locally instead of being sent as a prompt.
 - 会话列表的每一行新增“在编辑器区打开”操作，可直接把该会话作为编辑器标签打开；重命名会话会同步更新已打开标签的标题。

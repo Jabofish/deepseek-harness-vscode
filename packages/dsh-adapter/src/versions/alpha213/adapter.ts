@@ -4,9 +4,10 @@ import type { AlphaLoopbackApiClient, AlphaLoopbackApiClientOptions } from '../a
 import { Alpha212VersionAdapter } from '../alpha212/adapter.js'
 import { normalizeAlpha213ErrorCode } from './error-vocabulary.js'
 import { Alpha213PluginBundleRepository } from './plugin-manager-repository.js'
+import { alpha213SessionProfile } from './session-wire.js'
 
 /** dsh-v0.2.1-alpha.3 / 2fbf4359b82fb94c03dcce0b831660d87f12ea5c.
- * V4 codec sources are unchanged from alpha.2; Workspace and Gateway are not.
+ * The V4 codec is unchanged, while its event vocabulary adds durable Job facts.
  */
 export class Alpha213VersionAdapter extends Alpha212VersionAdapter {
   protected override readonly identity: VersionAdapterIdentity = {
@@ -20,6 +21,7 @@ export class Alpha213VersionAdapter extends Alpha212VersionAdapter {
   protected override createTransportOptions(endpoint: BackendEndpoint): AlphaLoopbackApiClientOptions {
     return {
       ...super.createTransportOptions(endpoint),
+      sessionWireProfile: alpha213SessionProfile,
       workspaceWireVersion: 'pinned-replace-v3',
       normalizeErrorCode: normalizeAlpha213ErrorCode,
     }

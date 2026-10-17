@@ -39,6 +39,7 @@
   "activationEvents": [
     "onView:dsh.chatView",
     "onWebviewPanel:dsh.chatPanel",
+    "onCustomEditor:dsh.sessionDrop",
     "onCommand:dsh.connect",
     "onCommand:dsh.reconnect",
     "onCommand:dsh.newSession",
@@ -74,6 +75,18 @@
     "@types/ws": "8.18.1"
   },
   "contributes": {
+    "customEditors": [
+      {
+        "viewType": "dsh.sessionDrop",
+        "displayName": "DeepSeek Harness Chat",
+        "selector": [
+          {
+            "filenamePattern": "*.dsh-chat"
+          }
+        ],
+        "priority": "default"
+      }
+    ],
     "viewsContainers": {
       "secondarySidebar": [
         {

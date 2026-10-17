@@ -42,6 +42,8 @@ export interface SessionControlsProps {
   /** False when the upstream preset registry hides new-session mode choice. */
   readonly presetSelectionEnabled?: boolean
   readonly permissionPresets: readonly string[]
+  /** Before session creation, choices update the draft instead of sending a command. */
+  readonly configurationDraft?: boolean
   /** Optional command directory; omitted means capability discovery is unavailable. */
   readonly commands?: readonly DynamicCommand[]
   readonly estimatedContextTokens?: number
@@ -135,7 +137,8 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
         : permissionOptions(permissionPreset, props.permissionPresets),
     [permissionPreset, props.permissionPresets, props.configuration.permissionPresetKnown],
   )
-  const permissionCommandAvailable = useMemo(() => hasCommand(props.commands, 'permission'), [props.commands])
+  const permissionCommandAvailable =
+    props.configurationDraft === true || hasCommand(props.commands, 'permission')
   const planCommandAvailable = useMemo(() => hasCommand(props.commands, 'plan'), [props.commands])
   const promptModeOptions = useMemo<SelectMenuOption[]>(
     () =>
@@ -180,15 +183,25 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
     (model: ModelSelection): void | Promise<void> => onChange({ ...configuration, model }),
     [configuration, onChange],
   )
+  const applyPermissionPreset = useCallback(
+    (preset: string): void => {
+      if (props.configurationDraft === true)
+        void Promise.resolve(
+          onChange({ ...configuration, permissionPreset: preset, permissionPresetKnown: true }),
+        ).catch(() => undefined)
+      else onCommand(`/permission ${preset}`)
+    },
+    [props.configurationDraft, onChange, configuration, onCommand],
+  )
   const handlePermissionChange = useCallback(
     (preset: string): void => {
       if (isFullAccessPreset(preset) || preset === 'auto') {
         setRiskState({ context: riskContext, pending: preset, acknowledged: false })
         return
       }
-      onCommand(`/permission ${preset}`)
+      applyPermissionPreset(preset)
     },
-    [onCommand, riskContext],
+    [applyPermissionPreset, riskContext],
   )
   const handlePlanToggle = useCallback(
     (): void => onCommand(configuration.planMode ? '/plan off' : '/plan'),
@@ -271,7 +284,7 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
               if (!riskAcknowledged) return
               const preset = riskPending
               cancelRisk()
-              props.onCommand(`/permission ${preset}`)
+              applyPermissionPreset(preset)
             }}
           >
             {t(riskPending === 'auto' ? 'controls.autoEnable' : 'controls.fullAccessEnable')}

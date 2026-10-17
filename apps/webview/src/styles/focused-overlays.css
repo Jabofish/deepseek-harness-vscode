@@ -1,9 +1,9 @@
 /* Portalled confirmations and feedback inherit the active frontend layout. */
 :root[data-dsh-conversation-layout='focused']
   :is(.dsh-session-dialog, .dsh-feedback-dialog, .dsh-presets__dialog) {
-  gap: 12px;
-  padding: 20px;
-  border-radius: 16px;
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-3);
+  border-radius: var(--dsh-radius-md);
 }
 
 :root[data-dsh-conversation-layout='focused'] :is(.dsh-session-dialog__title, .dsh-presets__dialog h3) {

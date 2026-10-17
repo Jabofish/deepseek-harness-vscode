@@ -32,7 +32,9 @@ export const GoalTodoStrip = memo(function GoalTodoStrip({
         <ol className="dsh-goal-strip__list">
           {goals.map((goal) => (
             <li key={goal.id}>
-              <span className="dsh-goal-strip__title">{goal.title}</span>
+              <span className="dsh-goal-strip__title" title={goal.title}>
+                {goal.title}
+              </span>
               <span className={`dsh-status-pill dsh-status-pill--${goal.status}`}>
                 {t(`goal.status.${goal.status}`)}
               </span>

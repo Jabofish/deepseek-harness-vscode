@@ -121,8 +121,13 @@ export class Alpha13AssistantStreamProjector {
     }
   }
 
-  public open(baselineValue: unknown, sessionId: string): readonly Alpha13ProjectedChunk[] {
+  public open(
+    baselineValue: unknown,
+    sessionId: string,
+    preserveProgress = false,
+  ): readonly Alpha13ProjectedChunk[] {
     const baseline = parseBaseline(baselineValue)
+    const previous = preserveProgress ? this.activeAttempt : undefined
     this.revision = baseline.revision
     this.transientSequence = 0
     this.pendingSettlements.clear()
@@ -142,14 +147,22 @@ export class Alpha13AssistantStreamProjector {
       nextIndex: attempt.nextIndex,
     }
     this.trimPublishedSequences()
-    return chunks.map((item, index) =>
+    const alreadyDelivered =
+      previous?.attemptId === attempt.attemptId &&
+      previous.startedAfterSeq === attempt.startedAfterSeq &&
+      previous.turn === attempt.turn &&
+      previous.step === attempt.step &&
+      previous.nextIndex <= attempt.nextIndex
+        ? previous.nextIndex
+        : 0
+    return chunks.slice(alreadyDelivered).map((item, offset) =>
       this.projectChunk(
         sessionId,
         {
           type: 'chunk',
           attemptId: attempt.attemptId,
           revision: baseline.revision,
-          index,
+          index: alreadyDelivered + offset,
           time: item.time,
           chunk: item.chunk,
         },
@@ -187,6 +200,13 @@ export class Alpha13AssistantStreamProjector {
 
   public acceptFrame(value: unknown, sessionId: string): readonly Alpha13ProjectorOutput[] {
     const frame = parseFrame(value)
+    // The upstream Session accumulator restarts revisions when the attached
+    // Agent lifecycle is replaced. Keep the follow-local delivery counter.
+    let released: readonly Alpha13ProjectorOutput[] = []
+    if (frame.type === 'start' && frame.revision === 1 && this.revision !== 0) {
+      released = this.releaseDurable()
+      this.revision = 0
+    }
     if (frame.revision !== this.revision + 1)
       throw new Error(`assistant stream skipped revision ${String(this.revision + 1)}`)
     this.revision = frame.revision
@@ -202,7 +222,7 @@ export class Alpha13AssistantStreamProjector {
         nextIndex: 0,
       }
       this.trimPublishedSequences()
-      return []
+      return released
     }
 
     const active = this.activeAttempt
@@ -240,6 +260,26 @@ export class Alpha13AssistantStreamProjector {
     this.publishedSequences.add(sequence)
     this.trimPublishedSequences()
     return [{ type: 'event', event: pending }]
+  }
+
+  /** A valid new attempt restores previews after an earlier attempt was unreadable. */
+  public resumeFrame(value: unknown, sessionId: string): readonly Alpha13ProjectorOutput[] {
+    const frame = parseFrame(value)
+    if (frame.type !== 'start' || frame.revision < 1)
+      throw new Error('assistant stream recovery needs a new attempt')
+    const pending = this.releaseDurable()
+    this.revision = frame.revision - 1
+    return [...pending, ...this.acceptFrame(frame, sessionId)]
+  }
+
+  /** Stop optional previews without losing an already received durable reply. */
+  public releaseDurable(): readonly Alpha13ProjectedDurableEvent[] {
+    const events = [...this.pendingSettlements.entries()].sort(([left], [right]) => left - right)
+    this.pendingSettlements.clear()
+    this.activeAttempt = undefined
+    for (const [sequence] of events) this.publishedSequences.add(sequence)
+    this.trimPublishedSequences()
+    return events.map(([, event]): Alpha13ProjectedDurableEvent => ({ type: 'event', event }))
   }
 
   private trimPublishedSequences(): void {

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const vscodeMock = vi.hoisted(() => {
   interface FakePanel {
     title: string
+    viewColumn: unknown
     visible: boolean
     readonly webview: {
       options: unknown
@@ -20,11 +21,16 @@ const vscodeMock = vi.hoisted(() => {
   }
   const panels: FakePanel[] = []
   const receiveListeners: ((message: unknown) => void)[] = []
-  const createWebviewPanel = (viewType: string, title: string): FakePanel => {
+  const createWebviewPanel = (
+    viewType: string,
+    title: string,
+    options: { viewColumn?: unknown } = {},
+  ): FakePanel => {
     void viewType
     const listeners = new Set<() => void>()
     const panel: FakePanel = {
       title,
+      viewColumn: options.viewColumn,
       visible: true,
       webview: {
         options: undefined,
@@ -42,7 +48,9 @@ const vscodeMock = vi.hoisted(() => {
         return { dispose: () => listeners.delete(listener) }
       },
       onDidChangeViewState: () => ({ dispose: () => undefined }),
-      reveal: () => undefined,
+      reveal: (column) => {
+        if (column !== undefined) panel.viewColumn = column
+      },
       dispose: () => {
         for (const listener of [...listeners]) listener()
       },
@@ -146,6 +154,17 @@ describe('EditorChatSurfaceManager', () => {
       'editor:session-1',
       'editor:session-2',
     ])
+  })
+
+  it('opens into the native drop group and moves an existing tab there without duplicating it', () => {
+    const harness = createHarness()
+    harness.manager.open('session-1', 'One', 2)
+    const panel = harness.lastPanel()
+    expect(panel.viewColumn).toBe(2)
+    harness.manager.open('session-1', 'One', 3)
+    expect(panel.viewColumn).toBe(3)
+    expect(harness.manager.count).toBe(1)
+    expect(vscodeMock.panels).toHaveLength(1)
   })
 
   it('cannot create or bind a late editor after disposal', () => {

@@ -23,12 +23,14 @@ export async function refreshSessions(
   isCurrent: () => boolean = () => true,
   awaitCatalogs = true,
 ): Promise<void> {
+  const rowsAtRead = new Map<string, SessionSummary>()
   if (isCurrent())
-    setState((current) =>
-      current.sessionDirectoryStatus === 'ready'
+    setState((current) => {
+      for (const session of current.sessions) rowsAtRead.set(session.id, session)
+      return current.sessionDirectoryStatus === 'ready'
         ? current
-        : { ...current, sessionDirectoryStatus: 'loading' },
-    )
+        : { ...current, sessionDirectoryStatus: 'loading' }
+    })
   const criticalResults = Promise.allSettled([
     client.request<unknown>({
       type: 'session.list',
@@ -73,13 +75,20 @@ export async function refreshSessions(
       current.activeSessionId === undefined
         ? undefined
         : current.sessions.find((session) => session.id === current.activeSessionId)
+    const liveRows = new Map(current.sessions.map((session) => [session.id, session]))
     const nextSessions = deduplicateSessionSummaries(
       activeSession !== undefined &&
         !archived.has(activeSession.id) &&
         !listedSessions.some((session) => session.id === activeSession.id)
         ? [...listedSessions, activeSession]
         : listedSessions,
-    )
+    ).map((session) => {
+      const live = liveRows.get(session.id)
+      // A late advisory list cannot roll back a newer runtime/Turn event.
+      return live !== undefined && live !== rowsAtRead.get(session.id) && live.status !== session.status
+        ? { ...session, status: live.status }
+        : session
+    })
     const stableSessions = sameSessionSummaryList(current.sessions, nextSessions)
       ? current.sessions
       : nextSessions

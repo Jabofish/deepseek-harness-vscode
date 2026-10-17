@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { id, requestBase, session, promptSchema, agentConfigurationSchema } from './request-common.js'
 
 export const sessionRequestSchemas = [
+  z.object({ type: z.literal('permissions.presets.list'), ...requestBase }).strict(),
   z
     .object({
       type: z.literal('session.transcript.resync'),

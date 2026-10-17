@@ -151,6 +151,31 @@ describe('useScrollFollow user jump', () => {
     expect(viewport.scrollTop).toBe(600)
   })
 
+  it('keeps following after nonzero measurement clamps and duplicate Chromium scroll events', () => {
+    vi.useFakeTimers()
+    const { viewport } = renderHarness(true)
+    setScrollMetrics(viewport, 600, 1_000, 400)
+    fireEvent.click(screen.getByRole('button', { name: 'Preserve layout' }))
+    viewport.scrollTop = 350
+    fireEvent.scroll(viewport)
+    fireEvent.scroll(viewport)
+    act(() => {
+      vi.runAllTimers()
+    })
+    expect(viewport.scrollTop).toBe(600)
+    fireEvent.scroll(viewport)
+    fireEvent.scroll(viewport)
+    expect(screen.getByTestId('jump-state').getAttribute('data-visible')).toBe('false')
+    fireEvent.wheel(viewport, { deltaY: -60 })
+    viewport.scrollTop = 350
+    fireEvent.scroll(viewport)
+    act(() => {
+      vi.runAllTimers()
+    })
+    expect(viewport.scrollTop).toBe(350)
+    expect(screen.getByTestId('jump-state').getAttribute('data-visible')).toBe('true')
+  })
+
   it('preserves a free reader across notification resizing', () => {
     vi.useFakeTimers()
     const resize = stubViewportResize()
@@ -212,9 +237,17 @@ function stubViewportResize(): (target: Element, height: number) => void {
   }
 }
 
-function renderHarness(): { viewport: HTMLDivElement; scrollTo: ReturnType<typeof vi.fn> } {
+function renderHarness(layoutMeasurementsActive = false): {
+  viewport: HTMLDivElement
+  scrollTo: ReturnType<typeof vi.fn>
+} {
   function Harness(): ReactElement {
-    const follow = useScrollFollow({ contentKey: 'tail', itemCount: 1, sessionId: 'session-1' })
+    const follow = useScrollFollow({
+      contentKey: 'tail',
+      itemCount: 1,
+      sessionId: 'session-1',
+      layoutMeasurementsActive,
+    })
     return (
       <>
         <div ref={follow.scrollRef} data-testid="viewport" onScroll={follow.handleScroll}>

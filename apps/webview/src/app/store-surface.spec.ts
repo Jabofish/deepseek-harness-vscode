@@ -4,7 +4,6 @@ import { describe, expect, it, vi } from 'vitest'
 import type { HostEvent, HostMessage, WebviewRequest } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
 import { createHostBackedAppStore as createAppStore } from '../test/host-window-store.js'
-import { isHandoffSidebar } from './store/surface-actions.js'
 
 /**
  * A scripted host that answers the ordinary startup/open traffic and can push
@@ -66,7 +65,7 @@ function surfaceResponse(request: WebviewRequest): unknown {
     case 'session.list':
       return { items: [session] }
     case 'workspace.list':
-      return { items: [] }
+      return []
     case 'subagent.list':
       return { entries: [], parentAvailable: true }
     case 'models.session.list':
@@ -94,18 +93,16 @@ describe('AppStore surface identity', () => {
   it('creates and sends a first message in an editor after updating the Host binding', async () => {
     const client = new SurfaceClient((request) => {
       if (request.type === 'workspace.list')
-        return {
-          items: [
-            {
-              id: 'workspace-1',
-              name: 'Workspace',
-              sessionIds: ['s1'],
-              sessionCount: 1,
-              createdAt: session.createdAt,
-              updatedAt: session.updatedAt,
-            },
-          ],
-        }
+        return [
+          {
+            id: 'workspace-1',
+            name: 'Workspace',
+            sessionIds: ['s1'],
+            sessionCount: 1,
+            createdAt: session.createdAt,
+            updatedAt: session.updatedAt,
+          },
+        ]
       if (request.type === 'session.create') return { id: 's2' }
       return surfaceResponse(request)
     })
@@ -289,6 +286,7 @@ describe('AppStore bound-session startup', () => {
     const store = createAppStore(client as unknown as ProtocolClient)
     try {
       client.emit('ui.surface.assigned', { kind: 'sidebar' })
+      client.emit('connection.snapshot', { kind: 'connected' })
 
       await store.initialize()
 
@@ -316,8 +314,8 @@ describe('AppStore move-to-sidebar action', () => {
   })
 })
 
-describe('AppStore handoff side-bar session routing', () => {
-  it('opens a picked session as a new editor tab instead of the hidden chat', async () => {
+describe('AppStore independent side-bar session routing', () => {
+  it('opens an editor tab only when explicitly requested', async () => {
     const client = new SurfaceClient()
     const store = createAppStore(client as unknown as ProtocolClient)
     try {
@@ -337,7 +335,7 @@ describe('AppStore handoff side-bar session routing', () => {
     }
   })
 
-  it('routes an ordinary open through the editor area while handed off', async () => {
+  it('opens a selected session in the sidebar even with editor chats open', async () => {
     const client = new SurfaceClient()
     const store = createAppStore(client as unknown as ProtocolClient)
     try {
@@ -346,14 +344,11 @@ describe('AppStore handoff side-bar session routing', () => {
       await store.refreshSessions()
       client.requests.length = 0
 
-      // The session list, the task centre and a session mention all open
-      // through this one call: in this posture the conversation is not on
-      // screen here, so the request must become an editor tab.
       await store.openSession('s1')
 
-      expect(requestsOfType(client, 'surface.openInEditor')).toHaveLength(1)
-      expect(requestsOfType(client, 'session.open')).toHaveLength(0)
-      expect(store.getState().activeSessionId).toBeUndefined()
+      expect(requestsOfType(client, 'surface.openInEditor')).toHaveLength(0)
+      expect(requestsOfType(client, 'session.open')).toHaveLength(1)
+      expect(store.getState().activeSessionId).toBe('s1')
     } finally {
       store.dispose()
     }
@@ -374,11 +369,47 @@ describe('AppStore handoff side-bar session routing', () => {
     }
   })
 
-  it('classifies the handed-off side bar from the surface and the tab count', () => {
-    expect(isHandoffSidebar({ surface: { kind: 'sidebar' }, editorChats: 1 })).toBe(true)
-    expect(isHandoffSidebar({ surface: undefined, editorChats: 2 })).toBe(true)
-    expect(isHandoffSidebar({ surface: { kind: 'editor', sessionId: 's1' }, editorChats: 1 })).toBe(false)
-    expect(isHandoffSidebar({ surface: { kind: 'sidebar' }, editorChats: 0 })).toBe(false)
+  it('creates and sends a sidebar session without rebinding or opening an editor tab', async () => {
+    const client = new SurfaceClient((request) => {
+      if (request.type === 'workspace.list')
+        return [
+          {
+            id: 'workspace-1',
+            name: 'Workspace',
+            sessionCount: 1,
+            createdAt: session.createdAt,
+            updatedAt: session.updatedAt,
+          },
+        ]
+      if (request.type === 'session.create') return { id: 's2' }
+      return surfaceResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+    try {
+      client.emit('ui.surface.assigned', { kind: 'sidebar' })
+      await store.refreshSessions()
+      await store.openSession('s1')
+      await store.openSessionInEditor('s1')
+      expect(store.getState().activeSessionId).toBe('s1')
+      client.emit('ui.surface.handoff', { editorChats: 1 })
+      client.requests.length = 0
+
+      await store.stageSession('workspace-1')
+      expect(store.getState().pendingSession?.workspaceId).toBe('workspace-1')
+      expect(requestsOfType(client, 'session.create')).toHaveLength(0)
+      // A later editor lifecycle notification must not take over the new draft.
+      client.emit('ui.surface.handoff', { editorChats: 2 })
+      await store.sendPendingPrompt('A separate task', [], 'queue')
+
+      expect(store.getState().activeSessionId).toBe('s2')
+      expect(requestsOfType(client, 'surface.openInEditor')).toHaveLength(0)
+      expect(requestsOfType(client, 'surface.moveToSidebar')).toHaveLength(0)
+      expect(requestsOfType(client, 'session.sendPrompt')).toMatchObject([
+        { payload: { sessionId: 's2', text: 'A separate task' } },
+      ])
+    } finally {
+      store.dispose()
+    }
   })
 })
 
@@ -413,7 +444,6 @@ describe('AppStore /moveto client command', () => {
       client.emit('ui.surface.handoff', { editorChats: 2 })
       client.emit('ui.surface.openInSidebar', { sessionId: 's2' })
       await vi.waitFor(() => expect(store.getState().activeSessionId).toBe('s2'))
-      expect(isHandoffSidebar(store.getState())).toBe(false)
       await store.openSession('s3')
       expect(store.getState().activeSessionId).toBe('s3')
       expect(requestsOfType(client, 'surface.openInEditor')).toHaveLength(0)

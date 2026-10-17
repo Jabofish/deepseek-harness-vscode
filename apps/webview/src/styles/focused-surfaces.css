@@ -254,27 +254,26 @@
 }
 
 .dsh-app[data-conversation-layout='focused']
-  :is(
-    .dsh-timeline__card--event,
-    .dsh-timeline__command-input,
-    .dsh-goal-bar,
-    .dsh-goal-strip,
-    .dsh-submitted-plan,
-    .dsh-queue
-  ) {
+  :is(.dsh-timeline__card--event, .dsh-timeline__command-input, .dsh-submitted-plan) {
   padding: 8px 12px;
   border: 0;
   border-radius: 12px;
   background: var(--dsh-surface-soft);
 }
 
+.dsh-app[data-conversation-layout='focused'] :is(.dsh-goal-bar, .dsh-queue) {
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  border: 0;
+  border-radius: var(--dsh-radius-md);
+  background: var(--dsh-surface-soft);
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-queue {
+  padding-inline: 0;
+}
+
 .dsh-app[data-conversation-layout='focused']
-  :is(
-    .dsh-submitted-plan > summary,
-    .dsh-goal-strip__heading,
-    .dsh-timeline__event-title,
-    .dsh-timeline__card-heading strong
-  ) {
+  :is(.dsh-submitted-plan > summary, .dsh-timeline__event-title, .dsh-timeline__card-heading strong) {
   font-size: var(--dsh-font-size-sm);
   font-weight: 500;
 }
@@ -298,9 +297,9 @@
 }
 
 .dsh-app[data-conversation-layout='focused'] .dsh-interaction {
-  gap: 12px;
-  padding: 16px;
-  border-radius: 16px;
+  gap: var(--dsh-space-1);
+  padding: var(--dsh-space-2);
+  border-radius: var(--dsh-radius-md);
   background: var(--dsh-surface-soft);
 }
 
@@ -310,19 +309,13 @@
 }
 
 .dsh-app[data-conversation-layout='focused']
-  :is(
-    .dsh-interaction__description,
-    .dsh-interaction__risk,
-    .dsh-approval__takeover,
-    .dsh-question__prompt,
-    .dsh-question__detail
-  ) {
+  :is(.dsh-interaction__description, .dsh-interaction__risk, .dsh-question__prompt, .dsh-question__detail) {
   margin: 0;
 }
 
 .dsh-app[data-conversation-layout='focused'] .dsh-question__choice {
-  padding: 8px 12px;
-  border-radius: 10px;
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  border-radius: var(--dsh-radius-sm);
   background: transparent;
 }
 
@@ -336,7 +329,7 @@
   outline-offset: 2px;
 }
 
-.dsh-app[data-conversation-layout='focused'] :is(.dsh-approval__takeover, .dsh-question__field) {
+.dsh-app[data-conversation-layout='focused'] .dsh-question__field {
   border-radius: 8px;
   background: var(--dsh-input-bg);
 }
