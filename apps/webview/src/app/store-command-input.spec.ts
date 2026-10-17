@@ -1,9 +1,12 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it } from 'vitest'
-import type { HostMessage, WebviewRequest } from '@dsh-vscode/webview-protocol'
+import type { HostMessage } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
-import { createAppStore } from './store.js'
+import {
+  createHostBackedAppStore as createAppStore,
+  type FixtureRequest as WebviewRequest,
+} from '../test/host-window-store.js'
 
 const SESSION_ID = 'session-command'
 
@@ -73,7 +76,7 @@ function commandInputOf(store: ReturnType<typeof createAppStore>): string | unde
 }
 
 describe('AppStore command input rows', () => {
-  it('keeps a slash-command line longer than 4096 characters', async () => {
+  it('marks an oversized slash-command line as a bounded preview', async () => {
     const client = new StreamClient()
     const store = createAppStore(client as unknown as ProtocolClient)
     await store.openSession(SESSION_ID)
@@ -103,7 +106,10 @@ describe('AppStore command input rows', () => {
     })
     await settle()
 
-    expect(commandInputOf(store)).toBe(commandInput)
+    expect(commandInputOf(store)).toBe(commandInput.slice(0, 4096))
+    expect(store.getState().transcript?.omittedNodeIds).toContain(
+      store.timeline.nodes.find((node) => node.kind === 'command-input')?.id,
+    )
     store.dispose()
   })
 })

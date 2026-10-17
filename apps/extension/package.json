@@ -62,6 +62,7 @@
   "dependencies": {
     "@dsh-vscode/application": "workspace:*",
     "@dsh-vscode/domain": "workspace:*",
+    "@dsh-vscode/timeline": "workspace:*",
     "@dsh-vscode/dsh-adapter": "workspace:*",
     "@dsh-vscode/webview-protocol": "workspace:*",
     "undici": "7.29.0",

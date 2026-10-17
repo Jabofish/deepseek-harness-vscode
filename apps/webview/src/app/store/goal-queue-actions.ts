@@ -2,12 +2,11 @@ import type { GoalView } from '@dsh-vscode/domain'
 
 import type { ProtocolClient } from '../protocol-client.js'
 import { requestId } from './ids.js'
-import type { AppState, StateSetter } from './types.js'
+import type { AppState } from './types.js'
 
 export interface GoalQueueActionDependencies {
   readonly client: ProtocolClient
   readonly getState: () => AppState
-  readonly setState: StateSetter
   readonly refreshGoals: () => Promise<void>
 }
 
@@ -25,7 +24,7 @@ export interface GoalQueueActions {
 }
 
 export function createGoalQueueActions(dependencies: GoalQueueActionDependencies): GoalQueueActions {
-  const { client, getState, setState, refreshGoals } = dependencies
+  const { client, getState, refreshGoals } = dependencies
 
   const updateGoal = async (
     goalId: string,
@@ -38,10 +37,6 @@ export function createGoalQueueActions(dependencies: GoalQueueActionDependencies
       requestId: requestId(),
       payload: { goalId, ...update },
     })
-    setState((current) => ({
-      ...current,
-      goals: current.goals.map((goal) => (goal.id === goalId ? { ...goal, ...update } : goal)),
-    }))
     await refreshGoals()
   }
 
@@ -51,10 +46,7 @@ export function createGoalQueueActions(dependencies: GoalQueueActionDependencies
       requestId: requestId(),
       payload: { goalId },
     })
-    setState((current) => ({
-      ...current,
-      goals: current.goals.filter((goal) => goal.id !== goalId),
-    }))
+    await refreshGoals()
   }
 
   const updateQueue = (inputId: string, text: string): Promise<void> =>

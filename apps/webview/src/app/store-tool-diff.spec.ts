@@ -1,9 +1,12 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it } from 'vitest'
-import type { HostMessage, WebviewRequest } from '@dsh-vscode/webview-protocol'
+import type { HostMessage } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
-import { createAppStore } from './store.js'
+import {
+  createHostBackedAppStore as createAppStore,
+  type FixtureRequest as WebviewRequest,
+} from '../test/host-window-store.js'
 
 const SESSION_ID = 'session-diff'
 
@@ -249,7 +252,7 @@ describe('store tool diff hunk windows', () => {
 })
 
 describe('store tool presentation text', () => {
-  it('keeps a written file longer than 4096 characters in the diff card', async () => {
+  it('marks an oversized diff as a preview', async () => {
     const client = new StreamClient()
     const store = createAppStore(client as unknown as ProtocolClient)
     await store.openSession(SESSION_ID)
@@ -287,12 +290,13 @@ describe('store tool presentation text', () => {
 
     expect(presentationOf(store, 'call-long-write')).toMatchObject({
       card: 'diff',
-      diffs: [{ path: 'notes.md', oldText: null, newText: file }],
+      diffs: [{ path: 'notes.md', oldText: null, newText: file.slice(0, 4096) }],
     })
+    expect(store.getState().transcript?.omittedNodeIds).toContain('call-long-write')
     store.dispose()
   })
 
-  it('keeps a terminal output longer than 4096 characters', async () => {
+  it('marks oversized terminal output as a preview', async () => {
     const client = new StreamClient()
     const store = createAppStore(client as unknown as ProtocolClient)
     await store.openSession(SESSION_ID)
@@ -331,9 +335,10 @@ describe('store tool presentation text', () => {
     expect(presentationOf(store, 'call-long-output')).toMatchObject({
       card: 'terminal',
       title: 'pnpm test',
-      output,
+      output: output.slice(0, 4096),
       exitCode: 0,
     })
+    expect(store.getState().transcript?.omittedNodeIds).toContain('call-long-output')
     store.dispose()
   })
 })

@@ -2,9 +2,12 @@
 
 import { describe, expect, it } from 'vitest'
 import type { SessionDetail, SessionSummary } from '@dsh-vscode/domain'
-import type { HostMessage, WebviewRequest } from '@dsh-vscode/webview-protocol'
+import type { HostMessage } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
-import { createAppStore } from './store.js'
+import {
+  createHostBackedAppStore as createAppStore,
+  type FixtureRequest as WebviewRequest,
+} from '../test/host-window-store.js'
 
 const SESSION = 'fresh-summary'
 const CREATED = 1_700_000_000_000

@@ -64,11 +64,6 @@ const gatewayRequestBody = handlerBody(
   'const router = new WebviewMessageRouter({',
 )
 const handleRequestBody = [gatewayRequestBody, SESSION_HANDLER_SOURCE, ATTACHMENT_HANDLER_SOURCE].join('\n')
-const sessionHistoryRequestBody = handlerBody(
-  SESSION_HANDLER_SOURCE,
-  "if (request.type === 'session.history') {",
-  "if (request.type === 'session.create') {",
-)
 const jobFollowStartBody = handlerBody(JOB_FOLLOW_HOST_SOURCE, 'const startJobFollow = ')
 
 describe('feature route coverage', () => {
@@ -97,9 +92,10 @@ describe('webview route coverage', () => {
     expect(jobFollowStartBody).toContain('resolveJobFollowOffset(job, requestedFrom)')
   })
 
-  it('forwards explicit session history purpose without forcing turn alignment', () => {
-    expect(sessionHistoryRequestBody).toContain('request.payload.pagePurpose')
-    expect(sessionHistoryRequestBody).not.toMatch(/turnAligned\s*:\s*true/u)
+  it('does not expose a raw history route or an optional transcript fallback', () => {
+    expect(declaredTypes(webviewRequestSchema)).not.toContain('session.history')
+    expect(SESSION_HANDLER_SOURCE).not.toContain("request.type === 'session.history'")
+    expect(SESSION_HANDLER_SOURCE).not.toContain('transcript === undefined')
   })
 
   it('dispatches every declared request', () => {

@@ -1,8 +1,9 @@
 import type { VersionAdapterIdentity } from '../../adapter-base.js'
-import type { ScheduleRepository } from '@dsh-vscode/domain'
+import type { BackendEvent, ScheduleRepository, SessionProjectionValues } from '@dsh-vscode/domain'
 import type { AlphaLoopbackApiClient } from '../alpha/transport.js'
 import { Rc172VersionAdapter } from '../rc172/adapter.js'
 import { Rc201ScheduleRepository } from './schedule-repository.js'
+import { mapRc201BackendEvent, mapRc201ProjectionValues } from './todo-projection.js'
 
 /**
  * Exact adapter for DSH dsh-v0.2.0-rc.1 at
@@ -22,5 +23,13 @@ export class Rc201VersionAdapter extends Rc172VersionAdapter {
 
   protected override createScheduleRepository(transport: AlphaLoopbackApiClient): ScheduleRepository {
     return new Rc201ScheduleRepository(transport)
+  }
+
+  protected override mapProjectionValues(values: Readonly<Record<string, unknown>>): SessionProjectionValues {
+    return mapRc201ProjectionValues(super.mapProjectionValues(values))
+  }
+
+  protected override mapBackendEvent(event: BackendEvent): BackendEvent {
+    return mapRc201BackendEvent(super.mapBackendEvent(event))
   }
 }

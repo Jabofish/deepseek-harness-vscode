@@ -84,6 +84,7 @@ export interface TimelineProps {
   readonly hasMoreHistory?: boolean
   readonly loadingOlderHistory?: boolean
   readonly onLoadOlderHistory?: () => Promise<void> | void
+  readonly pagedHistory?: boolean
   readonly revealTarget?: { readonly nodeId: string; readonly requestId: string }
 }
 
@@ -474,8 +475,9 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
   }, [captureScrollAnchor, hasMoreHistory, loadingOlderHistory, onLoadOlderHistory, props.sessionId])
   const handleScroll = useCallback((): void => {
     const element = scrollRef.current
-    if (element !== null && element.scrollTop <= 24 && isUserScrollActive()) loadOlderHistory()
-  }, [isUserScrollActive, loadOlderHistory, scrollRef])
+    if (props.pagedHistory !== true && element !== null && element.scrollTop <= 24 && isUserScrollActive())
+      loadOlderHistory()
+  }, [isUserScrollActive, loadOlderHistory, scrollRef, props.pagedHistory])
 
   const hasLoadImage = props.onLoadImage !== undefined
   const hasShowInFolder = props.onShowInFolder !== undefined

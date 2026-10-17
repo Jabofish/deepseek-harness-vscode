@@ -10,7 +10,7 @@ import {
   type ToolPresentationSource,
   type ToolPresentationView,
 } from '@dsh-vscode/domain'
-import { isRecord, object } from './unknown-record.js'
+import { isRecord, object } from '../../app/store/unknown-record.js'
 
 /** Keep the Webview boundary closed over the adapter-owned structured card. */
 export function parseToolPresentation(value: unknown): ToolPresentationView | undefined {

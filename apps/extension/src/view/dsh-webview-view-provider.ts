@@ -21,6 +21,7 @@ export interface DshWebviewDependencies {
   readonly onSurfaceClosed?: () => void
   /** Host-assigned identity; defaults to the sidebar surface. */
   readonly surfaceId?: string
+  readonly onVisibilityChanged?: (visible: boolean) => void
 }
 
 /**
@@ -91,6 +92,7 @@ export class DshWebviewViewProvider implements vscode.WebviewViewProvider, Webvi
       webviewView.onDidChangeVisibility(() => {
         if (this.view !== webviewView) return
         this.isVisible = webviewView.visible
+        this.dependencies.onVisibilityChanged?.(this.isVisible && this.isReady)
       }),
     )
   }

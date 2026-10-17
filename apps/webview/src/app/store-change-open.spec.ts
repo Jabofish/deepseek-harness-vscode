@@ -1,14 +1,12 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it, vi } from 'vitest'
-import type {
-  FeatureHostEvent,
-  FeatureRequest,
-  HostMessage,
-  WebviewRequest,
-} from '@dsh-vscode/webview-protocol'
+import type { FeatureHostEvent, FeatureRequest, HostMessage } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
-import { createAppStore } from './store.js'
+import {
+  createHostBackedAppStore as createAppStore,
+  type FixtureRequest as WebviewRequest,
+} from '../test/host-window-store.js'
 
 const SESSION_ID = 'session-change-open'
 const WORKSPACE_ID = 'workspace-change-open'

@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import type { HostMessage, FeatureHostEvent } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
-import { createAppStore } from './store.js'
+import { createHostBackedAppStore as createAppStore } from '../test/host-window-store.js'
 
 class TurnEventsClient {
   private readonly listeners = new Set<(message: HostMessage) => void>()

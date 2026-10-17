@@ -308,7 +308,6 @@ export function GeneralSettingsTab(input: GeneralSettingsTabProps): ReactElement
           <div className="dsh-settings__runtime-update-head">
             <div>
               <h3>{t('settings.dshUpdateTitle')}</h3>
-              <p>{t('settings.dshUpdateHint')}</p>
             </div>
             <button
               className="dsh-button dsh-button--secondary dsh-button--compact dsh-settings__runtime-update-check"
@@ -583,7 +582,6 @@ export function GeneralSettingsTab(input: GeneralSettingsTabProps): ReactElement
           />
         )}
       </SettingCard>
-      <p className="dsh-settings__note">{t('settings.hostNote')}</p>
       {dshState.status === 'ready' && dshState.snapshot.schema.hasDocument ? (
         <div className="dsh-settings__document-action">
           <button

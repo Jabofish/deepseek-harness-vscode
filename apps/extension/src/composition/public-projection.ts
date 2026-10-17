@@ -96,8 +96,8 @@ export function safeStateMessage(message: string): string {
 export function publicList(value: readonly unknown[]): readonly unknown[] {
   return value.map((item) => publicValue(item))
 }
-export function publicValue(value: unknown, roots: readonly string[] = []): unknown {
-  return sanitizePublicValue(value, undefined, roots)
+export function publicValue(value: unknown, roots: readonly string[] = [], sessionCwd?: string): unknown {
+  return sanitizePublicValue(value, undefined, roots, sessionCwd)
 }
 
 export function publicExtensionSettings(

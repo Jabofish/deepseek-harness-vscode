@@ -1,3 +1,4 @@
+import { transcriptWindowFixture } from '../view/transcript-window.fixture.js'
 import { createServer, type ServerResponse } from 'node:http'
 import { WebSocketServer } from 'ws'
 import { describe, expect, it, vi } from 'vitest'
@@ -116,6 +117,7 @@ describe('interaction cancellation through the Host and real alpha transport', (
         postEvent: () => Promise.resolve(true),
         postEventTo: () => Promise.resolve(true),
         surfaces: new WebviewSurfaceRegistry(),
+        transcript: transcriptWindowFixture(),
         post: (message: unknown) => {
           posted.push(message)
           return Promise.resolve(true)

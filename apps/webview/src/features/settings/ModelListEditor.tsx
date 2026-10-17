@@ -186,7 +186,6 @@ export function ModelListEditor(props: ModelListEditorProps): ReactElement {
           </button>
         </div>
       </div>
-      <p className="dsh-settings__model-editor-note">{t('settings.modelsEditorNote')}</p>
       {draft.length === 0 ? <p className="dsh-settings__empty">{t('settings.noConfiguredModels')}</p> : null}
       <ul className="dsh-settings__editable-models">
         {draft.map((model, index) => {

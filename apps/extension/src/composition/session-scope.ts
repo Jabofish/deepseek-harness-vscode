@@ -265,8 +265,16 @@ export function createSessionScope(deps: SessionScopeDependencies): SessionScope
           }),
         )
       loadSignal.throwIfAborted()
-      if (generation === currentWorkspaceSessionGeneration && options.allowArchived !== true)
-        currentWorkspaceSessionDetails.set(sessionId, { generation, detail })
+      if (generation === currentWorkspaceSessionGeneration && options.allowArchived !== true) {
+        // Ownership/advisory reads need metadata, never a retained transcript body.
+        const { history: _history, ...metadata } = detail
+        void _history
+        currentWorkspaceSessionDetails.delete(sessionId)
+        if (JSON.stringify(metadata).length <= 256 * 1024)
+          currentWorkspaceSessionDetails.set(sessionId, { generation, detail: metadata })
+        while (currentWorkspaceSessionDetails.size > 16)
+          currentWorkspaceSessionDetails.delete(currentWorkspaceSessionDetails.keys().next().value!)
+      }
       return detail
     })()
     // Recovery reads stay out of the shared in-flight map, mirroring the cache

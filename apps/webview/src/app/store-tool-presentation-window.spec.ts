@@ -2,9 +2,12 @@
 
 import { describe, expect, it } from 'vitest'
 import type { ToolCallView } from '@dsh-vscode/domain'
-import type { HostMessage, WebviewRequest } from '@dsh-vscode/webview-protocol'
+import type { HostMessage } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
-import { createAppStore } from './store.js'
+import {
+  createHostBackedAppStore as createAppStore,
+  type FixtureRequest as WebviewRequest,
+} from '../test/host-window-store.js'
 
 const SESSION_ID = 'session-presentation-window'
 
@@ -88,7 +91,7 @@ function readLines(value: unknown): readonly { readonly number: number; readonly
 }
 
 describe('store tool presentation windows', () => {
-  it('keeps every line of a read window the host is allowed to return', async () => {
+  it('marks a bounded read preview without claiming that it contains the full window', async () => {
     const client = new StreamClient()
     const store = createAppStore(client as unknown as ProtocolClient)
     await store.openSession(SESSION_ID)
@@ -129,11 +132,12 @@ describe('store tool presentation windows', () => {
     await settle()
 
     const kept = readLines(presentationOf(store, 'call-read-window'))
-    expect(kept).toHaveLength(2_000)
-    expect(kept.at(-1)).toEqual({ number: 2_000, text: 'line 2000 of the pinned read window' })
+    expect(kept).toHaveLength(64)
+    expect(store.getState().transcript?.omittedNodeIds).toContain('call-read-window')
+    expect(kept.at(-1)).toEqual({ number: 64, text: 'line 64 of the pinned read window' })
   })
 
-  it('keeps every match group of a capped grep result', async () => {
+  it('marks a bounded search preview without claiming all match groups are resident', async () => {
     const client = new StreamClient()
     const store = createAppStore(client as unknown as ProtocolClient)
     await store.openSession(SESSION_ID)
@@ -177,8 +181,9 @@ describe('store tool presentation windows', () => {
       readonly files?: readonly { readonly matches: readonly unknown[] }[]
     }
     expect(presentation.card).toBe('search')
-    expect(presentation.files).toHaveLength(250)
-    expect(presentation.files?.reduce((sum, file) => sum + file.matches.length, 0)).toBe(250)
+    expect(presentation.files).toHaveLength(64)
+    expect(presentation.files?.reduce((sum, file) => sum + file.matches.length, 0)).toBe(64)
+    expect(store.getState().transcript?.omittedNodeIds).toContain('call-grep-window')
   })
 
   it('preserves a validated Auto review denial through the Webview event projection', async () => {

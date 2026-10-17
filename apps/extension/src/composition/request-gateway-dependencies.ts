@@ -24,8 +24,11 @@ import type { AttachmentStore } from '../attachments/attachment-store.js'
 import type { WebviewSurfaceRegistry } from '../view/webview-surface-registry.js'
 import type { SessionScope } from './session-scope.js'
 import type { PostHostMessage, PostHostMessageTo, PostSurfaceEvent } from './host-event-pipeline.js'
+import type { TranscriptWindowRegistry } from '../view/transcript-window-registry.js'
 
 export interface RequestGatewayDependencies {
+  readonly transcript: TranscriptWindowRegistry
+  readonly resyncView?: () => Promise<void>
   readonly post: PostHostMessage
   readonly postTo: PostHostMessageTo
   readonly postEvent: (name: string, payload: unknown) => Promise<boolean>

@@ -3,7 +3,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { HostEvent, HostMessage, WebviewRequest } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
-import { createAppStore } from './store.js'
+import { createHostBackedAppStore as createAppStore } from '../test/host-window-store.js'
 import { isHandoffSidebar } from './store/surface-actions.js'
 
 /**

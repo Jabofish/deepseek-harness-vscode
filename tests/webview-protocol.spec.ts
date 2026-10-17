@@ -38,52 +38,40 @@ describe('attachment ingest schema', () => {
     ).toBe(true)
   })
 
-  it('accepts bounded DSH history paging intent and rejects invalid cursors or intent', () => {
-    expect(
-      webviewRequestSchema.safeParse({
-        type: 'session.history',
-        requestId: 'history-1',
-        payload: {
-          sessionId: 'session-1',
-          beforeSeq: 20,
-          maxMessages: 200,
-          pagePurpose: 'transcript',
-        },
-      }).success,
-    ).toBe(true)
-    expect(
-      webviewRequestSchema.safeParse({
-        type: 'session.history',
-        requestId: 'history-gap-recovery',
-        payload: { sessionId: 'session-1', pagePurpose: 'gap-recovery' },
-      }).success,
-    ).toBe(true)
-    expect(
-      webviewRequestSchema.safeParse({
-        type: 'session.history',
-        requestId: 'history-2',
-        payload: { sessionId: 'session-1', beforeSeq: -1 },
-      }).success,
-    ).toBe(false)
-    expect(
-      webviewRequestSchema.safeParse({
-        type: 'session.history',
-        requestId: 'history-invalid-purpose',
-        payload: { sessionId: 'session-1', pagePurpose: 'unknown' },
-      }).success,
-    ).toBe(false)
+  it('rejects retired raw history access and pages through bounded transcript windows', () => {
+    for (const payload of [
+      { sessionId: 's' },
+      { sessionId: 's', beforeSeq: 20, maxMessages: 200, pagePurpose: 'transcript' },
+    ])
+      expect(
+        webviewRequestSchema.safeParse({ type: 'session.history', requestId: 'retired', payload }).success,
+      ).toBe(false)
     expect(
       webviewRequestSchema.safeParse({
         type: 'subagent.history',
-        requestId: 'subagent-history-1',
-        payload: { sessionId: 'child-1', beforeSeq: 20, maxMessages: 200 },
+        requestId: 'open',
+        payload: { sessionId: 'child' },
       }).success,
     ).toBe(true)
     expect(
       webviewRequestSchema.safeParse({
         type: 'subagent.history',
-        requestId: 'subagent-history-2',
-        payload: { sessionId: 'child-1', maxMessages: 201 },
+        requestId: 'retired-child-page',
+        payload: { sessionId: 'child', beforeSeq: 20 },
+      }).success,
+    ).toBe(false)
+    expect(
+      webviewRequestSchema.safeParse({
+        type: 'session.transcript.navigate',
+        requestId: 'older',
+        payload: { sessionId: 's', revision: 2, direction: 'older' },
+      }).success,
+    ).toBe(true)
+    expect(
+      webviewRequestSchema.safeParse({
+        type: 'session.transcript.navigate',
+        requestId: 'invalid',
+        payload: { sessionId: 's', revision: -1, direction: 'older' },
       }).success,
     ).toBe(false)
   })

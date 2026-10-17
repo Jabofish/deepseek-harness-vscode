@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
-import { domainEvent, parseHostDomainEvent, timelineSequenceOptions } from './event-parser.js'
+import { domainEvent } from '../../test/domain-fixture/index.js'
+import { parseHostDomainEvent } from './event-parser.js'
+import { timelineSequenceOptions } from '@dsh-vscode/timeline'
 
 /**
  * Direct characterization tests for the host payload -> BackendEvent parser.
@@ -275,13 +277,10 @@ describe('parseHostDomainEvent', () => {
       expect(parseHostDomainEvent({ type: 'event', sequence: 1, name, payload: {} })).toBeUndefined()
   })
 
-  it('maps an uninterpretable event frame to a preserved unknown row', () => {
+  it('leaves unknown transcript frames to the Host', () => {
     expect(
       parseHostDomainEvent({ type: 'event', sequence: 1, name: 'totally.unheard', payload: {} }),
-    ).toMatchObject({
-      type: 'unknown',
-      name: 'totally.unheard',
-    })
+    ).toBeUndefined()
   })
 
   it('returns the parsed event for durable frames', () => {

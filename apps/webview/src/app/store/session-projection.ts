@@ -5,6 +5,8 @@ import { optionalGeneration } from './scalars.js'
 import { isSessionSummary } from './session-guards.js'
 import type { AppState } from './types.js'
 import { object } from './unknown-record.js'
+import { currentTodos } from './todo-state.js'
+import { sameTodoList } from './list-equality.js'
 
 export interface ProjectionSequenceIndex {
   readonly perKey: Map<string, Map<string, number>>
@@ -21,7 +23,26 @@ export function upsertOpenedSession(
   const opened = isSessionSummary(detail) ? detail : undefined
   if (opened === undefined) return sessions
   const withoutOpened = sessions.filter((session) => session.id !== sessionId)
-  return [...withoutOpened, opened]
+  // A detail also carries history/configuration/view data. Never retain that
+  // object in the roster after switching sessions.
+  const summary: SessionSummary = {
+    id: opened.id,
+    workspaceId: opened.workspaceId,
+    title: opened.title,
+    blank: opened.blank,
+    status: opened.status,
+    createdAt: opened.createdAt,
+    updatedAt: opened.updatedAt,
+    ...(opened.cwd === undefined ? {} : { cwd: opened.cwd }),
+    ...(opened.workspaceFolderId === undefined ? {} : { workspaceFolderId: opened.workspaceFolderId }),
+    ...(opened.parentSessionId === undefined ? {} : { parentSessionId: opened.parentSessionId }),
+    ...(opened.origin === undefined ? {} : { origin: opened.origin }),
+    ...(opened.formatStatus === undefined ? {} : { formatStatus: opened.formatStatus }),
+    ...(opened.agentAvailable === undefined ? {} : { agentAvailable: opened.agentAvailable }),
+    ...(opened.modelLabel === undefined ? {} : { modelLabel: opened.modelLabel }),
+    ...(opened.agentPreset === undefined ? {} : { agentPreset: opened.agentPreset }),
+  }
+  return [...withoutOpened, summary]
 }
 
 export function updateSessionById(
@@ -121,6 +142,10 @@ export function applySessionProjectionPresentation(
   value: unknown,
 ): AppState {
   let next = current
+  if (sessionId === next.activeSessionId && key === 'todoList') {
+    const todos = currentTodos({ todoList: value }, next.transcript)
+    if (!sameTodoList(next.todos, todos)) next = { ...next, todos }
+  }
   if (sessionId === next.activeSessionId && next.configuration !== undefined) {
     const projection = object(value)
     const configuration = next.configuration
@@ -234,7 +259,6 @@ export function clearedActiveSession(current: AppState, sessionId: string): Part
       nodeChangeStart: 0,
       eventCount: 0,
     },
-    history: [],
     historyHasMore: false,
     historyBeforeSequence: undefined,
     historyLoading: false,

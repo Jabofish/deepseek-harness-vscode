@@ -211,9 +211,6 @@ export function PluginConfiguration(props: PluginConfigurationProps): ReactEleme
       </div>
       {sectionOpen ? (
         <div className="dsh-plugin-configuration__section-body" id={sectionBodyId}>
-          <ContentFlow as="p" className="dsh-plugin-configuration__intro">
-            {t('plugins.config.intro')}
-          </ContentFlow>
           {cards.length === 0 ? (
             <p className="dsh-settings__empty">{t('plugins.config.empty')}</p>
           ) : (
@@ -388,9 +385,7 @@ export function PluginConfiguration(props: PluginConfigurationProps): ReactEleme
                                   : t('plugins.config.credentialMissing')}
                               </small>
                             </div>
-                            <span className="dsh-plugin-configuration__hint">
-                              {t('plugins.config.credentialHint', { reference: credential.reference })}
-                            </span>
+                            <code className="dsh-plugin-configuration__hint">{credential.reference}</code>
                             {props.onConfigureCredential === undefined ? null : (
                               <div className="dsh-plugin-configuration__credential-actions">
                                 <button

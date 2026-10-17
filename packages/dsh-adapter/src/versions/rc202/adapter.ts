@@ -31,10 +31,10 @@ export class Rc202VersionAdapter extends Rc201VersionAdapter {
   }
 
   protected override mapProjectionValues(values: Readonly<Record<string, unknown>>): SessionProjectionValues {
-    return mapRc202ProjectionValues(values)
+    return mapRc202ProjectionValues(super.mapProjectionValues(values))
   }
 
   protected override mapBackendEvent(event: BackendEvent): BackendEvent {
-    return mapRc202BackendEvent(event)
+    return mapRc202BackendEvent(super.mapBackendEvent(event))
   }
 }

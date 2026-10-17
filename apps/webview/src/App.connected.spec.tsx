@@ -75,7 +75,6 @@ function connectedState(activeSession: boolean): AppState {
     pendingSession: undefined,
     preferredOpenFileId: undefined,
     timeline: { sessionId: activeSession ? 's1' : undefined, nodes: [], lastSequence: -1 },
-    history: [],
     historyHasMore: false,
     historyBeforeSequence: undefined,
     historyLoading: false,
@@ -260,6 +259,8 @@ function storeFor(state: AppState): AppStore {
     openSessionInEditor: vi.fn().mockResolvedValue(undefined),
     runMovetoCommand: vi.fn().mockResolvedValue('editor'),
     loadOlderHistory: vi.fn().mockResolvedValue(undefined),
+    navigateTranscript: vi.fn().mockResolvedValue(undefined),
+    openTranscriptContent: vi.fn().mockResolvedValue(undefined),
     openSubagent: vi.fn().mockResolvedValue(undefined),
     renameSession: vi.fn().mockResolvedValue(undefined),
     renameWorkspace: vi.fn().mockResolvedValue(undefined),
@@ -452,6 +453,21 @@ describe('App connected rendering', () => {
         }) => { handle(message: unknown, surfaceId: string): Promise<void>; cancelAll(): void }
       }>('../../extension/src/view/message-router.js')
       const { AppError } = await import('@dsh-vscode/domain')
+      const { transcriptWindowFixture } = await vi.importActual<{
+        transcriptWindowFixture: () => {
+          forSurface(surfaceId: string): {
+            begin(sessionId: string): number
+            installPage(
+              sessionId: string,
+              page: { readonly events: readonly never[]; readonly hasMore: boolean },
+              generation: number,
+            ): unknown
+          }
+          dispose(): void
+        }
+      }>('../../extension/src/view/transcript-window.fixture.js')
+      const transcripts = transcriptWindowFixture()
+      const transcript = transcripts.forSurface('sidebar')
       const initial = connectedState(true)
       const requests: Array<{ type: string; payload?: unknown }> = []
       let failStop = true
@@ -467,6 +483,11 @@ describe('App connected rendering', () => {
               ...initial.sessions[0],
               configuration: initial.configuration,
               history: [],
+              transcript: transcript.installPage(
+                request.payload.sessionId,
+                { events: [], hasMore: false },
+                transcript.begin(request.payload.sessionId),
+              ),
             })
           if (request.type === 'models.session.list')
             throw new AppError({
@@ -563,6 +584,7 @@ describe('App connected rendering', () => {
       } finally {
         cleanup()
         realStore.dispose()
+        transcripts.dispose()
         router.cancelAll()
       }
     },

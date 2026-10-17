@@ -9,7 +9,7 @@ import type {
   HostMessage,
 } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
-import { createAppStore } from './store.js'
+import { createHostBackedAppStore as createAppStore } from '../test/host-window-store.js'
 
 const attemptId = 'd80ff092-0cdd-4a34-b5fb-05503d8574d8'
 const snapshot = {

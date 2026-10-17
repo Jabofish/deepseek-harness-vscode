@@ -2,7 +2,6 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentConfiguration } from '@dsh-vscode/domain'
-import type { WebviewRequest } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
 
 const vscodeState = vi.hoisted((): { value: unknown } => ({ value: undefined }))
@@ -17,7 +16,10 @@ vi.mock('../vscode-api.js', () => ({
   }),
 }))
 
-import { createAppStore } from './store.js'
+import {
+  createHostBackedAppStore as createAppStore,
+  type FixtureRequest as WebviewRequest,
+} from '../test/host-window-store.js'
 
 const STANDARD_CONFIGURATION: AgentConfiguration = {
   preset: 'standard',

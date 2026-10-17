@@ -1,9 +1,12 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it, vi } from 'vitest'
-import type { HostMessage, WebviewRequest } from '@dsh-vscode/webview-protocol'
+import type { HostMessage } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
-import { createAppStore } from './store.js'
+import {
+  createHostBackedAppStore as createAppStore,
+  type FixtureRequest as WebviewRequest,
+} from '../test/host-window-store.js'
 
 class FakeClient {
   public readonly requests: WebviewRequest[] = []
@@ -141,6 +144,39 @@ describe('AppStore prompt admission', () => {
     expect(goalUpdate.requestId).toEqual(expect.any(String))
     expect(goalUpdate.payload).toEqual({ goalId: 'goal-1', maxGoalRounds: 9 })
     store.dispose()
+  })
+
+  it('uses the authoritative Goal read after editing and does not overwrite it with the submitted value', async () => {
+    const canonical = [{ id: 'goal-1', title: 'Canonical title', status: 'in-progress' as const }]
+    const read = deferred<unknown>()
+    let editing = false
+    const client = new FakeClient((request) => {
+      if (request.type === 'goal.update') {
+        editing = true
+        return undefined
+      }
+      if (request.type === 'goal.list' && editing) return read.promise
+      return response(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+    try {
+      await store.openSession(session.id)
+      const saving = store.updateGoal('goal-1', { title: '  Submitted title  ' })
+      await Promise.resolve()
+      client.emit({
+        type: 'event',
+        name: 'goal.updated',
+        sequence: 100,
+        payload: { sessionId: session.id, goals: canonical },
+      })
+      expect(store.goals).toEqual(canonical)
+      read.resolve(canonical)
+      await saving
+      expect(store.goals).toEqual(canonical)
+    } finally {
+      read.resolve(canonical)
+      store.dispose()
+    }
   })
 
   it('retains a goal round cap from live goal events', async () => {
@@ -732,8 +768,19 @@ describe('AppStore prompt admission', () => {
     })
     await Promise.resolve()
     expect(store.timeline.nodes).toEqual([
-      { kind: 'user-message', id: 'message-1', markdown: 'queued prompt', source: 'user' },
+      expect.objectContaining({
+        kind: 'user-message',
+        id: 'message-1',
+        markdown: 'queued prompt',
+        source: 'user',
+      }),
     ])
+    client.emit({
+      type: 'event',
+      name: 'queue.updated',
+      sequence: 3,
+      payload: { sessionId: session.id, items: [] },
+    })
     expect(store.queue).toEqual([])
 
     requestDone.resolve()
@@ -741,7 +788,7 @@ describe('AppStore prompt admission', () => {
     store.dispose()
   })
 
-  it('retires a queued row that carries a file when the durable message has no rpcId', async () => {
+  it('uses the authoritative queue update for a file prompt without guessing from its durable message', async () => {
     const client = new FakeClient(response)
     const store = createAppStore(client as unknown as ProtocolClient)
     await store.openSession(session.id)
@@ -782,6 +829,12 @@ describe('AppStore prompt admission', () => {
       },
     })
     await Promise.resolve()
+    client.emit({
+      type: 'event',
+      name: 'queue.updated',
+      sequence: 3,
+      payload: { sessionId: session.id, items: [] },
+    })
     expect(store.queue).toEqual([])
     store.dispose()
   })

@@ -24,7 +24,6 @@ export interface SessionCreationActionDependencies {
   readonly client: ProtocolClient
   readonly clearStartupRestorePending: () => void
   readonly discardEditorContextForSessionSwitch: (sessionId: string) => Promise<void>
-  readonly flushPendingHistory: () => void
   readonly getComposerPreferences: () => Parameters<typeof createDefaultConfiguration>[1]
   readonly getOpenIntent: () => number
   readonly getPendingSend: () => PendingSend | undefined
@@ -50,7 +49,6 @@ export function createSessionCreationActions(
     client,
     clearStartupRestorePending,
     discardEditorContextForSessionSwitch,
-    flushPendingHistory,
     getComposerPreferences,
     getOpenIntent,
     getPendingSend,
@@ -85,7 +83,6 @@ export function createSessionCreationActions(
       nextOpenVersion()
       clearStartupRestorePending()
       stopJobsBeforeSessionOpen()
-      flushPendingHistory()
       await discardEditorContextForSessionSwitch('')
       if (revision !== getPendingSessionRevision() || navigationIntent !== getOpenIntent()) return
       setState((current) => ({

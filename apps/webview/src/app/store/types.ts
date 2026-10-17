@@ -6,6 +6,7 @@ import type {
   AccountLifecycleSnapshotDto,
   AccountSignOutImpactDto,
   AccountProfileDetailsSnapshotDto,
+  TranscriptWindow,
 } from '@dsh-vscode/webview-protocol'
 import type {
   AgentConfiguration,
@@ -55,7 +56,6 @@ import type {
   QueuedInput,
   RunningInputMode,
   SessionExportOptions,
-  SessionHistoryEvent,
   SessionPage,
   SessionSummary,
   SettingsPathOperation,
@@ -176,8 +176,7 @@ export interface AppState extends SessionModelDirectoryState {
     | undefined
   readonly preferredOpenFileId: string | undefined
   readonly timeline: TimelineState
-  /** The bounded, durable history window currently installed in the timeline. */
-  readonly history: readonly SessionHistoryEvent[]
+  readonly transcript?: TranscriptWindow | undefined
   readonly historyHasMore: boolean
   /** Raw sequence boundary used by DSH `session.history(beforeSeq)`. */
   readonly historyBeforeSequence: number | undefined
@@ -277,6 +276,8 @@ export interface AppActions {
   openSession(sessionId: string): Promise<void>
   openSkillDocument(sessionId: string, skillId: string): Promise<void>
   loadOlderHistory(): Promise<void>
+  navigateTranscript(direction: 'newer' | 'latest'): Promise<void>
+  openTranscriptContent(nodeId: string): Promise<void>
   openSubagent(entry: SubagentView, parentAvailable: boolean): Promise<void>
   renameSession(sessionId: string, title: string): Promise<void>
   renameWorkspace(workspaceId: string, name: string): Promise<void>
@@ -474,5 +475,3 @@ export interface ActiveSubagent {
 }
 
 export type StateSetter = (next: AppState | ((current: AppState) => AppState)) => void
-
-export type LiveHistoryAppender = (sessionId: string, entry: SessionHistoryEvent) => void

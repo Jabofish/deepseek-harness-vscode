@@ -1,7 +1,14 @@
-import type { SessionSummary, SubagentCatalog, SubagentHistoryPage, SubagentView } from '@dsh-vscode/domain'
+import type {
+  SessionSummary,
+  SubagentCatalog,
+  SubagentView,
+  SessionProjectionSnapshot,
+} from '@dsh-vscode/domain'
+import { parseSessionProjection } from './event-values.js'
 import { translate } from '../../i18n.js'
-import { optionalSequence } from './history-replay.js'
 import { object } from './unknown-record.js'
+import { parseTranscript } from './transcript-state.js'
+import type { TranscriptWindow } from '@dsh-vscode/webview-protocol'
 
 export function parseSubagentCatalog(value: unknown): SubagentCatalog {
   const catalog = object(value)
@@ -18,53 +25,15 @@ export function parseSubagentCatalog(value: unknown): SubagentCatalog {
   }
 }
 
-export function parseSubagentHistory(value: unknown): SubagentHistoryPage {
+export function parseSubagentHistory(value: unknown): {
+  readonly transcript: TranscriptWindow
+  readonly projection?: SessionProjectionSnapshot
+} {
   const page = object(value)
-  if (
-    page === undefined ||
-    !Array.isArray(page.events) ||
-    !page.events.every(isSubagentHistoryEvent) ||
-    typeof page.hasMore !== 'boolean'
-  )
-    throw new Error(translate('app.error.malformedHistory'))
-  const projection = object(page.projection)
-  if (
-    page.projection !== undefined &&
-    (projection === undefined ||
-      !Number.isSafeInteger(projection.asOfSequence) ||
-      (projection.asOfSequence as number) < -1 ||
-      object(projection.values) === undefined)
-  )
-    throw new Error(translate('app.error.malformedProjection'))
-  const hasBeforeSequence = Object.hasOwn(page, 'beforeSeq')
-  const parsedBeforeSequence = optionalSequence(page.beforeSeq)
-  if (hasBeforeSequence && parsedBeforeSequence === undefined)
-    throw new Error(translate('app.error.malformedHistory'))
-  return {
-    events: page.events,
-    hasMore: page.hasMore,
-    ...(parsedBeforeSequence === undefined ? {} : { beforeSequence: parsedBeforeSequence }),
-    ...(projection === undefined
-      ? {}
-      : {
-          projection: {
-            asOfSequence: projection.asOfSequence as number,
-            values: projection.values as Readonly<Record<string, unknown>>,
-          },
-        }),
-  }
-}
-
-export function isSubagentHistoryEvent(value: unknown): value is SubagentHistoryPage['events'][number] {
-  const entry = object(value)
-  const event = object(entry?.event)
-  return (
-    entry !== undefined &&
-    Number.isSafeInteger(entry.sequence) &&
-    typeof entry.time === 'string' &&
-    event !== undefined &&
-    typeof event.type === 'string'
-  )
+  if (page === undefined) throw new Error(translate('app.error.malformedHistory'))
+  const transcript = parseTranscript(page.transcript)
+  const projection = parseSessionProjection(page.projection)
+  return { transcript, ...(projection === undefined ? {} : { projection }) }
 }
 
 export function isSubagentView(value: unknown): value is SubagentView {

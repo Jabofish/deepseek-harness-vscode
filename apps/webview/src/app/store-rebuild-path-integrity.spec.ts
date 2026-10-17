@@ -1,9 +1,12 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it } from 'vitest'
-import type { HostMessage, WebviewRequest } from '@dsh-vscode/webview-protocol'
+import type { HostMessage } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
-import { createAppStore } from './store.js'
+import {
+  createHostBackedAppStore as createAppStore,
+  type FixtureRequest as WebviewRequest,
+} from '../test/host-window-store.js'
 
 const PARENT = 'session-rebuild-parent'
 const CHILD = 'session-rebuild-child'
@@ -150,7 +153,7 @@ describe('AppStore rebuild path integrity', () => {
     await store.openSubagent(subagentEntry(CHILD), true)
     client.emit(hostOnlyNotice(CHILD, 21, 'The child run failed.'))
     await settle()
-    expect(nodeIds(store)).toEqual(['notice:21'])
+    expect(nodeIds(store)).toEqual(['notice:-1'])
 
     await store.openSession(PARENT)
     await settle()
@@ -160,7 +163,7 @@ describe('AppStore rebuild path integrity', () => {
     // Opening a child rebuilds from `subagent.history`, and DSH never replays
     // a host-only row, so the same restore step the parent open performs has
     // to run here too.
-    expect(nodeIds(store)).toEqual(['notice:21'])
+    expect(nodeIds(store)).toEqual(['notice:-1'])
     store.dispose()
   })
 
@@ -183,7 +186,7 @@ describe('AppStore rebuild path integrity', () => {
     store.dispose()
   })
 
-  it('keeps a host-only row when an older history page is merged in', async () => {
+  it('keeps a host-only row when an older window replaces the current one', async () => {
     const { client, store } = open()
     client.history.set(
       PARENT,
@@ -198,7 +201,7 @@ describe('AppStore rebuild path integrity', () => {
       `user-${PARENT}-6`,
       `user-${PARENT}-7`,
       `user-${PARENT}-8`,
-      'notice:22',
+      'notice:-1',
     ])
 
     client.olderPages.set(PARENT, {
@@ -209,18 +212,13 @@ describe('AppStore rebuild path integrity', () => {
     await store.loadOlderHistory()
     await settle()
 
-    // Paging in older rows rehydrates from the merged ledger; the host-only
-    // row that arrived after row 8 has to stay at its place behind row 8.
+    // Historical navigation replaces resident rows while preserving Host notices.
     expect(nodeIds(store)).toEqual([
       `user-${PARENT}-1`,
       `user-${PARENT}-2`,
       `user-${PARENT}-3`,
       `user-${PARENT}-4`,
-      `user-${PARENT}-5`,
-      `user-${PARENT}-6`,
-      `user-${PARENT}-7`,
-      `user-${PARENT}-8`,
-      'notice:22',
+      'notice:-1',
     ])
     store.dispose()
   })

@@ -152,26 +152,29 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
       return { opened: false, message: 'The linked workspace file could not be opened.' }
     }
   }
-  const handleSessionRequest = createSessionRequestHandler({
-    backendService,
-    workspaceUseCases,
-    sessionUseCases,
-    modelUseCases,
-    exportUseCases,
-    attachmentTokens,
-    editorContextUseCases,
-    contextOwnerForSession,
-    currentFeatureSessionBinding,
-    workspaceFolderIdForSession,
-    currentWorkspaceFolders,
-    listCurrentWorkspaces,
-    listCurrentArchivedSessionIds,
-    ensureCurrentWorkspace,
-    requireCurrentWorkspaceSession,
-    requireCurrentWorkspaceId,
-    requireOwnedQueuedInput,
-    publicValue,
-  })
+  const sessionRequestFor = (surfaceId: string | undefined): ReturnType<typeof createSessionRequestHandler> =>
+    createSessionRequestHandler({
+      transcript: deps.transcript.forSurface(surfaceId ?? SIDEBAR_SURFACE_ID),
+      ...(deps.resyncView === undefined ? {} : { resyncView: deps.resyncView }),
+      backendService,
+      workspaceUseCases,
+      sessionUseCases,
+      modelUseCases,
+      exportUseCases,
+      attachmentTokens,
+      editorContextUseCases,
+      contextOwnerForSession,
+      currentFeatureSessionBinding,
+      workspaceFolderIdForSession,
+      currentWorkspaceFolders,
+      listCurrentWorkspaces,
+      listCurrentArchivedSessionIds,
+      ensureCurrentWorkspace,
+      requireCurrentWorkspaceSession,
+      requireCurrentWorkspaceId,
+      requireOwnedQueuedInput,
+      publicValue,
+    })
   const handleAttachmentRequest = createAttachmentRequestHandler({
     backendService,
     sessionUseCases,
@@ -285,7 +288,7 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
       return { surface: 'sidebar' as const }
     }
     if (isSessionRequest(request)) {
-      const result = await handleSessionRequest(request, signal)
+      const result = await sessionRequestFor(surfaceId)(request, signal)
       // A rename is the one session mutation that changes a tab label while the
       // tab is open; the Host applies the accepted title so a second Webview
       // (the editor tab) does not have to observe the catalog change.
@@ -579,21 +582,24 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
       return publicValue(await advancedUseCases.listSubagents(request.payload.sessionId, signal))
     }
     if (request.type === 'subagent.history') {
-      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
-      const page = await advancedUseCases.listSubagentHistory(
-        request.payload.sessionId,
-        {
-          ...(request.payload.beforeSeq === undefined ? {} : { beforeSequence: request.payload.beforeSeq }),
-          ...(request.payload.maxMessages === undefined ? {} : { pageSize: request.payload.maxMessages }),
-        },
-        signal,
-      )
-      return publicValue({
-        events: page.events,
-        hasMore: page.hasMore,
-        ...(page.beforeSequence === undefined ? {} : { beforeSeq: page.beforeSequence }),
-        ...(page.projection === undefined ? {} : { projection: page.projection }),
-      })
+      const detail = await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      const surfaceTranscript = deps.transcript.forSurface(surfaceId ?? SIDEBAR_SURFACE_ID)
+      const generation = surfaceTranscript.begin(request.payload.sessionId, true)
+      try {
+        const page = await advancedUseCases.listSubagentHistory(request.payload.sessionId, {}, signal)
+        const transcript = surfaceTranscript.installPage(
+          request.payload.sessionId,
+          page,
+          generation,
+          detail.cwd,
+        )
+        return publicValue({
+          transcript,
+          ...(page.projection === undefined ? {} : { projection: page.projection }),
+        })
+      } finally {
+        surfaceTranscript.cancel(generation)
+      }
     }
     if (request.type === 'subagent.send') {
       await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
@@ -706,6 +712,7 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     editorContextProvider.dispose()
   }
   const onSurfaceWorkCancelled = (disposedSurfaceId: string): void => {
+    deps.transcript.remove(disposedSurfaceId)
     router.cancelSurface(disposedSurfaceId)
     runSharedSurfaceTeardownIfIdle()
   }
@@ -722,10 +729,12 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     extensionUri: context.extensionUri,
     onMessage: (message) => router.handle(message, SIDEBAR_SURFACE_ID),
     onBecameReady: () => {
+      deps.transcript.setVisible(SIDEBAR_SURFACE_ID, provider.visible)
       void announceSurface(SIDEBAR_SURFACE_ID, { kind: 'sidebar' })
     },
     onViewDisposed: () => onSurfaceWorkCancelled(SIDEBAR_SURFACE_ID),
     onSurfaceClosed: () => surfaces.unregister(SIDEBAR_SURFACE_ID),
+    onVisibilityChanged: (visible) => deps.transcript.setVisible(SIDEBAR_SURFACE_ID, visible),
     onMessageError: logWebviewMessageError,
   })
   const editorSurfaceManager = new EditorChatSurfaceManager({
@@ -734,12 +743,15 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     onMessage: (surfaceId, message) => router.handle(message, surfaceId),
     onMessageError: logWebviewMessageError,
     onBecameReady: (surface) => {
+      deps.transcript.setVisible(surface.surfaceId, surface.visible)
       void announceSurface(surface.surfaceId, {
         kind: 'editor',
         ...(surface.sessionId === undefined ? {} : { sessionId: surface.sessionId }),
       })
     },
     onDisposed: (surface) => onSurfaceWorkCancelled(surface.surfaceId),
+    onVisibilityChanged: (surface) =>
+      deps.transcript.setVisible(surface.surfaceId, surface.visible && surface.isReady),
     onCountChanged: (count) => {
       // The sidebar renders its "chat is open in the editor area" posture from
       // this count; every surface may react, only the sidebar shows it.

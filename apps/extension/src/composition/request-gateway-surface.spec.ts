@@ -71,6 +71,7 @@ vi.mock('vscode', () => ({
 
 import { createRequestGateway } from './request-handler.js'
 import { WebviewSurfaceRegistry } from '../view/webview-surface-registry.js'
+import { transcriptWindowFixture } from '../view/transcript-window.fixture.js'
 
 type Sent = {
   readonly surfaceId: string | undefined
@@ -116,6 +117,7 @@ function buildGateway(): Harness {
     })
   }
   const gateway = createRequestGateway({
+    transcript: transcriptWindowFixture(),
     post: (message: unknown) => {
       record(sent, undefined, message)
       return Promise.resolve(true)

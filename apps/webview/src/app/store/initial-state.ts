@@ -35,7 +35,6 @@ export function createInitialState(composerPreferences: ComposerPreferences): Ap
     pendingSession: undefined,
     preferredOpenFileId: composerPreferences.openFileId,
     timeline: { sessionId: undefined, nodes: [], lastSequence: -1, nodeChangeStart: 0, eventCount: 0 },
-    history: [],
     historyHasMore: false,
     historyBeforeSequence: undefined,
     historyLoading: false,

@@ -131,8 +131,6 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactElement
       <div className="dsh-settings__custom-provider-head">
         <div>
           <strong>{t('settings.customProvider')}</strong>
-          <p>{t('settings.customProviderNote')}</p>
-          <p className="dsh-settings__advanced-hint">{t('settings.customProviderCredentialHint')}</p>
         </div>
         <button
           className="dsh-icon-button"

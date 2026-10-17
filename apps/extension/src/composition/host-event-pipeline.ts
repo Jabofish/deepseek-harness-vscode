@@ -1,5 +1,4 @@
 import * as vscode from 'vscode'
-import { redactText } from '@dsh-vscode/dsh-adapter'
 import type {
   AccountLifecycleSnapshot,
   BackendEvent,
@@ -13,10 +12,12 @@ import type { BackendService, EditorContextUseCases } from '@dsh-vscode/applicat
 import type { FeatureHostEvent, FeatureHostMessage, HostMessage } from '@dsh-vscode/webview-protocol'
 import type { RedactedDiagnostics } from '../backend/diagnostics.js'
 import type { TemporaryWorkspaceManager } from '../backend/temporary-workspace.js'
-import { publicWorkspaceRelativePath, sanitizePublicValue } from '../view/public-value.js'
+import { sanitizePublicValue } from '../view/public-value.js'
 import { updateContextKeys, updateEditorContextAvailabilityKeys } from '../vscode/context-keys.js'
 import { publicState } from './public-projection.js'
 import { featureContextKinds, type FeatureContextKind } from './editor-files.js'
+import type { TranscriptWindowService } from '../view/transcript-window.js'
+import { BoundedEventQueue, eventPayloadCharacters } from '../view/bounded-event-queue.js'
 
 export type PostHostMessage = (message: HostMessage | FeatureHostMessage) => Thenable<boolean>
 /** Deliver an event to exactly one surface (surface-owned state, not broadcasts). */
@@ -25,7 +26,12 @@ export type PostHostMessageTo = (
   message: HostMessage | FeatureHostMessage,
 ) => Thenable<boolean>
 /** Surface-directed event poster: same sequence/queue as `postEvent`, one target. */
-export type PostSurfaceEvent = (surfaceId: string, name: string, payload: unknown) => Promise<boolean>
+export type PostSurfaceEvent = (
+  surfaceId: string,
+  name: string,
+  payload: unknown,
+  isCurrent?: () => boolean,
+) => Promise<boolean>
 
 type AccountFeatureHostEvent =
   | Extract<FeatureHostEvent, { readonly name: 'account.lifecycle.updated' }>
@@ -51,6 +57,7 @@ export type PublishAccountError = (
 ) => void
 
 export interface HostEventPipelineDependencies {
+  readonly transcript: Pick<TranscriptWindowService, 'accept' | 'dispose'>
   readonly post: PostHostMessage
   readonly postTo: PostHostMessageTo
   readonly backendService: BackendService
@@ -64,6 +71,7 @@ export interface HostEventPipelineDependencies {
 }
 
 export interface HostEventPipeline {
+  readonly dispose: () => void
   readonly postFeatureEvent: PostFeatureEvent
   readonly publishAccountSnapshot: (snapshot: AccountLifecycleSnapshot) => void
   readonly publishAccountSessionExpired: () => void
@@ -208,12 +216,17 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
     }
   }
   let sequence = 0
-  let eventPostQueue = Promise.resolve()
+  const eventPostQueue = new BoundedEventQueue(async () => {
+    const nextSequence = sequence + 1
+    if (await post({ type: 'event', name: 'ui.resync', sequence: nextSequence, payload: {} }))
+      sequence = nextSequence
+  })
   const enqueueEvent = (
     resolve: () => Promise<{ readonly name: string; readonly payload: unknown } | undefined>,
+    chars: number,
     surfaceId?: string,
   ): Promise<boolean> => {
-    const task = eventPostQueue.then(async () => {
+    return eventPostQueue.enqueue(async () => {
       const nextEvent = await resolve()
       if (nextEvent === undefined) return true
       const nextSequence = sequence + 1
@@ -228,29 +241,19 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
       const delivered = surfaceId === undefined ? await post(message) : await postTo(surfaceId, message)
       if (delivered) sequence = nextSequence
       return delivered
-    })
-    eventPostQueue = task.then(
-      () => undefined,
-      () => undefined,
-    )
-    return task.catch(() => false)
+    }, chars)
   }
   const postEvent = (name: string, payload: unknown): Promise<boolean> => {
-    return enqueueEvent(() => Promise.resolve({ name, payload }))
+    return enqueueEvent(() => Promise.resolve({ name, payload }), eventPayloadCharacters(payload))
   }
-  const postEventTo: PostSurfaceEvent = (surfaceId, name, payload) =>
-    enqueueEvent(() => Promise.resolve({ name, payload }), surfaceId)
-  const preparationScopes = new WeakMap<
-    DshBackend,
-    Map<string, { attemptId: string; cwd: Promise<string | undefined> }>
-  >()
-  const publicBackendEvent = async (backend: DshBackend, event: BackendEvent): Promise<unknown> => {
-    if (
-      event.type === 'session.subscribed' ||
-      (event.type === 'session.projection' && event.key === 'workingDirectory')
+  const postEventTo: PostSurfaceEvent = (surfaceId, name, payload, isCurrent) =>
+    enqueueEvent(
+      () => Promise.resolve(isCurrent?.() === false ? undefined : { name, payload }),
+      eventPayloadCharacters(payload),
+      surfaceId,
     )
-      preparationScopes.get(backend)?.delete(event.sessionId)
-    const roots = [
+  const publicControlEvent = (event: BackendEvent): unknown =>
+    sanitizePublicValue(event, undefined, [
       ...currentWorkspaceFolders().map((folder) => folder.uri.fsPath),
       ...(temporaryWorkspaceManager.current?.path === undefined
         ? []
@@ -258,78 +261,30 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
       ...(temporaryWorkspaceManager.reference?.path === undefined
         ? []
         : [temporaryWorkspaceManager.reference.path]),
-    ]
-    const uniqueRoots = [...new Set(roots)]
-    if (event.type !== 'deliverables.presented' && event.type !== 'tool.preparing')
-      return sanitizePublicValue(event, undefined, uniqueRoots)
-    if (event.type === 'tool.preparing') {
-      const isCurrentBackend = (): boolean => {
-        try {
-          return backendService.requireBackend() === backend
-        } catch {
-          return false
-        }
-      }
-      if (!isCurrentBackend()) return undefined
-      let relativePath: string | undefined
-      if (event.filePath !== undefined) {
-        const scopes =
-          preparationScopes.get(backend) ??
-          new Map<string, { attemptId: string; cwd: Promise<string | undefined> }>()
-        preparationScopes.set(backend, scopes)
-        let scope = scopes.get(event.sessionId)
-        if (scope?.attemptId !== event.attemptId) {
-          if (scopes.size >= 128) scopes.clear()
-          scope = {
-            attemptId: event.attemptId,
-            cwd: backend.sessions
-              .get(event.sessionId)
-              .then((session) =>
-                typeof session.projection?.values.workingDirectory === 'string'
-                  ? session.projection.values.workingDirectory
-                  : session.cwd,
-              )
-              .catch(() => undefined),
-          }
-          scopes.set(event.sessionId, scope)
-        }
-        relativePath = publicWorkspaceRelativePath(event.filePath, await scope.cwd, uniqueRoots)
-      }
-      if (!isCurrentBackend()) return undefined
-      // Construct an allowlist. Raw arguments, executable input and source paths stay in the Host.
-      return {
-        type: event.type,
-        sessionId: event.sessionId,
-        callId: event.callId,
-        toolName: redactText(event.toolName, 512),
-        attemptId: event.attemptId,
-        turn: event.turn,
-        step: event.step,
-        updateIndex: event.updateIndex,
-        ...(event.description === undefined ? {} : { description: redactText(event.description, 512) }),
-        ...(relativePath === undefined ? {} : { filePath: relativePath }),
-        ...(event.contentCharacters === undefined ? {} : { contentCharacters: event.contentCharacters }),
-      }
+    ])
+  const postBackendEvent = (backend: DshBackend, event: BackendEvent): Promise<boolean> => {
+    // Reject the previous backend before it can mutate the current view.
+    try {
+      if (backendService.requireBackend() !== backend) return Promise.resolve(false)
+    } catch {
+      return Promise.resolve(false)
     }
-    const session = await backend.sessions.get(event.sessionId).catch(() => undefined)
-    const files = event.files.flatMap((file) => {
-      const relativePath = publicWorkspaceRelativePath(file.path, session?.cwd, uniqueRoots)
-      return relativePath === undefined ? [] : [{ ...file, path: relativePath }]
-    })
-    // Do not publish a card whose paths cannot be mapped into a workspace
-    // owned by this Extension Host. The raw source path stays Host-local.
-    if (files.length === 0) return undefined
-    return sanitizePublicValue({ ...event, files })
+    if (deps.transcript.accept(event)) return Promise.resolve(true)
+    return enqueueEvent(() => {
+      try {
+        if (backendService.requireBackend() !== backend) return Promise.resolve(undefined)
+      } catch {
+        return Promise.resolve(undefined)
+      }
+      const payload = publicControlEvent(event)
+      return Promise.resolve(payload === undefined ? undefined : { name: event.type, payload })
+    }, eventPayloadCharacters(event))
   }
-  const postBackendEvent = (backend: DshBackend, event: BackendEvent): Promise<boolean> =>
-    enqueueEvent(async () => {
-      const payload = await publicBackendEvent(backend, event)
-      return payload === undefined ? undefined : { name: event.type, payload }
-    })
   runtimeUpdateProgress.current = (progress) => {
     void postEvent('runtime.update.progress', progress)
   }
   const publishState = (state: BackendState): void => {
+    if (state.kind !== 'connected') deps.transcript?.dispose()
     void updateContextKeys(vscode.commands, state)
     diagnostics.log('info', 'connection-state', { state: state.kind })
     const payload = publicState(state)
@@ -340,6 +295,7 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
     return featureLocalSequence
   }
   return {
+    dispose: () => eventPostQueue.dispose(),
     postFeatureEvent,
     publishAccountSnapshot,
     publishAccountSessionExpired,

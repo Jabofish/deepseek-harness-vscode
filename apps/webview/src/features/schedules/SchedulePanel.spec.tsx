@@ -1087,7 +1087,7 @@ describe('SchedulePanel', () => {
     const history = await screen.findByRole('tabpanel', { name: 'Delivery history' })
     expect(within(history).getByText('Remind me to water the plants.')).toBeDefined()
     expect(within(history).getByText(/Some earlier delivery records/u)).toBeDefined()
-    expect(within(history).queryByText(/Older delivery records were removed/u)).toBeNull()
+    expect(within(history).queryByText(/Older delivery records have been cleared/u)).toBeNull()
     expect(within(history).queryByText('History is retained for 30 days, up to 500 deliveries.')).toBeNull()
     fireEvent.click(within(history).getByRole('button', { name: 'Load older deliveries' }))
 
@@ -1262,7 +1262,7 @@ describe('SchedulePanel', () => {
     fireEvent.click(within(history).getByRole('button', { name: 'Load older deliveries' }))
     await waitFor(() => expect(within(history).getByText('Earlier saved prompt.')).toBeDefined())
 
-    expect(within(history).getByText(/Older delivery records were removed/u)).toBeDefined()
+    expect(within(history).getByText(/Older delivery records have been cleared/u)).toBeDefined()
     const showRetention = within(history).getByRole('button', {
       name: 'Show delivery history retention rules',
     })

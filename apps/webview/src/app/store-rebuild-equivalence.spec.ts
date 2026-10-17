@@ -1,15 +1,19 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it } from 'vitest'
-import type { HostMessage, WebviewRequest } from '@dsh-vscode/webview-protocol'
+import type { HostMessage } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
-import { createAppStore } from './store.js'
+import {
+  createHostBackedAppStore as createAppStore,
+  type FixtureRequest as WebviewRequest,
+} from '../test/host-window-store.js'
 import type { TimelineNode } from '@dsh-vscode/timeline'
 
 const SESSION_ID = 'session-rebuild-equivalence'
 
 class StreamClient {
   public readonly requests: WebviewRequest[] = []
+  private readonly persisted: HostMessage[] = []
   private readonly listeners = new Set<(message: HostMessage) => void>()
 
   public request<T>(request: WebviewRequest): Promise<T> {
@@ -27,6 +31,8 @@ class StreamClient {
   }
 
   public emit(message: HostMessage): void {
+    if (message.type === 'event' && typeof (message.payload as { sequence?: unknown })?.sequence === 'number')
+      this.persisted.push(message)
     for (const listener of this.listeners) listener(message)
   }
 
@@ -41,7 +47,14 @@ class StreamClient {
           status: 'running',
           createdAt: '2026-09-02T00:00:00.000Z',
           updatedAt: '2026-09-02T00:00:00.000Z',
-          history: [],
+          history: this.persisted
+            .filter((message) => message.type === 'event')
+            .map((message) => {
+              if (message.type !== 'event') throw new Error('expected fixture event')
+              const payload = message.payload as Record<string, unknown>
+              return { sequence: payload.sequence as number, event: { ...payload, type: message.name } }
+            })
+            .sort((left, right) => left.sequence - right.sequence),
           permissionPresets: ['workspace-write'],
           configuration: {
             preset: 'standard',
@@ -277,14 +290,14 @@ async function replay(messages: readonly HostMessage[]): Promise<{
   return { store, client }
 }
 
-describe('ledger rebuild equivalence', () => {
-  it('produces the same transcript with and without a below-cursor rebuild', async () => {
+describe('Host recovery reread equivalence', () => {
+  it('produces the same transcript with and without a authoritative reread', async () => {
     const fixture = buildFixture()
     const reference = await replay(fixture)
     const referenceSignature = reference.store.timeline.nodes.map(signature)
 
     // The same stream, plus a history-recovery redelivery of the first durable
-    // row: absorbed below the cursor, then republished by a ledger rebuild.
+    // row: absorbed below the cursor, then republished by a Host window refresh.
     const { store, client } = await replay(fixture)
     client.emit({
       type: 'event',
@@ -316,7 +329,7 @@ describe('ledger rebuild equivalence', () => {
     expect(referenceSignature.some((line) => line.startsWith('tool:call-child:completed:grep'))).toBe(true)
     expect(referenceSignature).toContain('event:event:16:future/unreadable-frame')
     expect(referenceSignature.some((line) => line.includes('gap:'))).toBe(true)
-    expect(referenceSignature).toContain('notice:notice:16:压缩已完成。')
+    expect(referenceSignature.some((line) => /^notice:notice:-\d+:压缩已完成。$/.test(line))).toBe(true)
 
     // A rebuild reconstructs the transcript from the durable ledger. Lossless
     // means the same nodes in the same order, including the host-only rows DSH
@@ -327,7 +340,7 @@ describe('ledger rebuild equivalence', () => {
     store.dispose()
   })
 
-  it('keeps a recovered failed tool result before its error terminal across a ledger rebuild', async () => {
+  it('keeps a recovered failed tool result before its error terminal across a Host window refresh', async () => {
     const emit = (
       name: string,
       payload: Readonly<Record<string, unknown>>,

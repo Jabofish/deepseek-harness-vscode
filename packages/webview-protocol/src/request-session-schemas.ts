@@ -2,6 +2,40 @@ import { z } from 'zod'
 import { id, requestBase, session, promptSchema, agentConfigurationSchema } from './request-common.js'
 
 export const sessionRequestSchemas = [
+  z
+    .object({
+      type: z.literal('session.transcript.resync'),
+      ...requestBase,
+      payload: z.object({ sessionId: id }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('session.transcript.ack'),
+      ...requestBase,
+      payload: z.object({ sessionId: id, revision: z.number().int().nonnegative() }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('session.transcript.navigate'),
+      ...requestBase,
+      payload: z
+        .object({
+          sessionId: id,
+          revision: z.number().int().nonnegative(),
+          direction: z.enum(['older', 'newer', 'latest']),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('session.transcript.openContent'),
+      ...requestBase,
+      payload: z.object({ sessionId: id, revision: z.number().int().nonnegative(), nodeId: id }).strict(),
+    })
+    .strict(),
   z.object({ type: z.literal('workspace.list'), ...requestBase }).strict(),
   z.object({ type: z.literal('workspace.addFolder'), ...requestBase }).strict(),
   z
@@ -48,20 +82,6 @@ export const sessionRequestSchemas = [
     })
     .strict(),
   z.object({ type: z.literal('session.open'), ...requestBase, payload: z.object(session).strict() }).strict(),
-  z
-    .object({
-      type: z.literal('session.history'),
-      ...requestBase,
-      payload: z
-        .object({
-          sessionId: id,
-          beforeSeq: z.number().int().nonnegative().optional(),
-          maxMessages: z.number().int().positive().max(200).optional(),
-          pagePurpose: z.enum(['transcript', 'gap-recovery']).optional(),
-        })
-        .strict(),
-    })
-    .strict(),
   z
     .object({
       type: z.literal('session.create'),

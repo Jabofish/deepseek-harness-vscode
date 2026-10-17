@@ -2,6 +2,10 @@ import type { BackendEvent, DshBackend } from '@dsh-vscode/domain'
 import { AppError } from '@dsh-vscode/domain'
 
 export class BackendService {
+  /** Re-deliver current DSH control facts after a Webview transport invalidation. */
+  public replayEvents(): readonly BackendEvent[] {
+    return [...this.replay.values()]
+  }
   private backend: DshBackend | undefined
   private unsubscribe: (() => void) | undefined
   private readonly replay = new Map<string, BackendEvent>()

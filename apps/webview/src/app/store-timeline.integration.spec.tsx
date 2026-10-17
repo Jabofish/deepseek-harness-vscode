@@ -3,17 +3,21 @@
 import { cleanup, fireEvent, render } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { ReactElement } from 'react'
-import type { HostMessage, WebviewRequest } from '@dsh-vscode/webview-protocol'
+import type { HostMessage } from '@dsh-vscode/webview-protocol'
 import { hostMessageSchema } from '@dsh-vscode/webview-protocol'
 import { buildTrajectory } from '@dsh-vscode/timeline'
 import type { ProtocolClient } from './protocol-client.js'
-import { createAppStore } from './store.js'
+import {
+  createHostBackedAppStore as createAppStore,
+  type FixtureRequest as WebviewRequest,
+} from '../test/host-window-store.js'
 import { Timeline } from '../features/chat/Timeline.js'
 import { TrajectoryView } from '../features/trajectory/TrajectoryView.js'
 import { createTimelineFactsProjector } from '../features/chat/timeline-projection.js'
 
 class StreamClient {
   public readonly requests: WebviewRequest[] = []
+  private readonly persisted: HostMessage[] = []
   private readonly listeners = new Set<(message: HostMessage) => void>()
 
   public request<T>(request: WebviewRequest): Promise<T> {
@@ -31,6 +35,8 @@ class StreamClient {
   }
 
   public emit(message: HostMessage): void {
+    if (message.type === 'event' && typeof (message.payload as { sequence?: unknown })?.sequence === 'number')
+      this.persisted.push(message)
     for (const listener of this.listeners) listener(message)
   }
 
@@ -45,7 +51,14 @@ class StreamClient {
           status: 'running',
           createdAt: '2026-08-31T00:00:00.000Z',
           updatedAt: '2026-08-31T00:00:00.000Z',
-          history: [],
+          history: this.persisted
+            .filter((message) => message.type === 'event')
+            .map((message) => {
+              if (message.type !== 'event') throw new Error('expected fixture event')
+              const payload = message.payload as Record<string, unknown>
+              return { sequence: payload.sequence as number, event: { ...payload, type: message.name } }
+            })
+            .sort((left, right) => left.sequence - right.sequence),
           permissionPresets: ['workspace-write'],
           configuration: {
             preset: 'standard',
@@ -96,7 +109,7 @@ describe('Store to Timeline streamed rendering', () => {
     const preview = hostMessageSchema.parse(event(100, 'tool.preparing', payload))
     client.emit(preview)
     expect(store.timeline.lastSequence).toBe(-1)
-    expect(store.history).toEqual([])
+    expect(store.getState()).not.toHaveProperty('history')
     expect(buildTrajectory(store.timeline.nodes).recordCount).toBe(0)
     expect(createTimelineFactsProjector()(store.timeline.nodes).hasActiveTool).toBe(false)
     const view = render(
@@ -621,13 +634,9 @@ describe('Store to Timeline streamed rendering', () => {
       expect(finalNode).toEqual(
         expect.objectContaining({ kind: 'assistant-message', markdown: finalMarkdown, streaming: false }),
       )
-      const completedHistoryEntry = store.history.find(
-        (entry) => entry.sequence === 141 && entry.event.type === 'message.completed',
+      expect(store.getState().transcript?.eventFacts).toContainEqual(
+        expect.objectContaining({ sequence: 141, type: 'message.completed' }),
       )
-      expect(completedHistoryEntry?.event.type).toBe('message.completed')
-      if (completedHistoryEntry?.event.type !== 'message.completed') return
-      expect(completedHistoryEntry.event.messageId).toBe('97ce95fc-ad19-441d-ae90-c2e70b53a6da')
-      expect(completedHistoryEntry.event.markdown).toBe(finalMarkdown)
       expect(view.container.textContent).toContain('替换成功 ✅')
       expect(view.container.textContent).toContain('Greetings from MiniMax-M3!')
       expect(view.container.textContent).toContain('结果对比')
@@ -804,10 +813,8 @@ describe('Store to Timeline streamed rendering', () => {
       await push('step.ended', { sequence: 142, sessionId: 'session-stream', turn: 5, step: 5 })
       await push('turn.ended', { sequence: 143, sessionId: 'session-stream', turn: 5, reason: 'completed' })
 
-      expect(store.history.map((entry) => entry.sequence)).toEqual(
-        expect.arrayContaining([115, 117, 119, 121, 122, 123, 124, 141, 142, 143]),
-      )
-      expect(store.history.some((entry) => entry.event.type === 'message.delta')).toBe(false)
+      expect(store.getState()).not.toHaveProperty('history')
+      expect(store.getState()).not.toHaveProperty('history')
       expect(store.timeline.nodes).toContainEqual(
         expect.objectContaining({
           kind: 'assistant-message',
@@ -910,7 +917,7 @@ describe('Store to Timeline streamed rendering', () => {
     expect(store.timeline.nodes).not.toContainEqual(
       expect.objectContaining({ markdown: 'stale attempt output' }),
     )
-    expect(store.history.map((entry) => entry.sequence)).toEqual([2, 3, 5])
+    expect(store.getState()).not.toHaveProperty('history')
     store.dispose()
   })
 
@@ -1089,12 +1096,7 @@ describe('Store to Timeline streamed rendering', () => {
     )
     await new Promise((resolve) => window.setTimeout(resolve, 24))
 
-    expect(store.timeline.nodes).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ kind: 'event', name: 'session.projection' }),
-        expect.objectContaining({ kind: 'event', name: 'session.subscribed' }),
-      ]),
-    )
+    expect(store.timeline.nodes).toEqual([]) // Malformed control facts do not become transcript rows.
     expect(store.timeline.nodes.some((node) => node.kind === 'user-message')).toBe(false)
     expect(store.projections['session-stream']).toBeUndefined()
     store.dispose()
@@ -1517,7 +1519,10 @@ describe('Store to Timeline streamed rendering', () => {
       const node = store.timeline.nodes.find(
         (entry) => entry.kind === 'tool' && entry.tool.id === 'call-glob-capped',
       )
-      expect(node?.kind === 'tool' ? node.tool.outputSummary : undefined).toBe(outputSummary)
+      const preview = node?.kind === 'tool' ? node.tool.outputSummary : ''
+      expect(preview?.length).toBeLessThanOrEqual(4096)
+      expect(preview).toContain(footer)
+      expect(store.getState().transcript?.omittedNodeIds).toContain('call-glob-capped')
 
       const summary = view.container.querySelector<HTMLButtonElement>('.dsh-tool-row__summary')
       expect(summary).not.toBeNull()

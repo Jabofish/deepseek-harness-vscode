@@ -14,6 +14,7 @@ export interface EditorChatSurfaceManagerDependencies {
   readonly onMessageError: (error: unknown) => void
   readonly onBecameReady: (surface: DshWebviewPanelSurface) => void
   readonly onDisposed: (surface: DshWebviewPanelSurface) => void
+  readonly onVisibilityChanged?: (surface: DshWebviewPanelSurface) => void
   /** Fired after every create/restore/dispose with the new editor-surface count. */
   readonly onCountChanged: (count: number) => void
 }
@@ -152,6 +153,9 @@ export class EditorChatSurfaceManager implements vscode.Disposable {
       onMessage: (message) => this.dependencies.onMessage(surfaceId, message),
       onMessageError: this.dependencies.onMessageError,
       onBecameReady: this.dependencies.onBecameReady,
+      ...(this.dependencies.onVisibilityChanged === undefined
+        ? {}
+        : { onVisibilityChanged: this.dependencies.onVisibilityChanged }),
       onDisposed: (surface) => {
         this.forget(surface)
         this.dependencies.onDisposed(surface)

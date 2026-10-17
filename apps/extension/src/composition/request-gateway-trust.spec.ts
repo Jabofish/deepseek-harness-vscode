@@ -1,3 +1,4 @@
+import { transcriptWindowFixture } from '../view/transcript-window.fixture.js'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppError, type BackendEvent, type InteractionRepository } from '@dsh-vscode/domain'
 
@@ -69,6 +70,7 @@ function buildGateway(isTrusted: boolean): {
     postEvent: () => Promise.resolve(true),
     postEventTo: () => Promise.resolve(true),
     surfaces: new WebviewSurfaceRegistry(),
+    transcript: transcriptWindowFixture(),
     post: (message: unknown) => {
       sent.push(message as Sent)
       return Promise.resolve(true)

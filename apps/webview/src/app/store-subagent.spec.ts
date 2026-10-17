@@ -1,10 +1,13 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { HostMessage, WebviewRequest } from '@dsh-vscode/webview-protocol'
+import type { HostMessage } from '@dsh-vscode/webview-protocol'
 import type { SubagentView } from '@dsh-vscode/domain'
 import type { ProtocolClient } from './protocol-client.js'
-import { createAppStore } from './store.js'
+import {
+  createHostBackedAppStore as createAppStore,
+  type FixtureRequest as WebviewRequest,
+} from '../test/host-window-store.js'
 
 class FakeClient {
   public readonly requests: WebviewRequest[] = []
@@ -120,6 +123,44 @@ describe('AppStore subagent transport routing', () => {
       await expect(store.cancelSession('ordinary')).resolves.toBeUndefined()
       expect(client.requests.map((request) => request.type)).toEqual(['session.cancel', 'session.cancel'])
     } finally {
+      store.dispose()
+    }
+  })
+
+  it('rereads the native catalog after a descendant change instead of inferring hasChildren', async () => {
+    const updated = deferred<unknown>()
+    let changed = false
+    const client = new FakeClient((request) => {
+      if (request.type === 'subagent.list' && request.payload.sessionId === 'child')
+        return changed
+          ? updated.promise
+          : { entries: [child({ id: 'grandchild', parentSessionId: 'child' })], parentAvailable: true }
+      return answer(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+    try {
+      await store.openSubagent(child(), true)
+      expect(store.subagents.entries[0]).toMatchObject({ id: 'grandchild', hasChildren: false })
+      changed = true
+      client.emit({
+        type: 'event',
+        name: 'session.added',
+        sequence: 10,
+        payload: {
+          sessionId: 'descendant',
+          blank: true,
+          origin: 'subagent',
+          parentSessionId: 'grandchild',
+        },
+      })
+      expect(store.subagents.entries[0]).toMatchObject({ hasChildren: false })
+      updated.resolve({
+        entries: [child({ id: 'grandchild', parentSessionId: 'child', hasChildren: true })],
+        parentAvailable: true,
+      })
+      await vi.waitFor(() => expect(store.subagents.entries[0]).toMatchObject({ hasChildren: true }))
+    } finally {
+      updated.resolve({ entries: [], parentAvailable: true })
       store.dispose()
     }
   })
@@ -1113,7 +1154,7 @@ describe('AppStore sessions drawer', () => {
 })
 
 describe('AppStore history paging', () => {
-  it('prepends one real-protocol-shaped history page and advances its beforeSeq boundary', async () => {
+  it('replaces a window with an older authoritative page', async () => {
     const client = new FakeClient((request) => {
       switch (request.type) {
         case 'session.open':
@@ -1192,16 +1233,14 @@ describe('AppStore history paging', () => {
     expect(client.requests).toContainEqual(
       expect.objectContaining({
         type: 'session.history',
-        payload: { sessionId: 'parent', beforeSeq: 20, maxMessages: 200, pagePurpose: 'transcript' },
+        payload: { sessionId: 'parent', beforeSeq: 20, maxMessages: 200 },
       }),
     )
-    expect(store.timeline.nodes.map((node) => node.id)).toEqual(['older', 'newer'])
-    expect(store.timeline.lastSequence).toBe(20)
+    expect(store.timeline.nodes.map((node) => node.id)).toEqual(['older'])
+    expect(store.timeline.lastSequence).toBe(10)
     expect(store.historyHasMore).toBe(false)
     expect(store.historyBeforeSequence).toBe(10)
-    expect(store.getState().projections.parent).toEqual({
-      sessionStats: { turns: 1, steps: 1, llmMs: 10, toolMs: 5 },
-    })
+    expect(store.getState().projections.parent).toBeUndefined() // An older page cannot install current facts.
     expect(store.historyLoading).toBe(false)
     store.dispose()
   })
@@ -1252,14 +1291,14 @@ describe('AppStore history paging', () => {
     await store.openSession('parent')
     await expect(store.loadOlderHistory()).rejects.toThrow()
 
-    expect(store.history.map((entry) => entry.sequence)).toEqual([20])
+    expect(store.getState()).not.toHaveProperty('history')
     expect(store.historyBeforeSequence).toBe(20)
     expect(store.historyHasMore).toBe(true)
     expect(store.historyLoading).toBe(false)
     store.dispose()
   })
 
-  it('merges an older page with a multi-event live turn received while paging is in flight', async () => {
+  it('replaces the historical window while retaining the separate live tail', async () => {
     const page = deferred<unknown>()
     let historyRequested = false
     const client = new FakeClient((request) => {
@@ -1375,9 +1414,10 @@ describe('AppStore history paging', () => {
     })
     await paging
 
-    expect(store.history.map((entry) => entry.sequence)).toEqual([10, 20, 21, 22, 23])
+    expect(store.getState()).not.toHaveProperty('history')
+    expect(store.timeline.nodes.map((node) => node.id)).toEqual(['oldest-visible'])
+    await store.navigateTranscript('latest')
     expect(store.timeline.nodes.map((node) => node.id)).toEqual([
-      'oldest-visible',
       'older-visible',
       'assistant-live',
       'tool-after-page-start',
@@ -1386,7 +1426,7 @@ describe('AppStore history paging', () => {
       expect.objectContaining({ id: 'assistant-live', markdown: 'live prefix and final answer' }),
     )
     expect(store.historyLoading).toBe(false)
-    expect(store.historyBeforeSequence).toBe(10)
+    expect(store.historyBeforeSequence).toBe(20)
     store.dispose()
   })
 
@@ -1475,12 +1515,12 @@ describe('AppStore history paging', () => {
         },
       ],
     })
-    await paging
+    await expect(paging).rejects.toMatchObject({ code: 'STALE_INTERACTION' })
 
     // The newer open has not painted yet, so the old session is still active.
     // The page must nevertheless be discarded by the open-generation guard.
     expect(store.activeSessionId).toBe('parent')
-    expect(store.history.map((entry) => entry.sequence)).toEqual([20])
+    expect(store.getState()).not.toHaveProperty('history')
     expect(store.timeline.nodes.map((node) => node.id)).toEqual(['parent-current'])
 
     nextOpen.resolve(
@@ -1500,7 +1540,7 @@ describe('AppStore history paging', () => {
     await openingNext
 
     expect(store.activeSessionId).toBe('next')
-    expect(store.history.map((entry) => entry.sequence)).toEqual([30])
+    expect(store.getState()).not.toHaveProperty('history')
     expect(store.timeline.nodes.map((node) => node.id)).toEqual(['next-current'])
     expect(store.historyLoading).toBe(false)
     store.dispose()
@@ -1693,7 +1733,7 @@ describe('AppStore session branching', () => {
       }),
     )
     expect(client.requests.some((request) => request.type === 'session.history')).toBe(false)
-    expect(store.timeline.nodes.map((node) => node.id)).toEqual(['child-older', 'child-newer'])
+    expect(store.timeline.nodes.map((node) => node.id)).toEqual(['child-older'])
     expect(store.historyBeforeSequence).toBe(10)
     expect(store.historyHasMore).toBe(false)
     expect(store.historyLoading).toBe(false)

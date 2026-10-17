@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { Drawer } from '@dsh-vscode/ui'
-import type { SessionHistoryEvent } from '@dsh-vscode/domain'
 import type { TimelineNode } from '@dsh-vscode/timeline'
+import type { TranscriptEventFact } from '@dsh-vscode/webview-protocol'
 import type { AppStore } from '../../app/store.js'
 import { useI18n } from '../../i18n.js'
-import { inspectHistory, inspectChatNode } from './inspector-model.js'
+import { inspectChatNode, type InspectorRecord } from './inspector-model.js'
 import { InspectorDevtoolsActions } from './InspectorDevtoolsActions.js'
 import './inspector.css'
 import { createDisplayNodeProjector } from '../chat/timeline-projection.js'
@@ -15,7 +15,7 @@ import { SelectMenu } from '../../components/common/SelectMenu.js'
 
 const PAGE_SIZE = 100
 export function SessionInspector(props: {
-  readonly history: readonly SessionHistoryEvent[]
+  readonly eventFacts?: readonly TranscriptEventFact[]
   readonly nodes: readonly TimelineNode[]
   readonly hasMore: boolean
   readonly loading: boolean
@@ -45,9 +45,29 @@ export function SessionInspector(props: {
     setOpen(props.openRequestId !== undefined)
   }
   const displayProjector = useMemo(() => createDisplayNodeProjector(), [])
-  const records = useMemo(
-    () => (!open ? [] : [...props.history.map(inspectHistory), ...props.nodes.map(inspectChatNode)]),
-    [open, props.history, props.nodes],
+  const records = useMemo<readonly InspectorRecord[]>(
+    () =>
+      !open
+        ? []
+        : [
+            ...(props.eventFacts ?? []).map((fact) => ({
+              id: fact.id,
+              source: 'events' as const,
+              type: fact.type,
+              sequence: fact.sequence,
+              fields: {
+                coordinates: {
+                  sequence: fact.sequence,
+                  ...(fact.turn === undefined ? {} : { turn: fact.turn }),
+                  ...(fact.step === undefined ? {} : { step: fact.step }),
+                  ...(fact.attempt === undefined ? {} : { attempt: fact.attempt }),
+                },
+                structure: { representedSequences: fact.representedSequences },
+              },
+            })),
+            ...props.nodes.map(inspectChatNode),
+          ],
+    [open, props.nodes, props.eventFacts],
   )
   const sourceRecords = useMemo(() => records.filter((record) => record.source === source), [records, source])
   const types = useMemo(
@@ -68,7 +88,7 @@ export function SessionInspector(props: {
     selected?.sequence === undefined
       ? []
       : records.filter((record) => record.source !== selected.source && record.sequence === selected.sequence)
-  const selectRecord = (record: ReturnType<typeof inspectHistory>): void => {
+  const selectRecord = (record: InspectorRecord): void => {
     const sameSource = records.filter((candidate) => candidate.source === record.source)
     const index = sameSource.findIndex((candidate) => candidate.id === record.id)
     setSource(record.source)
@@ -140,7 +160,6 @@ export function SessionInspector(props: {
       <Drawer title={t('inspector.title')} open={open} onClose={() => setOpen(false)}>
         {open ? (
           <div className="dsh-session-inspector">
-            <p className="dsh-session-inspector__scope">{t('inspector.scope')}</p>
             <div className="dsh-session-inspector__filters">
               <label>
                 <span>{t('inspector.source')}</span>

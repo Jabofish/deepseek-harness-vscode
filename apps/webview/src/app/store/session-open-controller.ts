@@ -8,14 +8,9 @@ import { loadSessionModelDirectory, mergeSessionModelDirectory } from './session
 import type { CommandDirectoryCache } from './command-directory.js'
 import { isGoalView, isJobView, isQueuedInput, nonEmptyString } from './event-values.js'
 import { feedbackRecord } from './feature-parsers.js'
-import {
-  hydrateTimelineFromEntries,
-  hydrateTimelineFromHistoryEvents,
-  optionalSequence,
-  parseSessionHistoryWithTimeline,
-} from './history-replay.js'
-import { oldestHistorySequence } from './history-ledger.js'
-import { replayHostMessages, latestTodos } from './host-message-reducers.js'
+import { applyBufferedHostState } from './host-message-reducers.js'
+import { withCurrentTodos } from './todo-state.js'
+import { parseTranscript, transcriptTimeline } from './transcript-state.js'
 import { EMPTY_SUBAGENT_CATALOG, type ComposerPreferences } from './initial-state.js'
 import { stringList } from './list-equality.js'
 import { isSessionOpenDetail } from './session-guards.js'
@@ -28,10 +23,9 @@ import { parseSubagentHistory } from './subagent.js'
 import { safeList } from './session-registry.js'
 import { object } from './unknown-record.js'
 import type { AppState, StateSetter } from './types.js'
-import type { PendingOpenBuffer } from './pending-open.js'
+import type { PendingOpenBuffer } from './opening-state.js'
 import type { createFeatureActions } from './feature-actions.js'
 import type { createJobActions } from './job-actions.js'
-import type { createGapHealing } from './gap-heal.js'
 import type { createFeedbackCache } from './feedback-cache.js'
 
 export type SubagentOpenResolution =
@@ -47,7 +41,6 @@ export interface SessionOpenHost {
   readonly pendingOpenBuffer: PendingOpenBuffer
   readonly featureActions: ReturnType<typeof createFeatureActions>
   readonly jobActions: ReturnType<typeof createJobActions>
-  readonly gapHealing: ReturnType<typeof createGapHealing>
   readonly feedbackCache: ReturnType<typeof createFeedbackCache>
   readonly commandDirectory: CommandDirectoryCache
   readonly requestSessionOpen: (sessionId: string, version: number) => Promise<unknown>
@@ -56,7 +49,6 @@ export interface SessionOpenHost {
   readonly loadSubagentCatalog: (sessionId: string) => Promise<SubagentCatalog | undefined>
   readonly sessionWorkspaceFolderId: (sessionId: string) => string | undefined
   readonly persistWebviewState: (overrides: { readonly activeSessionId?: string }) => void
-  readonly flushPendingHistory: () => void
   readonly nextOpenIntent: () => number
   readonly getOpenIntent: () => number
   readonly nextOpenVersion: () => number
@@ -81,7 +73,6 @@ export function createSessionOpenController(host: SessionOpenHost): {
     pendingOpenBuffer,
     featureActions,
     jobActions,
-    gapHealing,
     feedbackCache,
     commandDirectory,
     requestSessionOpen,
@@ -90,9 +81,7 @@ export function createSessionOpenController(host: SessionOpenHost): {
     loadSubagentCatalog,
     sessionWorkspaceFolderId,
     persistWebviewState,
-    flushPendingHistory,
   } = host
-  const { restoreHostOnlyNodes, restoreGapNotices, scheduleGapBackfill, rememberHostOnlyNodes } = gapHealing
   const { requestFeedbackSnapshot } = feedbackCache
   const open = async (
     requestedSessionId: string,
@@ -101,7 +90,7 @@ export function createSessionOpenController(host: SessionOpenHost): {
     let sessionId = requestedSessionId
     // Claims the intent slot before any await. A root open stays fully
     // synchronous up to its buffer registration, or an event delivered while
-    // the open is in flight lands outside the replay barrier; only a subagent
+    // the open is in flight lands outside the opening barrier; only a subagent
     // child pays the catalog read, and that read can be superseded.
     const intent = host.nextOpenIntent()
     if (
@@ -119,14 +108,13 @@ export function createSessionOpenController(host: SessionOpenHost): {
     }
     jobActions.stopBeforeSessionOpen()
     if (options.startup !== true) host.clearStartupRestorePending()
-    flushPendingHistory()
     const version = host.nextOpenVersion()
     const modelDirectoryGeneration = host.nextSessionModelDirectoryGeneration()
     feedbackCache.forget(sessionId)
     featureActions.retireForSessionSwitch()
     const pending = pendingOpenBuffer.create(sessionId, version)
     // Events delivered after this open began must be replayed after the
-    // advisory snapshots, even when the critical history request has not
+    // advisory snapshots, even when the critical Host window request has not
     // produced first paint yet.
     const advisoryReplayStart = pending.messages.length
     let completed = false
@@ -143,16 +131,9 @@ export function createSessionOpenController(host: SessionOpenHost): {
       }
       const detail = object(result)
       if (!isSessionOpenDetail(detail, sessionId)) throw new Error(translate('app.error.openSession'))
-      const rawHistory = detail.history
-      const parsedHistory = parseSessionHistoryWithTimeline(rawHistory)
-      const history = parsedHistory.history
-      // Host-only rows (command notices, agent errors, unhealed gap warnings)
-      // are not part of the ledger this hydration reads, so a re-open has to
-      // put back the ones the session already announced.
-      const timeline = restoreHostOnlyNodes(
-        restoreGapNotices(hydrateTimelineFromEntries(sessionId, parsedHistory.timeline), sessionId, history),
-        sessionId,
-      )
+      const transcript = parseTranscript(detail.transcript)
+      if (transcript.sessionId !== sessionId) throw new Error(translate('app.error.openSession'))
+      const timeline = transcriptTimeline(transcript)
       const permissionPresets = stringList(detail?.permissionPresets)
       // The Host resolves which VS Code folder guards this session's paths and
       // states it on the open detail; a row from an earlier list is the
@@ -193,17 +174,15 @@ export function createSessionOpenController(host: SessionOpenHost): {
       if (version !== host.getOpenVersion()) return
       const initialMessages = pendingOpenBuffer.messagesAfterReplay(pending)
       setState((current) =>
-        replayHostMessages(
-          {
+        applyBufferedHostState(
+          withCurrentTodos({
             ...current,
             activeSessionId: sessionId,
             pendingSession: undefined,
             timeline,
-            history,
-            historyHasMore: detail?.historyHasMore === true,
-            historyBeforeSequence:
-              optionalSequence(detail?.historyBeforeSequence) ??
-              (detail?.historyHasMore === true ? oldestHistorySequence(history) : undefined),
+            transcript,
+            historyHasMore: transcript.hasMore,
+            historyBeforeSequence: transcript.beforeSequence,
             historyLoading: false,
             projections: setSessionProjection(
               current.projections,
@@ -230,7 +209,7 @@ export function createSessionOpenController(host: SessionOpenHost): {
             permissionPresets: permissionPresets ?? [],
             queue: [],
             goals: [],
-            todos: latestTodos(timeline),
+            todos: [],
             jobs: [],
             jobFollow: undefined,
             feedback: {},
@@ -258,11 +237,9 @@ export function createSessionOpenController(host: SessionOpenHost): {
               isAgentConfiguration(detail?.configuration) ? detail.configuration.planMode : false,
             ),
             commands: commandDirectory.peek(sessionId) ?? [],
-          },
+          }),
           initialMessages,
-          scheduleGapBackfill,
           projectionSequences,
-          rememberHostOnlyNodes,
         ),
       )
       pending.ready = true
@@ -317,7 +294,7 @@ export function createSessionOpenController(host: SessionOpenHost): {
             .messagesFrom(pending, advisoryReplayStart)
             .filter((message) => message.type !== 'event' || message.name !== 'session.gap')
           setState((current) =>
-            replayHostMessages(
+            applyBufferedHostState(
               {
                 ...current,
                 unavailableLists: [
@@ -338,9 +315,7 @@ export function createSessionOpenController(host: SessionOpenHost): {
                 ...(subagents === undefined ? {} : { subagents }),
               },
               pendingMessages,
-              scheduleGapBackfill,
               projectionSequences,
-              rememberHostOnlyNodes,
             ),
           )
           featureActions.refreshSessionScopedStates(sessionId)
@@ -362,13 +337,12 @@ export function createSessionOpenController(host: SessionOpenHost): {
     // by-id resolution inside `open`.
     host.nextOpenIntent()
     jobActions.stopBeforeSessionOpen()
-    flushPendingHistory()
     const version = host.nextOpenVersion()
     feedbackCache.forget(entry.id)
     featureActions.retirePromptTemplatesForSubagentSwitch()
     const pending = pendingOpenBuffer.create(entry.id, version)
     // The history and advisory reads overlap. Preserve every event delivered
-    // after this open began for the final advisory replay.
+    // after this open began for the final control-state merge.
     const advisoryReplayStart = pending.messages.length
     let completed = false
     const workspaceId =
@@ -412,33 +386,21 @@ export function createSessionOpenController(host: SessionOpenHost): {
       ])
       const history = await historyData
       if (version !== host.getOpenVersion()) return
-      // A child transcript is rebuilt from `subagent.history` on every entry,
-      // and DSH never replays host-only rows or an unhealed hole, so both
-      // restores have to run exactly as they do for a parent open.
-      const timeline = restoreHostOnlyNodes(
-        restoreGapNotices(
-          hydrateTimelineFromHistoryEvents(entry.id, history.events),
-          entry.id,
-          history.events,
-        ),
-        entry.id,
-      )
+      const transcript = history.transcript
+      if (transcript.sessionId !== entry.id) throw new Error(translate('app.error.openSession'))
+      const timeline = transcriptTimeline(transcript)
       const initialMessages = pendingOpenBuffer.messagesAfterReplay(pending)
       setState((current) =>
-        replayHostMessages(
-          {
+        applyBufferedHostState(
+          withCurrentTodos({
             ...current,
             activeSessionId: entry.id,
             pendingSession: undefined,
             activeSubagent: { entry, parentAvailable, workspaceId },
             timeline,
-            history: history.events,
-            // A child transcript is paged exactly like a parent one: without the
-            // host cursor (or a deriveable one) the transcript would stop at the
-            // newest page with no way to reach the records before it.
-            historyHasMore: history.hasMore,
-            historyBeforeSequence:
-              history.beforeSequence ?? (history.hasMore ? oldestHistorySequence(history.events) : undefined),
+            transcript,
+            historyHasMore: transcript.hasMore,
+            historyBeforeSequence: transcript.beforeSequence,
             historyLoading: false,
             projections: setSessionProjection(
               current.projections,
@@ -459,7 +421,7 @@ export function createSessionOpenController(host: SessionOpenHost): {
             permissionPresets: [],
             queue: [],
             goals: [],
-            todos: latestTodos(timeline),
+            todos: [],
             jobs: [],
             jobFollow: undefined,
             feedback: {},
@@ -481,11 +443,9 @@ export function createSessionOpenController(host: SessionOpenHost): {
             promptTemplates: [],
             promptTemplatesLoading: false,
             promptMode: 'ask',
-          },
+          }),
           initialMessages,
-          scheduleGapBackfill,
           projectionSequences,
-          rememberHostOnlyNodes,
         ),
       )
       pending.ready = true
@@ -501,7 +461,7 @@ export function createSessionOpenController(host: SessionOpenHost): {
       if (version !== host.getOpenVersion()) return
       const pendingMessages = pendingOpenBuffer.messagesFrom(pending, advisoryReplayStart)
       setState((current) =>
-        replayHostMessages(
+        applyBufferedHostState(
           {
             ...current,
             unavailableLists: [
@@ -520,9 +480,7 @@ export function createSessionOpenController(host: SessionOpenHost): {
             ...(subagents === undefined ? {} : { subagents }),
           },
           pendingMessages,
-          scheduleGapBackfill,
           projectionSequences,
-          rememberHostOnlyNodes,
         ),
       )
       featureActions.refreshSessionScopedStates(entry.id)

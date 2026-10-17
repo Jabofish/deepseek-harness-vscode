@@ -1071,7 +1071,7 @@ describe('SettingsDrawer', () => {
 
     cleanup()
     renderDrawer({ onLoadDshSettings: vi.fn().mockRejectedValue(new Error('offline')) })
-    expect(await screen.findByText(/DSH preferences are unavailable/)).toBeDefined()
+    expect(await screen.findByText(/Could not load DSH preferences/)).toBeDefined()
     expect(screen.queryByRole('group', { name: 'Workflow display' })).toBeNull()
     expect(screen.queryByRole('switch', { name: 'Developer Tools' })).toBeNull()
   })
@@ -1179,7 +1179,7 @@ describe('SettingsDrawer', () => {
 
   it('degrades to an explicit note when the host settings cannot be read', async () => {
     renderDrawer({ onLoadDshSettings: vi.fn().mockResolvedValue(undefined) })
-    await waitFor(() => expect(screen.getByText(/DSH preferences are unavailable/)).toBeDefined())
+    await waitFor(() => expect(screen.getByText(/Could not load DSH preferences/)).toBeDefined())
     expect(screen.queryByRole('group', { name: 'Permission' })).toBeNull()
   })
 
@@ -1397,7 +1397,7 @@ describe('SettingsDrawer', () => {
       .mockResolvedValue(dshSettingsFixture())
     renderDrawer({ onLoadDshSettings }, true)
 
-    expect(await screen.findByText(/DSH preferences are unavailable/)).toBeDefined()
+    expect(await screen.findByText(/Could not load DSH preferences/)).toBeDefined()
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
 
     await waitFor(() => expect(onLoadDshSettings).toHaveBeenCalledTimes(2))

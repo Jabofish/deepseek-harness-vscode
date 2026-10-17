@@ -56,13 +56,7 @@ export const workflowRequestSchemas = [
     .object({
       type: z.literal('subagent.history'),
       ...requestBase,
-      payload: z
-        .object({
-          sessionId: id,
-          beforeSeq: z.number().int().nonnegative().optional(),
-          maxMessages: z.number().int().positive().max(200).optional(),
-        })
-        .strict(),
+      payload: z.object(session).strict(),
     })
     .strict(),
   z

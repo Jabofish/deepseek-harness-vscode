@@ -109,6 +109,8 @@ Control 基线随 wire 变化：早期 alpha 是 `queues`/`jobs`；`alpha162` �
 
 ## 工具、命令与交互
 
+`rc201` 及继承它的精确入口直接消费 [rc.1 的 tool-todo projection](https://github.com/deepseek-ai/deepseek-harness/blob/4878cdabd87d4041bdaff61d04c966883b9fd07a/packages/todo/tool-todo/src/index.ts)：原生 `todos` 是整值数组或 null；`todo/write` 替换，`turn/start` 清为 null，`turn/end` 保留清单。rc.2（`639ed015397290b3745d163aafe02ffee4aa3f84`）和 alpha.2（`d743267388641bc76f17c45ce8b4c231aed1d32c`）已核对同一行为。Adapter 只将 key、条目身份及 `in_progress` 映射为 Domain `todoList` / `in-progress`；完整基线缺少服务表示空当前列表，不从历史 Todo 卡恢复。历史卡仍属于对应回合；旧版未声明该 projection 时，由 Host 桥接结构化 Todo 整值，Webview 不再扫描历史。桥只采用最新尾部，裁切带明确标记；新版原生投影一旦可用就停止该桥的推导，不能用新版投影契约猜测旧版。
+
 Legacy Host 的 `view` envelope 存在时，它是工具卡的权威投影。无 envelope 的后续 wire 只能从第一方工具**结构化参数或结果 `meta` 的合法形状**派生展示：diff、搜索、网页、读卡等分别校验所需字段，空或畸形 `diffs` 不造卡；第三方工具即使有同名参数也不套第一方规则。调用期文件变更卡只表示“打算做”，成功结果和权威 `meta` 到达后才可结算。Shell/terminal 卡必须校验前台命令、工作目录、权限字段及结果标记；后台、失败、溢出页脚、畸形参数和不完整结果退回通用行。调用与结果需按 call ID 在时间线合并点配对，不能逐事件猜测退出状态；宿主结算卡始终优先。
 
 具体派生规则须与第一方客户端的结构模型一致：`write`、`edit` 和 `str_replace_editor` 仅在各自合法的路径、文本及布尔参数下形成调用期 diff 卡；PTC 子调用不派生文件变更卡。前台 `bash`/`pwsh` 的非空 `command` 与 `terminal_send` 的非空 `text`/`sessionId` 才可形成调用期终端卡，后台调用、畸形 `timeoutMs`/`workdir`/权限参数不出卡；PTC 子调用可以保留终端卡。结算只发生在匹配的调用与结果均到达后：尾部 signal 标记优先于 exit code，标记从正文移走；没有合法结算正文、失败结果或溢出页脚时不猜退出状态。工具原文和错误正文只按安全边界脱敏，不以任意较小长度预算静默裁切。

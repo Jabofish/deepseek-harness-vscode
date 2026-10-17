@@ -50,11 +50,16 @@ export function sanitizePublicValue(
   value: unknown,
   parentKey?: string,
   roots: readonly string[] = [],
+  sessionCwd?: string,
 ): unknown {
   if (Array.isArray(value))
     return value.flatMap((entry: unknown) => {
-      if (parentKey === 'paths' && typeof entry === 'string' && isAbsoluteHostPath(entry)) {
-        const relative = publicWorkspaceRelativePath(entry, undefined, roots)
+      if (
+        parentKey === 'paths' &&
+        typeof entry === 'string' &&
+        (isAbsoluteHostPath(entry) || sessionCwd !== undefined)
+      ) {
+        const relative = publicWorkspaceRelativePath(entry, sessionCwd, roots)
         return relative === undefined ? [] : [relative]
       }
       if (
@@ -66,7 +71,7 @@ export function sanitizePublicValue(
         publicWorkspaceRelativePath(entry.path, undefined, roots) === undefined
       )
         return []
-      return [sanitizePublicValue(entry, parentKey, roots)]
+      return [sanitizePublicValue(entry, parentKey, roots, sessionCwd)]
     })
   if (typeof value !== 'object' || value === null) return value
   const source = value as Record<string, unknown>
@@ -77,12 +82,16 @@ export function sanitizePublicValue(
       result[key] = null
       continue
     }
-    if ((key === 'path' || key === 'filePath') && typeof entry === 'string' && isAbsoluteHostPath(entry)) {
-      const relative = publicWorkspaceRelativePath(entry, undefined, roots)
+    if (
+      (key === 'path' || key === 'filePath') &&
+      typeof entry === 'string' &&
+      (isAbsoluteHostPath(entry) || sessionCwd !== undefined)
+    ) {
+      const relative = publicWorkspaceRelativePath(entry, sessionCwd, roots)
       if (relative !== undefined) result[key] = relative
       continue
     }
-    result[key] = sanitizePublicValue(entry, key, roots)
+    result[key] = sanitizePublicValue(entry, key, roots, sessionCwd)
   }
   return result
 }

@@ -1,10 +1,4 @@
-import type {
-  AgentConfiguration,
-  PromptMode,
-  SessionHistoryEvent,
-  SubagentCatalog,
-  SubagentView,
-} from '@dsh-vscode/domain'
+import type { AgentConfiguration, PromptMode, SubagentCatalog, SubagentView } from '@dsh-vscode/domain'
 import type { FeatureRequest } from '@dsh-vscode/webview-protocol'
 import { PluginInstallRecoveryController } from './plugin-install-recovery.js'
 import { createAccountActions } from './store/account-actions.js'
@@ -17,15 +11,14 @@ import { defineStateView, type StoreWithoutStateView } from './store/state-view.
 import { createJobActions } from './store/job-actions.js'
 import { getVsCodeApi } from '../vscode-api.js'
 import { ProtocolClient } from './protocol-client.js'
-import type { AppStore, LiveHistoryAppender, StateSetter } from './store/types.js'
+import type { AppStore, StateSetter } from './store/types.js'
 import { requestId } from './store/ids.js'
-import { createPendingOpenBuffer } from './store/pending-open.js'
+import { createPendingOpenBuffer } from './store/opening-state.js'
 import { createGoalQueueActions } from './store/goal-queue-actions.js'
 import { createSessionActions } from './store/session-actions.js'
 import { createCommandDirectoryCache, readCommandList } from './store/command-directory.js'
 import { refreshSessionModelDirectory } from './store/session-model-directory.js'
 import { createDshUpdateActions } from './store/dsh-update.js'
-import { createGapHealing } from './store/gap-heal.js'
 import { createFeedbackCache } from './store/feedback-cache.js'
 import { createFeedbackActions } from './store/feedback-actions.js'
 import { createInteractionActions } from './store/interaction-actions.js'
@@ -36,10 +29,10 @@ import { createSurfaceActions, isHandoffSidebar } from './store/surface-actions.
 import { subscribeHostEvents } from './store/host-event-subscription.js'
 import { createPromptActions } from './store/prompt-actions.js'
 import { createHistoryActions } from './store/history-actions.js'
+import { installTranscript, parseTranscript } from './store/transcript-state.js'
 import { createSessionCreationActions } from './store/session-creation-actions.js'
 import { createAppLifecycleActions } from './store/app-lifecycle-actions.js'
 import { parseGoalViews } from './store/event-values.js'
-import { mergeHistory } from './store/history-ledger.js'
 import { parseDshSettingsSnapshot } from './store/host-settings.js'
 import { createInitialState } from './store/initial-state.js'
 import { sameGoalList, sameSessionSummaryList, strictListValues } from './store/list-equality.js'
@@ -96,54 +89,45 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   const listeners = new Set<() => void>()
   const turnWatchers = createTurnWatchers({ isDisposed: () => disposed })
   let notifyTimer: number | undefined
-  let pendingHistorySessionId: string | undefined
-  let pendingHistory: SessionHistoryEvent[] = []
-  const notify = (): void => {
-    for (const listener of listeners) listener()
-  }
-  const flushPendingHistory = (): void => {
-    if (pendingHistory.length === 0) return
-    const sessionId = pendingHistorySessionId
-    const additions = pendingHistory
-    pendingHistory = []
-    pendingHistorySessionId = undefined
-    if (sessionId === undefined || state.activeSessionId !== sessionId) return
-    const history = mergeHistory(state.history, additions)
-    if (history !== state.history) state = { ...state, history }
-  }
   const scheduleNotify = (): void => {
     if (disposed || notifyTimer !== undefined) return
     notifyTimer = window.setTimeout(() => {
       notifyTimer = undefined
-      flushPendingHistory()
-      notify()
+      for (const listener of listeners) listener()
     }, STORE_NOTIFY_BATCH_MS)
-  }
-  const appendLiveHistory: LiveHistoryAppender = (sessionId, entry): void => {
-    if (disposed) return
-    if (pendingHistorySessionId !== undefined && pendingHistorySessionId !== sessionId) flushPendingHistory()
-    pendingHistorySessionId = sessionId
-    pendingHistory.push(entry)
-    // History-only events (for example an unchanged projection) can leave
-    // applyHostMessage with the same AppState object. They still need the
-    // normal frame notification so the history ledger is published without a
-    // later session switch or unrelated state update.
-    scheduleNotify()
   }
   const setState: StateSetter = (next): void => {
     if (disposed) return
     const nextState = typeof next === 'function' ? next(state) : next
-    if (nextState === state) {
-      // A guarded async refresh can legitimately produce the current object.
-      // Do not wake React for that no-op, but keep the coalesced history
-      // flush alive when a live event was appended before the guard ran.
-      if (pendingHistory.length > 0) scheduleNotify()
-      return
+    if (nextState === state) return
+    const previousTranscript = state.transcript
+    state =
+      nextState.transcript !== undefined && nextState.transcript.sessionId !== nextState.activeSessionId
+        ? { ...nextState, transcript: undefined }
+        : nextState
+    if (state.transcript !== undefined) {
+      const active = state.activeSessionId
+      const retained = Object.entries(state.projections).filter(([id]) => id === active)
+      if (retained.length !== Object.keys(state.projections).length)
+        state = { ...state, projections: Object.fromEntries(retained) }
+      for (const index of [
+        projectionSequences.perKey,
+        projectionSequences.baselines,
+        projectionSequences.queueBySession,
+      ])
+        for (const id of index.keys()) if (id !== active) index.delete(id)
     }
-    state = nextState
-    // Host streams can deliver hundreds of deltas for one answer. State is
-    // still reduced synchronously so ordering and reads stay authoritative;
-    // only the React subscriber notification is coalesced to one frame.
+    if (state.transcript !== undefined && state.transcript !== previousTranscript) {
+      const window = state.transcript
+      void client
+        .request<unknown>({
+          type: 'session.transcript.ack',
+          requestId: requestId(),
+          payload: { sessionId: window.sessionId, revision: window.revision },
+        })
+        .catch(() => undefined)
+    }
+    // Install Host windows and control facts synchronously; batch React notifications.
     scheduleNotify()
   }
   const feedbackCache = createFeedbackCache({ client, setState, getState: () => state })
@@ -179,23 +163,6 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     setState,
     sessionWorkspaceFolderId,
   })
-  const gapHealing = createGapHealing({
-    client,
-    setState,
-    getState: () => state,
-    getOpenVersion: () => openVersion,
-    isDisposed: () => disposed,
-    flushPendingHistory,
-    notifyBatchMs: STORE_NOTIFY_BATCH_MS,
-  })
-  const {
-    scheduleGapBackfill,
-    scheduleLedgerRebuild,
-    restoreGapNotices,
-    restoreHostOnlyNodes,
-    rememberHostOnlyNodes,
-    rememberCoveredRanges,
-  } = gapHealing
   const persistWebviewState = (overrides: { readonly activeSessionId?: string } = {}): void => {
     if (disposed) return
     const activeSessionId = overrides.activeSessionId ?? state.activeSessionId
@@ -244,9 +211,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     isPresetRosterCurrent,
   })
 
-  const refreshLiveGoals = async (): Promise<void> => {
+  const refreshLiveGoals = async (force = false): Promise<void> => {
     const sessionId = state.activeSessionId
-    if (sessionId === undefined || !goalActivationAvailable) return
+    if (sessionId === undefined || (!force && !goalActivationAvailable)) return
     const generation = ++goalReadGeneration
     const version = openVersion
     try {
@@ -289,7 +256,19 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   let startupRestorePending = true
   let startupRestoreArmed = false
   let startupRestorePromise: Promise<void> | undefined
-  const pendingOpenBuffer = createPendingOpenBuffer(() => openVersion)
+  const pendingOpenBuffer = createPendingOpenBuffer(() => {
+    turnWatchers.disposeAll()
+    const sessionId = state.activeSessionId
+    if (sessionId !== undefined)
+      void client
+        .request({
+          type: 'session.transcript.resync',
+          requestId: requestId(),
+          payload: { sessionId },
+        })
+        .catch(() => undefined)
+    reopenActiveView()
+  })
   const commandDirectory = createCommandDirectoryCache((sessionId) => readCommandList(client, sessionId))
   const loadCommandDirectory = (
     sessionId: string,
@@ -457,7 +436,6 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     pendingOpenBuffer,
     featureActions,
     jobActions,
-    gapHealing,
     feedbackCache,
     commandDirectory,
     requestSessionOpen,
@@ -466,7 +444,6 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     loadSubagentCatalog,
     sessionWorkspaceFolderId,
     persistWebviewState,
-    flushPendingHistory,
     nextOpenIntent: () => ++openIntent,
     getOpenIntent: () => openIntent,
     nextOpenVersion: () => ++openVersion,
@@ -544,7 +521,6 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   })
   const unsubscribeHostEvents = subscribeHostEvents({
     accountActions,
-    appendLiveHistory,
     callbacks,
     client,
     commandDirectory,
@@ -578,9 +554,6 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     refreshLiveGoals,
     refreshSessionModelDirectoryForSession,
     reopenActiveView,
-    scheduleGapBackfill,
-    scheduleLedgerRebuild,
-    rememberHostOnlyNodes,
     setState,
     surfaceActions,
     turnWatchers,
@@ -652,13 +625,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   })
   const { loadOlderHistory } = createHistoryActions({
     client,
-    flushPendingHistory,
-    getOpenVersion: () => openVersion,
     getState: () => state,
-    projectionSequences,
-    rememberCoveredRanges,
-    restoreGapNotices,
-    restoreHostOnlyNodes,
     setState,
   })
   const sessionCreationActions = createSessionCreationActions({
@@ -668,7 +635,6 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     },
     discardEditorContextForSessionSwitch: (sessionId) =>
       featureActions.discardEditorContextForSessionSwitch(sessionId),
-    flushPendingHistory,
     getComposerPreferences: () => composerPreferences,
     getOpenIntent: () => openIntent,
     getPendingSend: () => pendingSend,
@@ -706,8 +672,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   const goalQueueActions = createGoalQueueActions({
     client,
     getState: () => state,
-    setState,
-    refreshGoals: refreshLiveGoals,
+    refreshGoals: () => refreshLiveGoals(true),
   })
 
   /**
@@ -760,6 +725,25 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       await refreshSessionModelDirectoryForSession(target)
     },
     loadOlderHistory,
+    navigateTranscript: async (direction) => {
+      const window = state.transcript
+      if (window === undefined) return
+      const result = await client.request<unknown>({
+        type: 'session.transcript.navigate',
+        requestId: requestId(),
+        payload: { sessionId: window.sessionId, revision: window.revision, direction },
+      })
+      setState((current) => installTranscript(current, parseTranscript(result)))
+    },
+    openTranscriptContent: async (nodeId) => {
+      const window = state.transcript
+      if (window === undefined) return
+      await client.request<unknown>({
+        type: 'session.transcript.openContent',
+        requestId: requestId(),
+        payload: { sessionId: window.sessionId, revision: window.revision, nodeId },
+      })
+    },
     openSubagent,
     ...sessionActions,
     ...goalQueueActions,
@@ -821,10 +805,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         window.clearTimeout(notifyTimer)
         notifyTimer = undefined
       }
-      // In-flight opens, rebuilds and gap backfills all guard on openVersion;
-      // bumping it retires them without letting a late continuation touch a
-      // disposed store. Gap backfills also read `disposed`: they outlive a
-      // superseded open on purpose so their announced range is not lost.
+      // Retire in-flight opens and release their bounded snapshots immediately.
+      pendingOpenBuffer.clear()
       turnWatchers.disposeAll()
       pluginInstallRecovery.dispose()
       openVersion += 1
@@ -832,9 +814,6 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       globalCatalogs.invalidate()
       commandDirectory.invalidate()
       accountActions.invalidate()
-      gapHealing.dispose()
-      pendingHistory = []
-      pendingHistorySessionId = undefined
       invalidateFeedback()
       unsubscribeHostEvents()
       client.dispose()

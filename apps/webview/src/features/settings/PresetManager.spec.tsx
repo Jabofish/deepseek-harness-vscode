@@ -163,7 +163,7 @@ describe('PresetManager roster', () => {
 
     const creator = await screen.findByRole('button', { name: 'Ask Agent to create a mode' })
     expect(
-      screen.getByText(/Creator mode to build and install a bundle that declares one.*DSH loads it/),
+      screen.getByText(/Create one in Creator mode, then install it in the Plugin Manager/),
     ).toBeDefined()
     expect(screen.queryByText(/Copy a built-in preset/)).toBeNull()
 

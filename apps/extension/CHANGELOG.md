@@ -31,6 +31,16 @@
 - 修复 Webview 上下文菜单的“复制”在未选中文本时无任何效果：现在复制所指行（助手回答或用户提问）的 Markdown，不含思考、工具调用和通知；该行没有可读文本时保持剪贴板不变。
 - Fixes the Webview context menu's Copy doing nothing without a selection: it copies the Markdown of the addressed row (assistant answer or user prompt) without reasoning, tool calls or notices, and leaves the clipboard untouched when that row has no readable text.
 
+- 精简设置、模型、插件和检查器中的重复说明；空状态与错误提示聚焦当前情况和可执行操作。
+- Removes repetitive explanations from Settings, Models, Plugins and the Inspector; empty states and errors focus on the current situation and available actions.
+
+- 移除 Webview 旧历史引擎及原始历史分页协议，普通和子代理会话统一使用 Host 窗口；队列接纳、Goal 修改和子代理目录采用 DSH 权威结果，工具预览复用工作目录投影。
+- Removes the legacy Webview history engine and raw paging protocol. Ordinary and child sessions use Host windows; queue admission, Goal edits and subagent catalogs follow authoritative DSH results, and tool previews reuse the working-directory projection.
+- 将聊天历史展示投影移至 Extension Host，按节点及正文预算提供可回看的窗口；隐藏时暂停窗口发送，以确认控制消息积压，避免 Webview 累积事件账本及历史页。
+- Moves transcript presentation to the Extension Host with bounded, navigable windows and acknowledged delivery. Hidden views pause window delivery instead of accumulating a renderer event ledger and loaded history pages.
+- 移除聊天区的分页、长记录预览和任务清单截断说明；完整持久内容可按需在 VS Code 编辑器打开，当前 Todo 直接使用 DSH 的整值投影。
+- Removes paging, long-entry preview and partial-task-list notices from the chat. Full durable content opens on demand in the editor, and current Todos consume DSH's whole projection.
+
 ## 0.3.1
 
 - 修复远程工作区的凭据作用域、附件文件系统与 Inspector 转发边界，避免不同 SSH / 容器环境复用授权。

@@ -1,4 +1,3 @@
-import type { SessionHistoryEvent } from '@dsh-vscode/domain'
 import type { TimelineNode } from '@dsh-vscode/timeline'
 
 export interface InspectorRecord {
@@ -22,19 +21,6 @@ function counts(value: unknown, keys: readonly string[]): Record<string, number 
   return result
 }
 const COORDINATES = ['turn', 'step', 'attempt', 'sequence', 'durationMs'] as const
-/** Metadata allowlist, never a dump of logs, tools or model text. */
-export function inspectHistory(entry: SessionHistoryEvent): InspectorRecord {
-  return {
-    id: `event:${entry.sequence}`,
-    source: 'events',
-    type: entry.event.type,
-    sequence: entry.sequence,
-    fields: {
-      coordinates: counts(entry.event, COORDINATES),
-      structure: { representedSequences: entry.coveredSequences?.length ?? 1 },
-    },
-  }
-}
 export function inspectChatNode(node: TimelineNode, index: number): InspectorRecord {
   const structure: Record<string, number | boolean> = { index }
   if ('markdown' in node) structure.textCharacters = node.markdown.length

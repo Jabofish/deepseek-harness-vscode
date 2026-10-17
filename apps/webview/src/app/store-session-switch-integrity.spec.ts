@@ -1,9 +1,12 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it } from 'vitest'
-import type { HostMessage, WebviewRequest } from '@dsh-vscode/webview-protocol'
+import type { HostMessage } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
-import { createAppStore } from './store.js'
+import {
+  createHostBackedAppStore as createAppStore,
+  type FixtureRequest as WebviewRequest,
+} from '../test/host-window-store.js'
 
 const SESSION_A = 'session-switch-a'
 const SESSION_B = 'session-switch-b'
@@ -129,7 +132,7 @@ describe('AppStore session switch integrity', () => {
     await store.openSession(SESSION_A)
     client.emit(hostOnlyNotice(SESSION_A, 11, 'The provider rejected the request.'))
     await settle()
-    expect(nodeIds(store)).toEqual(['notice:11'])
+    expect(nodeIds(store)).toEqual(['notice:-1'])
 
     await store.openSession(SESSION_B)
     await settle()
@@ -138,7 +141,7 @@ describe('AppStore session switch integrity', () => {
 
     // Nothing in the DSH ledger can replay a host-only row, so dropping it on
     // a re-open loses it for good.
-    expect(nodeIds(store)).toEqual(['notice:11'])
+    expect(nodeIds(store)).toEqual(['notice:-1'])
     store.dispose()
   })
 
@@ -151,7 +154,7 @@ describe('AppStore session switch integrity', () => {
     await store.openSession(SESSION_B)
     await settle()
 
-    expect(nodeIds(store)).toEqual(['notice:12'])
+    expect(nodeIds(store)).toEqual(['notice:-1'])
     store.dispose()
   })
 
@@ -160,14 +163,14 @@ describe('AppStore session switch integrity', () => {
     await store.openSession(SESSION_A)
     client.emit(hostOnlyCommand(SESSION_A, 13, '/compact'))
     await settle()
-    expect(nodeIds(store)).toEqual(['command-input:13', 'notice:13'])
+    expect(nodeIds(store)).toEqual(['command-input:-1', 'notice:-1'])
 
     await store.openSession(SESSION_B)
     await settle()
     await store.openSession(SESSION_A)
     await settle()
 
-    expect(nodeIds(store)).toEqual(['command-input:13', 'notice:13'])
+    expect(nodeIds(store)).toEqual(['command-input:-1', 'notice:-1'])
     store.dispose()
   })
 
@@ -214,7 +217,7 @@ describe('AppStore session switch integrity', () => {
       `user-${SESSION_A}-1`,
       `user-${SESSION_A}-2`,
       `user-${SESSION_A}-3`,
-      'notice:14',
+      'notice:-1',
       `user-${SESSION_A}-4`,
       `user-${SESSION_A}-5`,
       `user-${SESSION_A}-6`,
@@ -235,7 +238,7 @@ describe('AppStore session switch integrity', () => {
       await settle()
     }
 
-    expect(nodeIds(store)).toEqual(['notice:15'])
+    expect(nodeIds(store)).toEqual(['notice:-1'])
     store.dispose()
   })
 })

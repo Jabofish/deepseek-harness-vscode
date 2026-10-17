@@ -3,9 +3,12 @@
 import { cleanup, fireEvent, render } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { ReactElement } from 'react'
-import type { HostMessage, WebviewRequest } from '@dsh-vscode/webview-protocol'
+import type { HostMessage } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
-import { createAppStore } from './store.js'
+import {
+  createHostBackedAppStore as createAppStore,
+  type FixtureRequest as WebviewRequest,
+} from '../test/host-window-store.js'
 import { LONG_SESSION_ID, longSessionMessages } from './long-session.fixture.js'
 import { Timeline } from '../features/chat/Timeline.js'
 import { TrajectoryView } from '../features/trajectory/TrajectoryView.js'

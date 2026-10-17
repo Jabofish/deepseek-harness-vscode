@@ -1,23 +1,21 @@
 import type { PluginInstallProgressView, SubagentCatalog } from '@dsh-vscode/domain'
 import type { ProtocolClient } from '../protocol-client.js'
 import type { PluginInstallRecoveryController } from '../plugin-install-recovery.js'
-import type { AppState, LiveHistoryAppender, StateSetter } from './types.js'
+import type { AppState, StateSetter } from './types.js'
 import { requestId } from './ids.js'
-import type { PendingOpenBuffer } from './pending-open.js'
+import type { PendingOpenBuffer } from './opening-state.js'
 import type { ProjectionSequenceIndex } from './session-projection.js'
 import { isCommandDirectoryRefresh, isModelCatalogRefresh } from './command-directory.js'
 import type { createCommandDirectoryCache } from './command-directory.js'
 import type { createFeatureActions } from './feature-actions.js'
 import type { createAccountActions } from './account-actions.js'
-import type { createGapHealing } from './gap-heal.js'
 import type { createTurnWatchers } from './turn-watchers.js'
 import type { createSurfaceActions } from './surface-actions.js'
-import { parseHostDomainEvent, timelineSequenceOptions } from './event-parser.js'
+import { parseHostDomainEvent } from './event-parser.js'
 import { backendEventSessionId, applyHostMessage } from './host-message-reducers.js'
 import { object } from './unknown-record.js'
 import { stringList } from './list-equality.js'
 
-type GapHealingOperations = ReturnType<typeof createGapHealing>
 type AccountEventActions = Pick<
   ReturnType<typeof createAccountActions>,
   'applyConnectionIdentity' | 'applyFeatureEvent'
@@ -42,7 +40,6 @@ export interface HostEventSubscriptionLifecycle {
 
 export interface HostEventSubscriptionDependencies {
   readonly accountActions: AccountEventActions
-  readonly appendLiveHistory: LiveHistoryAppender
   readonly callbacks: { openCreatedSession?: (sessionId: string) => Promise<void> }
   readonly client: ProtocolClient
   readonly commandDirectory: CommandDirectory
@@ -60,9 +57,6 @@ export interface HostEventSubscriptionDependencies {
   readonly refreshLiveGoals: () => Promise<void>
   readonly refreshSessionModelDirectoryForSession: (sessionId: string) => Promise<void>
   readonly reopenActiveView: () => void
-  readonly scheduleGapBackfill: GapHealingOperations['scheduleGapBackfill']
-  readonly scheduleLedgerRebuild: GapHealingOperations['scheduleLedgerRebuild']
-  readonly rememberHostOnlyNodes: GapHealingOperations['rememberHostOnlyNodes']
   readonly setState: StateSetter
   readonly surfaceActions: SurfaceActions
   readonly turnWatchers: TurnWatchers
@@ -72,7 +66,6 @@ export interface HostEventSubscriptionDependencies {
 export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): () => void {
   const {
     accountActions,
-    appendLiveHistory,
     callbacks,
     client,
     commandDirectory,
@@ -89,9 +82,6 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
     refreshLiveGoals,
     refreshSessionModelDirectoryForSession,
     reopenActiveView,
-    scheduleGapBackfill,
-    scheduleLedgerRebuild,
-    rememberHostOnlyNodes,
     setState,
     surfaceActions,
     turnWatchers,
@@ -104,6 +94,31 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
     // active session in the editor area). They own their own reduction and never
     // reach the conversation pipeline.
     if (surfaceActions.applySurfaceEvent(message)) return
+    if (message.type === 'event' && message.name === 'ui.resync') {
+      turnWatchers.disposeAll()
+      const state = getState()
+      if (state.backend.kind === 'connected' && state.activeSessionId !== undefined) {
+        void client
+          .request({
+            type: 'session.transcript.resync',
+            requestId: requestId(),
+            payload: { sessionId: state.activeSessionId },
+          })
+          .catch(() => undefined)
+        reopenActiveView()
+        void refresh().catch(() => undefined)
+      }
+      return
+    }
+    if (message.type === 'event' && message.name === 'session.transcript.invalidated') {
+      if (
+        object(message.payload)?.sessionId === getState().activeSessionId &&
+        getState().transcript !== undefined &&
+        getState().transcript?.historical !== true
+      )
+        reopenActiveView()
+      return
+    }
     if (
       message.type === 'event' &&
       (message.name === 'connection.snapshot' || message.name === 'connection.lost')
@@ -134,68 +149,33 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
     if (parsedEvent?.type === 'turn.started' || parsedEvent?.type === 'turn.ended')
       turnWatchers.notify(parsedEvent)
     const messageSessionId =
-      parsedEvent === undefined || parsedEvent === null ? undefined : backendEventSessionId(parsedEvent)
-    const previousLastSequence = getState().timeline.lastSequence
+      message.type === 'event' &&
+      message.name === 'session.transcript' &&
+      typeof object(message.payload)?.sessionId === 'string'
+        ? (object(message.payload)!.sessionId as string)
+        : parsedEvent === undefined || parsedEvent === null
+          ? undefined
+          : backendEventSessionId(parsedEvent)
     let deferredToOpen = false
-    let pendingOpenReady = false
     if (messageSessionId !== undefined) {
       const pending = pendingOpenBuffer.capture(messageSessionId, message)
       if (pending !== undefined) {
         deferredToOpen = true
-        pendingOpenReady = pending.ready
-        // History/configuration is the open barrier; advisory reads must not
-        // keep live model/tool events hidden after the first conversation
-        // paint. Retain the message in the queue so the final advisory
-        // snapshot can replay it after its potentially stale list response.
+        // The Host window is the opening barrier. Keep only bounded windows
+        // and idempotent control facts while advisory list reads settle.
         if (
           pending.ready &&
           pending.version === lifecycle.getOpenVersion() &&
           getState().activeSessionId === pending.sessionId
         )
-          applyHostMessage(
-            message,
-            getState(),
-            setState,
-            appendLiveHistory,
-            parsedEvent,
-            scheduleGapBackfill,
-            projectionSequences,
-            rememberHostOnlyNodes,
-          )
+          applyHostMessage(message, getState(), setState, parsedEvent, projectionSequences)
       }
     }
-    // A session can be reopened while it is still active. Applying its live
-    // event immediately and replaying it over the freshly hydrated history
-    // would duplicate deltas, queue rows, and interaction requests. Defer
-    // only events addressed to an in-flight open; global connection/workspace
-    // events continue to update the shell while the read is in progress.
+    // Buffer session-scoped view/control updates during the opening barrier.
+    // Global shell facts and pending interactions remain immediately available.
     if (!deferredToOpen)
-      applyHostMessage(
-        message,
-        getState(),
-        setState,
-        appendLiveHistory,
-        parsedEvent,
-        scheduleGapBackfill,
-        projectionSequences,
-        rememberHostOnlyNodes,
-        reopenActiveView,
-      )
-    // Content frames that history recovery redelivers below the timeline
-    // cursor are absorbed into the ledger but ignored by the reduce gate.
-    // Republish the ledger once so the healed range becomes visible.
+      applyHostMessage(message, getState(), setState, parsedEvent, projectionSequences, reopenActiveView)
     const currentState = getState()
-    if (
-      parsedEvent !== undefined &&
-      parsedEvent !== null &&
-      (!deferredToOpen || pendingOpenReady) &&
-      currentState.activeSessionId !== undefined &&
-      messageSessionId === currentState.activeSessionId &&
-      parsedEvent.sequence !== undefined &&
-      timelineSequenceOptions(parsedEvent).advanceSequence !== false &&
-      parsedEvent.sequence <= previousLastSequence
-    )
-      scheduleLedgerRebuild(currentState.activeSessionId)
     // The switcher only caches its rows, so a session whose title changed
     // while the drawer was closed (a missed live frame, a reconnect gap, or a
     // title generated before this client attached) would keep showing the
@@ -236,7 +216,6 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
     if (
       message.type === 'event' &&
       ((message.name === 'remote.event' && object(message.payload)?.name === 'goal/activation-changed') ||
-        message.name === 'goal.updated' ||
         message.name === 'session.status' ||
         message.name === 'session.subscribed' ||
         (message.name === 'connection.snapshot' && object(message.payload)?.kind === 'connected'))
@@ -338,11 +317,17 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
         added?.origin === 'subagent' && typeof added.parentSessionId === 'string'
           ? added.parentSessionId
           : undefined
-      if (parentSessionId !== undefined && parentSessionId === getState().activeSessionId)
-        void loadSubagentCatalog(parentSessionId).then((catalog) => {
+      const activeSessionId = getState().activeSessionId
+      if (
+        activeSessionId !== undefined &&
+        parentSessionId !== undefined &&
+        (parentSessionId === activeSessionId ||
+          getState().subagents.entries.some((entry) => entry.id === parentSessionId))
+      )
+        void loadSubagentCatalog(activeSessionId).then((catalog) => {
           if (catalog !== undefined)
             setState((current) =>
-              current.activeSessionId === parentSessionId ? { ...current, subagents: catalog } : current,
+              current.activeSessionId === activeSessionId ? { ...current, subagents: catalog } : current,
             )
         })
     }
@@ -352,11 +337,17 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
     ) {
       const subscribed = object(message.payload)
       const sessionId = typeof subscribed?.sessionId === 'string' ? subscribed.sessionId : undefined
-      if (sessionId !== undefined && sessionId === getState().activeSessionId)
-        void loadSubagentCatalog(sessionId).then((catalog) => {
+      const activeSessionId = getState().activeSessionId
+      if (
+        activeSessionId !== undefined &&
+        sessionId !== undefined &&
+        (sessionId === activeSessionId ||
+          getState().subagents.entries.some((entry) => entry.id === sessionId))
+      )
+        void loadSubagentCatalog(activeSessionId).then((catalog) => {
           if (catalog !== undefined)
             setState((current) =>
-              current.activeSessionId === sessionId ? { ...current, subagents: catalog } : current,
+              current.activeSessionId === activeSessionId ? { ...current, subagents: catalog } : current,
             )
         })
     }

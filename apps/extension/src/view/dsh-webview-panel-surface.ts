@@ -13,6 +13,7 @@ export interface DshWebviewPanelSurfaceDependencies {
   readonly onMessageError?: (error: unknown) => void
   readonly onBecameReady?: (surface: DshWebviewPanelSurface) => void
   readonly onDisposed?: (surface: DshWebviewPanelSurface) => void
+  readonly onVisibilityChanged?: (surface: DshWebviewPanelSurface) => void
 }
 
 export interface CreateDshWebviewPanelSurfaceOptions extends DshWebviewPanelSurfaceDependencies {
@@ -76,6 +77,7 @@ export class DshWebviewPanelSurface implements WebviewSurface {
       panel.onDidDispose(() => this.finishDispose()),
       panel.onDidChangeViewState(() => {
         this.isVisible = panel.visible
+        this.dependencies.onVisibilityChanged?.(this)
       }),
     ]
   }

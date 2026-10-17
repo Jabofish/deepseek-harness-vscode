@@ -1,6 +1,5 @@
 import type {
   AgentPresetDescriptor,
-  BackendEvent,
   GoalView,
   JobView,
   MessageImageReference,
@@ -313,44 +312,6 @@ export function sameQueuedInputList(left: readonly QueuedInput[], right: readonl
       sameMessageImageList(previous.images, next.images) &&
       sameStringList(previous.files, next.files),
   )
-}
-
-export function removeAdmittedQueueInput(
-  queue: readonly QueuedInput[],
-  event: Extract<BackendEvent, { readonly type: 'message.user' }>,
-): readonly QueuedInput[] {
-  const byRpcId = event.rpcId === undefined ? -1 : queue.findIndex((item) => item.rpcId === event.rpcId)
-  const index = byRpcId >= 0 ? byRpcId : queue.findIndex((item) => isAdmittedQueueInput(item, event))
-  if (index < 0) return queue
-  return [...queue.slice(0, index), ...queue.slice(index + 1)]
-}
-
-/**
- * Whether a pending row is the durable message that was just admitted.
- *
- * The two are projections of the same host content, but not of the same
- * fields: the row lists the names of the files it carries — an inlined text
- * file among them — while the durable message reports those names as
- * attachments, and its images are compared by count. Comparing the two lists
- * field by field therefore never matched a row that carried anything, and the
- * dock kept the row until the next queue frame. Correspondence by kind is what
- * identifies the message, mirroring the timeline's preview matcher.
- *
- * The durable message may carry attachments the row never listed: editor
- * context chips are resolved into prompt attachments inside the Extension Host
- * and are appended after the row's own, so the row's names are the leading
- * ones and anything beyond them belongs to content the Webview never queued.
- */
-export function isAdmittedQueueInput(
-  item: QueuedInput,
-  event: Extract<BackendEvent, { readonly type: 'message.user' }>,
-): boolean {
-  if (item.text !== event.markdown) return false
-  const names = item.files ?? []
-  const attachedNames = (event.attachments ?? []).map((attachment) => attachment.name)
-  if (names.length > attachedNames.length) return false
-  if (!names.every((name, index) => name === attachedNames[index])) return false
-  return (item.images ?? []).length === (event.images ?? []).length
 }
 
 export function samePromptAttachmentList(

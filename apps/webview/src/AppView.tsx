@@ -468,9 +468,75 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                       )}
                     </ConversationActionsMenu>
                   </div>
+                  {state.transcript === undefined ||
+                  (!state.transcript.historical && state.transcript.omittedNodeIds.length === 0) ? null : (
+                    <div className="dsh-timeline__history-more">
+                      {state.transcript.historical ? (
+                        <>
+                          <button
+                            type="button"
+                            className="dsh-button dsh-button--secondary dsh-button--compact"
+                            onClick={() => {
+                              void store
+                                .navigateTranscript('newer')
+                                .catch((reason) => setError(String(reason)))
+                            }}
+                          >
+                            {t('transcript.newer')}
+                          </button>
+                          <button
+                            type="button"
+                            className="dsh-button dsh-button--secondary dsh-button--compact"
+                            onClick={() => {
+                              void store
+                                .navigateTranscript('latest')
+                                .catch((reason) => setError(String(reason)))
+                            }}
+                          >
+                            {t('transcript.latest')}
+                          </button>
+                        </>
+                      ) : null}
+                      {state.transcript.omittedNodeIds.length === 0 ? null : (
+                        <details>
+                          <summary>{t('transcript.fullContent')}</summary>
+                          {state.transcript.omittedNodeIds.map((id) => {
+                            const node = state.timeline.nodes.find((candidate) => candidate.id === id)
+                            const label =
+                              node?.kind === 'tool'
+                                ? node.tool.title
+                                : node !== undefined && 'markdown' in node
+                                  ? node.markdown.slice(0, 64)
+                                  : t('transcript.fullContent')
+                            return (
+                              <button
+                                key={id}
+                                type="button"
+                                disabled={
+                                  (node?.kind === 'assistant-message' &&
+                                    (node.streaming || node.reasoning?.streaming === true)) ||
+                                  (node?.kind === 'reasoning' && node.streaming) ||
+                                  (node?.kind === 'tool' &&
+                                    (node.tool.status === 'running' || node.tool.status === 'queued'))
+                                }
+                                className="dsh-button dsh-button--secondary dsh-button--compact"
+                                onClick={() => {
+                                  void store
+                                    .openTranscriptContent(id)
+                                    .catch((reason) => setError(String(reason)))
+                                }}
+                              >
+                                {t('transcript.fullContent')}: {label}
+                              </button>
+                            )
+                          })}
+                        </details>
+                      )}
+                    </div>
+                  )}
                   <SessionInspector
                     key={`${state.connectionEpoch}:${active.id}`}
-                    history={state.history}
+                    {...(state.transcript === undefined ? {} : { eventFacts: state.transcript.eventFacts })}
                     nodes={state.timeline.nodes}
                     hasMore={state.historyHasMore}
                     loading={state.historyLoading}
@@ -545,6 +611,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                       hasMoreHistory={state.historyHasMore}
                       loadingOlderHistory={state.historyLoading}
                       onLoadOlderHistory={timelineOnLoadOlderHistory}
+                      pagedHistory
                       onFeedback={timelineOnFeedback}
                       onFeedbackPrepare={timelineOnFeedbackPrepare}
                       onFeedbackSubmit={timelineOnFeedbackSubmit}

@@ -120,7 +120,6 @@ export async function refreshSessions(
               nodeChangeStart: 0,
               eventCount: 0,
             },
-            history: [],
             historyHasMore: false,
             historyBeforeSequence: undefined,
             historyLoading: false,

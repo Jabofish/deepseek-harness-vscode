@@ -77,6 +77,9 @@ importers:
       '@dsh-vscode/dsh-adapter':
         specifier: workspace:*
         version: link:../../packages/dsh-adapter
+      '@dsh-vscode/timeline':
+        specifier: workspace:*
+        version: link:../../packages/timeline
       '@dsh-vscode/webview-protocol':
         specifier: workspace:*
         version: link:../../packages/webview-protocol
@@ -218,6 +221,9 @@ importers:
       '@dsh-vscode/domain':
         specifier: workspace:*
         version: link:../domain
+      '@dsh-vscode/timeline':
+        specifier: workspace:*
+        version: link:../timeline
       zod:
         specifier: 4.4.3
         version: 4.4.3

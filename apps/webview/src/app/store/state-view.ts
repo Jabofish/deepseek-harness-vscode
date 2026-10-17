@@ -15,7 +15,6 @@ export const STATE_VIEW_KEYS_B = [
   'pendingSession',
   'preferredOpenFileId',
   'timeline',
-  'history',
   'historyHasMore',
   'historyBeforeSequence',
   'historyLoading',

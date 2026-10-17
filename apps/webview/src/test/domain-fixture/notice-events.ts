@@ -1,4 +1,4 @@
-import { nonEmptyString } from './event-values.js'
+import { nonEmptyString } from '../../app/store/event-values.js'
 
 import type { BackendEvent } from '@dsh-vscode/domain'
 

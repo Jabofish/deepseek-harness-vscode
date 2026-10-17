@@ -23,7 +23,7 @@ import { workspaceFolderId } from './editor/workspace-path-guard.js'
 import { DSH_CHAT_VIEW_OWNER_ID } from './editor/editor-context-provider.js'
 import { sessionWorkspaceFolderId, hasLocalWorkspaceAuthority } from './view/session-workspace-scope.js'
 import { readExtensionVersion, endpointFromServerUrl } from './composition/runtime.js'
-import { AppError, type BackendEndpoint } from '@dsh-vscode/domain'
+import { AppError, type BackendEndpoint, type ConnectedBackend } from '@dsh-vscode/domain'
 import { sameWorkspacePath } from './composition/workspace-state.js'
 import { createSessionScope } from './composition/session-scope.js'
 import { createUseCasesAssembly } from './composition/use-cases-assembly.js'
@@ -37,6 +37,9 @@ import { createFeatureRequestHandler } from './composition/feature-request-handl
 import { createRequestGateway } from './composition/request-handler.js'
 import { WebviewSurfaceRegistry } from './view/webview-surface-registry.js'
 import { createCommandsAssembly } from './composition/commands-assembly.js'
+import { TranscriptWindowService } from './view/transcript-window.js'
+import { TranscriptWindowRegistry } from './view/transcript-window-registry.js'
+import { publicValue } from './composition/public-projection.js'
 
 export interface CompositionRoot extends vscode.Disposable {
   start(): Promise<void>
@@ -167,6 +170,47 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     ownerViewId: DSH_CHAT_VIEW_OWNER_ID,
     contextStoreGeneration: 1,
   })
+  const currentConnectedBackend = (): ConnectedBackend | undefined => {
+    const state = coordinator.getState()
+    return state.kind === 'connected' ? state.backend : undefined
+  }
+  const transcript = new TranscriptWindowRegistry(
+    (surfaceId, isCurrent) =>
+      new TranscriptWindowService({
+        read: (sessionId, before, signal, child) =>
+          child
+            ? advancedUseCases.listSubagentHistory(
+                sessionId,
+                { ...(before === undefined ? {} : { beforeSequence: before }), pageSize: 50 },
+                signal,
+              )
+            : backendService
+                .requireBackend()
+                .sessions.history(sessionId, before, signal, { pageSize: 50, pagePurpose: 'transcript' }),
+        publicValue: (value, cwd) =>
+          publicValue(
+            value,
+            [
+              ...currentWorkspaceFolders().map((folder) => folder.uri.fsPath),
+              ...(temporaryWorkspaceManager.current?.path === undefined
+                ? []
+                : [temporaryWorkspaceManager.current.path]),
+              ...(temporaryWorkspaceManager.reference?.path === undefined
+                ? []
+                : [temporaryWorkspaceManager.reference.path]),
+            ],
+            hasLocalWorkspaceAuthority(currentConnectedBackend()) ? cwd : undefined,
+          ),
+        post: (window) => postEventTo(surfaceId, 'session.transcript', window, isCurrent),
+        invalidate: (sessionId) => {
+          void postEventTo(surfaceId, 'session.transcript.invalidated', { sessionId }, isCurrent)
+        },
+      }),
+    (surfaceId) => {
+      const surface = surfaces.get(surfaceId)
+      return surface?.isReady === true && surface.visible
+    },
+  )
   const {
     postFeatureEvent,
     publishAccountSnapshot,
@@ -178,7 +222,9 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     postBackendEvent,
     publishState,
     nextFeatureLocalSequence,
+    dispose: disposeHostEventPipeline,
   } = createHostEventPipeline({
+    transcript,
     post,
     postTo,
     backendService,
@@ -280,6 +326,11 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     currentWorkspaceFolders,
   })
   const { router, provider, editorSurfaces, moveChatToSidebar } = createRequestGateway({
+    transcript,
+    resyncView: async () => {
+      const backend = backendService.requireBackend()
+      for (const event of backendService.replayEvents()) await postBackendEvent(backend, event)
+    },
     post,
     postTo,
     postEvent,
@@ -375,7 +426,11 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
 
   const root: CompositionRoot = {
     start: commands.start,
-    dispose: commands.dispose,
+    dispose: () => {
+      transcript.dispose()
+      disposeHostEventPipeline()
+      return commands.dispose()
+    },
   }
   return root
 }

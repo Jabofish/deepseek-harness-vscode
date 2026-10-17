@@ -1,18 +1,20 @@
-import { isRecord } from './unknown-record.js'
+import { isRecord } from '../../app/store/unknown-record.js'
 import {
   finiteEventIndex,
   isJobView,
-  isWorkflowMember,
-  isWorkflowSummary,
   nonEmptyString,
-  nonNegativeSafeInteger,
   parseGoalViews,
   parseQueuedInputs,
-  parseTeamActivity,
   parseTodoViews,
   positiveSafeInteger,
   projectionAsOfSequence,
-} from './event-values.js'
+} from '../../app/store/event-values.js'
+import {
+  isWorkflowMember,
+  isWorkflowSummary,
+  nonNegativeSafeInteger,
+  parseTeamActivity,
+} from './fixture-values.js'
 import { jobFollowUpdatedPayloadSchema, jobFollowFailedPayloadSchema } from '@dsh-vscode/webview-protocol'
 
 import type { BackendEvent } from '@dsh-vscode/domain'

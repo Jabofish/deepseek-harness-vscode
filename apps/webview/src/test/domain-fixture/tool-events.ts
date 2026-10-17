@@ -1,4 +1,4 @@
-import { isRecord } from './unknown-record.js'
+import { isRecord } from '../../app/store/unknown-record.js'
 import { toolPreparingPayloadSchema } from '@dsh-vscode/webview-protocol'
 import {
   parseToolPresentation,
@@ -8,7 +8,8 @@ import {
   presentationIdentifier,
   positivePresentationNumber,
 } from './tool-presentation.js'
-import { finiteEventIndex, isToolStatus, messageImages, nonEmptyString } from './event-values.js'
+import { finiteEventIndex, nonEmptyString } from '../../app/store/event-values.js'
+import { isToolStatus, messageImages } from './fixture-values.js'
 
 import type { BackendEvent } from '@dsh-vscode/domain'
 

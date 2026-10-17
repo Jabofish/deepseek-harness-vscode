@@ -2,9 +2,8 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ReactElement } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
-import type { SessionHistoryEvent } from '@dsh-vscode/domain'
 import type { TimelineNode } from '@dsh-vscode/timeline'
-import type { FeatureRequest } from '@dsh-vscode/webview-protocol'
+import type { FeatureRequest, TranscriptEventFact } from '@dsh-vscode/webview-protocol'
 import { SessionInspector } from './SessionInspector.js'
 import { inspectChatNode } from './inspector-model.js'
 import { InspectorDevtoolsActions } from './InspectorDevtoolsActions.js'
@@ -23,15 +22,16 @@ const node: TimelineNode = {
 }
 
 it('bounds large histories, filters types and joins authoritative sequences without displaying bodies', async () => {
-  const history: SessionHistoryEvent[] = Array.from({ length: 10000 }, (_, sequence) => ({
+  const eventFacts: TranscriptEventFact[] = Array.from({ length: 10000 }, (_, sequence) => ({
+    id: `event:${sequence}`,
     sequence,
-    time: '2026-10-04T00:00:00Z',
-    event: { type: 'unknown', name: 'PRIVATE_NAME', payload: { secret: 'PRIVATE_LOG' } },
+    type: 'unknown',
+    representedSequences: 1,
   }))
   const loadOlder = vi.fn(() => Promise.resolve())
   render(
     <SessionInspector
-      history={history}
+      eventFacts={eventFacts}
       nodes={[node]}
       hasMore
       loading={false}
@@ -63,7 +63,7 @@ it('bounds large histories, filters types and joins authoritative sequences with
 it('keeps focus on inspected rows and lets Escape dismiss a filter before the drawer', () => {
   render(
     <SessionInspector
-      history={[]}
+      eventFacts={[]}
       nodes={[node]}
       hasMore={false}
       loading={false}
@@ -95,7 +95,6 @@ it('picks an existing visible chat row without activating its content action', a
   render(
     <>
       <SessionInspector
-        history={[]}
         nodes={[node]}
         hasMore={false}
         loading={false}
@@ -123,7 +122,6 @@ it('picks the actual projected conversation row and reveals its source identity'
   const view = render(
     <>
       <SessionInspector
-        history={[]}
         nodes={nodes}
         hasMore={false}
         loading={false}
@@ -182,7 +180,6 @@ it('handles menu open requests while preserving picking and discarding stale req
     <>
       <SessionInspector
         key={sessionKey}
-        history={[]}
         nodes={[node]}
         hasMore={false}
         loading={false}

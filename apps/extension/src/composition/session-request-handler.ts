@@ -1,11 +1,12 @@
 import * as vscode from 'vscode'
-import type { SessionSummary } from '@dsh-vscode/domain'
+import { type SessionSummary } from '@dsh-vscode/domain'
 import type { WebviewRequest } from '@dsh-vscode/webview-protocol'
 import { publicList } from './public-projection.js'
 import { sameWorkspacePath } from './workspace-state.js'
 import { pathExists } from './runtime.js'
 import { requireCatalogOwnedSession } from './session-scope.js'
 import type { RequestGatewayDependencies } from './request-gateway-dependencies.js'
+import type { TranscriptWindowService } from '../view/transcript-window.js'
 import { unsupportedRequest } from './request-routing.js'
 
 type SessionRequest = Extract<WebviewRequest, { type: `session.${string}` }>
@@ -28,7 +29,11 @@ type SessionDependencies = Pick<
   | 'requireCurrentWorkspaceSession'
   | 'requireCurrentWorkspaceId'
   | 'requireOwnedQueuedInput'
-> & { readonly publicValue: (value: unknown) => unknown }
+  | 'resyncView'
+> & {
+  readonly transcript: TranscriptWindowService
+  readonly publicValue: (value: unknown) => unknown
+}
 
 export function isSessionRequest(request: WebviewRequest): request is SessionRequest {
   return request.type.startsWith('session.')
@@ -125,27 +130,58 @@ export function createSessionRequestHandler(
     }
 
     if (request.type === 'session.open') {
-      const detail = await requireCurrentWorkspaceSession(request.payload.sessionId, signal, {
-        fresh: true,
-      })
-      return publicValue(withSessionWorkspaceScope(detail))
+      const generation = deps.transcript.begin(request.payload.sessionId)
+      try {
+        let detail = await requireCurrentWorkspaceSession(request.payload.sessionId, signal, { fresh: true })
+        for (let retry = 0; retry < 3 && deps.transcript.needsRefresh(generation); retry++) {
+          deps.transcript.restart(generation)
+          detail = await requireCurrentWorkspaceSession(request.payload.sessionId, signal, { fresh: true })
+        }
+        const transcript = deps.transcript.install(detail, generation)
+        return publicValue(
+          withSessionWorkspaceScope({
+            ...detail,
+            history: [],
+            transcript,
+            historyHasMore: transcript.hasMore,
+            historyBeforeSequence: transcript.beforeSequence,
+          }),
+        )
+      } finally {
+        deps.transcript.cancel(generation)
+      }
     }
 
-    if (request.type === 'session.history') {
+    if (request.type === 'session.transcript.navigate') {
       await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
-      const page = await backendService
-        .requireBackend()
-        .sessions.history(request.payload.sessionId, request.payload.beforeSeq, signal, {
-          ...(request.payload.maxMessages === undefined ? {} : { pageSize: request.payload.maxMessages }),
-          ...(request.payload.pagePurpose === undefined ? {} : { pagePurpose: request.payload.pagePurpose }),
-        })
-      return publicValue({
-        events: page.events,
-        hasMore: page.hasMore,
-        ...(page.beforeSequence === undefined ? {} : { beforeSeq: page.beforeSequence }),
-        ...(page.coveredSequenceRanges === undefined ? {} : { coveredSeqRanges: page.coveredSequenceRanges }),
-        ...(page.projection === undefined ? {} : { projection: page.projection }),
-      })
+      return deps.transcript.navigate(
+        request.payload.sessionId,
+        request.payload.direction,
+        request.payload.revision,
+        signal,
+      )
+    }
+    if (request.type === 'session.transcript.ack') {
+      deps.transcript.acknowledge(request.payload.sessionId, request.payload.revision)
+      return {}
+    }
+    if (request.type === 'session.transcript.resync') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      await deps.resyncView?.()
+      return {}
+    }
+    if (request.type === 'session.transcript.openContent') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      const content = await deps.transcript.content(
+        request.payload.sessionId,
+        request.payload.nodeId,
+        request.payload.revision,
+        signal,
+      )
+      const document = await vscode.workspace.openTextDocument({ content, language: 'markdown' })
+      signal.throwIfAborted()
+      await vscode.window.showTextDocument(document, { preview: true })
+      return { opened: true }
     }
 
     if (request.type === 'session.create') {
@@ -248,6 +284,7 @@ export function createSessionRequestHandler(
       // consumes them exactly once.
       attachmentTokens.release(request.payload.attachments)
       if (contextRefs.length > 0) await editorContextUseCases.release(contextRefs, contextOwner)
+      deps.transcript.showLatest(request.payload.sessionId)
       return result
     }
 

@@ -5,7 +5,6 @@ import {
   type WorkspaceSummary,
 } from '@dsh-vscode/domain'
 import { parseSessionProjection } from './event-values.js'
-import { optionalSequence } from './history-replay.js'
 import type { PersistedWebviewState } from './initial-state.js'
 import { isAgentConfiguration, normalizedModelSelection } from './model-catalog.js'
 import { object } from './unknown-record.js'
@@ -100,7 +99,8 @@ export function isSessionOpenDetail(value: unknown, sessionId: string): value is
     (detail.history === undefined || Array.isArray(detail.history)) &&
     (detail.historyHasMore === undefined || typeof detail.historyHasMore === 'boolean') &&
     (detail.historyBeforeSequence === undefined ||
-      optionalSequence(detail.historyBeforeSequence) !== undefined) &&
+      (Number.isSafeInteger(detail.historyBeforeSequence) &&
+        (detail.historyBeforeSequence as number) >= 0)) &&
     (permissionPresets === undefined ||
       (Array.isArray(permissionPresets) &&
         permissionPresets.every((entry) => typeof entry === 'string' && entry.trim() !== '')))

@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
-import type { WebviewRequest } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
-import { createAppStore } from './store.js'
+import {
+  createHostBackedAppStore as createAppStore,
+  type FixtureRequest as WebviewRequest,
+} from '../test/host-window-store.js'
 
 function session(id: string): Record<string, unknown> {
   return {
@@ -185,17 +187,17 @@ describe('pagination ownership across a failed navigation', () => {
         hasMore: true,
         beforeSeq: 15,
       })
-      await paging
+      await expect(paging).rejects.toMatchObject({ code: 'STALE_INTERACTION' })
 
       // The late page is discarded for the superseded open, but the user is
       // still reading session-a: the shared pagination flag must be released
       // so older pages stay reachable.
       expect(store.getState().historyLoading).toBe(false)
-      expect(store.history.map((entry) => entry.sequence)).toEqual([20])
+      expect(store.timeline.nodes.map((node) => node.id)).toEqual(['message-20'])
 
       await store.loadOlderHistory()
       expect(historyRequests).toBe(2)
-      expect(store.history.map((entry) => entry.sequence)).toEqual([10, 20])
+      expect(store.timeline.nodes.map((node) => node.id)).toEqual(['message-10'])
       expect(store.historyBeforeSequence).toBe(10)
       expect(store.historyHasMore).toBe(false)
       expect(store.getState().historyLoading).toBe(false)

@@ -1,3 +1,4 @@
+import { transcriptWindowFixture } from '../view/transcript-window.fixture.js'
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import type { AgentConfiguration, DshBackend, SessionDetail, WorkspaceSummary } from '@dsh-vscode/domain'
 import { AppError } from '@dsh-vscode/domain'
@@ -77,6 +78,7 @@ function harness(): {
     postEvent: () => Promise.resolve(true),
     postEventTo: () => Promise.resolve(true),
     surfaces: new WebviewSurfaceRegistry(),
+    transcript: transcriptWindowFixture(),
     backendService: service,
     modelUseCases: new ModelSettingsUseCases(service),
     sessionUseCases: new SessionUseCases(service),

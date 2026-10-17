@@ -4,6 +4,7 @@ import { protocolAppErrorCodeSchema } from './feature-schemas.js'
 import { id, wireVersion, MAX_HOST_ERROR_MESSAGE_CHARS, boundedUnknown } from './request-common.js'
 import { budgetFailure } from './protocol-budget.js'
 import { webviewRequestSchema } from './webview-request-schema.js'
+import { transcriptWindowSchema } from './transcript.js'
 
 const hostError = z
   .object({
@@ -220,7 +221,8 @@ const genericHostEventSchema = z
           name !== 'job.follow.updated' &&
           name !== 'job.follow.failed' &&
           name !== 'queue.updated' &&
-          name !== 'tool.preparing',
+          name !== 'tool.preparing' &&
+          name !== 'session.transcript',
       ),
     sequence: z.number().int().nonnegative(),
     payload: boundedUnknown,
@@ -267,6 +269,14 @@ const jobFollowFailedHostEventSchema = z
   .strict()
 
 export const hostEventSchema = z.union([
+  z
+    .object({
+      type: z.literal('event'),
+      name: z.literal('session.transcript'),
+      sequence: z.number().int().nonnegative(),
+      payload: transcriptWindowSchema,
+    })
+    .strict(),
   toolPreparingHostEventSchema,
   queueUpdatedHostEventSchema,
   jobFollowUpdatedHostEventSchema,

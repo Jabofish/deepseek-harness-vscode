@@ -448,7 +448,6 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
 
       {sectionRevealed ? (
         <div className="dsh-optional-bundles__section-body" id={SECTION_BODY_ID}>
-          <p>{t('plugins.manager.description')}</p>
           <p className="dsh-optional-bundles__muted">{t('plugins.bundles.scopeNotice')}</p>
           <p className="dsh-optional-bundles__muted">{t('plugins.bundles.restartNotice')}</p>
           {!loading && !loadFailed && catalog?.available === true ? (

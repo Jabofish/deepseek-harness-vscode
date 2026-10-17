@@ -1,17 +1,19 @@
 import {
   finiteEventIndex,
+  nonEmptyString,
+  turnEndFailure,
+  turnEndReason,
+} from '../../app/store/event-values.js'
+import {
   finiteEventTimestamp,
   finiteTransientSequence,
   finiteTransientStartSequence,
   messageAttachments,
   messageImages,
   messageSessionReferenceLabels,
-  nonEmptyString,
   parseTokenUsage,
   parseUserQuestionReply,
-  turnEndFailure,
-  turnEndReason,
-} from './event-values.js'
+} from './fixture-values.js'
 
 import type { BackendEvent } from '@dsh-vscode/domain'
 

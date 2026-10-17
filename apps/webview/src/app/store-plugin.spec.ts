@@ -1,10 +1,13 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it } from 'vitest'
-import type { FeatureHostEvent, HostMessage, WebviewRequest } from '@dsh-vscode/webview-protocol'
+import type { FeatureHostEvent, HostMessage } from '@dsh-vscode/webview-protocol'
 
 import type { ProtocolClient } from './protocol-client.js'
-import { createAppStore } from './store.js'
+import {
+  createHostBackedAppStore as createAppStore,
+  type FixtureRequest as WebviewRequest,
+} from '../test/host-window-store.js'
 
 class PluginClient {
   private readonly listeners = new Set<(message: HostMessage) => void>()

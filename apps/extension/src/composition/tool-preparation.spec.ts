@@ -1,8 +1,10 @@
 import path from 'node:path'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, type Mock } from 'vitest'
 import type { BackendEvent, DshBackend } from '@dsh-vscode/domain'
 import { Alpha211VersionAdapter } from '@dsh-vscode/dsh-adapter'
-import { hostMessageSchema, type HostMessage } from '@dsh-vscode/webview-protocol'
+import { hostMessageSchema, type HostMessage, type TranscriptWindow } from '@dsh-vscode/webview-protocol'
+import { TranscriptWindowService } from '../view/transcript-window.js'
+import { sanitizePublicValue } from '../view/public-value.js'
 import { createHostEventPipeline, type HostEventPipelineDependencies } from './host-event-pipeline.js'
 
 vi.mock('vscode', () => ({ commands: { executeCommand: vi.fn() } }))
@@ -13,22 +15,61 @@ class PreparationAdapter extends Alpha211VersionAdapter {
   }
 }
 
-describe('alpha211 Adapter to Host preparation boundary', () => {
-  it('uses one read per attempt, projects only owned relative paths and preserves serialized event order', async () => {
+function fixture(roots: readonly string[] = []): {
+  get: Mock<() => unknown>
+  backend: DshBackend
+  posted: HostMessage[]
+  transcript: TranscriptWindowService
+  pipeline: ReturnType<typeof createHostEventPipeline>
+  replace: () => void
+  view: () => Promise<TranscriptWindow>
+} {
+  const get = vi.fn()
+  const backend = { sessions: { get } } as unknown as DshBackend
+  let current = backend
+  const posted: HostMessage[] = []
+  const transcript = new TranscriptWindowService({
+    read: () => Promise.resolve({ events: [], hasMore: false }),
+    publicValue: (value, cwd) => sanitizePublicValue(value, undefined, roots, cwd),
+    post: () => Promise.resolve(true),
+  })
+  transcript.installPage(
+    's1',
+    {
+      events: [],
+      hasMore: false,
+      projection: { asOfSequence: 0, values: roots.length === 0 ? {} : { workingDirectory: roots[0] } },
+    },
+    transcript.begin('s1'),
+  )
+  const pipeline = createHostEventPipeline({
+    transcript,
+    post: (message: Parameters<HostEventPipelineDependencies['post']>[0]) => {
+      posted.push(hostMessageSchema.parse(message))
+      return Promise.resolve(true)
+    },
+    currentWorkspaceFolders: () => roots.map((fsPath) => ({ uri: { fsPath } })),
+    temporaryWorkspaceManager: {},
+    runtimeUpdateProgress: {},
+    backendService: { requireBackend: () => current },
+  } as unknown as HostEventPipelineDependencies)
+  return {
+    get,
+    backend,
+    posted,
+    transcript,
+    pipeline,
+    replace: () => {
+      current = {} as DshBackend
+    },
+    view: () => transcript.navigate('s1', 'latest', 0, new AbortController().signal),
+  }
+}
+
+describe('alpha211 Adapter to Host window preparation boundary', () => {
+  it('uses the native workingDirectory projection without rereading a session for every attempt', async () => {
     const root = path.resolve('fixture-workspace')
-    const get = vi.fn(() => Promise.resolve({ cwd: root }))
-    const backend = { sessions: { get } } as unknown as DshBackend
-    const posted: HostMessage[] = []
-    const pipeline = createHostEventPipeline({
-      post: (message: Parameters<HostEventPipelineDependencies['post']>[0]) => {
-        posted.push(hostMessageSchema.parse(message))
-        return Promise.resolve(true)
-      },
-      currentWorkspaceFolders: () => [{ uri: { fsPath: root } }],
-      temporaryWorkspaceManager: {},
-      backendService: { requireBackend: () => backend },
-      runtimeUpdateProgress: {},
-    } as unknown as HostEventPipelineDependencies)
+    const f = fixture([root])
     const normalize = new PreparationAdapter({
       requestTimeoutMs: 1000,
       retryPolicy: { maximumAttempts: 1, baseDelayMs: 1, maximumDelayMs: 1 },
@@ -58,45 +99,27 @@ describe('alpha211 Adapter to Host preparation boundary', () => {
     )
     const second = normalize(raw(1, '"}'))
     if (first === undefined || second === undefined) throw new Error('missing typed preparation')
-    await Promise.all([pipeline.postBackendEvent(backend, first), pipeline.postBackendEvent(backend, second)])
-    expect(get).toHaveBeenCalledTimes(1)
-    expect(posted.map((message) => (message.type === 'event' ? message.sequence : -1))).toEqual([1, 2])
-    expect(posted[1]).toMatchObject({
-      payload: { filePath: 'src/test.ts', description: 'token=[redacted]', contentCharacters: 12 },
+    await f.pipeline.postBackendEvent(f.backend, first)
+    await f.pipeline.postBackendEvent(f.backend, second)
+    const view = await f.view()
+    const tool = view.nodes.find((node) => node.kind === 'tool')
+    expect(tool?.kind === 'tool' ? tool.tool.preparation : undefined).toMatchObject({
+      filePath: 'src/test.ts',
+      description: 'token=[redacted]',
+      contentCharacters: 12,
     })
-    const text = JSON.stringify(posted)
-    expect(text).not.toContain(root)
-    expect(text).not.toContain('PRIVATE_BODY')
-    expect(text).not.toContain('fixture-secret')
-    expect(text).not.toContain('argumentsDelta')
-    if (second.type !== 'tool.preparing') throw new Error('missing preparation')
-    await pipeline.postBackendEvent(backend, { ...second, filePath: path.resolve(root, '..', 'private.txt') })
-    expect(posted.at(-1)).not.toHaveProperty('payload.filePath')
-    await pipeline.postBackendEvent(backend, {
-      type: 'session.subscribed',
-      sessionId: 's1',
-      lastSequence: 2,
-      controlBaseline: false,
-    })
-    await pipeline.postBackendEvent(backend, second)
-    expect(get).toHaveBeenCalledTimes(2)
+    expect(f.get).not.toHaveBeenCalled()
+    expect(f.posted).toEqual([]) // No raw preparation frames cross the renderer boundary.
+    const text = JSON.stringify(view)
+    for (const value of [root, 'PRIVATE_BODY', 'fixture-secret', 'argumentsDelta'])
+      expect(text).not.toContain(value)
+    f.pipeline.dispose()
+    f.transcript.dispose()
   })
 
-  it('keeps the preview usable when session scope lookup fails or no workspace is owned', async () => {
-    const get = vi.fn(() => Promise.reject(new Error('scope unavailable')))
-    const backend = { sessions: { get } } as unknown as DshBackend
-    const posted: HostMessage[] = []
-    const pipeline = createHostEventPipeline({
-      post: (message: Parameters<HostEventPipelineDependencies['post']>[0]) => {
-        posted.push(hostMessageSchema.parse(message))
-        return Promise.resolve(true)
-      },
-      currentWorkspaceFolders: () => [],
-      temporaryWorkspaceManager: {},
-      runtimeUpdateProgress: {},
-      backendService: { requireBackend: () => backend },
-    } as unknown as HostEventPipelineDependencies)
-    await pipeline.postBackendEvent(backend, {
+  it('keeps descriptions but removes paths outside the current workspace', async () => {
+    const f = fixture()
+    await f.pipeline.postBackendEvent(f.backend, {
       type: 'tool.preparing',
       sessionId: 's1',
       callId: 'c1',
@@ -108,41 +131,35 @@ describe('alpha211 Adapter to Host preparation boundary', () => {
       filePath: path.resolve('outside.txt'),
       description: 'Inspect file',
     })
-    expect(posted[0]).toMatchObject({ payload: { description: 'Inspect file' } })
-    expect(posted[0]).not.toHaveProperty('payload.filePath')
+    const tool = (await f.view()).nodes.find((node) => node.kind === 'tool')
+    expect(tool?.kind === 'tool' ? tool.tool.preparation : undefined).toMatchObject({
+      description: 'Inspect file',
+    })
+    expect(JSON.stringify(await f.view())).not.toContain('outside.txt')
+    expect(f.get).not.toHaveBeenCalled()
+    f.pipeline.dispose()
+    f.transcript.dispose()
   })
 
-  it('drops a previous backend preview if its scope read settles after connection replacement', async () => {
-    let resolve!: (value: { cwd: string }) => void
-    const cwd = new Promise<{ cwd: string }>((finish) => {
-      resolve = finish
-    })
-    const get = vi.fn(() => cwd)
-    const backend = { sessions: { get } } as unknown as DshBackend
-    let current = backend
-    const post = vi.fn(() => Promise.resolve(true))
-    const pipeline = createHostEventPipeline({
-      post,
-      currentWorkspaceFolders: () => [],
-      temporaryWorkspaceManager: {},
-      runtimeUpdateProgress: {},
-      backendService: { requireBackend: () => current },
-    } as unknown as HostEventPipelineDependencies)
-    const pending = pipeline.postBackendEvent(backend, {
-      type: 'tool.preparing',
-      sessionId: 's1',
-      callId: 'c1',
-      toolName: 'read',
-      attemptId: 'a1',
-      turn: 1,
-      step: 1,
-      updateIndex: 0,
-      filePath: 'src/file.ts',
-    })
-    await vi.waitFor(() => expect(get).toHaveBeenCalledOnce())
-    current = {} as DshBackend
-    resolve({ cwd: path.resolve('fixture-workspace') })
-    await pending
-    expect(post).not.toHaveBeenCalled()
+  it('rejects a stale backend before it can mutate the current Host view', async () => {
+    const f = fixture()
+    f.replace()
+    expect(
+      await f.pipeline.postBackendEvent(f.backend, {
+        type: 'tool.preparing',
+        sessionId: 's1',
+        callId: 'c1',
+        toolName: 'read',
+        attemptId: 'a1',
+        turn: 1,
+        step: 1,
+        updateIndex: 0,
+        filePath: 'src/file.ts',
+      }),
+    ).toBe(false)
+    expect((await f.view()).nodes).toEqual([])
+    expect(f.posted).toEqual([])
+    f.pipeline.dispose()
+    f.transcript.dispose()
   })
 })

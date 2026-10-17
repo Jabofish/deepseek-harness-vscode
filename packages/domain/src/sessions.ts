@@ -1,11 +1,14 @@
 import type { AgentConfiguration } from './models.js'
 import type { BackendEvent } from './events.js'
-import type { MessageImageReference } from './events.js'
+import type { MessageImageReference, TodoView } from './events.js'
 
 export type SessionStatus = 'idle' | 'running' | 'awaiting-input' | 'failed' | 'completed'
 
 /** Projection values remain opaque until the exact version adapter maps a supported key. */
 export type SessionProjectionValues = Readonly<Record<string, unknown>>
+
+/** Host-computed whole current list; null means there is no current standing plan. */
+export type SessionTodoProjection = readonly TodoView[] | null
 
 export interface SessionProjectionSnapshot {
   readonly asOfSequence: number

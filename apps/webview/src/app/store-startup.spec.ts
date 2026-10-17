@@ -2,9 +2,12 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ModelDescriptor, ModelProvider } from '@dsh-vscode/domain'
-import type { HostMessage, WebviewRequest } from '@dsh-vscode/webview-protocol'
+import type { HostMessage } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
-import { createAppStore } from './store.js'
+import {
+  createHostBackedAppStore as createAppStore,
+  type FixtureRequest as WebviewRequest,
+} from '../test/host-window-store.js'
 
 class StartupClient {
   public readonly requests: WebviewRequest[] = []
@@ -239,7 +242,7 @@ describe('AppStore startup session restoration', () => {
     await Promise.resolve()
     await Promise.resolve()
 
-    expect(settingsReadStarted).toBe(true)
+    await vi.waitFor(() => expect(settingsReadStarted).toBe(true))
     releaseSessions?.()
     await initialization
     store.dispose()
@@ -485,7 +488,7 @@ describe('AppStore startup session restoration', () => {
     store.dispose()
   })
 
-  it('flushes live history once with the coalesced host notification', async () => {
+  it('coalesces Host windows without retaining live history', async () => {
     const client = new StartupClient()
     const store = createAppStore(client as unknown as ProtocolClient)
     await store.initialize()
@@ -509,14 +512,14 @@ describe('AppStore startup session restoration', () => {
     expect(store.timeline.nodes).toContainEqual(
       expect.objectContaining({ id: 'assistant-1', markdown: 'ab', streaming: true }),
     )
-    expect(store.history).toHaveLength(0)
+    expect(store.getState()).not.toHaveProperty('history')
     await new Promise((resolve) => window.setTimeout(resolve, 24))
-    expect(store.history.map((entry) => entry.sequence)).toEqual([1, 2])
+    expect(store.getState()).not.toHaveProperty('history')
     expect(listener).toHaveBeenCalledTimes(1)
     store.dispose()
   })
 
-  it('notifies for history appended by an otherwise unchanged event', async () => {
+  it('does not notify for unchanged control facts or keep a second journal', async () => {
     const client = new StartupClient()
     const store = createAppStore(client as unknown as ProtocolClient)
     await store.initialize()
@@ -541,8 +544,8 @@ describe('AppStore startup session restoration', () => {
     })
     await new Promise((resolve) => window.setTimeout(resolve, 24))
 
-    expect(store.history.map((entry) => entry.sequence)).toEqual([1, 2])
-    expect(listener).toHaveBeenCalledTimes(1)
+    expect(store.getState()).not.toHaveProperty('history')
+    expect(listener).not.toHaveBeenCalled()
     store.dispose()
   })
 
@@ -777,21 +780,12 @@ describe('AppStore startup session restoration', () => {
     store.dispose()
   })
 
-  it('keeps sorted history on the zero-copy hydration path and reorders an out-of-order page', async () => {
+  it('consumes the ordered Host window without frontend sorting', async () => {
     const client = new StartupClient((request) => {
       if (request.type === 'session.open')
         return {
           ...activeSession,
           history: [
-            {
-              sequence: 2,
-              event: {
-                type: 'message.user',
-                sessionId: activeSession.id,
-                messageId: 'user-2',
-                markdown: 'second',
-              },
-            },
             {
               sequence: 1,
               event: {
@@ -799,6 +793,15 @@ describe('AppStore startup session restoration', () => {
                 sessionId: activeSession.id,
                 messageId: 'user-1',
                 markdown: 'first',
+              },
+            },
+            {
+              sequence: 2,
+              event: {
+                type: 'message.user',
+                sessionId: activeSession.id,
+                messageId: 'user-2',
+                markdown: 'second',
               },
             },
           ],
@@ -818,11 +821,11 @@ describe('AppStore startup session restoration', () => {
     await store.openSession(activeSession.id)
 
     expect(store.timeline.nodes.map((node) => node.id)).toEqual(['user-1', 'user-2'])
-    expect(store.history.map((entry) => entry.sequence)).toEqual([1, 2])
+    expect(store.getState()).not.toHaveProperty('history')
     store.dispose()
   })
 
-  it('keeps distinct same-sequence projection records during a replay merge', async () => {
+  it('keeps independent same-sequence projection values without a journal', async () => {
     const client = new StartupClient((request) => {
       if (request.type === 'session.open')
         return {
@@ -873,12 +876,7 @@ describe('AppStore startup session restoration', () => {
     emitProjection('tokenUsage', { outputTokens: 2 })
     await new Promise((resolve) => window.setTimeout(resolve, 24))
 
-    expect(store.history.filter((entry) => entry.sequence === 2)).toHaveLength(2)
-    expect(
-      store.history
-        .filter((entry) => entry.sequence === 2)
-        .map((entry) => (entry.event.type === 'session.projection' ? entry.event.key : undefined)),
-    ).toEqual(['tokenUsage', 'contextPressure'])
+    expect(store.getState()).not.toHaveProperty('history')
     expect(store.projections[activeSession.id]).toMatchObject({
       tokenUsage: { outputTokens: 2 },
       contextPressure: { pressureTokens: 12 },

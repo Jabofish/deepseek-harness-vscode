@@ -1,0 +1,929 @@
+import { createHash } from 'node:crypto'
+import {
+  AppError,
+  type BackendEvent,
+  type SessionDetail,
+  type SessionHistoryPage,
+  type TodoView,
+} from '@dsh-vscode/domain'
+import {
+  reduceTimeline,
+  isRedundantTurnFailureNotice,
+  timelineSequenceOptions,
+  type TimelineNode,
+  type TimelineState,
+} from '@dsh-vscode/timeline'
+import {
+  TRANSCRIPT_MAX_CHARS,
+  TRANSCRIPT_MAX_NODES,
+  TRANSCRIPT_NODE_CHARS,
+  transcriptNodeSchema,
+  transcriptWindowSchema,
+  type TranscriptWindow,
+  type TranscriptEventFact,
+} from '@dsh-vscode/webview-protocol'
+
+type ReadPage = (
+  sessionId: string,
+  before: number | undefined,
+  signal: AbortSignal,
+  child: boolean,
+) => Promise<SessionHistoryPage>
+interface PendingOpen {
+  readonly sessionId: string
+  readonly generation: number
+  readonly child: boolean
+  events: BackendEvent[]
+  chars: number
+  overflow: boolean
+  cwd?: string
+  cwdSequence?: number
+  cwdKnown?: boolean
+}
+interface Resident {
+  readonly sessionId: string
+  readonly child: boolean
+  timeline: TimelineState
+  hasMore: boolean
+  before?: number
+  upper?: number
+  omitted: Set<string>
+  sources: Map<string, { from: number; to: number }>
+  facts: TranscriptEventFact[]
+  factCounter: number
+  contextIds: Set<string>
+  cwd?: string
+  cwdSequence?: number
+  currentTodos?: readonly TodoView[]
+  currentTodosOmitted?: true
+  nativeTodos: boolean
+}
+
+/** A presentation cache. DSH owns durable ordering, recovery and domain projections. */
+export class TranscriptWindowService {
+  private generation = 0
+  private revision = 0
+  private pending: PendingOpen | undefined
+  private tail: Resident | undefined
+  private displayed: Resident | undefined
+  private readonly forward: (number | undefined)[] = []
+  private readonly sameSequence = new Set<string>()
+  private identitySequence = -1
+  private timer: ReturnType<typeof setTimeout> | undefined
+  private visible = true
+  private dirty = false
+  private posting = false
+  private awaitingAck: number | undefined
+  private invalidated = false
+  private readonly recentEvents = new Map<string, true>()
+  private hostSequence = 0
+  private readonly notices = new Map<
+    string,
+    { node: TimelineNode; anchors: readonly string[]; chars: number; range?: { from: number; to: number } }[]
+  >()
+  private readonly previews = new WeakMap<
+    TimelineNode,
+    { value: TimelineNode; omitted: boolean; size: number }
+  >()
+
+  public constructor(
+    private readonly deps: {
+      readonly read: ReadPage
+      readonly publicValue: (value: unknown, cwd?: string) => unknown
+      readonly post: (window: TranscriptWindow) => Promise<boolean>
+      readonly invalidate?: (sessionId: string) => void
+    },
+  ) {}
+
+  public begin(sessionId: string, child = false): number {
+    const generation = ++this.generation
+    this.pending = { sessionId, generation, child, events: [], chars: 0, overflow: false }
+    return generation
+  }
+
+  public needsRefresh(generation: number): boolean {
+    return this.pending?.generation === generation && this.pending.overflow
+  }
+
+  public restart(generation: number): void {
+    const pending = this.pending
+    if (pending?.generation !== generation) return
+    pending.events = []
+    pending.chars = 0
+    pending.overflow = false
+  }
+
+  public install(detail: SessionDetail, generation: number): TranscriptWindow {
+    return this.installPage(
+      detail.id,
+      {
+        events: detail.history ?? [],
+        hasMore: detail.historyHasMore ?? false,
+        ...(detail.historyBeforeSequence === undefined
+          ? {}
+          : { beforeSequence: detail.historyBeforeSequence }),
+      },
+      generation,
+      detail.cwd,
+    )
+  }
+
+  public installPage(
+    sessionId: string,
+    page: SessionHistoryPage,
+    generation: number,
+    cwd?: string,
+  ): TranscriptWindow {
+    if (this.pending?.generation !== generation || this.pending.sessionId !== sessionId) throw stale()
+    if (this.pending.overflow) throw stale()
+    const resident = this.project(sessionId, page, this.pending.child, undefined, cwd)
+    if (
+      this.pending.cwdKnown &&
+      (this.pending.cwdSequence === undefined ||
+        this.pending.cwdSequence > (page.projection?.asOfSequence ?? -1))
+    ) {
+      if (this.pending.cwd === undefined) delete resident.cwd
+      else resident.cwd = this.pending.cwd
+    }
+    const pending = this.pending.events
+    this.pending = undefined
+    this.tail = resident
+    this.displayed = resident
+    this.forward.length = 0
+    this.invalidated = false
+    this.recentEvents.clear()
+    for (const entry of page.events) this.rememberIdentity(entry.event, entry.sequence)
+    this.sameSequence.clear()
+    this.identitySequence = -1
+    this.identitySequence = resident.timeline.lastSequence
+    for (const entry of page.events)
+      if (entry.sequence === this.identitySequence)
+        this.sameSequence.add(eventIdentity(entry.event, entry.sequence))
+    const settlements = new Map<string, number>()
+    for (const entry of page.events) {
+      const event = entry.event
+      if (event.type === 'message.completed' || event.type === 'assistant.attempt')
+        settlements.set(assistantKey(event), entry.sequence)
+    }
+    for (const event of pending) {
+      if (
+        (event.type === 'message.delta' || event.type === 'reasoning.delta') &&
+        event.transientStartedAfterSequence !== undefined &&
+        (settlements.get(assistantKey(event)) ?? -1) > event.transientStartedAfterSequence
+      )
+        continue
+      this.reduce(resident, event)
+    }
+    this.revision++
+    return this.snapshot()
+  }
+
+  public cancel(generation: number): void {
+    if (this.pending?.generation === generation) this.pending = undefined
+  }
+
+  /** Content is never queued for the renderer; only the latest bounded window is published. */
+  public accept(event: BackendEvent): boolean {
+    const sessionId = ('sessionId' in event ? event.sessionId : undefined) ?? this.tail?.sessionId
+    if (event.type === 'session.subscribed' && this.tail !== undefined && this.tail.sessionId === sessionId) {
+      this.tail.timeline = reduceTimeline(this.tail.timeline, {
+        event,
+        sequence: this.tail.timeline.lastSequence,
+        advanceSequence: false,
+      })
+      if (this.displayed === this.tail) {
+        this.revision++
+        this.schedule()
+      }
+    }
+    if (event.type === 'session.projection' && event.key === 'workingDirectory') {
+      for (const target of [this.pending, this.tail])
+        if (
+          target !== undefined &&
+          target.sessionId === sessionId &&
+          (event.sequence === undefined ||
+            target.cwdSequence === undefined ||
+            event.sequence >= target.cwdSequence)
+        ) {
+          if (typeof event.value === 'string') target.cwd = event.value
+          else delete target.cwd
+          if (event.sequence !== undefined) target.cwdSequence = event.sequence
+          if ('overflow' in target) target.cwdKnown = true
+        }
+    }
+    if (
+      event.type === 'session.projection' &&
+      event.key === 'todoList' &&
+      this.tail !== undefined &&
+      this.tail.sessionId === sessionId
+    ) {
+      this.tail.nativeTodos = true
+      delete this.tail.currentTodos
+      delete this.tail.currentTodosOmitted
+    }
+    if (!isTranscriptEvent(event)) return false
+    const pending = this.pending
+    if (pending !== undefined && pending.sessionId === sessionId && !pending.overflow) {
+      const chars = JSON.stringify(event).length
+      if (pending.events.length >= TRANSCRIPT_MAX_NODES || pending.chars + chars > TRANSCRIPT_MAX_CHARS) {
+        pending.events = []
+        pending.chars = 0
+        pending.overflow = true
+      } else {
+        pending.events.push(event)
+        pending.chars += chars
+      }
+    }
+    if (this.tail !== undefined && this.tail.sessionId === sessionId) {
+      this.reduce(this.tail, event)
+      if (this.displayed === this.tail) {
+        this.revision++
+        this.schedule()
+      }
+    } else if ((event.type === 'notice' || event.type === 'session.gap') && sessionId !== undefined) {
+      const scratch = reduceTimeline(empty(sessionId), {
+        event,
+        sequence: -++this.hostSequence,
+        advanceSequence: false,
+      })
+      this.rememberNotices(
+        sessionId,
+        scratch.nodes,
+        [],
+        event.type === 'session.gap' ? { from: event.fromSequence, to: event.toSequence } : undefined,
+      )
+    }
+    return isTranscriptOnlyEvent(event)
+  }
+
+  public async navigate(
+    sessionId: string,
+    direction: 'older' | 'newer' | 'latest',
+    revision: number,
+    signal: AbortSignal,
+  ): Promise<TranscriptWindow> {
+    if (
+      this.tail?.sessionId !== sessionId ||
+      this.displayed === undefined ||
+      revision > this.revision ||
+      (this.displayed !== this.tail && revision !== this.revision)
+    )
+      throw stale()
+    if (direction === 'latest') {
+      if (this.invalidated) {
+        const generation = this.begin(sessionId, this.tail.child)
+        try {
+          const page = await this.deps.read(sessionId, undefined, signal, this.tail.child)
+          signal.throwIfAborted()
+          return this.installPage(sessionId, page, generation)
+        } finally {
+          this.cancel(generation)
+        }
+      }
+      this.displayed = this.tail
+      this.forward.length = 0
+      this.revision++
+      return this.snapshot()
+    }
+    signal.throwIfAborted()
+    const generation = this.generation
+    const previous = this.displayed
+    if (direction === 'older' && (!previous.hasMore || previous.before === undefined)) return this.snapshot()
+    if (direction === 'newer' && this.forward.length === 0) {
+      this.displayed = this.tail
+      this.revision++
+      return this.snapshot()
+    }
+    const before = direction === 'older' ? previous.before : this.forward[this.forward.length - 1]
+    const page = await this.deps.read(sessionId, before, signal, previous.child)
+    if (signal.aborted || generation !== this.generation || this.displayed !== previous) throw stale()
+    if (direction === 'older') {
+      if (
+        page.beforeSequence !== undefined &&
+        previous.before !== undefined &&
+        page.beforeSequence >= previous.before
+      )
+        throw stale()
+      this.forward.push(previous.upper)
+      if (this.forward.length > 64) this.forward.shift()
+    } else this.forward.pop()
+    this.displayed = this.project(sessionId, page, previous.child, before, previous.cwd)
+    this.revision++
+    return this.snapshot()
+  }
+
+  /** Full content is reread from DSH, never retained as a second renderer/Host body cache. */
+  public async content(
+    sessionId: string,
+    nodeId: string,
+    revision: number,
+    signal: AbortSignal,
+  ): Promise<string> {
+    const displayed = this.displayed
+    if (
+      displayed?.sessionId !== sessionId ||
+      revision > this.revision ||
+      (displayed !== this.tail && revision !== this.revision) ||
+      !displayed.timeline.nodes.some((node) => node.id === nodeId)
+    )
+      throw stale()
+    const generation = this.generation
+    const remembered = this.notices.get(sessionId)?.find((entry) => entry.node.id === nodeId)
+    if (remembered !== undefined) {
+      const safe = this.deps.publicValue(remembered.node, displayed.cwd)
+      return typeof safe === 'object' && safe !== null && 'text' in safe && typeof safe.text === 'string'
+        ? safe.text
+        : JSON.stringify(safe, null, 2)
+    }
+    const source = displayed.sources.get(nodeId)
+    const page = await this.deps.read(
+      sessionId,
+      source === undefined ? displayed.upper : source.to + 1,
+      signal,
+      displayed.child,
+    )
+    if (signal.aborted || generation !== this.generation) throw stale()
+    let timeline = empty(sessionId)
+    for (const entry of page.events)
+      timeline = reduceTimeline(timeline, {
+        event: entry.event,
+        sequence: entry.sequence,
+        ...timelineSequenceOptions(entry.event),
+        ...(entry.sequence === timeline.lastSequence ? { advanceSequence: false as const } : {}),
+      })
+    const node = timeline.nodes.find((candidate) => candidate.id === nodeId)
+    if (node === undefined) throw stale()
+    const safe = this.deps.publicValue(node, displayed.cwd)
+    return typeof safe === 'object' &&
+      safe !== null &&
+      'markdown' in safe &&
+      typeof safe.markdown === 'string'
+      ? 'reasoning' in safe &&
+        typeof safe.reasoning === 'object' &&
+        safe.reasoning !== null &&
+        'markdown' in safe.reasoning &&
+        typeof safe.reasoning.markdown === 'string'
+        ? `${safe.reasoning.markdown}\n\n${safe.markdown}`
+        : safe.markdown
+      : JSON.stringify(safe, null, 2)
+  }
+
+  public setVisible(visible: boolean): void {
+    this.visible = visible
+    if (!visible && this.timer !== undefined) {
+      clearTimeout(this.timer)
+      this.timer = undefined
+    }
+    if (visible && this.displayed !== undefined) {
+      this.awaitingAck = undefined
+      this.schedule()
+    }
+  }
+
+  public acknowledge(sessionId: string, revision: number): void {
+    if (this.displayed?.sessionId !== sessionId || revision > this.revision) return
+    if (this.awaitingAck !== undefined && revision >= this.awaitingAck) {
+      this.awaitingAck = undefined
+      if (this.dirty) this.schedule()
+    }
+  }
+
+  public showLatest(sessionId: string): void {
+    if (this.tail?.sessionId !== sessionId) return
+    this.displayed = this.tail
+    this.forward.length = 0
+    this.revision++
+    this.schedule()
+  }
+
+  public dispose(): void {
+    ++this.generation
+    this.pending = undefined
+    this.tail = undefined
+    this.displayed = undefined
+    this.forward.length = 0
+    this.sameSequence.clear()
+    this.dirty = false
+    this.awaitingAck = undefined
+    this.invalidated = false
+    this.recentEvents.clear()
+    this.notices.clear()
+    if (this.timer !== undefined) clearTimeout(this.timer)
+    this.timer = undefined
+  }
+
+  private project(
+    sessionId: string,
+    page: SessionHistoryPage,
+    child: boolean,
+    upper?: number,
+    cwd?: string,
+  ): Resident {
+    const projectedCwd = page.projection?.values.workingDirectory
+    const scopedCwd = typeof projectedCwd === 'string' ? projectedCwd : cwd
+    const resident: Resident = {
+      sessionId,
+      child,
+      timeline: empty(sessionId),
+      hasMore: page.hasMore,
+      omitted: new Set(),
+      sources: new Map(),
+      facts: [],
+      factCounter: 0,
+      contextIds: new Set(),
+      nativeTodos: Object.hasOwn(page.projection?.values ?? {}, 'todoList'),
+      ...(scopedCwd === undefined ? {} : { cwd: scopedCwd }),
+      ...(page.projection === undefined ? {} : { cwdSequence: page.projection.asOfSequence }),
+      ...(page.beforeSequence === undefined ? {} : { before: page.beforeSequence }),
+      ...(upper === undefined ? {} : { upper }),
+    }
+    if (resident.before === undefined && page.hasMore)
+      for (const entry of page.events) {
+        const position = entry.coveredSequences?.[0] ?? entry.sequence
+        resident.before = resident.before === undefined ? position : Math.min(resident.before, position)
+      }
+    for (const entry of page.events) {
+      this.rememberFact(resident, entry.event, entry.sequence, entry.coveredSequences?.length ?? 1)
+      const previous = resident.timeline.nodes
+      resident.timeline = reduceTimeline(resident.timeline, {
+        event: entry.event,
+        sequence: entry.sequence,
+        ...timelineSequenceOptions(entry.event),
+        ...(entry.sequence === resident.timeline.lastSequence ? { advanceSequence: false as const } : {}),
+      })
+      this.rememberSources(resident, previous, entry.sequence, entry.coveredSequences?.[0])
+      this.bound(resident)
+      this.updateCurrentTodos(resident, entry.event)
+    }
+    const restored = [...resident.timeline.nodes]
+    let previousIndex = -1
+    const notices = (this.notices.get(sessionId) ?? []).filter(
+      (entry) =>
+        entry.range === undefined ||
+        !page.coveredSequenceRanges?.some(
+          (range) => range.from <= entry.range!.from && range.to >= entry.range!.to,
+        ),
+    )
+    if (this.notices.has(sessionId)) this.notices.set(sessionId, notices)
+    for (const entry of notices) {
+      if (
+        restored.some((node) => node.id === entry.node.id) ||
+        isRedundantTurnFailureNotice(entry.node, restored)
+      )
+        continue
+      const anchor = entry.anchors
+        .map((id) => restored.findIndex((node) => node.id === id))
+        .find((index) => index >= 0)
+      const index = Math.max(previousIndex + 1, anchor === undefined ? restored.length : anchor + 1)
+      restored.splice(index, 0, entry.node)
+      previousIndex = index
+    }
+    resident.timeline = { ...resident.timeline, nodes: restored }
+    this.bound(resident)
+    return resident
+  }
+
+  private reduce(resident: Resident, event: BackendEvent): void {
+    const sequence = event.sequence ?? (event.type === 'notice' ? -++this.hostSequence : ++this.hostSequence)
+    if (event.sequence !== undefined && timelineSequenceOptions(event).advanceSequence !== false) {
+      if (sequence < resident.timeline.lastSequence) {
+        // An Adapter recovery may fill an already-published view. Reread its
+        // authoritative window; do not sort, backfill or replay another journal.
+        const known = this.recentEvents.has(eventIdentity(event, sequence))
+        if (!known && sequence >= (resident.before ?? 0) && this.pending === undefined && !this.invalidated) {
+          this.invalidated = true
+          this.deps.invalidate?.(resident.sessionId)
+        }
+        return
+      }
+      if (sequence !== this.identitySequence) {
+        this.sameSequence.clear()
+        this.identitySequence = sequence
+      }
+      const key = eventIdentity(event, sequence)
+      if (this.sameSequence.has(key)) return
+      if (this.sameSequence.size < 64) this.sameSequence.add(key)
+      this.rememberIdentity(event, sequence)
+    }
+    const previous = resident.timeline.nodes
+    if (event.sequence !== undefined) this.rememberFact(resident, event, event.sequence, 1)
+    resident.timeline = reduceTimeline(resident.timeline, {
+      event,
+      sequence,
+      ...timelineSequenceOptions(event),
+      ...(event.sequence === undefined || sequence === resident.timeline.lastSequence
+        ? { advanceSequence: false as const }
+        : {}),
+    })
+    if (event.type === 'notice' || event.type === 'session.gap')
+      this.rememberNotices(
+        resident.sessionId,
+        resident.timeline.nodes.filter((node) => !previous.includes(node)),
+        previous
+          .slice(-4)
+          .map((node) => node.id)
+          .reverse(),
+        event.type === 'session.gap' ? { from: event.fromSequence, to: event.toSequence } : undefined,
+      )
+    if (event.sequence !== undefined) this.rememberSources(resident, previous, event.sequence)
+    this.bound(resident)
+    this.updateCurrentTodos(resident, event)
+  }
+
+  private updateCurrentTodos(resident: Resident, event: BackendEvent): void {
+    if (resident.nativeTodos || event.type !== 'todo.updated') return
+    const result = preview({ kind: 'todo', id: 'current-todos', todos: event.todos }, TRANSCRIPT_NODE_CHARS)
+    resident.currentTodos = result.value.kind === 'todo' ? result.value.todos : []
+    if (result.omitted) resident.currentTodosOmitted = true
+    else delete resident.currentTodosOmitted
+  }
+
+  private rememberSources(
+    resident: Resident,
+    previous: readonly TimelineNode[],
+    sequence: number,
+    fromSequence = sequence,
+  ): void {
+    const unchanged = new Set(previous)
+    for (const node of resident.timeline.nodes)
+      if (!unchanged.has(node)) {
+        const old = resident.sources.get(node.id)
+        resident.sources.set(node.id, {
+          from: Math.min(old?.from ?? fromSequence, fromSequence),
+          to: sequence,
+        })
+      }
+  }
+
+  private rememberIdentity(event: BackendEvent, sequence: number): void {
+    this.recentEvents.set(eventIdentity(event, sequence), true)
+    if (this.recentEvents.size > 512) this.recentEvents.delete(this.recentEvents.keys().next().value!)
+  }
+
+  private rememberNotices(
+    sessionId: string,
+    nodes: readonly TimelineNode[],
+    anchors: readonly string[],
+    range?: { from: number; to: number },
+  ): void {
+    const entries = [...(this.notices.get(sessionId) ?? [])]
+    for (const node of nodes)
+      if (
+        (node.kind === 'command-input' || node.kind === 'notice') &&
+        !entries.some((entry) => entry.node.id === node.id)
+      ) {
+        const chars = JSON.stringify(node).length
+        if (chars <= 512 * 1024)
+          entries.push({ node, anchors, chars, ...(range === undefined ? {} : { range }) })
+      }
+    while (entries.length > 128) entries.shift()
+    this.notices.delete(sessionId)
+    this.notices.set(sessionId, entries)
+    const size = (): number => [...this.notices.values()].flat().reduce((sum, entry) => sum + entry.chars, 0)
+    while (this.notices.size > 16 || size() > 512 * 1024)
+      this.notices.delete(this.notices.keys().next().value!)
+  }
+
+  private rememberFact(
+    resident: Resident,
+    event: BackendEvent,
+    sequence: number,
+    representedSequences: number,
+  ): void {
+    const coords: { turn?: number; step?: number; attempt?: number } = {}
+    if ('turn' in event && typeof event.turn === 'number') coords.turn = event.turn
+    if ('step' in event && typeof event.step === 'number') coords.step = event.step
+    if ('attempt' in event && typeof event.attempt === 'number') coords.attempt = event.attempt
+    resident.facts.push({
+      id: `event:${sequence}:${event.type}:${++resident.factCounter}`,
+      type: event.type,
+      sequence,
+      representedSequences,
+      ...coords,
+    })
+    if (resident.facts.length > TRANSCRIPT_MAX_NODES) resident.facts.shift()
+  }
+
+  private bound(resident: Resident): void {
+    let remaining = TRANSCRIPT_MAX_CHARS - 128 * 1024
+    const nodes: TimelineNode[] = []
+    const source = resident.timeline.nodes
+    const candidates = source.filter((node) => !resident.contextIds.has(node.id))
+    const projectNode = (original: TimelineNode): { value: TimelineNode; omitted: boolean; size: number } => {
+      let clipped = this.previews.get(original)
+      if (clipped === undefined) {
+        const projected = preview(original, TRANSCRIPT_NODE_CHARS)
+        const node = projected.value
+        clipped = { value: node, omitted: projected.omitted, size: JSON.stringify(node).length }
+        this.previews.set(original, clipped)
+        this.previews.set(node, clipped)
+      }
+      return clipped
+    }
+    for (let index = candidates.length - 1; index >= 0 && nodes.length < TRANSCRIPT_MAX_NODES - 32; index--) {
+      const original = candidates[index]!
+      const clipped = projectNode(original)
+      const node = clipped.value
+      const size = clipped.size
+      if (size > remaining) break
+      remaining -= size
+      nodes.unshift(node)
+      if (clipped.omitted) resident.omitted.add(node.id)
+      else resident.omitted.delete(node.id)
+    }
+    // Context parents preserve supplied call identities and pairing, while
+    // the actual page boundary follows the contiguous display rows below.
+    const byId = new Map(source.map((node) => [node.id, node]))
+    const positionsById = new Map(source.map((node, index) => [node.id, index]))
+    const normalIds = new Set(nodes.map((node) => node.id))
+    const contextIds = new Set<string>()
+    let contextChars = 64 * 1024
+    for (const node of [...nodes]) {
+      let parentId = node.kind === 'tool' ? node.tool.parentCallId : undefined
+      const visited = new Set<string>()
+      while (parentId !== undefined && !visited.has(parentId)) {
+        visited.add(parentId)
+        const parent = byId.get(parentId)
+        if (parent?.kind !== 'tool') break
+        if (!normalIds.has(parentId) && !contextIds.has(parentId)) {
+          const clipped = projectNode(parent)
+          if (contextIds.size >= 32 || clipped.size > contextChars) break
+          contextChars -= clipped.size
+          contextIds.add(parentId)
+          nodes.push(clipped.value)
+          if (clipped.omitted) resident.omitted.add(parentId)
+        }
+        parentId = parent.tool.parentCallId
+      }
+    }
+    nodes.sort((left, right) => (positionsById.get(left.id) ?? 0) - (positionsById.get(right.id) ?? 0))
+    resident.contextIds = contextIds
+    const kept = new Set(nodes.map((node) => node.id))
+    for (const id of resident.omitted) if (!kept.has(id)) resident.omitted.delete(id)
+    for (const id of resident.sources.keys()) if (!kept.has(id)) resident.sources.delete(id)
+    const evicted = source.length > nodes.length
+    // All bookkeeping is bounded too; a partial turn never claims exact aggregate usage.
+    const tracking = Object.entries(resident.timeline.turnUsageTracking ?? {})
+      .slice(-8)
+      .map(
+        ([key, value]) =>
+          [key, value.attempts.length > 256 ? { ...value, invalid: true, attempts: [] } : value] as const,
+      )
+    const { nodeChangeBase: _base, closedTurns, ...rest } = resident.timeline
+    void _base
+    resident.timeline = {
+      ...rest,
+      nodes,
+      nodeChangeStart: 0,
+      ...(closedTurns === undefined ? {} : { closedTurns: closedTurns.slice(-64) }),
+      stepTimings: Object.fromEntries(Object.entries(resident.timeline.stepTimings ?? {}).slice(-64)),
+      turnUsageTracking: Object.fromEntries(tracking),
+      commandModes: Object.fromEntries(Object.entries(resident.timeline.commandModes ?? {}).slice(-64)),
+    }
+    if (evicted) {
+      resident.hasMore = true
+      // Evicted rows stay in DSH. Their raw boundary, not a display index, enables rereading.
+      const positions = [...resident.sources]
+        .filter(([id]) => !contextIds.has(id))
+        .map(([, source]) => source.from)
+      if (positions.length > 0) resident.before = Math.min(...positions)
+    }
+  }
+
+  private snapshot(): TranscriptWindow {
+    const resident = this.displayed
+    if (resident === undefined) throw stale()
+    const safe = this.deps.publicValue(
+      {
+        sessionId: resident.sessionId,
+        revision: this.revision,
+        nodes: resident.timeline.nodes,
+        eventFacts: resident.facts,
+        ...(this.tail?.currentTodos === undefined ? {} : { currentTodos: this.tail.currentTodos }),
+        ...(this.tail?.currentTodosOmitted === true ? { currentTodosOmitted: true } : {}),
+        lastSequence: resident.timeline.lastSequence,
+        hasMore: resident.hasMore,
+        historical: resident !== this.tail,
+        omittedNodeIds: [...resident.omitted],
+        ...(resident.before === undefined ? {} : { beforeSequence: resident.before }),
+        ...(resident.timeline.activeTurn === undefined ? {} : { activeTurn: resident.timeline.activeTurn }),
+        ...(resident.timeline.tokenUsage === undefined ? {} : { tokenUsage: resident.timeline.tokenUsage }),
+      },
+      resident.cwd,
+    )
+    if (typeof safe === 'object' && safe !== null && 'nodes' in safe && Array.isArray(safe.nodes)) {
+      safe.nodes = safe.nodes.map((node: unknown) => {
+        if (transcriptNodeSchema.safeParse(node).success) return node
+        // A path outside the workspace removes a required read/diff field.
+        // Degrade that card alone, just as the existing public event mapper does.
+        if (
+          typeof node === 'object' &&
+          node !== null &&
+          'kind' in node &&
+          node.kind === 'tool' &&
+          'tool' in node &&
+          typeof node.tool === 'object' &&
+          node.tool !== null
+        ) {
+          const { presentation: _presentation, ...tool } = node.tool as Record<string, unknown>
+          void _presentation
+          const fallback = { ...node, tool }
+          transcriptNodeSchema.parse(fallback)
+          return fallback
+        }
+        transcriptNodeSchema.parse(node)
+        return node
+      })
+    }
+    return transcriptWindowSchema.parse(safe) as TranscriptWindow
+  }
+
+  private schedule(): void {
+    this.dirty = true
+    if (!this.visible || this.timer !== undefined || this.posting || this.awaitingAck !== undefined) return
+    this.timer = setTimeout(() => {
+      this.timer = undefined
+      void this.publish()
+    }, 32)
+  }
+
+  private async publish(): Promise<void> {
+    if (!this.visible || this.displayed === undefined) return
+    this.dirty = false
+    this.posting = true
+    const sentRevision = this.revision
+    this.awaitingAck = sentRevision
+    try {
+      if (!(await this.deps.post(this.snapshot()))) this.awaitingAck = undefined
+    } catch {
+      this.awaitingAck = undefined
+    } finally {
+      this.posting = false
+    }
+    if (this.dirty && this.visible && this.awaitingAck === undefined && sentRevision !== this.revision)
+      this.schedule()
+  }
+}
+
+function empty(sessionId: string): TimelineState {
+  return { sessionId, nodes: [], lastSequence: -1, eventCount: 0 }
+}
+function eventIdentity(event: BackendEvent, sequence: number): string {
+  return createHash('sha256')
+    .update(JSON.stringify({ ...event, sequence }))
+    .digest('hex')
+}
+function assistantKey(
+  event: Extract<
+    BackendEvent,
+    { type: 'message.delta' | 'reasoning.delta' | 'message.completed' | 'assistant.attempt' }
+  >,
+): string {
+  return event.turn !== undefined && event.step !== undefined
+    ? `${event.turn}:${event.step}`
+    : 'messageId' in event
+      ? event.messageId
+      : ''
+}
+function stale(): AppError {
+  return new AppError({
+    code: 'STALE_INTERACTION',
+    message: 'The transcript window changed. Reopen the session and retry.',
+    retryable: true,
+  })
+}
+export function isTranscriptEvent(event: BackendEvent): boolean {
+  return ![
+    'session.status',
+    'session.activity',
+    'session.title',
+    'session.subscribed',
+    'session.projection',
+    'session.projection.baseline',
+    'session.configuration',
+    'session.system',
+    'subagent.catalog.updated',
+    'session.added',
+    'session.removed',
+    'workspace.changed',
+    'workspace.order.changed',
+    'workspace.removed',
+    'queue.updated',
+    'jobs.updated',
+    'job.follow.updated',
+    'job.follow.failed',
+    'permission.requested',
+    'permission.resolved',
+    'question.requested',
+    'question.resolved',
+    'connection.lost',
+    'archived.sessions.changed',
+    'remote.event',
+  ].includes(event.type)
+}
+
+export function isTranscriptOnlyEvent(event: BackendEvent): boolean {
+  return (
+    isTranscriptEvent(event) &&
+    !['turn.started', 'turn.ended', 'goal.updated', 'workflow.updated'].includes(event.type)
+  )
+}
+
+/** Bound every body and nested collection; omission is explicit and reversible through DSH. */
+function preview(value: TimelineNode, budget: number): { value: TimelineNode; omitted: boolean } {
+  let remaining = budget
+  let omitted = false
+  let visited = 0
+  const visit = (input: unknown, depth: number, field?: string): unknown => {
+    if (++visited > 1024) {
+      omitted = true
+      return null
+    }
+    if (typeof input === 'string') {
+      const limit = Math.max(0, Math.min(4096, remaining))
+      // Keep upstream recovery/overflow text at the end of tool summaries.
+      // This is presentation clipping, without parsing or inventing a locator.
+      const output =
+        field === 'outputSummary' && input.length > limit && limit > 16
+          ? `${input.slice(0, Math.floor((limit - 3) / 2))}\n…\n${input.slice(-Math.ceil((limit - 3) / 2))}`
+          : input.slice(0, limit)
+      remaining -= output.length
+      if (output.length < input.length) omitted = true
+      return output
+    }
+    if (input === null || typeof input !== 'object') return input
+    if (depth > 12) {
+      omitted = true
+      return null
+    }
+    if (Array.isArray(input)) {
+      const output = input.slice(0, 64).map((entry) => visit(entry, depth + 1))
+      if (input.length > 64) omitted = true
+      return output
+    }
+    const output = Object.create(null) as Record<string, unknown>
+    for (const [key, entry] of Object.entries(input).slice(0, 64)) output[key] = visit(entry, depth + 1, key)
+    if (Object.keys(input).length > 64) omitted = true
+    return output
+  }
+  const candidate = visit(value, 0)
+  const parsed = transcriptNodeSchema.safeParse(withoutHostCwd(candidate))
+  if (parsed.success && JSON.stringify(candidate).length <= budget)
+    return { value: omitted ? (parsed.data as TimelineNode) : value, omitted }
+  if (value.kind === 'tool')
+    return {
+      value: {
+        kind: 'tool',
+        id: value.id,
+        ...(value.sequence === undefined ? {} : { sequence: value.sequence }),
+        tool: {
+          id: value.tool.id,
+          name: value.tool.name.slice(0, 512),
+          category: value.tool.category.slice(0, 512),
+          title: value.tool.title.slice(0, 512),
+          status: value.tool.status,
+          ...(value.tool.parentCallId === undefined ? {} : { parentCallId: value.tool.parentCallId }),
+          ...(value.tool.turn === undefined ? {} : { turn: value.tool.turn }),
+          ...(value.tool.step === undefined ? {} : { step: value.tool.step }),
+          inputSummary: value.tool.inputSummary?.slice(0, 2048) ?? '',
+          outputSummary: value.tool.outputSummary?.slice(0, 2048) ?? '',
+          ...(value.tool.error === undefined ? {} : { error: value.tool.error.slice(0, 1024) }),
+          ...(value.tool.autoReviewDenial === undefined
+            ? {}
+            : {
+                autoReviewDenial: {
+                  ...(value.tool.autoReviewDenial.reason === undefined
+                    ? {}
+                    : { reason: value.tool.autoReviewDenial.reason.slice(0, 1024) }),
+                },
+              }),
+          ...(value.tool.images === undefined ? {} : { images: value.tool.images.slice(0, 4) }),
+          ...(value.tool.startedAt === undefined ? {} : { startedAt: value.tool.startedAt }),
+          ...(value.tool.completedAt === undefined ? {} : { completedAt: value.tool.completedAt }),
+          metadata: {},
+        },
+      },
+      omitted: true,
+    }
+  return {
+    value: { kind: 'notice', id: value.id, level: 'info', text: '…' },
+    omitted: true,
+  }
+}
+
+function withoutHostCwd(candidate: unknown): unknown {
+  if (
+    typeof candidate !== 'object' ||
+    candidate === null ||
+    !('tool' in candidate) ||
+    typeof candidate.tool !== 'object' ||
+    candidate.tool === null ||
+    !('presentation' in candidate.tool)
+  )
+    return candidate
+  const presentation = candidate.tool.presentation
+  if (typeof presentation !== 'object' || presentation === null || !('cwd' in presentation)) return candidate
+  const { cwd: _cwd, ...view } = presentation
+  void _cwd
+  return { ...candidate, tool: { ...candidate.tool, presentation: view } }
+}

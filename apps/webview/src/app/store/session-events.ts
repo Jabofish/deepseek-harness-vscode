@@ -1,8 +1,12 @@
 import { object, isRecord } from './unknown-record.js'
-import { parseSubagentCatalogEntryFact } from './tool-presentation.js'
-import { configurationPatch, nonEmptyString, parseSessionProjection } from './event-values.js'
+import {
+  configurationPatch,
+  nonEmptyString,
+  parseSessionProjection,
+  validTodoProjectionValues,
+} from './event-values.js'
 
-import type { BackendEvent, SessionProjectionSnapshot } from '@dsh-vscode/domain'
+import type { BackendEvent, SessionProjectionSnapshot, SubagentCatalogEntryFact } from '@dsh-vscode/domain'
 
 /** Branches are matched by event name; the caller owns the name-mutual-exclusion ordering. */
 export function parseSessionEvents(
@@ -111,8 +115,11 @@ export function parseSessionEvents(
     nonEmptyString(value.sessionId) &&
     nonEmptyString(value.key) &&
     Object.hasOwn(value, 'value')
-  )
+  ) {
+    if (value.key === 'todoList' && !validTodoProjectionValues({ todoList: value.value }))
+      return { type: 'unknown', name, payload }
     return { type: 'session.projection', sessionId: value.sessionId, key: value.key, value: value.value }
+  }
   if (
     name === 'session.gap' &&
     nonEmptyString(value.sessionId) &&
@@ -130,4 +137,23 @@ export function parseSessionEvents(
       toSequence: value.toSequence,
     }
   return undefined
+}
+
+/** Catalog facts are already structured by DSH; validate identity without deriving a tree. */
+function parseSubagentCatalogEntryFact(value: unknown): SubagentCatalogEntryFact | undefined {
+  const entry = object(value)
+  if (
+    !nonEmptyString(entry?.id) ||
+    !Number.isSafeInteger(entry?.createdAt) ||
+    (entry.createdAt as number) < 0 ||
+    !['one-shot', 'continuable', 'external', 'unknown'].includes(String(entry?.mode)) ||
+    (entry?.label !== undefined && typeof entry.label !== 'string')
+  )
+    return undefined
+  return {
+    id: entry.id,
+    createdAt: entry.createdAt as number,
+    mode: entry.mode as SubagentCatalogEntryFact['mode'],
+    ...(entry.label === undefined ? {} : { label: entry.label }),
+  }
 }
