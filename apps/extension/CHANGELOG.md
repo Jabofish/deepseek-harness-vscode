@@ -1,90 +1,20 @@
 # Change Log
 
-## Unreleased
+## 0.3.2
 
-- 修复打开会话时发送/停止按钮反复切换及消息区跳动：历史快照不再冒充实时运行事件，压缩历史已覆盖的记录不触发重新打开，并在连接就绪后只恢复一次会话。
-- Fixes startup flicker, Send/Stop toggling and transcript jumps by separating follow history from live activity, preserving compacted read baselines, and restoring the session after connection readiness.
+- 重构长会话与流式传输：移除旧历史引擎，使用 Host 有界视图和 DSH 权威数据；修复分段输出、启动闪烁及完成状态残留。
+- Reworks long conversations and streaming around bounded Host views and authoritative DSH data; removes the legacy history engine and fixes delayed output, startup flicker and stale completion state.
 
-- 临时助手预览异常时立即重取上游基线，同一 attempt 只补上未交付的部分，避免等待和文字回退；重复失败才退避并最终降级。流式正文发送脱敏后的新增部分，扩大有界确认窗口，修复长回复补跳、回合结束状态残留及补丁预算计算。
-- Immediately rebaselines interrupted assistant previews without replaying an already delivered prefix; repeated failures back off before durable fallback. Sends sanitized text suffixes with bounded delivery credits and fixes long-reply stalls, stale completion metadata, and patch budget accounting.
+- 新增编辑器会话标签与拖放分栏，复用已有连接；运行中保留输入、中断及模型和权限调整，修复跨窗口取消串扰。
+- Adds editor chat tabs and drag-to-split with shared connections; keeps input, Stop, model and permission choices available while running and isolates cancellation between windows.
 
-- 去除 Host 与前端通知的人为等待，修复逐帧等待确认、重复替换 Markdown 稳定段及长历史虚拟列表误退出尾部跟随；立即投递和通知，保留有界背压及主动滚动阅读的位置。
-- Removes artificial Host and Store notification delays and per-frame ACK waits, preserves stable streaming Markdown DOM, and keeps long virtualized conversations following live output while respecting reader scrolling and bounded backpressure.
+- 精简审批、任务、通知和输入面板，修复窄栏挤压、菜单样式、弹层定位与焦点；删去重复说明。
+- Compacts approvals, tasks, notices and the composer; fixes narrow layouts, menu styling, overlay placement and focus, and removes repetitive explanations.
 
-- 压缩任务、目标、提问、队列及扩展面板，完整目标列表移入“更多”；计划默认收起，长内容和多条交互内部滚动，缩小功能菜单、导出和反馈弹层。
-- Compacts task, goal, question, queue and Mods panels; moves the goal list into More, collapses plans by default, bounds long content and interaction stacks, and reduces utility menus, export and feedback dialogs.
+- 适配并默认安装 DSH `0.2.1-rc.2`，补齐后台任务事件，改善旧历史兼容、断线恢复和慢速安装。
+- Supports and installs DSH `0.2.1-rc.2` by default, adds missing Job events, and improves legacy-history compatibility, reconnection and slow installs.
 
-- 实时更新发送变化节点并复用未变的展示行，修复流式修订号重置、预览永久降级与活动长回复冻结；运行中可继续输入、添加附件和补充命令，停止操作独立；回合完成及断线恢复同步刷新界面状态。
-- Sends changed transcript nodes while preserving unchanged rows, restores transient streaming after revision resets, and keeps long live replies updating. Input, attachments, commands and Stop remain independently usable; Turn completion and transport recovery refresh the UI state.
-
-- 压缩权限审批卡片，合并标题与风险、移除重复等待提示；长会话的完整内容列表移至会话“更多”菜单，减少消息区占用。
-- Compacts permission approvals and removes repeated waiting notices; moves full-content links into the conversation actions menu to keep the message area clear.
-
-- 补齐 `0.2.1-alpha.3` 至 `0.2.1-rc.2` 的后台任务持久事件，修复 Preset 通知误用历史序号；旧版历史、临时回复预览及共享连接内的单流错误不再扩大为整段会话故障。
-- Adds durable Job events for `0.2.1-alpha.3` through `0.2.1-rc.2` and fixes Preset notifications being treated as sequenced history. Unreadable legacy rows, transient preview failures and logical-stream errors no longer invalidate unrelated conversation data.
-
-- 打开会话、历史翻页和实时跟随按记录兼容不支持的 V4 事件，避免单条后台任务记录导致整段历史打不开；任务与权限状态继续使用上游权威数据。
-- Session opening, paging and live following tolerate unsupported V4 records individually, so a background-job record cannot block the whole conversation; task and permission state still comes from authoritative upstream data.
-
-- 修复 DSH 安装的前后台等待时限不一致及同一宿主内重复安装；延长慢速安装预算，并区分超时和文件占用错误。
-- Fixes mismatched DSH installation timeouts and duplicate installs within one Extension Host; allows longer installs and distinguishes timeouts from files that are in use or not writable.
-
-- 新聊天标签复用已有连接，只初始化自身会话；新会话可在首条消息前选择上游提供的权限，已有会话发送后及运行中仍可随时调整。
-- New chat tabs reuse the existing connection and initialize only their own session; new-session drafts can select upstream permission presets, while existing sessions remain adjustable after sending and while running.
-
-- 支持将会话行拖到编辑器区或分栏打开；重复拖入复用已有标签，保留列表内排序，取消拖动不会打开会话。
-- Supports dragging a session row into the editor area or a split group; reuses existing chat tabs, preserves list reordering, and leaves cancelled drags unopened.
-
-- 聚焦布局继续收尾：隐藏性能行后不再保留底部空白；“跳转到最新”按钮浮于正文底部而不独占一行；Markdown 链接恢复手型光标。
-- Focused layout polish: the frame no longer keeps empty space below the composer after the performance line is hidden; "Jump to latest" floats over the transcript tail instead of claiming a row; Markdown links restore the pointer cursor.
-
-- 精简聚焦布局：简洁模式隐藏性能与用量行；收紧会话头、正文与输入框的边距，并缩小正文与输入框之间的空隙。
-- Tightens the focused layout: Compact mode hides the performance and usage line, trims the header/transcript/composer insets, and reduces the gap between the transcript and the composer.
-
-- 将目标与任务合并为会话头部的紧凑、默认收起的目标/任务坞：活跃目标作为常驻信号，附完成计数与状态徽标；展开后查看目标栏、目标待办与任务清单。
-- Folds goals and todos into a compact, collapsed-by-default dock in the conversation header: the active goal stays visible with a completion count and status pill; expanding reveals the goal bar, goal todos and task list.
-
-- 当轨迹视图被禁用（关闭开发者工具）时隐藏会话视图标签栏，会话标题改为常驻显示。
-- Hides the conversation view tab bar when the Trajectory view is disabled (Developer Tools off), and keeps the conversation title visible in the header.
-
-- 新增 DSH `0.2.1-rc.2` 精确适配，核对固定源码并验证 Search / Fetch 实时设置、密钥隔离、非法值与过期修订拒绝、恢复默认；保留动态模型目录与已选路由。
-- Adds exact DSH `0.2.1-rc.2` support with pinned source review and Search / Fetch settings coverage, including credential isolation, invalid values, stale revisions and restoring inherited defaults; preserves authoritative model catalogs and routes.
-
-- 将更新、连接、错误和欢迎提示合并为默认收起的紧凑通知栏；返回最新消息和轨迹详情各占独立空间，短窗口提供滚动退路，修复通知挤压、辅助控件覆盖正文及长会话跳转后再次偏离尾部的问题。
-- Combines persistent notices into a compact collapsed bar; reserves separate rows for jump controls and trajectory details, keeps short windows scrollable, and preserves the measured tail of long conversations after a jump.
-
-- 修复菜单同级入口字号与行高不统一：任务、导出、语言和检查器采用相同文字角色；共享选择菜单不再继承表单字号，菜单和工具详情正确跟随会话字号设置。
-- Unifies typography across peer menu actions, including tasks, export, language and Inspector; gives shared choice menus an explicit text role and makes menu/tool detail roles follow conversation font settings.
-
-- 系统修复 Webview 布局和弹层：会话状态与行操作不再重叠，任务等菜单保持可读宽度；重排检查器和插件页，统一选择器主题及锚点定位，修复诊断和导出层级、嵌套 Esc、焦点恢复与动画残留坐标偏移。
-- Repairs Webview layout and overlays: separates session status from row actions, keeps feature menus readable, reorganizes Inspector and plugins, unifies themed anchored selectors, and fixes diagnostics/export stacking, nested Escape, focus restoration and retained animation transforms.
-
-- 适配 DSH 的后续精确入口，涵盖工作区完整替换、插件重启原因及重复安装错误、账号奖励通知变化；版本与固定来源见 [DSH 契约](../../docs/dsh-contract.md)。
-- Adds subsequent exact DSH adapters, including workspace replacement baselines, plugin restart reasons and already-installed failures, and optional account bonus fields; see the pinned [DSH contract](../../docs/dsh-contract.md).
-- 修复 [Issue #3](https://github.com/Jabofish/deepseek-harness-vscode/issues/3) 的普通会话停止被误判为子代理问题；审批和提问期间保持停止入口，允许运行时调整模型与权限，撤回控制不被工作区信任变化阻挡。
-- Fixes ordinary-session Stop routing in [Issue #3](https://github.com/Jabofish/deepseek-harness-vscode/issues/3), preserves Stop during approvals and questions, enables model and permission choices while running, and keeps withdrawal controls available after workspace trust changes.
-- 深入修复 [PR #4](https://github.com/Jabofish/deepseek-harness-vscode/pull/4) 的跨窗口取消串扰、会话绑定错位、关闭后的迟到消息和移动失败丢失错误；感谢 [ggeorgovassilis](https://github.com/ggeorgovassilis) 的贡献。
-- Hardens [PR #4](https://github.com/Jabofish/deepseek-harness-vscode/pull/4) against cancellation across surfaces, stale session bindings, queued messages after close, and lost move failures; thanks to [ggeorgovassilis](https://github.com/ggeorgovassilis).
-
-- 新增编辑器区聊天入口：命令面板的 **DSH: Open Chat in Editor Area** 将当前会话以编辑器标签打开（每个会话一个标签，窗口重载后恢复）；侧边栏保持可用，可独立新建、切换和发送会话消息。
-- Adds an editor-area chat entry point: **DSH: Open Chat in Editor Area** opens the current session as an editor tab (one tab per session, restored after a window reload); the side bar remains available to create, switch and send messages in its own session.
-- 新增聊天输入框命令 `/moveto:editor`（等同 `/moveto editor`）与 `/moveto:sidebar`，可在编辑器区与侧边栏之间移动聊天；未知目标只在本机报错，不会作为提示词发送。
-- Adds the composer commands `/moveto:editor` (same as `/moveto editor`) and `/moveto:sidebar` for moving the chat between the editor area and the side bar; an unknown target fails locally instead of being sent as a prompt.
-- 会话列表的每一行新增“在编辑器区打开”操作，可直接把该会话作为编辑器标签打开；重命名会话会同步更新已打开标签的标题。
-- Adds an "Open in Editor Area" action to every session row, opening that conversation as an editor tab; renaming a session now updates the title of its open tab.
-
-- 修复 Webview 上下文菜单的“复制”在未选中文本时无任何效果：现在复制所指行（助手回答或用户提问）的 Markdown，不含思考、工具调用和通知；该行没有可读文本时保持剪贴板不变。
-- Fixes the Webview context menu's Copy doing nothing without a selection: it copies the Markdown of the addressed row (assistant answer or user prompt) without reasoning, tool calls or notices, and leaves the clipboard untouched when that row has no readable text.
-
-- 精简设置、模型、插件和检查器中的重复说明；空状态与错误提示聚焦当前情况和可执行操作。
-- Removes repetitive explanations from Settings, Models, Plugins and the Inspector; empty states and errors focus on the current situation and available actions.
-
-- 移除 Webview 旧历史引擎及原始历史分页协议，普通和子代理会话统一使用 Host 窗口；队列接纳、Goal 修改和子代理目录采用 DSH 权威结果，工具预览复用工作目录投影。
-- Removes the legacy Webview history engine and raw paging protocol. Ordinary and child sessions use Host windows; queue admission, Goal edits and subagent catalogs follow authoritative DSH results, and tool previews reuse the working-directory projection.
-- 将聊天历史展示投影移至 Extension Host，按节点及正文预算提供可回看的窗口；隐藏时暂停窗口发送，以确认控制消息积压，避免 Webview 累积事件账本及历史页。
-- Moves transcript presentation to the Extension Host with bounded, navigable windows and acknowledged delivery. Hidden views pause window delivery instead of accumulating a renderer event ledger and loaded history pages.
-- 移除聊天区的分页、长记录预览和任务清单截断说明；完整持久内容可按需在 VS Code 编辑器打开，当前 Todo 直接使用 DSH 的整值投影。
-- Removes paging, long-entry preview and partial-task-list notices from the chat. Full durable content opens on demand in the editor, and current Todos consume DSH's whole projection.
+感谢 [ggeorgovassilis](https://github.com/ggeorgovassilis) 的多窗口与界面贡献（[PR #4](https://github.com/Jabofish/deepseek-harness-vscode/pull/4)、[PR #5](https://github.com/Jabofish/deepseek-harness-vscode/pull/5)、[PR #6](https://github.com/Jabofish/deepseek-harness-vscode/pull/6)）。Thanks to ggeorgovassilis for the multi-window and UI contributions.
 
 ## 0.3.1
 

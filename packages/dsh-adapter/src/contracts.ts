@@ -77,7 +77,7 @@ export const LATEST_PUBLISHED_DSH_VERSION = '0.2.1-rc.2' as const
 export const LATEST_SUPPORTED_DSH_VERSION = LATEST_PUBLISHED_DSH_VERSION
 
 /** Explicit exact-version default for guided installs; update only after reviewing the release contract. */
-export const DEFAULT_INSTALL_DSH_VERSION = '0.2.0-rc.2' as const
+export const DEFAULT_INSTALL_DSH_VERSION = '0.2.1-rc.2' as const
 
 /**
  * Newest adapter whose wire contract is safe to reuse for an unverified

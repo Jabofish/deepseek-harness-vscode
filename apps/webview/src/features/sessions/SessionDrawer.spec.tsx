@@ -721,6 +721,29 @@ describe('SessionDrawer', () => {
     expect(document.activeElement).toBe(trigger)
   })
 
+  it('returns focus to the alternate opener when the desktop trigger is hidden', () => {
+    const opener = document.createElement('button')
+    document.body.append(opener)
+    opener.focus()
+    const onOpenChange = vi.fn()
+    const view = renderDrawer({
+      open: true,
+      showTrigger: true,
+      onOpenChange,
+      fallbackFocusRef: { current: opener },
+    })
+    const trigger = screen.getByRole('button', { name: 'Switch session: Fix login bug' })
+    trigger.style.display = 'none'
+    screen.getByRole('dialog', { name: 'Sessions' }).focus()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+    expect(document.activeElement).toBe(opener)
+    view.unmount()
+    opener.remove()
+  })
+
   it('dismisses the switcher when the pointer goes elsewhere', () => {
     const onOpenChange = vi.fn()
     renderDrawer({ open: true, onOpenChange })

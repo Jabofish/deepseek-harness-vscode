@@ -30,8 +30,7 @@
   flex: 0 0 auto;
 }
 
-/* Only the blocked reason needs a second row. Keep the live controls beside
- * the title even when this bar is hosted in a narrow editor split. */
+/* Narrow goal cards give the objective a row of its own below. */
 .dsh-goal-bar__content {
   flex-wrap: wrap;
 }
@@ -46,8 +45,22 @@
 }
 
 @container dsh-goal (max-width: 18rem) {
+  .dsh-goal-bar__content {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
   .dsh-goal-bar__glyph {
     display: none;
+  }
+
+  .dsh-goal-bar__title {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+
+  .dsh-goal-bar__blocked {
+    grid-column: 1 / -1;
   }
 }
 
@@ -760,6 +773,7 @@
   font: inherit;
   font-size: var(--dsh-font-size-sm);
   text-align: start;
+  white-space: nowrap;
   cursor: pointer;
 }
 
@@ -801,6 +815,22 @@
   flex: 0 0 auto;
   color: var(--dsh-muted);
   font-size: var(--dsh-font-size-2xs);
+}
+
+@media (max-width: 48rem) {
+  .dsh-goals-tasks {
+    flex: 0 0 auto;
+  }
+
+  .dsh-goals-tasks__label,
+  .dsh-goals-tasks__toggle > .dsh-status-pill {
+    display: none;
+  }
+
+  .dsh-goals-tasks__toggle {
+    gap: var(--dsh-space-1);
+    padding-inline: var(--dsh-space-1);
+  }
 }
 
 .dsh-goals-tasks__chevron {

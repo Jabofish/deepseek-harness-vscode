@@ -7,6 +7,7 @@ import {
   useState,
   type FormEvent,
   type ReactElement,
+  type RefObject,
 } from 'react'
 import { createPortal } from 'react-dom'
 import type {
@@ -52,6 +53,7 @@ export interface SessionDrawerProps {
   readonly open?: boolean | undefined
   readonly onOpenChange?: (open: boolean) => void
   readonly showTrigger?: boolean
+  readonly fallbackFocusRef?: RefObject<HTMLButtonElement | null>
   readonly onOpen: (sessionId: string) => void
   /** Open one conversation as an editor-area chat tab instead of switching here. */
   readonly onOpenInEditor?: (sessionId: string) => void
@@ -183,7 +185,11 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
   }
   const closeSwitcherAndRefocus = (): void => {
     setOpen(false)
-    triggerRef.current?.focus()
+    // Compact chrome opens this same drawer from another control. Returning
+    // focus to its hidden desktop trigger would strand keyboard navigation.
+    const trigger = triggerRef.current
+    if (trigger !== null && getComputedStyle(trigger).display !== 'none') trigger.focus()
+    else props.fallbackFocusRef?.current?.focus()
   }
   const chooseArchiveFilter = (value: string): void => {
     if (value !== 'hide' && value !== 'all' && value !== 'archived') return
@@ -253,7 +259,7 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
       const target = dialogTriggerRef.current
       dialogTriggerRef.current = null
       if (target !== null && target.isConnected) target.focus()
-      else (triggerRef.current ?? panelRef.current)?.focus()
+      else panelRef.current?.focus()
     }
     dialogWasOpen.current = dialogOpen
   }, [dialogOpen])

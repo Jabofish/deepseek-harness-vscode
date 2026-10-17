@@ -9,7 +9,7 @@ Bring local or remote [DeepSeek Harness](https://github.com/deepseek-ai/deepseek
 - Use the models, providers, permissions, and agent options supplied by the connected DSH.
 - Open produced files through VS Code, and use local templates, checkpoints, Changes, and task views when available.
 - Use the compact DSH-style focused layout, or switch to the classic layout in **Settings → General → Conversation layout**.
-- Move the chat into the editor area as a full-width tab, one per session, with **DSH: Open Chat in Editor Area**, the `/moveto:editor` command, or **Open in Editor Area** on a session row; `/moveto:sidebar` moves it back. Editor tabs return with their session after a window reload, and the side bar shows a short notice instead of a second copy while a tab is open.
+- Open sessions in editor tabs alongside the side bar, with independent navigation and restored sessions after a window reload.
 
 Available operations depend on the connected DSH runtime. Unsupported capabilities are shown explicitly; [exact compatibility and evidence](https://github.com/Jabofish/deepseek-harness-vscode/tree/main/docs) are documented in the repository.
 
@@ -20,6 +20,8 @@ Available operations depend on the connected DSH runtime. Unsupported capabiliti
 3. Choose or create a workspace, start a session, and send a task.
 
 The Chat view is registered in VS Code's Secondary Side Bar by default (on the right in the default workbench layout). VS Code may keep a previously saved view location after an upgrade.
+
+Drag a session row into the editor area, choose **Open in Editor Area**, or run **DSH: Open Chat in Editor Area** (`/moveto:editor`). Drop near an editor edge to split; `/moveto:sidebar` returns the chat. The side bar remains available for other sessions. Narrow views collect session navigation, New Session, Schedules and Settings in **More**.
 
 The extension discovers compatible local instances before starting one. Connection modes let you attach only, start an isolated extension-owned instance, or probe one configured HTTP(S) endpoint (which may be remote). It never stops an external DSH. Runtime updates install a verified exact version and do not restart external processes.
 

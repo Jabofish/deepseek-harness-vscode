@@ -608,6 +608,42 @@
   min-width: 0;
 }
 
+.dsh-conversation__compact-actions,
+.dsh-conversation__compact-menu {
+  display: none;
+}
+
+@media (max-width: 48rem) {
+  /* Keep the drawer mounted: native title actions and the compact menu both
+   * open it. Only the duplicate utility controls leave the topbar. */
+  .dsh-conversation__utility,
+  .dsh-conversation__utility-session,
+  .dsh-conversation__utility .dsh-session-header,
+  .dsh-conversation__utility .dsh-session-header__switcher,
+  .dsh-conversation__utility .dsh-session-switcher,
+  .dsh-conversation__utility > .dsh-runtime-status {
+    display: contents;
+  }
+
+  .dsh-conversation__utility .dsh-session-switcher__trigger,
+  .dsh-conversation__utility .dsh-session-header__create,
+  .dsh-conversation__utility .dsh-runtime-status__trigger,
+  .dsh-conversation__utility > .dsh-icon-button {
+    display: none;
+  }
+
+  .dsh-conversation__compact-actions {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: inherit;
+    gap: inherit;
+  }
+
+  .dsh-conversation__compact-menu {
+    display: contents;
+  }
+}
+
 .dsh-conversation__content-menu {
   grid-column: 1 / -1;
 }
@@ -691,13 +727,21 @@
   font-weight: inherit;
 }
 
+.dsh-conversation__navigation-trigger,
 .dsh-conversation__actions-grid .dsh-conversation__export-trigger {
   display: inline-flex;
   align-items: center;
   gap: var(--dsh-space-1);
+  border-color: transparent;
   color: var(--dsh-muted);
   background: transparent;
   cursor: pointer;
+}
+
+.dsh-conversation__navigation-trigger:hover,
+.dsh-conversation__navigation-trigger:focus-visible {
+  color: var(--dsh-text);
+  background: var(--dsh-surface-hover);
 }
 
 .dsh-conversation__actions-grid .dsh-conversation__locale-control {
@@ -708,7 +752,7 @@
   .dsh-conversation__actions-panel {
     inset-inline-end: var(--dsh-space-2);
     inset-inline-start: var(--dsh-space-2);
-    width: auto;
+    width: calc(100vw - var(--dsh-space-4));
     max-width: none;
   }
 
@@ -723,6 +767,10 @@
 }
 
 @media (max-width: 24rem) {
+  .dsh-conversation__actions-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .dsh-settings__tabs {
     padding: var(--dsh-space-2);
   }
@@ -732,8 +780,7 @@
   }
 }
 
-/* Keep every utility reachable in the narrowest editor sidebar. View labels
- * may truncate; their tab names remain complete for assistive technology. */
+/* The two view tabs keep their hit areas even in the narrowest sidebar. */
 @media (max-width: 18rem) {
   .dsh-conversation__topbar {
     --dsh-control-height: 24px;
@@ -744,12 +791,11 @@
   }
 
   .dsh-conversation__views {
-    flex-shrink: 1;
-    overflow: hidden;
+    flex-shrink: 0;
   }
 
   .dsh-conversation__views .dsh-conversation__view-tab {
-    flex-shrink: 1;
+    flex-shrink: 0;
     min-width: 24px;
     padding-inline: 2px;
     overflow: hidden;

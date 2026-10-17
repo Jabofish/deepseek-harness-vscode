@@ -1,4 +1,4 @@
-import { memo, useCallback, useRef, useState, type ReactElement, type ReactNode } from 'react'
+import { memo, useCallback, useRef, useState, type ReactElement, type ReactNode, type RefObject } from 'react'
 
 import { PopoverCard } from '../../components/common/PopoverCard.js'
 import { useViewportMenuPosition } from '../../components/common/useViewportMenuPosition.js'
@@ -9,6 +9,7 @@ import { Icon } from '../../ui/Icon.js'
 export interface ConversationActionsMenuProps {
   readonly children: ReactNode | ((closeAndFocus: () => void) => ReactNode)
   readonly onClose?: () => void
+  readonly triggerRef?: RefObject<HTMLButtonElement | null>
 }
 
 /**
@@ -25,7 +26,8 @@ export const ConversationActionsMenu = memo(function ConversationActionsMenu(
   const { children, onClose } = props
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
-  const triggerRef = useRef<HTMLButtonElement>(null)
+  const localTriggerRef = useRef<HTMLButtonElement>(null)
+  const triggerRef = props.triggerRef ?? localTriggerRef
   // The panel anchors to the trigger instead of the viewport top so a wrapped
   // narrow-sidebar topbar cannot detach it from the control that opened it.
   const panelRef = useRef<HTMLDivElement>(null)
@@ -45,7 +47,7 @@ export const ConversationActionsMenu = memo(function ConversationActionsMenu(
   const closeAndFocus = useCallback((): void => {
     close()
     triggerRef.current?.focus()
-  }, [close])
+  }, [close, triggerRef])
 
   // Escape is owned by the layer hook alone: a React handler on this element
   // would run before the document listeners of the drawers nested inside the

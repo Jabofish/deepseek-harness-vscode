@@ -77,7 +77,8 @@ describe('GoalsTasksStrip active goal', () => {
     ]
     const { container } = render(<GoalsTasksStrip goals={[goal]} todos={todos} />)
 
-    expect(within(headerOf(container)).getByRole('status').textContent).toBe('1/4 complete')
+    const progress = within(headerOf(container)).getByRole('status', { name: '1/4 complete' })
+    expect(progress.textContent).toBe('1/4')
   })
 
   it('sums completed goals and completed todos in one count', () => {
@@ -93,6 +94,7 @@ describe('GoalsTasksStrip active goal', () => {
     const header = headerOf(container)
 
     expect(labelOf(header)).toBe('Ship the follow-up')
-    expect(within(header).getByRole('status').textContent).toBe('2/4 complete')
+    const progress = within(header).getByRole('status', { name: '2/4 complete' })
+    expect(progress.textContent).toBe('2/4')
   })
 })

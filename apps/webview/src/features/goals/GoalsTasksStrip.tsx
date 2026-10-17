@@ -70,6 +70,7 @@ export const GoalsTasksStrip = memo(function GoalsTasksStrip(
         aria-expanded={open}
         aria-controls={panelId}
         aria-label={open ? t('goalsTasks.collapse') : t('goalsTasks.expand')}
+        title={label}
         onClick={() => setOpen((current) => !current)}
       >
         <span className="dsh-goals-tasks__glyph" aria-hidden="true">
@@ -83,8 +84,12 @@ export const GoalsTasksStrip = memo(function GoalsTasksStrip(
             {t(`goal.status.${activeGoal.status}`)}
           </span>
         )}
-        <span className="dsh-goals-tasks__count" role="status">
-          {t('goals.complete', { completed, total })}
+        <span
+          className="dsh-goals-tasks__count"
+          role="status"
+          aria-label={t('goals.complete', { completed, total })}
+        >
+          {completed}/{total}
         </span>
         <span className="dsh-goals-tasks__chevron" aria-hidden="true">
           <Icon name="chevron-down" />

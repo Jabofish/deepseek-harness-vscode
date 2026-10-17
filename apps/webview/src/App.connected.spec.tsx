@@ -1255,6 +1255,59 @@ describe('App connected rendering', () => {
     expect(setDrawer).toHaveBeenCalledWith('schedules')
   })
 
+  it.each([
+    ['Sessions', 'sessions'],
+    ['Schedules', 'schedules'],
+    ['Settings', 'settings'],
+  ] as const)('opens %s from the compact conversation menu', (label, drawer) => {
+    const setDrawer = vi.fn()
+    currentStore = { ...storeFor(connectedState(true)), setDrawer }
+    render(<App />)
+
+    const tools = screen.getByRole('button', { name: 'Conversation tools' })
+    fireEvent.click(tools)
+    const menu = screen.getByRole('dialog', { name: 'Conversation tools' })
+    fireEvent.click(within(menu).getByRole('button', { name: label }))
+
+    expect(setDrawer).toHaveBeenCalledWith(drawer)
+    expect(screen.queryByRole('dialog', { name: 'Conversation tools' })).toBeNull()
+    expect(document.activeElement).toBe(tools)
+  })
+
+  it('starts a draft in the current workspace from the compact conversation menu', () => {
+    const stageSession = vi.fn().mockResolvedValue(undefined)
+    currentStore = { ...storeFor(connectedState(true)), stageSession }
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Conversation tools' }))
+    const menu = screen.getByRole('dialog', { name: 'Conversation tools' })
+    fireEvent.click(within(menu).getByRole('button', { name: 'New Session' }))
+
+    expect(stageSession).toHaveBeenCalledWith('w1', undefined)
+    expect(screen.queryByRole('dialog', { name: 'Conversation tools' })).toBeNull()
+  })
+
+  it('keeps compact navigation available before the first draft message is sent', () => {
+    const state = connectedState(true)
+    const setDrawer = vi.fn()
+    currentStore = {
+      ...storeFor({
+        ...state,
+        activeSessionId: undefined,
+        pendingSession: { revision: 1, workspaceId: 'w1', configuration: state.configuration! },
+      }),
+      setDrawer,
+    }
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Conversation tools' }))
+    const menu = screen.getByRole('dialog', { name: 'Conversation tools' })
+    fireEvent.click(within(menu).getByRole('button', { name: 'Sessions' }))
+
+    expect(setDrawer).toHaveBeenCalledWith('sessions')
+    expect(screen.queryByRole('dialog', { name: 'Conversation tools' })).toBeNull()
+  })
+
   it('keeps the subagent catalog trigger visible when the host reports children', async () => {
     const state = connectedState(true)
     currentStore = storeFor({

@@ -17,7 +17,7 @@
 - Choose the models, providers, permissions, and agent options exposed by the connected DSH runtime.
 - Use local prompt templates, checkpoints, a Changes view, and a task center when their prerequisites are available.
 - Use the DSH-style focused layout with collapsible process details and a compact composer. Choose the focused or classic layout in **Settings → General → Conversation layout**; the choice is saved locally.
-- Move the chat into the editor area as a full-width tab, one per session, and back to the side bar. Use **DSH: Open Chat in Editor Area**, the `/moveto:editor` composer command, or **Open in Editor Area** on a session row; `/moveto:sidebar` or the tab's button returns it. Editor tabs are restored with their session after a window reload.
+- Open sessions in editor tabs alongside the side bar, with independent navigation and restored sessions after a window reload.
 
 The connected DSH version determines which advanced capabilities are available. Unsupported operations show a clear unavailable state. The [compatibility contract](docs/dsh-contract.md) lists exact adapter boundaries; the [capability matrix](docs/capability-matrix.md) distinguishes implementation, automated tests, and real runtime verification.
 
@@ -31,9 +31,9 @@ Install [DeepSeek Harness Companion for VS Code](https://marketplace.visualstudi
 
 The DeepSeek Harness Chat view appears in VS Code's Secondary Side Bar by default (on the right in the default workbench layout). If you previously moved it, VS Code may keep your saved layout. Run **DSH: Move View to Secondary Side Bar** from the Command Palette to choose the Chat view and **New Secondary Side Bar Entry**, or right-click the view title and use **Move View**.
 
-The side bar stays available while editor chat tabs are open. Use its **+** button to start another session, or select an existing session from its session list; editor tabs keep their own sessions.
+The side bar stays available while editor chat tabs are open. Use the view title's **+** button to start another session. Narrow views collect session navigation, New Session, Schedules and Settings in **More**.
 
-Drag a session row from the session list into the editor area to open it there. Drop near an editor edge to open in a split group. Dragging within a manually sorted list still reorders sessions.
+To open an editor tab, drag a session row into the editor area, choose **Open in Editor Area**, or run **DSH: Open Chat in Editor Area** (`/moveto:editor`). Drop near an editor edge to split; `/moveto:sidebar` returns the chat. Dragging within a manually sorted list still reorders sessions.
 
 The extension first looks for a compatible local DSH. It starts one only when the selected connection mode permits it and discovery has finished. It never stops a DSH process it did not create.
 

@@ -76,6 +76,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
     contextPressure,
     contextWindowTokens,
     conversationActionItems,
+    conversationActionsTriggerRef,
     conversationFontSize,
     conversationFontStyle,
     conversationView,
@@ -119,6 +120,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
     scheduleOnOpenLinkedSession,
     scheduleOnStartSession,
     sessionControl,
+    sessionOnOpenChange,
     setConversationFontSize,
     setConversationView,
     setDismissedConnection,
@@ -161,6 +163,54 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
     readonly nodeId: string
     readonly requestId: string
   }>()
+  const compactActions = (closeMenu: () => void): ReactElement => (
+    <div className="dsh-conversation__compact-actions">
+      <button
+        type="button"
+        className="dsh-conversation__navigation-trigger"
+        onClick={() => {
+          closeMenu()
+          sessionOnOpenChange(true)
+        }}
+      >
+        <Icon name="session" />
+        {t('sessions.title')}
+      </button>
+      <button
+        type="button"
+        className="dsh-conversation__navigation-trigger"
+        onClick={() => {
+          closeMenu()
+          headerOnNewSession()
+        }}
+      >
+        <Icon name="add" />
+        {t('sessions.new')}
+      </button>
+      <button
+        type="button"
+        className="dsh-conversation__navigation-trigger"
+        onClick={() => {
+          closeMenu()
+          headerOnOpenSchedules()
+        }}
+      >
+        <Icon name="clock" />
+        {t('schedules.title')}
+      </button>
+      <button
+        type="button"
+        className="dsh-conversation__navigation-trigger"
+        onClick={() => {
+          closeMenu()
+          headerOnOpenSettings()
+        }}
+      >
+        <Icon name="settings" />
+        {t('settings.title')}
+      </button>
+    </div>
+  )
   const showWelcome =
     backend.kind === 'connected' &&
     active === undefined &&
@@ -281,6 +331,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                   aria-label={t('app.createSession')}
                 >
                   <div className="dsh-conversation__topbar">
+                    <span className="dsh-conversation__header-title">{t('sessions.new')}</span>
                     <AppHeader
                       runtime={backend}
                       connectedDshVersion={state.connectedDshVersion}
@@ -291,6 +342,11 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                       onOpenSettings={headerOnOpenSettings}
                       onRetryConnection={retryConnection}
                     />
+                    <div className="dsh-conversation__compact-menu">
+                      <ConversationActionsMenu triggerRef={conversationActionsTriggerRef}>
+                        {compactActions}
+                      </ConversationActionsMenu>
+                    </div>
                   </div>
                   <div className="dsh-app__empty">
                     <EmptyState title={t('app.createSession')} description={t('app.workspacePickerHint')} />
@@ -443,9 +499,10 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                         onOpenSession={lineageOnOpenSession}
                       />
                     ) : null}
-                    <ConversationActionsMenu>
+                    <ConversationActionsMenu triggerRef={conversationActionsTriggerRef}>
                       {(closeMenu) => (
                         <>
+                          {compactActions(closeMenu)}
                           {conversationActionItems(closeMenu)}
                           <button
                             type="button"

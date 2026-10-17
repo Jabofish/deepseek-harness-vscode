@@ -81,6 +81,6 @@ describe('production version adapter registry', () => {
     expect(adapters.filter((adapter) => adapter.supportedVersion === '0.2.0-rc.1')).toHaveLength(1)
     expect(LATEST_PUBLISHED_DSH_VERSION).toBe('0.2.1-rc.2')
     expect(LATEST_SUPPORTED_DSH_VERSION).toBe('0.2.1-rc.2')
-    expect(DEFAULT_INSTALL_DSH_VERSION).toBe('0.2.0-rc.2')
+    expect(DEFAULT_INSTALL_DSH_VERSION).toBe('0.2.1-rc.2')
   })
 })

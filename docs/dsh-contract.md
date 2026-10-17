@@ -4,7 +4,7 @@
 
 ## 上游来源与安装默认
 
-当前上游最新发布包为 `@deepseek-ai/dsh@0.2.1-rc.2`；扩展引导安装默认包为 `@deepseek-ai/dsh@0.2.0-rc.2`。`LATEST_PUBLISHED_DSH_VERSION` 与 `DEFAULT_INSTALL_DSH_VERSION` 分别记录发布版本和明确选定的安装默认，增加精确版本入口不自动切换稳定安装默认。安装始终使用精确版本，不解析浮动 dist-tag。真实 timed 提问与 VS Code 交互验收仍未完成，见能力矩阵 UQ-01；默认版本不代表这项能力已标为 `DONE`。npm 通道指向会改变，不在规范中复制“当前 latest/next/alpha”快照。更新功能可从上游目录选择经过验证的**精确**版本，不能把源码适配视为已完成真实运行验证。
+当前上游最新发布包为 `@deepseek-ai/dsh@0.2.1-rc.2`；扩展引导安装默认包为 `@deepseek-ai/dsh@0.2.1-rc.2`，固定源码与隔离运行证据见[交付检查](../reviews/dsh-rc212-release-review.md)。发布版本与安装默认分别由 `LATEST_PUBLISHED_DSH_VERSION`、`DEFAULT_INSTALL_DSH_VERSION` 维护；新增适配不自动切换默认，安装和更新均使用经过验证的精确版本，不跟随浮动 dist-tag。默认版本不代表所有能力完成，timed 提问等验收缺口仍见能力矩阵。
 
 历史 Host API 的固定基线是提交 [`47f943859bef60e4160492346772ded9b24f765a`](https://github.com/deepseek-ai/deepseek-harness/tree/47f943859bef60e4160492346772ded9b24f765a)：[RPC map](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/host/apiproxy/src/api/rpc-map.ts)、[events](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/host/apiproxy/src/api/events.ts)、[tool catalog](https://github.com/deepseek-ai/deepseek-harness/tree/47f943859bef60e4160492346772ded9b24f765a/packages/core/tools)。它只证明该 Host API 家族；较新的 Connection/Gateway、typed Remote 和 Session Controller 必须从**目标版本自己的 tag/commit 和实际存在的接口文件**核对。尤其 `0.1.5-rc.2` 与 `0.1.5-rc.3` 的 wire 比较不能引用上述已不存在的旧 RPC 文件；两者被适配器消费的 Session Controller、typed Remote、Connection/Gateway 与工具运行时源码相同，仍保留各自精确身份。
 

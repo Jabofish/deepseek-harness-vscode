@@ -119,6 +119,7 @@ const useAppControllerImpl = () => {
   )
   const [dismissedConnection, setDismissedConnection] = useState<string | undefined>()
   const [modelPickerOpenRequest, setModelPickerOpenRequest] = useState(0)
+  const conversationActionsTriggerRef = useRef<HTMLButtonElement>(null)
   const [conversationView, setConversationView] = useState<'chat' | 'trajectory'>('chat')
   const [dshEventVisibility, setDshEventVisibility] = useState<{
     readonly sessionId: string | undefined
@@ -733,6 +734,7 @@ const useAppControllerImpl = () => {
         activeSessionId={state.activeSessionId}
         open={state.drawer === 'sessions'}
         showTrigger={state.activeSessionId !== undefined || state.pendingSession !== undefined}
+        fallbackFocusRef={conversationActionsTriggerRef}
         preferredWorkspaceId={state.pendingSession?.workspaceId}
         onOpenChange={sessionOnOpenChange}
         onOpen={sessionOnOpen}
@@ -908,6 +910,7 @@ const useAppControllerImpl = () => {
     contextPressure,
     contextWindowTokens,
     conversationActionItems,
+    conversationActionsTriggerRef,
     conversationFontSize,
     conversationFontStyle,
     conversationView,
@@ -952,6 +955,7 @@ const useAppControllerImpl = () => {
     scheduleOnOpenLinkedSession,
     scheduleOnStartSession,
     sessionControl,
+    sessionOnOpenChange,
     setConversationFontSize,
     setConversationView,
     setDismissedConnection,
