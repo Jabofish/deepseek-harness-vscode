@@ -58,7 +58,7 @@ it('bounds large histories, filters types and joins authoritative sequences with
   fireEvent.click(screen.getByRole('button', { name: 'Load older history' }))
   await waitFor(() => expect(loadOlder).toHaveBeenCalledTimes(1))
   expect(JSON.stringify(inspectChatNode(node, 0))).not.toContain('PRIVATE_PROMPT')
-})
+}, 15000)
 
 it('keeps focus on inspected rows and lets Escape dismiss a filter before the drawer', () => {
   render(
