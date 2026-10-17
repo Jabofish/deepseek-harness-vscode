@@ -96,8 +96,12 @@
   color: var(--dsh-muted);
 }
 
-.dsh-markdown a {
+.dsh-markdown a,
+.dsh-markdown [data-dsh-link] {
   color: var(--dsh-link);
+  /* Links render as anchors without href (the click is handled in React), so
+   * the UA pointer affordance is absent unless we restore it here. */
+  cursor: pointer;
 }
 
 .dsh-markdown code {

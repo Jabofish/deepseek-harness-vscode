@@ -18,9 +18,13 @@
 }
 
 .dsh-scroll-to-latest {
-  position: static;
-  flex: 0 0 auto;
-  align-self: center;
+  /* Float over the transcript tail instead of claiming a flex row: both shells
+   * are the positioning context, so the affordance never shrinks the scroll area. */
+  position: absolute;
+  z-index: 5;
+  bottom: var(--dsh-space-2);
+  left: 50%;
+  transform: translateX(-50%);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -29,7 +33,7 @@
   min-height: var(--dsh-control-height);
   gap: var(--dsh-space-2);
   padding: var(--dsh-space-1) var(--dsh-space-3);
-  margin-block: var(--dsh-space-1);
+  margin: 0;
   overflow: hidden;
   border-color: color-mix(in srgb, var(--dsh-info) 54%, var(--dsh-border-color));
   border-radius: 999px;

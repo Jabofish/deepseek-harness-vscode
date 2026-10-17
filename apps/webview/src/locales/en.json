@@ -817,7 +817,7 @@
   "settings.transcriptView.label": "Workflow display",
   "settings.transcriptView.hint": "Choose how much tool activity to show.",
   "settings.performanceUsage.label": "Performance and usage",
-  "settings.performanceUsage.hint": "Choose the detail shown for performance and usage.",
+  "settings.performanceUsage.hint": "Compact hides the performance and usage line; Detailed shows session statistics and per-turn token usage.",
   "settings.codingTools.label": "Developer Tools",
   "settings.codingTools.hint": "Show tools and information for debugging and troubleshooting.",
   "settings.extensionPreferences": "Extension preferences",

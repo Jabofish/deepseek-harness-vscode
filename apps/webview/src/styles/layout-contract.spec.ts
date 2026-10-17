@@ -24,13 +24,12 @@ const appStyles = readStylesheet(new URL('./app.css', import.meta.url), [
 ])
 
 describe('Conversation space ownership', () => {
-  it('keeps notifications, jump controls and trajectory details in document flow', () => {
+  it('keeps notifications and trajectory details in document flow', () => {
     const styles = `${appStyles}\n${layoutStyles}`
     for (const selector of [
       '.dsh-app__notices',
       '.dsh-app__notice-summary',
       '.dsh-app__notice-list',
-      '.dsh-scroll-to-latest',
       '.dsh-trajectory-inspector',
     ]) {
       expect(ruleBodies(styles, selector).length, selector).toBeGreaterThan(0)
@@ -45,6 +44,17 @@ describe('Conversation space ownership', () => {
     expect(
       Number.parseFloat(effective(styles, '.dsh-trajectory-shell', 'min-height') ?? '0'),
     ).toBeGreaterThan(0)
+  })
+
+  it('floats the jump control over the transcript instead of claiming a row', () => {
+    const styles = `${appStyles}\n${layoutStyles}`
+    // The affordance is absolutely positioned inside its shell, so showing it
+    // never shrinks the scroll area; both owning shells are the positioning
+    // context it anchors to.
+    expect(declared(styles, '.dsh-scroll-to-latest', 'position')).toContain('absolute')
+    for (const shell of ['.dsh-timeline-shell', '.dsh-trajectory-shell']) {
+      expect(effective(styles, shell, 'position'), shell).toBe('relative')
+    }
   })
 })
 

@@ -692,23 +692,27 @@ const useAppControllerImpl = () => {
     }),
   )
   const composerUsage = projectedTokenUsage ?? state.timeline.tokenUsage
+  // Compact performance usage hides the line entirely (rather than upstream's
+  // "speed + cache only" line): on this surface the setting is a visibility
+  // switch, and the composer must not reserve a row when detail is off.
   const composerStatus = useMemo(
-    () => (
-      <StatsLine
-        sessionId={activeSessionId}
-        nodes={state.timeline.nodes}
-        {...(state.timeline.nodeChangeStart === undefined
-          ? {}
-          : { nodeChangeStart: state.timeline.nodeChangeStart })}
-        {...(state.timeline.nodeChangeBase === undefined
-          ? {}
-          : { nodeChangeBase: state.timeline.nodeChangeBase })}
-        usage={composerUsage}
-        cacheHit={cacheHitRate(composerUsage)}
-        performanceUsage={performanceUsage}
-        {...(sessionStats === undefined ? {} : { sessionStats })}
-      />
-    ),
+    () =>
+      performanceUsage === 'compact' ? undefined : (
+        <StatsLine
+          sessionId={activeSessionId}
+          nodes={state.timeline.nodes}
+          {...(state.timeline.nodeChangeStart === undefined
+            ? {}
+            : { nodeChangeStart: state.timeline.nodeChangeStart })}
+          {...(state.timeline.nodeChangeBase === undefined
+            ? {}
+            : { nodeChangeBase: state.timeline.nodeChangeBase })}
+          usage={composerUsage}
+          cacheHit={cacheHitRate(composerUsage)}
+          performanceUsage={performanceUsage}
+          {...(sessionStats === undefined ? {} : { sessionStats })}
+        />
+      ),
     [
       activeSessionId,
       composerUsage,

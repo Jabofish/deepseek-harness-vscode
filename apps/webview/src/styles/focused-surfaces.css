@@ -511,10 +511,10 @@
   min-height: 40px;
   justify-content: center;
   padding: 8px;
-  transform: none;
   border: var(--dsh-border);
   border-radius: 50%;
   background: var(--dsh-surface-soft);
+  box-shadow: var(--dsh-shadow);
   color: var(--dsh-text);
 }
 

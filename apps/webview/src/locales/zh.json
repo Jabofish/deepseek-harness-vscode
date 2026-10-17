@@ -817,7 +817,7 @@
   "settings.transcriptView.label": "工作步骤展示",
   "settings.transcriptView.hint": "选择希望看到多少工具调用细节。",
   "settings.performanceUsage.label": "性能与用量",
-  "settings.performanceUsage.hint": "选择性能和用量信息的显示详细程度。",
+  "settings.performanceUsage.hint": "简洁模式隐藏性能与用量行；详细模式显示会话统计和每轮 token 用量。",
   "settings.codingTools.label": "代码工作工具",
   "settings.codingTools.hint": "显示用于调试和排查问题的工具与信息。",
   "settings.extensionPreferences": "扩展偏好设置",
