@@ -147,7 +147,11 @@ function connectedState(activeSession: boolean): AppState {
   }
 }
 
-function dshUiSettingsSnapshot(enabled?: boolean, busyEnter?: 'queue' | 'steer'): DshSettingsSnapshot {
+function dshUiSettingsSnapshot(
+  enabled?: boolean,
+  busyEnter?: 'queue' | 'steer',
+  performanceUsage?: 'compact' | 'detailed',
+): DshSettingsSnapshot {
   const fields: DshSettingsSnapshot['schema']['fields'][number][] = []
   const values: Record<string, unknown> = {}
   if (enabled !== undefined) {
@@ -170,6 +174,17 @@ function dshUiSettingsSnapshot(enabled?: boolean, busyEnter?: 'queue' | 'steer')
       restartRequired: false,
     })
     values['ui-conversation'] = { busyEnter }
+  }
+  if (performanceUsage !== undefined) {
+    fields.push({
+      path: 'ui-chat.performanceUsage',
+      label: 'performanceUsage',
+      type: 'enum',
+      required: false,
+      enumValues: ['compact', 'detailed'],
+      restartRequired: false,
+    })
+    values['ui-chat'] = { performanceUsage }
   }
   return {
     schema: {
@@ -197,6 +212,17 @@ function dshUiSettingsSnapshot(enabled?: boolean, busyEnter?: 'queue' | 'steer')
                 applies: 'live' as const,
                 revision: 1,
                 userFields: ['busyEnter'],
+                secrets: [],
+              },
+            ]),
+        ...(performanceUsage === undefined
+          ? []
+          : [
+              {
+                ns: 'ui-chat',
+                applies: 'live' as const,
+                revision: 1,
+                userFields: ['performanceUsage'],
                 secrets: [],
               },
             ]),
@@ -2526,6 +2552,46 @@ describe('App connected rendering', () => {
     expect(todoToggle?.textContent).not.toContain('查询系统信息')
     expect(container.querySelector('.dsh-compose-area .dsh-todo-list')).toBeNull()
     expect(container.querySelector('.dsh-conversation > .dsh-goal-strip')).toBeNull()
+  })
+
+  it('keeps the goals/tasks dock in flow above the transcript', () => {
+    const state = connectedState(true)
+    currentStore = storeFor({
+      ...state,
+      goals: [{ id: 'goal-1', title: 'Ship the dock placement', status: 'in-progress' }],
+    })
+    const { container } = render(<App />)
+
+    const dock = container.querySelector<HTMLElement>('.dsh-goals-tasks')
+    const timeline = screen.getByTestId('timeline')
+    expect(dock).not.toBeNull()
+    // jsdom has no layout engine, so containment and document order stand in
+    // for geometry: the dock is ordinary conversation content that sits above
+    // the transcript, never a modal or a floating overlay.
+    expect(dock?.closest('.dsh-conversation')).not.toBeNull()
+    expect(dock?.closest('[role="dialog"]')).toBeNull()
+    expect(dock?.getAttribute('role')).not.toBe('dialog')
+    expect(dock!.compareDocumentPosition(timeline) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    )
+  })
+
+  it('hides the performance line when performance usage is compact', async () => {
+    const readDshSettings = vi.fn().mockResolvedValue(dshUiSettingsSnapshot(undefined, undefined, 'compact'))
+    currentStore = { ...storeFor(connectedState(true)), readDshSettings }
+    const { container } = render(<App />)
+
+    await waitFor(() => expect(readDshSettings).toHaveBeenCalled())
+    expect(container.querySelector('.dsh-composer__status')).toBeNull()
+  })
+
+  it('keeps the performance line when performance usage is detailed', async () => {
+    const readDshSettings = vi.fn().mockResolvedValue(dshUiSettingsSnapshot(undefined, undefined, 'detailed'))
+    currentStore = { ...storeFor(connectedState(true)), readDshSettings }
+    const { container } = render(<App />)
+
+    await waitFor(() => expect(readDshSettings).toHaveBeenCalled())
+    expect(container.querySelector('.dsh-composer__status')).not.toBeNull()
   })
 
   it('floats pending questions outside the composer layout', () => {

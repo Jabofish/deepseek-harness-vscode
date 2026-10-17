@@ -60,6 +60,9 @@
 .dsh-app {
   gap: var(--dsh-space-2);
   padding: var(--dsh-frame-inset);
+  /* Nothing renders below the composer, so a bottom frame inset would leave an
+   * empty band where the hidden performance line used to sit. */
+  padding-block-end: 0;
 }
 
 .dsh-app__body {

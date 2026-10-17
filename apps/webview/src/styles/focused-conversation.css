@@ -21,11 +21,18 @@
 }
 
 .dsh-timeline[data-conversation-layout='focused'] {
-  padding: var(--dsh-space-4) var(--dsh-space-2) var(--dsh-space-4);
+  padding: var(--dsh-space-2) var(--dsh-space-1) 0;
 }
 
 .dsh-timeline[data-conversation-layout='focused'] .dsh-timeline__row {
-  padding-block: var(--dsh-space-2);
+  padding-block: var(--dsh-space-1);
+}
+
+/* The canvas already follows the timeline's inset; keep its own tail padding
+ * out of the transcript→composer gap. */
+.dsh-timeline[data-conversation-layout='focused'] .dsh-timeline__canvas {
+  padding-inline: 0;
+  padding-block-end: 0;
 }
 
 .dsh-timeline[data-conversation-layout='focused'] .dsh-timeline__message-stack {
@@ -35,7 +42,7 @@
 
 .dsh-timeline[data-conversation-layout='focused'] .dsh-timeline__card--assistant {
   width: 100%;
-  padding: var(--dsh-space-2) 0;
+  padding: var(--dsh-space-1) 0;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -177,8 +184,14 @@
   min-height: var(--dsh-control-height);
 }
 
+/* Compact reading column: the transcript tail and the composer sit one small
+ * step apart so the input does not float away from the last message. */
+.dsh-app[data-conversation-layout='focused'] .dsh-conversation {
+  gap: var(--dsh-space-1);
+}
+
 .dsh-app[data-conversation-layout='focused'] .dsh-compose-area {
-  padding-inline: clamp(4px, 1.5vw, 12px);
+  padding-inline: var(--dsh-space-1);
 }
 
 .dsh-app[data-conversation-layout='focused'] .dsh-unified-composer {

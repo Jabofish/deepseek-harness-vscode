@@ -6,6 +6,7 @@ import { GoalBar } from './GoalBar.js'
 import { GoalTodoStrip } from './GoalTodoStrip.js'
 import { TodoList } from './TodoList.js'
 import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
+import { useViewportMenuPosition } from '../../components/common/useViewportMenuPosition.js'
 
 export interface GoalsTasksStripProps {
   readonly goals: readonly GoalView[]
@@ -27,7 +28,15 @@ export const GoalsTasksStrip = memo(function GoalsTasksStrip(
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
   const panelId = useId()
+  const panelPosition = useViewportMenuPosition({
+    open,
+    anchorRef: triggerRef,
+    menuRef: panelRef,
+    placement: 'below',
+    align: 'end',
+  })
   useDismissibleLayer({
     open,
     refs: [rootRef],
@@ -82,8 +91,10 @@ export const GoalsTasksStrip = memo(function GoalsTasksStrip(
         </span>
       </button>
       <div
+        ref={panelRef}
         id={panelId}
         className="dsh-disclosure dsh-goals-tasks__disclosure"
+        style={panelPosition}
         data-open={open}
         hidden={!open}
       >

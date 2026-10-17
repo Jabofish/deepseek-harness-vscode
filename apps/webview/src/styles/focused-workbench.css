@@ -2,11 +2,15 @@
  * Every override belongs to the opt-in workbench; classic keeps its cascade. */
 .dsh-app[data-conversation-layout='focused'] {
   --dsh-focused-panel-radius: 16px;
+  /* One minimal window inset, and no bottom inset at all: nothing sits below
+   * the composer, so the frame ends at its edge instead of leaving an empty
+   * band where the hidden performance line used to be. */
+  padding: var(--dsh-space-1) var(--dsh-space-1) 0;
   gap: var(--dsh-space-2);
 }
 
 .dsh-app[data-conversation-layout='focused'] .dsh-conversation__topbar {
-  padding-inline: var(--dsh-space-2);
+  padding-inline: var(--dsh-space-1);
   border-bottom: var(--dsh-border);
 }
 
@@ -41,7 +45,7 @@
 
 .dsh-app[data-conversation-layout='focused'] .dsh-unified-composer {
   gap: 8px;
-  padding: 6px 12px;
+  padding: 6px var(--dsh-space-2);
   border-color: var(--dsh-border-color);
   border-radius: 20px;
   background: var(--dsh-surface-soft);

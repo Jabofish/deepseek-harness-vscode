@@ -278,7 +278,11 @@
   overflow: hidden;
 }
 
-.dsh-unified-composer .dsh-composer__status:has(.dsh-stats-line[aria-hidden='true']) {
+/* The status row is a sibling of the composer form (both direct children of
+ * `.dsh-compose-area`), so the collapse rule has to target that parent; the
+ * `.dsh-unified-composer` scope never matched and left an empty 8px row. */
+.dsh-compose-area > .dsh-composer__status:has(.dsh-stats-line[aria-hidden='true']),
+.dsh-compose-area > .dsh-composer__status:empty {
   display: none;
 }
 

@@ -416,6 +416,13 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                     >
                       {active.title.trim() === '' ? t('app.conversation') : active.title}
                     </span>
+                    <GoalsTasksStrip
+                      key={active.id}
+                      goals={state.goals}
+                      todos={state.todos}
+                      onUpdateGoal={goalOnUpdate}
+                      onClearGoal={goalOnClear}
+                    />
                     <AppHeader
                       runtime={backend}
                       connectedDshVersion={state.connectedDshVersion}
@@ -516,13 +523,6 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                       </button>
                     </div>
                   )}
-                  <GoalsTasksStrip
-                    key={active.id}
-                    goals={state.goals}
-                    todos={state.todos}
-                    onUpdateGoal={goalOnUpdate}
-                    onClearGoal={goalOnClear}
-                  />
                   <SessionInspector
                     key={`${state.connectionEpoch}:${active.id}`}
                     {...(state.transcript === undefined ? {} : { eventFacts: state.transcript.eventFacts })}
@@ -766,7 +766,9 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                           onSteerQueue={composerOnSteerQueue}
                           queue={state.queue}
                         />
-                        <div className="dsh-composer__status">{composerStatus}</div>
+                        {composerStatus === undefined ? null : (
+                          <div className="dsh-composer__status">{composerStatus}</div>
+                        )}
                       </>
                     ) : (
                       <div className="dsh-subagent-readonly" role="status">

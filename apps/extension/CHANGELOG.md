@@ -34,6 +34,13 @@
 
 - 支持将会话行拖到编辑器区或分栏打开；重复拖入复用已有标签，保留列表内排序，取消拖动不会打开会话。
 - Supports dragging a session row into the editor area or a split group; reuses existing chat tabs, preserves list reordering, and leaves cancelled drags unopened.
+
+- 聚焦布局继续收尾：隐藏性能行后不再保留底部空白；“跳转到最新”按钮浮于正文底部而不独占一行；Markdown 链接恢复手型光标。
+- Focused layout polish: the frame no longer keeps empty space below the composer after the performance line is hidden; "Jump to latest" floats over the transcript tail instead of claiming a row; Markdown links restore the pointer cursor.
+
+- 精简聚焦布局：简洁模式隐藏性能与用量行；收紧会话头、正文与输入框的边距，并缩小正文与输入框之间的空隙。
+- Tightens the focused layout: Compact mode hides the performance and usage line, trims the header/transcript/composer insets, and reduces the gap between the transcript and the composer.
+
 - 将目标与任务合并为会话头部的紧凑、默认收起的目标/任务坞：活跃目标作为常驻信号，附完成计数与状态徽标；展开后查看目标栏、目标待办与任务清单。
 - Folds goals and todos into a compact, collapsed-by-default dock in the conversation header: the active goal stays visible with a completion count and status pill; expanding reveals the goal bar, goal todos and task list.
 
