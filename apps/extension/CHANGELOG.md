@@ -5,14 +5,17 @@
 - 重构长会话与流式传输：移除旧历史引擎，使用 Host 有界视图和 DSH 权威数据；修复分段输出、启动闪烁及完成状态残留。
 - Reworks long conversations and streaming around bounded Host views and authoritative DSH data; removes the legacy history engine and fixes delayed output, startup flicker and stale completion state.
 
-- 新增编辑器会话标签与拖放分栏，复用已有连接；运行中保留输入、中断及模型和权限调整，修复跨窗口取消串扰。
-- Adds editor chat tabs and drag-to-split with shared connections; keeps input, Stop, model and permission choices available while running and isolates cancellation between windows.
+- 新增复用已有连接的编辑器会话标签；运行中保留输入、中断及模型和权限调整，修复跨窗口取消串扰。
+- Adds editor chat tabs with shared connections; keeps input, Stop, model and permission choices available while running and isolates cancellation between windows.
 
 - 精简审批、任务、通知和输入面板，修复窄栏挤压、菜单样式、弹层定位与焦点；删去重复说明。
 - Compacts approvals, tasks, notices and the composer; fixes narrow layouts, menu styling, overlay placement and focus, and removes repetitive explanations.
 
 - 适配并默认安装 DSH `0.2.1-rc.2`，补齐后台任务事件，改善旧历史兼容、断线恢复和慢速安装。
 - Supports and installs DSH `0.2.1-rc.2` by default, adds missing Job events, and improves legacy-history compatibility, reconnection and slow installs.
+
+已知问题：从会话列表拖到编辑器分栏可能被 VS Code 拒绝，尚未完成实际拖放验收。暂用会话行的“在编辑器区打开”或命令面板入口。
+Known issue: VS Code may reject session-row drops into editor groups; native drag-to-split has not passed acceptance. Use **Open in Editor Area** or **DSH: Open Chat in Editor Area** for now.
 
 感谢 [ggeorgovassilis](https://github.com/ggeorgovassilis) 的多窗口与界面贡献（[PR #4](https://github.com/Jabofish/deepseek-harness-vscode/pull/4)、[PR #5](https://github.com/Jabofish/deepseek-harness-vscode/pull/5)、[PR #6](https://github.com/Jabofish/deepseek-harness-vscode/pull/6)）。Thanks to ggeorgovassilis for the multi-window and UI contributions.
 

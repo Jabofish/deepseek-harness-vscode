@@ -33,7 +33,7 @@ The DeepSeek Harness Chat view appears in VS Code's Secondary Side Bar by defaul
 
 The side bar stays available while editor chat tabs are open. Use the view title's **+** button to start another session. Narrow views collect session navigation, New Session, Schedules and Settings in **More**.
 
-To open an editor tab, drag a session row into the editor area, choose **Open in Editor Area**, or run **DSH: Open Chat in Editor Area** (`/moveto:editor`). Drop near an editor edge to split; `/moveto:sidebar` returns the chat. Dragging within a manually sorted list still reorders sessions.
+To open an editor tab, choose **Open in Editor Area** or run **DSH: Open Chat in Editor Area** (`/moveto:editor`); `/moveto:sidebar` returns the chat. VS Code may reject dragging session rows out of the Webview. For now, use the explicit entry points and drag the opened editor tab to split. Dragging within a manually sorted session list still reorders sessions.
 
 The extension first looks for a compatible local DSH. It starts one only when the selected connection mode permits it and discovery has finished. It never stops a DSH process it did not create.
 
