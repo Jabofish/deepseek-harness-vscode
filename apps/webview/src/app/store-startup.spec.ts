@@ -1002,6 +1002,104 @@ describe('AppStore startup session restoration', () => {
     },
   )
 
+  it.each(['stopping', 'lost'] as const)(
+    'does not restore departed connection data when delayed open reads finish after %s',
+    async (transition) => {
+      const deferred = new Map<string, (value: unknown) => void>()
+      const replies: Readonly<Record<string, unknown>> = {
+        'session.queue.list': [
+          {
+            id: 'old-input',
+            text: 'Old input',
+            textOnly: true,
+            mode: 'queue',
+            attachments: [],
+            sessionId: activeSession.id,
+            createdAt: activeSession.createdAt,
+          },
+        ],
+        'goal.list': [{ id: 'old-goal', title: 'Old goal', status: 'in-progress' }],
+        'job.list': [{ id: 'old-job', kind: 'shell', label: 'Old job', status: 'running', startedAt: 123 }],
+        'feedback.list': [{ messageId: 'old-message', rating: 'positive', version: 'old-version' }],
+        'subagent.list': { entries: [childEntry], parentAvailable: true },
+        'command.list': [{ name: 'old-command', description: 'Old command' }],
+      }
+      const client = new StartupClient((request) => {
+        if (request.type in replies) return new Promise((resolve) => deferred.set(request.type, resolve))
+        return startupResponse(request)
+      })
+      const store = createAppStore(client as unknown as ProtocolClient)
+      try {
+        client.emit({
+          type: 'event',
+          name: 'connection.snapshot',
+          sequence: 1,
+          payload: { kind: 'connected', backendInstanceId: 'old-host', connectionGeneration: 1 },
+        })
+        await store.openSession(activeSession.id)
+        expect(deferred.size).toBe(Object.keys(replies).length)
+        client.emit(
+          transition === 'lost'
+            ? {
+                type: 'event',
+                name: 'connection.lost',
+                sequence: 2,
+                payload: { message: 'Disconnected', retryable: true },
+              }
+            : { type: 'event', name: 'connection.snapshot', sequence: 2, payload: { kind: 'stopping' } },
+        )
+        const disconnected = store.getState()
+        for (const [type, resolve] of deferred) resolve(replies[type])
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        for (const key of ['queue', 'goals', 'jobs', 'feedback', 'subagents', 'commands'] as const)
+          expect(store.getState()[key], key).toEqual(disconnected[key])
+      } finally {
+        store.dispose()
+      }
+    },
+  )
+
+  it('does not publish a session or start advisory reads from an open completed after disconnect', async () => {
+    let release!: (value: unknown) => void
+    const detail = new Promise<unknown>((resolve) => {
+      release = resolve
+    })
+    const client = new StartupClient((request) =>
+      request.type === 'session.open' ? detail : startupResponse(request),
+    )
+    const store = createAppStore(client as unknown as ProtocolClient)
+    try {
+      client.emit({
+        type: 'event',
+        name: 'connection.snapshot',
+        sequence: 1,
+        payload: { kind: 'connected', backendInstanceId: 'old-host', connectionGeneration: 1 },
+      })
+      const opening = store.openSession(activeSession.id)
+      await vi.waitFor(() =>
+        expect(client.requests.some((request) => request.type === 'session.open')).toBe(true),
+      )
+      client.emit({ type: 'event', name: 'connection.snapshot', sequence: 2, payload: { kind: 'stopping' } })
+      release(
+        startupResponse({
+          type: 'session.open',
+          requestId: 'old-open',
+          payload: { sessionId: activeSession.id },
+        }),
+      )
+      await opening
+      expect(store.activeSessionId).toBeUndefined()
+      expect(store.backend.kind).toBe('stopping')
+      expect(
+        client.requests.some((request) =>
+          ['session.queue.list', 'job.list', 'subagent.list', 'command.list'].includes(request.type),
+        ),
+      ).toBe(false)
+    } finally {
+      store.dispose()
+    }
+  })
+
   it('completes session open before command and session-model directories finish', async () => {
     let releaseCommands: ((value: readonly unknown[]) => void) | undefined
     let releaseSkills: ((value: readonly unknown[]) => void) | undefined

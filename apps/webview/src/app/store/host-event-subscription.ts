@@ -30,7 +30,7 @@ type SurfaceActions = ReturnType<typeof createSurfaceActions>
 
 export interface HostEventSubscriptionLifecycle {
   readonly invalidateGlobalCatalogs: () => void
-  readonly advanceSessionModelDirectoryGeneration: () => void
+  readonly retireSessionReads: () => void
   readonly clearStartupRestorePending: () => void
   readonly getOpenVersion: () => number
   readonly incrementGoalReadGeneration: () => void
@@ -132,9 +132,9 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
       (message.name === 'connection.lost' ||
         (message.name === 'connection.snapshot' && object(message.payload)?.kind !== 'connected'))
     )
-      // Retire reads from the connection that is going away. The replacement
-      // session open starts a fresh generation when it can read its own catalog.
-      lifecycle.advanceSessionModelDirectoryGeneration()
+      // Retire every pending session read before clearing connection state;
+      // late open/advisory results must not repopulate the departed host's data.
+      lifecycle.retireSessionReads()
     if (
       message.type === 'event' &&
       (message.name === 'connection.snapshot' || message.name === 'connection.lost')

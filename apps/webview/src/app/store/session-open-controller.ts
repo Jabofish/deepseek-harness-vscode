@@ -212,6 +212,7 @@ export function createSessionOpenController(host: SessionOpenHost): {
     let advisoryPending = false
     try {
       await featureActions.discardEditorContextForSessionSwitch(sessionId)
+      if (version !== host.getOpenVersion()) return
       let result: unknown
       try {
         result = await requestSessionOpen(sessionId, version)
@@ -220,6 +221,7 @@ export function createSessionOpenController(host: SessionOpenHost): {
         if (version !== host.getOpenVersion()) return
         throw reason
       }
+      if (version !== host.getOpenVersion()) return
       const detail = object(result)
       if (!isSessionOpenDetail(detail, sessionId)) throw new Error(translate('app.error.openSession'))
       const transcript = parseTranscript(detail.transcript)
@@ -373,12 +375,14 @@ export function createSessionOpenController(host: SessionOpenHost): {
       ''
     try {
       await featureActions.discardEditorContextForSessionSwitch(entry.id)
+      if (version !== host.getOpenVersion()) return
       // The child→parent routing is connection state owned by the host
       // catalog: a child transcript can only be read after its parent catalog
       // was read on *this* connection, and a replacement process starts
       // without one. Read it first instead of beside the history request; the
       // caller still owns `parentAvailable`, which it read from that catalog.
       await loadSubagentCatalog(entry.parentSessionId)
+      if (version !== host.getOpenVersion()) return
       const historyData = client
         .request<unknown>({
           type: 'subagent.history',

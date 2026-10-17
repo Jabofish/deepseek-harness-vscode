@@ -519,8 +519,13 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     invalidateFeedback,
     lifecycle: {
       invalidateGlobalCatalogs: globalCatalogs.invalidate,
-      advanceSessionModelDirectoryGeneration: () => {
+      retireSessionReads: () => {
+        openVersion += 1
+        openIntent += 1
         sessionModelDirectoryGeneration += 1
+        pendingOpenBuffer.clear()
+        commandDirectory.invalidate()
+        invalidateFeedback()
       },
       clearStartupRestorePending: () => {
         startupRestorePending = false

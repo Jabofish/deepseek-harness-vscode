@@ -2,8 +2,8 @@
 
 ## Unreleased
 
-- 降低会话打开、恢复和大目录搜索的等待：辅助信息独立加载，移除目录归属的重复扫描，并保留实时更新与切换隔离。
-- Reduces waits when opening or restoring chats and searching large directories: loads advisory data independently and removes repeated membership scans while preserving live updates and session isolation.
+- 降低会话打开、恢复和大目录搜索的等待：辅助信息独立加载，移除重复扫描；修复断连后旧数据回填，保留实时更新与切换隔离。
+- Reduces waits when opening or restoring chats and searching large directories through independent advisory loading and fewer repeated scans; prevents late reads from restoring disconnected data while preserving live updates and session isolation.
 
 - 统一表单、弹框和操作提示，精简设置与列表，保留完整详情和键盘滚动；修复短窗控件被挤出、弹框裁切、菜单焦点和保存时误关闭。
 - Unifies forms, dialogs and user-facing messages, compacts Settings and lists while retaining full details and keyboard scrolling, and fixes clipped controls, dialog clipping, menu focus and accidental dismissal during saves.
