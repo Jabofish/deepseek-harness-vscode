@@ -161,10 +161,11 @@ export function workspaceSessionsFor(
   input: SessionListProjectionInput,
   workspace: WorkspaceSummary,
 ): readonly SessionSummary[] {
+  const memberIds = new Set(workspace.sessionIds)
   return input.sessions.filter(
     (session) =>
       session.origin !== 'subagent' &&
-      (session.workspaceId === workspace.id || workspace.sessionIds?.includes(session.id) === true) &&
+      (session.workspaceId === workspace.id || memberIds.has(session.id)) &&
       (!session.blank || session.id === input.activeSessionId),
   )
 }
@@ -217,14 +218,14 @@ export function projectSessionLists(input: SessionListProjectionInput): SessionL
             input.sorting,
           )
         : []
+  const selectedMemberIds = new Set(input.selectedWorkspace?.sessionIds)
   const archivedToShow =
     input.archiveFilter === 'archived' &&
     input.workspaceDisplay === 'current' &&
     input.selectedWorkspace !== undefined
       ? input.archivedSessions.filter(
           (session) =>
-            session.workspaceId === input.selectedWorkspace?.id ||
-            input.selectedWorkspace?.sessionIds?.includes(session.id) === true,
+            session.workspaceId === input.selectedWorkspace?.id || selectedMemberIds.has(session.id),
         )
       : input.archivedSessions
   const archived = archivedToShow.filter(

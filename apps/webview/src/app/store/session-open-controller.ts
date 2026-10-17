@@ -20,10 +20,10 @@ import {
   type ProjectionSequenceIndex,
 } from './session-projection.js'
 import { parseSubagentHistory } from './subagent.js'
-import { safeList } from './session-registry.js'
+import { safeList, type FeedbackListResult } from './session-registry.js'
 import { object } from './unknown-record.js'
 import type { AppState, StateSetter } from './types.js'
-import type { PendingOpenBuffer } from './opening-state.js'
+import type { PendingOpenBuffer, PendingSessionOpen } from './opening-state.js'
 import type { createFeatureActions } from './feature-actions.js'
 import type { createJobActions } from './job-actions.js'
 import type { createFeedbackCache } from './feedback-cache.js'
@@ -60,6 +60,15 @@ export interface SessionOpenHost {
   readonly clearStartupRestorePending: () => void
 }
 
+interface SessionAdvisoryReads {
+  readonly goalGeneration: number
+  readonly queue: Promise<readonly QueuedInput[] | undefined>
+  readonly goals: Promise<readonly GoalView[] | undefined>
+  readonly jobs: Promise<readonly JobView[] | undefined>
+  readonly feedback: Promise<FeedbackListResult>
+  readonly subagents: Promise<SubagentCatalog | undefined>
+}
+
 export function createSessionOpenController(host: SessionOpenHost): {
   readonly open: (requestedSessionId: string, options?: { readonly startup?: boolean }) => Promise<void>
   readonly openSubagent: (entry: SubagentView, parentAvailable: boolean) => Promise<void>
@@ -83,6 +92,89 @@ export function createSessionOpenController(host: SessionOpenHost): {
     persistWebviewState,
   } = host
   const { requestFeedbackSnapshot } = feedbackCache
+  const readAdvisoryData = (sessionId: string): SessionAdvisoryReads => ({
+    goalGeneration: host.getGoalReadGeneration(),
+    queue: safeList<QueuedInput>(
+      client,
+      { type: 'session.queue.list', requestId: requestId(), payload: { sessionId } },
+      isQueuedInput,
+    ),
+    goals: safeList<GoalView>(
+      client,
+      { type: 'goal.list', requestId: requestId(), payload: { sessionId } },
+      isGoalView,
+    ),
+    jobs: safeList<JobView>(
+      client,
+      { type: 'job.list', requestId: requestId(), payload: { sessionId } },
+      isJobView,
+    ),
+    feedback: requestFeedbackSnapshot(sessionId),
+    subagents: loadSubagentCatalog(sessionId),
+  })
+  const hydrateAdvisoryData = (pending: PendingSessionOpen, reads: SessionAdvisoryReads): void => {
+    const { sessionId, version } = pending
+    const isCurrent = (): boolean =>
+      version === host.getOpenVersion() && getState().activeSessionId === sessionId
+    const mergeList = <K extends 'queue' | 'goals' | 'jobs'>(
+      key: K,
+      items: AppState[K] | undefined,
+      eventNames: readonly string[],
+    ): void => {
+      if (!isCurrent()) return
+      const superseded = key === 'goals' && reads.goalGeneration !== host.getGoalReadGeneration()
+      setState((current) => {
+        const unavailableLists = [
+          ...(current.unavailableLists ?? []).filter((entry) => entry !== key),
+          ...(items === undefined ? [key] : []),
+        ]
+        if (items === undefined || superseded) return { ...current, unavailableLists }
+        // Only rebase this surface. Replaying unrelated transcript/projection
+        // frames on each completed read would redo work and roll back peers.
+        // Queue facts have already advanced the live sequence index, so this
+        // local snapshot overlay must not reject their replay as duplicates.
+        const replayed = applyBufferedHostState(
+          { ...current, [key]: items },
+          pending.messages.filter((message) => message.type === 'event' && eventNames.includes(message.name)),
+          {
+            perKey: new Map(),
+            baselines: new Map(),
+            queueBySession: new Map(),
+            connectionIdentity: projectionSequences.connectionIdentity,
+          },
+        )
+        return { ...current, [key]: replayed[key], unavailableLists }
+      })
+    }
+    // Attach after first paint, even for child reads that finished before the
+    // history. A slow optional endpoint must not hold any other surface back.
+    void Promise.allSettled([
+      reads.queue.then((queue) => mergeList('queue', queue, ['queue.updated', 'session.subscribed'])),
+      reads.goals.then((goals) => {
+        if (
+          isCurrent() &&
+          reads.goalGeneration === host.getGoalReadGeneration() &&
+          goals?.some((goal) => goal.activation !== undefined)
+        )
+          host.setGoalActivationAvailable()
+        mergeList('goals', goals, ['goal.updated'])
+      }),
+      reads.jobs.then((jobs) => mergeList('jobs', jobs, ['jobs.updated', 'session.subscribed'])),
+      reads.feedback.then((feedback) => {
+        if (!isCurrent()) return
+        setState((current) => ({
+          ...current,
+          ...(feedback.items === undefined ? {} : { feedback: feedbackRecord(feedback.items) }),
+          ...(feedback.unavailable === undefined ? {} : { feedbackUnavailable: feedback.unavailable }),
+        }))
+      }),
+      reads.subagents.then((subagents) => {
+        if (!isCurrent() || subagents === undefined) return
+        setState((current) => ({ ...current, subagents }))
+      }),
+    ]).then(() => pendingOpenBuffer.settle(pending, isCurrent()))
+    featureActions.refreshSessionScopedStates(sessionId)
+  }
   const open = async (
     requestedSessionId: string,
     options: { readonly startup?: boolean } = {},
@@ -116,7 +208,6 @@ export function createSessionOpenController(host: SessionOpenHost): {
     // Events delivered after this open began must be replayed after the
     // advisory snapshots, even when the critical Host window request has not
     // produced first paint yet.
-    const advisoryReplayStart = pending.messages.length
     let completed = false
     let advisoryPending = false
     try {
@@ -151,26 +242,7 @@ export function createSessionOpenController(host: SessionOpenHost): {
       // but do not make their latency part of the session-open completion.
       const commandDirectoryData = loadCommandDirectory(sessionId)
       const sessionModelDirectoryData = loadSessionModelDirectory(client, sessionId)
-      const goalBaselineGeneration = host.getGoalReadGeneration()
-      const secondaryData = Promise.all([
-        safeList<QueuedInput>(
-          client,
-          { type: 'session.queue.list', requestId: requestId(), payload: { sessionId } },
-          isQueuedInput,
-        ),
-        safeList<GoalView>(
-          client,
-          { type: 'goal.list', requestId: requestId(), payload: { sessionId } },
-          isGoalView,
-        ),
-        safeList<JobView>(
-          client,
-          { type: 'job.list', requestId: requestId(), payload: { sessionId } },
-          isJobView,
-        ),
-        requestFeedbackSnapshot(sessionId),
-        loadSubagentCatalog(sessionId),
-      ])
+      const secondaryData = readAdvisoryData(sessionId)
       if (version !== host.getOpenVersion()) return
       const initialMessages = pendingOpenBuffer.messagesAfterReplay(pending)
       setState((current) =>
@@ -274,58 +346,8 @@ export function createSessionOpenController(host: SessionOpenHost): {
         )
       })
 
-      // Queue/goal/job/feedback/subagent data is advisory. It must not keep
-      // the session-open promise (and therefore startup/manual navigation)
-      // hostage to any one slow endpoint. The first paint above is complete;
-      // merge these surfaces when they arrive and replay any events that were
-      // delivered during this short hydration window.
-      void secondaryData
-        .then(([queue, goals, jobs, feedback, subagents]) => {
-          if (version !== host.getOpenVersion()) return
-          if (
-            goalBaselineGeneration === host.getGoalReadGeneration() &&
-            goals?.some((goal) => goal.activation !== undefined)
-          )
-            host.setGoalActivationAvailable()
-          // A gap event has already been applied live and may have triggered
-          // an asynchronous history rebuild. Replaying it over the advisory
-          // baseline would re-add a gap notice after the backfill removed it.
-          const pendingMessages = pendingOpenBuffer
-            .messagesFrom(pending, advisoryReplayStart)
-            .filter((message) => message.type !== 'event' || message.name !== 'session.gap')
-          setState((current) =>
-            applyBufferedHostState(
-              {
-                ...current,
-                unavailableLists: [
-                  ...(current.unavailableLists ?? []).filter(
-                    (key) => !['queue', 'goals', 'jobs'].includes(key),
-                  ),
-                  ...(queue === undefined ? ['queue'] : []),
-                  ...(goals === undefined ? ['goals'] : []),
-                  ...(jobs === undefined ? ['jobs'] : []),
-                ],
-                ...(queue === undefined ? {} : { queue }),
-                ...(goals === undefined || goalBaselineGeneration !== host.getGoalReadGeneration()
-                  ? {}
-                  : { goals }),
-                ...(jobs === undefined ? {} : { jobs }),
-                ...(feedback.items === undefined ? {} : { feedback: feedbackRecord(feedback.items) }),
-                ...(feedback.unavailable === undefined ? {} : { feedbackUnavailable: feedback.unavailable }),
-                ...(subagents === undefined ? {} : { subagents }),
-              },
-              pendingMessages,
-              projectionSequences,
-            ),
-          )
-          featureActions.refreshSessionScopedStates(sessionId)
-          featureActions.refreshEditorContextForOpen(workspaceFolderId)
-        })
-        .catch(() => undefined)
-        .finally(() => {
-          advisoryPending = false
-          pendingOpenBuffer.settle(pending, version === host.getOpenVersion())
-        })
+      hydrateAdvisoryData(pending, secondaryData)
+      featureActions.refreshEditorContextForOpen(workspaceFolderId)
       completed = true
     } finally {
       if (!advisoryPending) pendingOpenBuffer.settle(pending, completed)
@@ -343,8 +365,8 @@ export function createSessionOpenController(host: SessionOpenHost): {
     const pending = pendingOpenBuffer.create(entry.id, version)
     // The history and advisory reads overlap. Preserve every event delivered
     // after this open began for the final control-state merge.
-    const advisoryReplayStart = pending.messages.length
     let completed = false
+    let advisoryPending = false
     const workspaceId =
       getState().sessions.find((session) => session.id === getState().activeSessionId)?.workspaceId ??
       getState().activeSubagent?.workspaceId ??
@@ -364,26 +386,7 @@ export function createSessionOpenController(host: SessionOpenHost): {
           payload: { sessionId: entry.id },
         })
         .then(parseSubagentHistory)
-      const goalBaselineGeneration = host.getGoalReadGeneration()
-      const secondaryData = Promise.all([
-        safeList<QueuedInput>(
-          client,
-          { type: 'session.queue.list', requestId: requestId(), payload: { sessionId: entry.id } },
-          isQueuedInput,
-        ),
-        safeList<GoalView>(
-          client,
-          { type: 'goal.list', requestId: requestId(), payload: { sessionId: entry.id } },
-          isGoalView,
-        ),
-        safeList<JobView>(
-          client,
-          { type: 'job.list', requestId: requestId(), payload: { sessionId: entry.id } },
-          isJobView,
-        ),
-        requestFeedbackSnapshot(entry.id),
-        loadSubagentCatalog(entry.id),
-      ])
+      const secondaryData = readAdvisoryData(entry.id)
       const history = await historyData
       if (version !== host.getOpenVersion()) return
       const transcript = history.transcript
@@ -451,42 +454,11 @@ export function createSessionOpenController(host: SessionOpenHost): {
       pending.ready = true
       persistWebviewState({ activeSessionId: entry.id })
 
-      const [queue, goals, jobs, feedback, subagents] = await secondaryData
-      if (
-        version === host.getOpenVersion() &&
-        goalBaselineGeneration === host.getGoalReadGeneration() &&
-        goals?.some((goal) => goal.activation !== undefined)
-      )
-        host.setGoalActivationAvailable()
-      if (version !== host.getOpenVersion()) return
-      const pendingMessages = pendingOpenBuffer.messagesFrom(pending, advisoryReplayStart)
-      setState((current) =>
-        applyBufferedHostState(
-          {
-            ...current,
-            unavailableLists: [
-              ...(current.unavailableLists ?? []).filter((key) => !['queue', 'goals', 'jobs'].includes(key)),
-              ...(queue === undefined ? ['queue'] : []),
-              ...(goals === undefined ? ['goals'] : []),
-              ...(jobs === undefined ? ['jobs'] : []),
-            ],
-            ...(queue === undefined ? {} : { queue }),
-            ...(goals === undefined || goalBaselineGeneration !== host.getGoalReadGeneration()
-              ? {}
-              : { goals }),
-            ...(jobs === undefined ? {} : { jobs }),
-            ...(feedback.items === undefined ? {} : { feedback: feedbackRecord(feedback.items) }),
-            ...(feedback.unavailable === undefined ? {} : { feedbackUnavailable: feedback.unavailable }),
-            ...(subagents === undefined ? {} : { subagents }),
-          },
-          pendingMessages,
-          projectionSequences,
-        ),
-      )
-      featureActions.refreshSessionScopedStates(entry.id)
+      advisoryPending = true
+      hydrateAdvisoryData(pending, secondaryData)
       completed = true
     } finally {
-      pendingOpenBuffer.settle(pending, completed)
+      if (!advisoryPending) pendingOpenBuffer.settle(pending, completed)
     }
   }
   return { open, openSubagent }

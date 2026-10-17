@@ -16,6 +16,7 @@ function sessionView(id: string): Record<string, unknown> {
   return {
     id,
     workspaceId: 'workspace-editor-context',
+    workspaceFolderId: 'editor-context-folder',
     title: `Session ${id}`,
     blank: false,
     status: 'running',
@@ -41,9 +42,10 @@ function hang(): Promise<never> {
 }
 
 class RailClient {
-  /** A slow advisory endpoint keeps the post-open merge from ever running. */
+  /** Advisory reads can remain pending independently of the editor-context strip. */
   public hangQueueList = false
   public hangContextList = false
+  public readonly featureRequests: FeatureRequest[] = []
   private readonly listeners = new Set<(message: HostMessage) => void>()
   private readonly featureListeners = new Set<(message: FeatureHostEvent) => void>()
 
@@ -53,6 +55,7 @@ class RailClient {
   }
 
   public featureRequest<T>(request: FeatureRequest): Promise<T> {
+    this.featureRequests.push(request)
     if (request.type === 'editor.context.list') {
       if (this.hangContextList) return hang()
       return Promise.resolve({ kind: 'editor.context', items: [], availableKinds: [] } as T)
@@ -116,6 +119,7 @@ describe('AppStore editor-context loading flag', () => {
     await settle()
     expect(store.getState().editorContextLoading).toBe(true)
 
+    client.hangContextList = false
     await store.openSession(SESSION_B)
     await settle()
 
@@ -123,6 +127,15 @@ describe('AppStore editor-context loading flag', () => {
     // reset that supersedes it has to release the spinner, or the composer
     // shows a loading affordance that no request can ever clear.
     expect(store.getState().editorContextLoading).toBe(false)
+    store.dispose()
+  })
+
+  it('starts independent session surfaces before a slow queue read finishes', async () => {
+    const { client, store } = open()
+    client.hangQueueList = true
+    await store.openSession(SESSION_A)
+    expect(client.featureRequests.map((request) => request.type)).toContain('editor.context.list')
+    expect(client.featureRequests.map((request) => request.type)).toContain('prompt.template.list')
     store.dispose()
   })
 

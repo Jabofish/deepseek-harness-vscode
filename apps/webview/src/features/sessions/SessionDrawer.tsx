@@ -139,14 +139,13 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
   const activeWorkspace =
     props.workspaces.find((workspace) => workspace.id === activeSession?.workspaceId) ?? props.workspaces[0]
   const archivedWorkspaceIds = new Set(props.archivedSessions.map((session) => session.workspaceId))
+  const archivedSessionIds = new Set(props.archivedSessions.map((session) => session.id))
   const visibleWorkspaces =
     archiveFilter === 'archived'
       ? props.workspaces.filter(
           (workspace) =>
             archivedWorkspaceIds.has(workspace.id) ||
-            workspace.sessionIds?.some((sessionId) =>
-              props.archivedSessions.some((session) => session.id === sessionId),
-            ) === true,
+            workspace.sessionIds?.some((sessionId) => archivedSessionIds.has(sessionId)) === true,
         )
       : props.workspaces
   const selectedWorkspace =

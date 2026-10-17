@@ -246,7 +246,12 @@ describe('AppStore session gap healing', () => {
           // The real Host can publish from another stream while the critical
           // history request is still being installed. Return an intentionally
           // stale advisory response after first paint to exercise the race.
-          clientHolder.current?.emit(controlEvent('queue.updated', { sessionId, items: [queueItem] }, 50))
+          clientHolder.current?.emit(
+            controlEvent('queue.updated', { sessionId, items: [queueItem], asOfSequence: 50 }, 50),
+          )
+          clientHolder.current?.emit(
+            controlEvent('queue.updated', { sessionId, items: [], asOfSequence: 49 }, 55),
+          )
           clientHolder.current?.emit(controlEvent('goal.updated', { sessionId, goals: [goal] }, 51))
           clientHolder.current?.emit(controlEvent('jobs.updated', { sessionId, jobs: [job] }, 52))
           clientHolder.current?.emit(controlEvent('permission.requested', { request: permission }, 53))

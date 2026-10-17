@@ -140,7 +140,9 @@ describe('AppStore subagent transport routing', () => {
     const store = createAppStore(client as unknown as ProtocolClient)
     try {
       await store.openSubagent(child(), true)
-      expect(store.subagents.entries[0]).toMatchObject({ id: 'grandchild', hasChildren: false })
+      await vi.waitFor(() =>
+        expect(store.subagents.entries[0]).toMatchObject({ id: 'grandchild', hasChildren: false }),
+      )
       changed = true
       client.emit({
         type: 'event',
@@ -423,7 +425,7 @@ describe('AppStore subagent transport routing', () => {
 
     await vi.waitFor(() => expect(store.activeSessionId).toBe('child'))
     expect(store.timeline.sessionId).toBe('child')
-    expect(settled).toBe(false)
+    expect(settled).toBe(true)
 
     queue.resolve([])
     await opening

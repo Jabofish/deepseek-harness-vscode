@@ -173,18 +173,16 @@ export function selectStartupSessionId(
   archivedSessionIds: readonly string[],
   rememberedSessionId: string | undefined,
 ): string | undefined {
+  if (rememberedSessionId !== undefined && sessions.some((session) => session.id === rememberedSessionId))
+    return rememberedSessionId
   const archived = new Set(archivedSessionIds)
-  const workspaceSessionIds = workspaces
-    .flatMap((workspace) => workspace.sessionIds ?? [])
-    .filter((sessionId, index, all) => !archived.has(sessionId) && all.indexOf(sessionId) === index)
-  const remembered =
-    rememberedSessionId === undefined
-      ? undefined
-      : sessions.some((session) => session.id === rememberedSessionId) ||
-          workspaceSessionIds.includes(rememberedSessionId)
-        ? rememberedSessionId
-        : undefined
-  if (remembered !== undefined) return remembered
+  const workspaceSessionIds = new Set(
+    workspaces
+      .flatMap((workspace) => workspace.sessionIds ?? [])
+      .filter((sessionId) => !archived.has(sessionId)),
+  )
+  if (rememberedSessionId !== undefined && workspaceSessionIds.has(rememberedSessionId))
+    return rememberedSessionId
 
   const rootSessions = sessions
     .filter((session) => session.origin !== 'subagent' && !archived.has(session.id))
@@ -201,7 +199,7 @@ export function selectStartupSessionId(
   // sessionIds is the only durable membership evidence available when the
   // summary projection is temporarily empty. Do not synthesize a SessionSummary;
   // session.open will fetch the authoritative detail from DSH.
-  return workspaceSessionIds[0]
+  return workspaceSessionIds.values().next().value
 }
 
 export function findReusableBlankSession(

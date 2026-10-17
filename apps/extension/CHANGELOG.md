@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 降低会话打开、恢复和大目录搜索的等待：辅助信息独立加载，移除目录归属的重复扫描，并保留实时更新与切换隔离。
+- Reduces waits when opening or restoring chats and searching large directories: loads advisory data independently and removes repeated membership scans while preserving live updates and session isolation.
+
 - 统一表单与弹框样式，压缩设置页空白；修复短窗中输入和中断按钮被挤出、模板与检查点弹框裁切、下拉菜单焦点和保存时误关闭。
 - Unifies form and dialog styling and compacts Settings; fixes clipped input and Stop controls in short windows, template and checkpoint dialog clipping, menu focus and accidental dismissal during saves.
 

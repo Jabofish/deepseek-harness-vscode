@@ -934,6 +934,74 @@ describe('AppStore startup session restoration', () => {
     store.dispose()
   })
 
+  it.each(['session.queue.list', 'goal.list', 'job.list', 'feedback.list', 'subagent.list'])(
+    'hydrates ready surfaces while %s is pending and ignores its late result after a switch',
+    async (slowType) => {
+      let release!: (value: unknown) => void
+      const slow = new Promise<unknown>((resolve) => {
+        release = resolve
+      })
+      const queue = [
+        {
+          id: 'queued',
+          sessionId: activeSession.id,
+          text: 'Continue',
+          attachments: [],
+          textOnly: true,
+          mode: 'queue',
+          createdAt: activeSession.createdAt,
+        },
+      ]
+      const goals = [{ id: 'goal', title: 'Verify', status: 'in-progress' }]
+      const jobs = [{ id: 'job', kind: 'shell', label: 'Check', status: 'running', startedAt: 123 }]
+      const client = new StartupClient((request) => {
+        if (
+          'payload' in request &&
+          request.payload !== undefined &&
+          'sessionId' in request.payload &&
+          request.payload.sessionId === blankSession.id
+        ) {
+          if (request.type === 'session.open') return { ...blankSession, history: [] }
+          return startupResponse(request)
+        }
+        if (request.type === slowType) return slow
+        if (request.type === 'session.queue.list') return queue
+        if (request.type === 'goal.list') return goals
+        if (request.type === 'job.list') return jobs
+        return startupResponse(request)
+      })
+      const store = createAppStore(client as unknown as ProtocolClient)
+      try {
+        await store.openSession(activeSession.id)
+        await vi.waitFor(() => {
+          if (slowType !== 'session.queue.list') expect(store.queue).toEqual(queue)
+          if (slowType !== 'goal.list') expect(store.goals).toEqual(goals)
+          if (slowType !== 'job.list') expect(store.jobs).toEqual(jobs)
+        })
+        await store.openSession(blankSession.id)
+        release(
+          slowType === 'subagent.list'
+            ? { entries: [], parentAvailable: false }
+            : slowType === 'session.queue.list'
+              ? queue
+              : slowType === 'goal.list'
+                ? goals
+                : slowType === 'job.list'
+                  ? jobs
+                  : [],
+        )
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        expect(store.activeSessionId).toBe(blankSession.id)
+        expect(store.queue).toEqual([])
+        expect(store.goals).toEqual([])
+        expect(store.jobs).toEqual([])
+        expect(store.subagents.parentAvailable).toBe(true)
+      } finally {
+        store.dispose()
+      }
+    },
+  )
+
   it('completes session open before command and session-model directories finish', async () => {
     let releaseCommands: ((value: readonly unknown[]) => void) | undefined
     let releaseSkills: ((value: readonly unknown[]) => void) | undefined
