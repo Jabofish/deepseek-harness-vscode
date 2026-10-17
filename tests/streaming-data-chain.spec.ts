@@ -70,9 +70,25 @@ describe('streaming data delivery over loopback WebSocket', () => {
       normalizeEvent: createAlpha211SessionNormalizer(),
     })
     const received: Extract<BackendEvent, { type: 'message.delta' }>[] = []
+    const deliveries = new Map<number, () => void>()
+    const waitForDelivery = (count: number): Promise<void> =>
+      received.length >= count
+        ? Promise.resolve()
+        : new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+              deliveries.delete(count)
+              reject(new Error(`Received ${received.length}/${count} assistant frames`))
+            }, 3_000)
+            deliveries.set(count, () => {
+              clearTimeout(timer)
+              resolve()
+            })
+          })
     controller.subscribe((event) => {
       if (event.type === 'message.delta') received.push(event)
       host.accept(event)
+      deliveries.get(received.length)?.()
+      deliveries.delete(received.length)
     })
     const snapshot = (assistantStream: unknown): unknown => ({
       type: 'snapshot',
@@ -106,9 +122,17 @@ describe('streaming data delivery over loopback WebSocket', () => {
       mux.item(0, chunk(0, 'First '))
       await vi.waitFor(() => expect(received).toHaveLength(1))
       expect((await latest()).nodes.at(-1)).toMatchObject({ markdown: 'First ', streaming: true })
-      const texts = ['First ', ...Array.from({ length: 1_000 }, () => 't')]
+      // Distinct one-character deltas expose reordering without growing the message window.
+      const texts = [
+        'First ',
+        ...Array.from({ length: 1_000 }, (_, index) => String.fromCodePoint(0x4e00 + index)),
+      ]
       for (let index = 1; index < texts.length; index++) mux.item(0, chunk(index, texts[index]!))
-      await vi.waitFor(() => expect(received).toHaveLength(texts.length))
+      // Wait for delivery with an explicit drain deadline; reject inside the
+      // test so its finally block releases the socket even if a frame is lost.
+      // First-token/recovery limits and the overall test timeout stay unchanged.
+      await waitForDelivery(texts.length)
+      expect(received.map((event) => event.delta)).toEqual(texts)
       expect(preview).not.toHaveBeenCalled()
       expect(mux.opens()).toBe(1)
       expect((await latest()).nodes.at(-1)).toMatchObject({ markdown: texts.join(''), streaming: true })
@@ -134,6 +158,7 @@ describe('streaming data delivery over loopback WebSocket', () => {
         }),
       )
       await vi.waitFor(() => expect(received).toHaveLength(texts.length))
+      expect(received.map((event) => event.delta)).toEqual(texts)
       expect((await latest()).nodes.at(-1)).toMatchObject({ markdown: texts.join(''), streaming: true })
       const lastIndex = texts.length
       texts.push(' last')
