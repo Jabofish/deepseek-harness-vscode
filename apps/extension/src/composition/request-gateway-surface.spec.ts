@@ -227,6 +227,42 @@ describe('request gateway editor surface routes', () => {
     expect(harness.gateway.editorSurfaces.count).toBe(0)
   })
 
+  it('opens a native-list selection in the sidebar without closing editor chats', async () => {
+    harness.openSidebar()
+    const signal = new AbortController().signal
+    await harness.gateway.openDroppedSession('editor-session', 2, signal)
+    await harness.gateway.sessionNavigation.open('sidebar-session', false, signal)
+    expect(harness.gateway.editorSurfaces.count).toBe(1)
+    expect(host.panels[0]?.disposeCount).toBe(0)
+    expect(harness.events).toContainEqual(
+      expect.objectContaining({
+        surfaceId: 'sidebar',
+        name: 'ui.surface.openInSidebar',
+        payload: { sessionId: 'sidebar-session' },
+      }),
+    )
+  })
+
+  it('runs native renames through ownership checks and publishes the accepted full title to every list', async () => {
+    const signal = new AbortController().signal
+    host.renamedTitle = 'A long accepted title '.repeat(10)
+    await harness.gateway.openDroppedSession('s1', 2, signal)
+    await harness.gateway.sessionNavigation.rename('s1', 'Requested title', signal)
+    expect(host.panels[0]?.title).toHaveLength(120)
+    expect(harness.events).toContainEqual(
+      expect.objectContaining({
+        name: 'session.title',
+        payload: { sessionId: 's1', title: host.renamedTitle },
+      }),
+    )
+    harness.rejectSession('foreign')
+    await expect(harness.gateway.sessionNavigation.rename('foreign', 'Title', signal)).rejects.toThrow(
+      'not owned',
+    )
+    host.isTrusted = false
+    await expect(harness.gateway.sessionNavigation.rename('s1', 'Title', signal)).rejects.toThrow('Trust')
+  })
+
   it('opens one editor tab per session and answers the surface that asked', async () => {
     await harness.gateway.router.handle(
       request('surface.openInEditor', 'r1', { sessionId: 'session-1', title: 'Session one' }),

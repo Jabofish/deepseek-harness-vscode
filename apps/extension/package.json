@@ -50,7 +50,9 @@
     "onCommand:dsh.addSelectionContext",
     "onCommand:dsh.addFileContext",
     "onCommand:dsh.addSymbolContext",
-    "onCommand:dsh.addDiagnosticContext"
+    "onCommand:dsh.addDiagnosticContext",
+    "onView:dsh.sessionList",
+    "onCommand:dsh.openSessionList"
   ],
   "scripts": {
     "build": "node esbuild.mjs",
@@ -105,6 +107,14 @@
           "visibility": "visible",
           "icon": "resources/dsh.svg",
           "contextualTitle": "Chat"
+        }
+      ],
+      "explorer": [
+        {
+          "id": "dsh.sessionList",
+          "name": "DSH Sessions",
+          "visibility": "hidden",
+          "icon": "resources/dsh.svg"
         }
       ]
     },
@@ -200,6 +210,41 @@
         "command": "dsh.clearExternalCredentials",
         "title": "Clear External Connection Credentials",
         "category": "DSH"
+      },
+      {
+        "command": "dsh.sessions.open",
+        "title": "DSH: Open Session",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "dsh.sessions.openInEditor",
+        "title": "DSH: Open Session in Editor Area",
+        "icon": "$(open-preview)"
+      },
+      {
+        "command": "dsh.sessions.rename",
+        "title": "DSH: Rename Session",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "dsh.sessions.archive",
+        "title": "DSH: Archive Session",
+        "icon": "$(archive)"
+      },
+      {
+        "command": "dsh.sessions.refresh",
+        "title": "DSH: Refresh Sessions",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "dsh.sessions.loadMore",
+        "title": "DSH: Load More Sessions",
+        "icon": "$(ellipsis)"
+      },
+      {
+        "command": "dsh.openSessionList",
+        "title": "DSH: Open Drag Sessions",
+        "icon": "$(list-tree)"
       }
     ],
     "menus": {
@@ -233,6 +278,21 @@
           "command": "dsh.openChatInEditor",
           "when": "view == dsh.chatView",
           "group": "navigation@5"
+        },
+        {
+          "command": "dsh.newSession",
+          "when": "view == dsh.sessionList",
+          "group": "navigation@1"
+        },
+        {
+          "command": "dsh.sessions.refresh",
+          "when": "view == dsh.sessionList",
+          "group": "navigation@2"
+        },
+        {
+          "command": "dsh.openSessionList",
+          "when": "view == dsh.chatView",
+          "group": "dsh@1"
         }
       ],
       "editor/title": [
@@ -284,6 +344,45 @@
           "command": "dsh.addDiagnosticContext",
           "when": "editorLangId != '' && dsh.editorContext.diagnosticAvailable",
           "group": "dsh@4"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "dsh.sessions.openInEditor",
+          "when": "view == dsh.sessionList && viewItem == dsh.session",
+          "group": "inline@1"
+        },
+        {
+          "command": "dsh.sessions.rename",
+          "when": "view == dsh.sessionList && viewItem == dsh.session",
+          "group": "session@1"
+        },
+        {
+          "command": "dsh.sessions.archive",
+          "when": "view == dsh.sessionList && viewItem == dsh.session",
+          "group": "session@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "dsh.sessions.open",
+          "when": "false"
+        },
+        {
+          "command": "dsh.sessions.openInEditor",
+          "when": "false"
+        },
+        {
+          "command": "dsh.sessions.rename",
+          "when": "false"
+        },
+        {
+          "command": "dsh.sessions.archive",
+          "when": "false"
+        },
+        {
+          "command": "dsh.sessions.loadMore",
+          "when": "false"
         }
       ]
     },

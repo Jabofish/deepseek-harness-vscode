@@ -21,6 +21,7 @@ import type { RequestGatewayDependencies } from './request-gateway-dependencies.
 import { questionResponse } from './session-payload.js'
 import { createSessionRequestHandler, isSessionRequest } from './session-request-handler.js'
 import { requiresTrustedWorkspace } from './workspace-guards.js'
+import { createSessionNavigation, type SessionNavigation } from './session-navigation.js'
 export type { RequestGatewayDependencies } from './request-gateway-dependencies.js'
 
 export interface OpenLinkResult {
@@ -29,6 +30,7 @@ export interface OpenLinkResult {
 }
 
 export interface RequestGateway {
+  readonly sessionNavigation: SessionNavigation
   readonly router: WebviewMessageRouter
   readonly provider: DshWebviewViewProvider
   /** Editor-area chat surfaces; the composition root owns their lifecycle. */
@@ -327,8 +329,32 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
       if (request.type === 'session.rename') {
         const title = (result as { readonly title?: unknown } | undefined)?.title
         const accepted = typeof title === 'string' ? editorTabTitle(title) : undefined
-        if (accepted !== undefined) editorChatSurfaces.current?.retitle(request.payload.sessionId, accepted)
+        if (accepted !== undefined) {
+          editorChatSurfaces.current?.retitle(request.payload.sessionId, accepted)
+        }
+        if (typeof title === 'string')
+          void postEvent('session.title', { sessionId: request.payload.sessionId, title })
       }
+      if (request.type === 'session.open') sessionNavigation.select(request.payload.sessionId)
+      if (
+        (request.type === 'session.create' || request.type === 'session.fork') &&
+        typeof result === 'object' &&
+        result !== null &&
+        'id' in result &&
+        typeof result.id === 'string'
+      )
+        sessionNavigation.select(result.id)
+      if (
+        [
+          'session.create',
+          'session.fork',
+          'session.archive',
+          'session.remove',
+          'session.move',
+          'session.rename',
+        ].includes(request.type)
+      )
+        sessionNavigation.invalidate()
       return result
     }
     if (isAttachmentRequest(request)) return handleAttachmentRequest(request, signal)
@@ -803,5 +829,18 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     if (signal.aborted) return
     editorSurfaceManager.open(sessionId, editorTabTitle(session.title), column)
   }
-  return { router, provider, editorSurfaces: editorSurfaceManager, moveChatToSidebar, openDroppedSession }
+  const sessionNavigation = createSessionNavigation(
+    deps,
+    provider,
+    (request, signal) => handleRequest(request, signal, undefined),
+    openDroppedSession,
+  )
+  return {
+    router,
+    provider,
+    editorSurfaces: editorSurfaceManager,
+    moveChatToSidebar,
+    openDroppedSession,
+    sessionNavigation,
+  }
 }

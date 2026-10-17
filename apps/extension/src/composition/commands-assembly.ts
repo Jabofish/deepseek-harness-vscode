@@ -31,6 +31,7 @@ import type { PostFeatureEvent } from './host-event-pipeline.js'
 import { SESSION_DROP_EDITOR_VIEW_TYPE } from '@dsh-vscode/webview-protocol'
 import { createSessionDropEditorProvider } from '../view/session-drop-editor.js'
 import type { RequestGateway } from './request-handler.js'
+import { registerNativeSessionList, SESSION_LIST_VIEW_ID } from '../view/native-session-list.js'
 
 const TRANSPORT_CONFIGURATION_KEYS = [
   'dsh.connection.mode',
@@ -43,6 +44,7 @@ const TRANSPORT_CONFIGURATION_KEYS = [
 ] as const
 
 export interface CommandsAssemblyDependencies {
+  readonly sessionNavigation: RequestGateway['sessionNavigation']
   readonly authorizeExternalConnection?: () => Promise<void>
   readonly clearExternalCredentials?: () => Promise<void>
   readonly disposeEndpointAccess?: () => Promise<void>
@@ -146,6 +148,7 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
     provider,
     diagnostics,
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      deps.sessionNavigation.invalidate()
       invalidateCurrentWorkspaceSessionDetails()
       // This drops every captured context ref, so the availability keys have
       // to be recomputed in the same turn. They are what gates the "Add …
@@ -176,8 +179,11 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
       name,
       payload,
     )
+  let nativeList: vscode.Disposable | undefined
   const start = (): Promise<void> => {
+    nativeList = registerNativeSessionList(deps.sessionNavigation)
     subscriptions.push(
+      nativeList,
       vscode.window.registerCustomEditorProvider(
         SESSION_DROP_EDITOR_VIEW_TYPE,
         createSessionDropEditorProvider(deps.openDroppedSession, () => {
@@ -214,6 +220,7 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
             await vscode.window.showWarningMessage('The DSH view could not be opened. Try opening it again.')
           return delivered
         },
+        'dsh.openSessionList': () => vscode.commands.executeCommand(`${SESSION_LIST_VIEW_ID}.focus`),
         'dsh.openSettings': async () => {
           const delivered = await postEvent('ui.settings.toggle', {})
           if (!delivered)
@@ -297,6 +304,9 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
   }
   const dispose = async (): Promise<void> => {
     const errors = await runCleanupSequence([
+      () => {
+        nativeList?.dispose()
+      },
       () => router.cancelAll(),
       () => disposeAccountLifecycleHost(),
       () => stopAllJobFollows(),

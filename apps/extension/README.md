@@ -23,6 +23,8 @@ The Chat view is registered in VS Code's Secondary Side Bar by default (on the r
 
 Choose **Open in Editor Area** or run **DSH: Open Chat in Editor Area** (`/moveto:editor`); `/moveto:sidebar` returns the chat. VS Code may reject dragging session rows out of the Webview; use the explicit entry points, then drag the opened editor tab to split. The side bar remains available for other sessions. Narrow views collect session navigation, New Session, Schedules and Settings in **More**.
 
+In development builds, **DSH: Open Drag Sessions** opens a native **DSH Sessions** list in Explorer. It is hidden initially and keeps the chat area free; the existing switcher remains available. Native drag-to-split still needs live VS Code acceptance.
+
 The extension discovers compatible local instances before starting one. Connection modes let you attach only, start an isolated extension-owned instance, or probe one configured HTTP(S) endpoint (which may be remote). It never stops an external DSH. Runtime updates install a verified exact version and do not restart external processes.
 
 For an external instance, select `custom`, set `dsh.connection.serverUrl` to its HTTP(S) origin and `dsh.connection.runtimeVersion` to its exact supported version. Run **DSH: Authorize External Connection**, enter its launch token (leave blank for anonymous access), then connect. Credentials stay in SecretStorage per execution environment and full origin; **DSH: Clear External Connection Credentials** removes the current environment's grant. Connections without a grant for the current execution environment require authorization.

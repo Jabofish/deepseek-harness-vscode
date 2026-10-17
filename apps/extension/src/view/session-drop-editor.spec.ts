@@ -60,7 +60,7 @@ describe('native session editor drop', () => {
   it('registers the resource editor association and activation used by native drops', () => {
     const manifest = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as {
       activationEvents: unknown
-      contributes: { customEditors: unknown }
+      contributes: { customEditors: unknown; views: Record<string, readonly unknown[]> }
     }
     expect(manifest.activationEvents).toContain(`onCustomEditor:${SESSION_DROP_EDITOR_VIEW_TYPE}`)
     expect(manifest.contributes.customEditors).toContainEqual({
@@ -69,6 +69,13 @@ describe('native session editor drop', () => {
       selector: [{ filenamePattern: '*.dsh-chat' }],
       priority: 'default',
     })
+    expect(manifest.activationEvents).toContain('onView:dsh.sessionList')
+    expect(manifest.contributes.views['dsh-container']).toEqual([
+      expect.objectContaining({ id: 'dsh.chatView', type: 'webview' }),
+    ])
+    expect(manifest.contributes.views['explorer']).toContainEqual(
+      expect.objectContaining({ id: 'dsh.sessionList', visibility: 'hidden' }),
+    )
   })
 
   it('opens the accepted session in the drop group and releases the temporary editor', async () => {

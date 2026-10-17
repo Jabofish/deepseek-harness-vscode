@@ -40,6 +40,7 @@ import { createCommandsAssembly } from './composition/commands-assembly.js'
 import { TranscriptWindowService } from './view/transcript-window.js'
 import { TranscriptWindowRegistry } from './view/transcript-window-registry.js'
 import { publicValue } from './composition/public-projection.js'
+import type { SessionNavigation } from './composition/session-navigation.js'
 
 export interface CompositionRoot extends vscode.Disposable {
   start(): Promise<void>
@@ -77,6 +78,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   // `postTo` read them through this binding; no message can be posted before
   // composition has finished.
   const surfaces = new WebviewSurfaceRegistry()
+  const nativeNavigation: { current?: SessionNavigation } = {}
   const hostEnvelope = (message: HostMessage | FeatureHostMessage): object | undefined => {
     const legacy = hostMessageSchema.safeParse(message)
     if (legacy.success) return hostEnvelopeSchema.parse({ protocolVersion: 1, message: legacy.data })
@@ -87,6 +89,8 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   }
   const post = (message: HostMessage | FeatureHostMessage): Thenable<boolean> => {
     const envelope = hostEnvelope(message)
+    if (envelope !== undefined && message.type === 'event')
+      nativeNavigation.current?.acceptEvent(message.name, message.payload)
     return envelope === undefined ? Promise.resolve(false) : surfaces.post(envelope)
   }
   const postTo = (surfaceId: string, message: HostMessage | FeatureHostMessage): Thenable<boolean> => {
@@ -330,7 +334,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     promptTemplateUseCases,
     currentWorkspaceFolders,
   })
-  const { router, provider, editorSurfaces, moveChatToSidebar, openDroppedSession } = createRequestGateway({
+  const gateway = createRequestGateway({
     transcript,
     resyncView: async () => {
       const backend = backendService.requireBackend()
@@ -383,6 +387,9 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     stopAllJobFollows,
     editorContextProvider,
   })
+  const { router, provider, editorSurfaces, moveChatToSidebar, openDroppedSession, sessionNavigation } =
+    gateway
+  nativeNavigation.current = sessionNavigation
   const commands = createCommandsAssembly({
     context,
     configuration,
@@ -393,6 +400,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     editorSurfaces,
     moveChatToSidebar,
     openDroppedSession,
+    sessionNavigation,
     surfaces,
     runtimeLocator,
     runtimeInstaller,

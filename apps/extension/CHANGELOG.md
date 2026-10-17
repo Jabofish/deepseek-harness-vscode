@@ -1,5 +1,10 @@
 # Change Log
 
+## Unreleased
+
+- 保留原会话列表，增加资源管理器中默认隐藏的原生会话列表，复用 Host 目录与操作并提供原生拖拽源；实际分栏效果待 VS Code 验收。
+- Keeps the existing switcher and adds a native session list hidden initially in Explorer sharing Host data and actions, with a native drag source; live VS Code split behavior still needs acceptance.
+
 ## 0.3.2
 
 - 重构长会话与流式传输：移除旧历史引擎，使用 Host 有界视图和 DSH 权威数据；修复分段输出、启动闪烁及完成状态残留。

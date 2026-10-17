@@ -17,6 +17,7 @@ describe('registerCommands', () => {
     } as unknown as typeof vscode.commands
     const subscriptions: vscode.Disposable[] = []
     const selectionHandler = vi.fn((..._args: readonly unknown[]) => undefined)
+    const sessionListHandler = vi.fn(() => undefined)
 
     registerCommands({
       commands,
@@ -26,7 +27,7 @@ describe('registerCommands', () => {
           return undefined
         },
       },
-      handlers: { 'dsh.addSelectionContext': selectionHandler },
+      handlers: { 'dsh.addSelectionContext': selectionHandler, 'dsh.openSessionList': sessionListHandler },
     })
 
     expect(registrations.map(({ id }) => id)).toEqual([
@@ -35,6 +36,7 @@ describe('registerCommands', () => {
       'dsh.connect',
       'dsh.reconnect',
       'dsh.newSession',
+      'dsh.openSessionList',
       'dsh.openSettings',
       'dsh.openWebUi',
       'dsh.installRuntime',
@@ -56,5 +58,7 @@ describe('registerCommands', () => {
     expect(registeredSelection).toBeDefined()
     await registeredSelection?.handler('from-editor-menu')
     expect(selectionHandler).toHaveBeenCalledWith('from-editor-menu')
+    await registrations.find(({ id }) => id === 'dsh.openSessionList')?.handler()
+    expect(sessionListHandler).toHaveBeenCalledOnce()
   })
 })

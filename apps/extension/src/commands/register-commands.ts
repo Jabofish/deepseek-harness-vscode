@@ -21,6 +21,7 @@ export const COMMANDS = [
   'dsh.connect',
   'dsh.reconnect',
   'dsh.newSession',
+  'dsh.openSessionList',
   'dsh.openSettings',
   'dsh.openWebUi',
   'dsh.installRuntime',

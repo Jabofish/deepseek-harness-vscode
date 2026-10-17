@@ -35,6 +35,8 @@ DeepSeek Harness 的 Chat 视图默认注册在辅助侧边栏（VS Code 默认�
 
 选择 **在编辑器区打开** 或执行 **DSH: Open Chat in Editor Area**（`/moveto:editor`）打开标签，`/moveto:sidebar` 可移回侧边栏。VS Code 可能拒绝从 Webview 拖出会话行；暂用上述入口，再拖动已打开的编辑器标签分栏。手动排序时，列表内拖动仍用于调整顺序。
 
+开发版可执行 **DSH: Open Drag Sessions**，在资源管理器中打开原生 **DSH Sessions** 列表，将会话拖向编辑器。该列表默认隐藏，不占用聊天区域；原浮层列表继续保留。原生拖拽分栏仍待真实 VS Code 验收。
+
 扩展会先查找本机兼容的 DSH。只有所选连接模式允许且发现流程结束后，才会启动实例；扩展绝不会停止不是自己创建的 DSH 进程。
 
 | 连接模式       | 行为                                                       |

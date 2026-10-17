@@ -35,6 +35,8 @@ The side bar stays available while editor chat tabs are open. Use the view title
 
 To open an editor tab, choose **Open in Editor Area** or run **DSH: Open Chat in Editor Area** (`/moveto:editor`); `/moveto:sidebar` returns the chat. VS Code may reject dragging session rows out of the Webview. For now, use the explicit entry points and drag the opened editor tab to split. Dragging within a manually sorted session list still reorders sessions.
 
+In development builds, **DSH: Open Drag Sessions** opens a native **DSH Sessions** list in Explorer for dragging sessions into the editor. It is hidden initially and keeps the chat area free; the existing switcher remains available. Native drag-to-split still needs live VS Code acceptance.
+
 The extension first looks for a compatible local DSH. It starts one only when the selected connection mode permits it and discovery has finished. It never stops a DSH process it did not create.
 
 | Connection mode | Behavior                                                                             |

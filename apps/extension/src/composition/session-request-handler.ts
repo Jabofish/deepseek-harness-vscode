@@ -2,7 +2,7 @@ import * as vscode from 'vscode'
 import { type SessionSummary } from '@dsh-vscode/domain'
 import type { WebviewRequest } from '@dsh-vscode/webview-protocol'
 import { publicList } from './public-projection.js'
-import { sameWorkspacePath } from './workspace-state.js'
+import { listScopedSessions } from './session-directory.js'
 import { pathExists } from './runtime.js'
 import { requireCatalogOwnedSession } from './session-scope.js'
 import type { RequestGatewayDependencies } from './request-gateway-dependencies.js'
@@ -55,7 +55,6 @@ export function createSessionRequestHandler(
     workspaceFolderIdForSession,
     currentWorkspaceFolders,
     listCurrentWorkspaces,
-    listCurrentArchivedSessionIds,
     ensureCurrentWorkspace,
     requireCurrentWorkspaceSession,
     requireCurrentWorkspaceId,
@@ -87,46 +86,19 @@ export function createSessionRequestHandler(
     }
 
     if (request.type === 'session.list') {
-      const folders = currentWorkspaceFolders()
-      const workspaces = await listCurrentWorkspaces(signal)
-      const archivedSessionIds = new Set(await listCurrentArchivedSessionIds(workspaces, signal))
-      const workspaceIds = new Set(workspaces.map((workspace) => workspace.id))
-      const sessionIds = new Set(workspaces.flatMap((workspace) => workspace.sessionIds ?? []))
-      const workspaceId = request.payload.workspaceId
-      const includeArchived = request.payload.archived ?? false
-      if (workspaceId !== undefined && !workspaceIds.has(workspaceId)) return publicValue({ items: [] })
-      const page = await sessionUseCases.list(
+      const { workspaceId, search, archived, cursor, limit } = request.payload
+      const page = await listScopedSessions(
+        deps,
         {
           ...(workspaceId === undefined ? {} : { workspaceId }),
-          ...(request.payload.search === undefined ? {} : { search: request.payload.search }),
-          // The normal conversation list is the active, recoverable surface.
-          // Archived sessions remain in DSH for recovery but must not stay in
-          // the switcher after the user archives one.
-          archived: includeArchived,
-          ...(request.payload.cursor === undefined ? {} : { cursor: request.payload.cursor }),
-          ...(request.payload.limit === undefined ? {} : { limit: request.payload.limit }),
+          ...(search === undefined ? {} : { search }),
+          ...(archived === undefined ? {} : { archived }),
+          ...(cursor === undefined ? {} : { cursor }),
+          ...(limit === undefined ? {} : { limit }),
         },
         signal,
       )
-      return publicValue({
-        ...page,
-        items: page.items
-          .filter((session) => {
-            const belongsToCurrentWorkspace =
-              (workspaceId === undefined
-                ? workspaceIds.has(session.workspaceId)
-                : session.workspaceId === workspaceId) || sessionIds.has(session.id)
-            const sessionCwd = session.cwd
-            const belongsByCwd =
-              sessionCwd !== undefined &&
-              folders.some((folder) => sameWorkspacePath(sessionCwd, folder.uri.fsPath))
-            return (
-              (belongsToCurrentWorkspace || belongsByCwd) &&
-              archivedSessionIds.has(session.id) === includeArchived
-            )
-          })
-          .map((session) => withSessionWorkspaceScope(session)),
-      })
+      return publicValue({ ...page, items: page.items.map(withSessionWorkspaceScope) })
     }
 
     if (request.type === 'session.open') {
