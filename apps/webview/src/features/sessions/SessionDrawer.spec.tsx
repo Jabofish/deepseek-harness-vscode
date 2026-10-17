@@ -501,6 +501,35 @@ describe('SessionDrawer', () => {
     expect(screen.getByText('Content matches')).toBeDefined()
   })
 
+  it('puts search matches before workspace controls and shows one empty state across groups', () => {
+    renderDrawer()
+    fireEvent.click(screen.getByTitle('Show sessions grouped by workspace'))
+    const search = screen.getByLabelText('Search sessions by title or content')
+    const results = document.querySelector<HTMLElement>('.dsh-session-switcher__results')!
+    results.scrollTop = 500
+    fireEvent.change(search, { target: { value: 'login' } })
+    expect(results.scrollTop).toBe(0)
+
+    const groups = document.querySelectorAll('.dsh-session-switcher__group')
+    expect(groups).toHaveLength(1)
+    expect(groups[0]?.textContent).toContain('Fix login bug')
+    expect(screen.queryByText('No sessions match this search.')).toBeNull()
+    const navigation = screen.getByRole('group', { name: 'Workspaces' })
+    expect(within(navigation).getByRole('button', { name: 'Rename workspace Beta' })).toBeDefined()
+    expect(groups[0]!.compareDocumentPosition(navigation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+    fireEvent.change(search, { target: { value: 'no matching session' } })
+    expect(document.querySelectorAll('.dsh-session-switcher__group')).toHaveLength(0)
+    expect(screen.getAllByText('No sessions match this search.')).toHaveLength(1)
+
+    fireEvent.change(search, { target: { value: '' } })
+    expect(document.querySelectorAll('.dsh-session-switcher__group')).toHaveLength(2)
+    expect(
+      navigation.compareDocumentPosition(document.querySelector('.dsh-session-switcher__groups')!) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+  })
+
   it('surfaces the active session when only its content matches the query', async () => {
     const onSearch = vi.fn().mockResolvedValue({ items: [sessions[0]] })
     renderDrawer({ onSearch })

@@ -5,8 +5,8 @@
 - 降低会话打开、恢复和大目录搜索的等待：辅助信息独立加载，移除目录归属的重复扫描，并保留实时更新与切换隔离。
 - Reduces waits when opening or restoring chats and searching large directories: loads advisory data independently and removes repeated membership scans while preserving live updates and session isolation.
 
-- 统一表单与弹框样式，压缩设置页空白；修复短窗中输入和中断按钮被挤出、模板与检查点弹框裁切、下拉菜单焦点和保存时误关闭。
-- Unifies form and dialog styling and compacts Settings; fixes clipped input and Stop controls in short windows, template and checkpoint dialog clipping, menu focus and accidental dismissal during saves.
+- 统一表单与弹框，压缩设置和列表空白，保留长标题、完整详情与键盘滚动；修复短窗中输入和中断按钮被挤出、弹框裁切、菜单焦点和保存时误关闭。
+- Unifies forms and dialogs and compacts Settings and lists while retaining long titles, full details and keyboard scrolling; fixes clipped input and Stop controls, dialog clipping, menu focus and accidental dismissal during saves.
 
 - 保留原会话列表，增加资源管理器中默认隐藏的原生会话列表，复用 Host 目录与操作并提供原生拖拽源，窄栏标题优先保留会话和设置；实际分栏效果待 VS Code 验收。
 - Keeps the existing switcher and adds a native session list hidden initially in Explorer sharing Host data and actions, with a native drag source and priority for Sessions and Settings in narrow title bars; live VS Code split behavior still needs acceptance.

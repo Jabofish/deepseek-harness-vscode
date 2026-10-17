@@ -94,6 +94,23 @@ describe('PromptTemplatesDrawer', () => {
     expect(props.onInsert).toHaveBeenCalledWith(summary.templateId, undefined)
   })
 
+  it('omits empty description placeholders and retains the complete selected template', async () => {
+    const complete = {
+      ...template,
+      description: '',
+      templateText: `${'Detailed template content.\n\n'.repeat(80)}END_OF_COMPLETE_TEMPLATE`,
+    }
+    renderDrawer({
+      templates: [{ ...summary, description: '' }],
+      onRead: vi.fn().mockResolvedValue(complete),
+    })
+    expect(screen.queryByText('No description')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /^Review current change/u }))
+    const preview = await screen.findByRole('region', { name: 'Template preview' })
+    expect(preview.textContent).toContain('END_OF_COMPLETE_TEMPLATE')
+    expect(preview.querySelector('p:empty')).toBeNull()
+  })
+
   it('creates a user template through the form and never sends it automatically', async () => {
     const onCreate = vi.fn().mockResolvedValue(summary)
     renderDrawer({ templates: [], onCreate })

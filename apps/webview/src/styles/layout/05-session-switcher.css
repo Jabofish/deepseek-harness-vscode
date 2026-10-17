@@ -442,11 +442,10 @@
 .dsh-session-switcher__list .dsh-session-item__copy strong {
   display: block;
   min-width: 0;
-  overflow: hidden;
+  overflow-wrap: anywhere;
   font-size: inherit;
   font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .dsh-session-switcher__list .dsh-session-item__status {

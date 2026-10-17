@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type FormEvent,
@@ -164,6 +165,10 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
   const contentMatches = contentSearch.query === trimmedSearchQuery ? contentSearch.matches : []
   const contentSearchHasMore = contentSearch.query === trimmedSearchQuery && contentSearch.searchHasMore
   const query = trimmedSearchQuery.toLowerCase()
+  useLayoutEffect(() => {
+    const results = panelRef.current?.querySelector<HTMLElement>('.dsh-session-switcher__results')
+    if (results !== undefined && results !== null) results.scrollTop = 0
+  }, [query, workspaceDisplay, archiveFilter, selectedWorkspaceKey])
   const closeRenameDialog = useCallback((): void => {
     if (mutationBusy) return
     setRenameTarget(undefined)
@@ -287,6 +292,7 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
     archivedInScope: archivedSessionsToShow,
     archived: filteredArchivedSessions,
   } = projectSessionLists(listProjectionInput)
+  const matchedWorkspaceGroups = groupedWorkspaceSessions.filter((group) => group.sessions.length > 0)
 
   const openSession = (session: SessionSummary): void => {
     setSelectedWorkspaceId(session.workspaceId)
@@ -499,6 +505,12 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
     workspaces: props.workspaces,
     t,
   })
+  const workspaceNavigation =
+    !open || visibleWorkspaces.length === 0 ? null : (
+      <div role="group" className="dsh-session-switcher__workspaces" aria-label={t('sessions.workspaces')}>
+        {visibleWorkspaces.map(renderWorkspaceCard)}
+      </div>
+    )
 
   return (
     <section
@@ -696,21 +708,18 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
             </p>
           )}
           <div className="dsh-session-switcher__results">
-            {visibleWorkspaces.length === 0 ? null : (
-              <div
-                role="group"
-                className="dsh-session-switcher__workspaces"
-                aria-label={t('sessions.workspaces')}
-              >
-                {visibleWorkspaces.map(renderWorkspaceCard)}
-              </div>
-            )}
+            {query === '' ? workspaceNavigation : null}
             {archiveFilter === 'archived' ? null : selectedWorkspace === undefined && query === '' ? (
               <p className="dsh-session-switcher__empty">{t('sessions.temporary')}</p>
             ) : workspaceDisplay === 'grouped' ? (
               <>
+                {matchedWorkspaceGroups.length === 0 && contentSearchResults.length === 0 ? (
+                  <p className="dsh-session-switcher__empty">
+                    {query === '' ? t('sessions.empty') : t('sessions.noMatch')}
+                  </p>
+                ) : null}
                 <div className="dsh-session-switcher__groups">
-                  {groupedWorkspaceSessions.map(({ workspace, sessions: groupSessions }) => (
+                  {matchedWorkspaceGroups.map(({ workspace, sessions: groupSessions }) => (
                     <section
                       className="dsh-session-switcher__group"
                       key={workspace.id}
@@ -720,20 +729,14 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
                         <strong id={`workspace-${workspace.id}`}>
                           {displayWorkspaceName(workspace.name)}
                         </strong>
-                        <span>{workspaceSessions(workspace).length}</span>
+                        <span>{groupSessions.length}</span>
                       </header>
-                      {groupSessions.length === 0 ? (
-                        <p className="dsh-session-switcher__empty">
-                          {query === '' ? t('sessions.empty') : t('sessions.noMatch')}
-                        </p>
-                      ) : (
-                        <ul
-                          className="dsh-session-switcher__list"
-                          aria-label={displayWorkspaceName(workspace.name)}
-                        >
-                          {groupSessions.map((session) => renderSessionRow(session, undefined, workspace.id))}
-                        </ul>
-                      )}
+                      <ul
+                        className="dsh-session-switcher__list"
+                        aria-label={displayWorkspaceName(workspace.name)}
+                      >
+                        {groupSessions.map((session) => renderSessionRow(session, undefined, workspace.id))}
+                      </ul>
                     </section>
                   ))}
                 </div>
@@ -850,6 +853,7 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
                 ) : null}
               </section>
             )}
+            {query === '' ? null : workspaceNavigation}
           </div>
         </PopoverCard>
       ) : null}

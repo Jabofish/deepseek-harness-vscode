@@ -382,7 +382,7 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
                   <Icon name="file" />
                   <span>
                     <strong>{template.title}</strong>
-                    <small>{template.description || t('promptTemplates.noDescription')}</small>
+                    {template.description.trim() === '' ? null : <small>{template.description}</small>}
                   </span>
                   <em>{t(`promptTemplates.scope.${template.scope}`)}</em>
                 </button>
@@ -449,7 +449,7 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
                   </button>
                 </div>
               </div>
-              <p>{selected.description}</p>
+              {selected.description.trim() === '' ? null : <p>{selected.description}</p>}
               <div className="dsh-prompt-templates-popover__variables">
                 {selected.variables.length === 0
                   ? t('promptTemplates.noVariables')

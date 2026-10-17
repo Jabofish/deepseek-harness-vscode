@@ -77,9 +77,13 @@ export function renderSections(sections: readonly ToolDetailBlock[]): ReactEleme
   return (
     <>
       {sections.map((section, index) => (
-        <section className="dsh-tool-row__section" key={`${section.label}:${index}`}>
+        <section
+          className="dsh-tool-row__section"
+          key={`${section.label}:${index}`}
+          aria-label={section.label}
+        >
           <h4>{section.label}</h4>
-          <pre>{section.content}</pre>
+          <pre tabIndex={0}>{section.content}</pre>
         </section>
       ))}
     </>

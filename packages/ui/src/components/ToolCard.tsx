@@ -91,15 +91,23 @@ export function ToolCard(props: ToolCardProps): ReactElement {
       {props.expanded && hasDetails ? (
         <div className="dsh-tool-card__details">
           {request.map((block, index) => (
-            <section className="dsh-tool-card__section" key={`request:${block.label}:${index}`}>
+            <section
+              className="dsh-tool-card__section"
+              key={`request:${block.label}:${index}`}
+              aria-label={block.label}
+            >
               <h4>{block.label}</h4>
-              <p>{block.content}</p>
+              <p tabIndex={0}>{block.content}</p>
             </section>
           ))}
           {response.map((block, index) => (
-            <section className="dsh-tool-card__section" key={`response:${block.label}:${index}`}>
+            <section
+              className="dsh-tool-card__section"
+              key={`response:${block.label}:${index}`}
+              aria-label={block.label}
+            >
               <h4>{block.label}</h4>
-              <p>{block.content}</p>
+              <p tabIndex={0}>{block.content}</p>
             </section>
           ))}
           {targets.length === 0 ? null : (
@@ -123,7 +131,7 @@ export function ToolCard(props: ToolCardProps): ReactElement {
           {props.tool.error === undefined ? null : (
             <section className="dsh-tool-card__section dsh-tool-card__section--error" role="alert">
               <h4>{errorLabel}</h4>
-              <p>{errorText}</p>
+              <p tabIndex={0}>{errorText}</p>
             </section>
           )}
         </div>

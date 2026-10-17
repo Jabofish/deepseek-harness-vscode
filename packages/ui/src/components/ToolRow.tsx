@@ -223,14 +223,16 @@ export function ToolRow(props: ToolRowProps): ReactElement {
                 {props.tool.error === undefined ? null : (
                   <section className="dsh-tool-row__section dsh-tool-row__section--error" role="alert">
                     <h4>{label(props.translate, 'toolrow.error', 'Error')}</h4>
-                    <pre>{formatToolText(props.tool.error, props.translate) ?? props.tool.error.trim()}</pre>
+                    <pre tabIndex={0}>
+                      {formatToolText(props.tool.error, props.translate) ?? props.tool.error.trim()}
+                    </pre>
                   </section>
                 )}
               </>
             ) : (
               <section className="dsh-tool-row__section dsh-tool-row__section--error" role="alert">
                 <h4>{label(props.translate, 'toolrow.autoReview.rejected', 'Rejected by Auto review')}</h4>
-                <pre>{model.autoReviewOutput}</pre>
+                <pre tabIndex={0}>{model.autoReviewOutput}</pre>
               </section>
             )}
           </div>

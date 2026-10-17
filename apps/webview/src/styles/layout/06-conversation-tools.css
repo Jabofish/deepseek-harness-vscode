@@ -288,7 +288,7 @@
   justify-content: stretch;
   min-width: 0;
   width: 100%;
-  gap: var(--dsh-space-1);
+  gap: 2px;
   margin: 0;
   padding: 0;
   border: 0;
@@ -304,8 +304,8 @@
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
-  gap: var(--dsh-space-2);
-  padding: var(--dsh-space-1);
+  gap: var(--dsh-space-1);
+  padding: 4px 6px;
   border: 1px solid transparent;
   border-radius: var(--dsh-radius-md);
 }
@@ -316,6 +316,14 @@
 .dsh-prompt-templates-popover__row:hover {
   border-color: var(--dsh-border-color);
   background: var(--dsh-surface-hover);
+}
+
+.dsh-changes-popover__row:focus-within,
+.dsh-tasks-popover__row:focus-within,
+.dsh-checkpoints-popover__row:focus-within,
+.dsh-prompt-templates-popover__row:focus-within {
+  outline: 2px solid var(--dsh-focus);
+  outline-offset: -2px;
 }
 
 /* The row the reader is currently viewing. The flag sits on the inner button, so it
@@ -333,7 +341,7 @@
   flex: 1 1 auto;
   min-width: 0;
   gap: var(--dsh-space-2);
-  padding: var(--dsh-space-1);
+  padding: 0;
   border: 0;
   color: var(--dsh-text);
   background: transparent;
@@ -423,7 +431,7 @@
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   column-gap: var(--dsh-space-1);
-  row-gap: var(--dsh-space-1);
+  row-gap: 2px;
   text-align: start;
 }
 
@@ -444,9 +452,8 @@
 .dsh-tasks-popover__title {
   grid-column: 1 / -1;
   grid-row: 2;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  display: block;
+  overflow: visible;
   overflow-wrap: anywhere;
   white-space: normal;
   color: var(--dsh-text);
@@ -560,10 +567,8 @@
 }
 
 .dsh-changes-popover__path strong {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  overflow: hidden;
+  display: block;
+  overflow: visible;
   overflow-wrap: anywhere;
   font-size: var(--dsh-font-size-xs);
   font-weight: 600;
@@ -606,8 +611,15 @@
 }
 
 .dsh-prompt-templates-popover__row-main strong,
-.dsh-prompt-templates-popover__row-main small,
 .dsh-checkpoints-popover__summary strong {
+  display: block;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  line-height: var(--dsh-line-height-body);
+}
+
+.dsh-prompt-templates-popover__row-main small {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;

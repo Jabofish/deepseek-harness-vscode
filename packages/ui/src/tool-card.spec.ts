@@ -67,6 +67,10 @@ describe('ToolCard', () => {
     const details = document.querySelector('.dsh-tool-card__details')
     expect(details?.textContent).toContain('--include=src/feature-119/**')
     expect(details?.textContent).toContain('row 90: the tool reported this line to the caller')
+    const resultBody = details?.querySelectorAll<HTMLElement>('section p')[1]
+    expect(resultBody?.tabIndex).toBe(0)
+    resultBody?.focus()
+    expect(document.activeElement).toBe(resultBody)
   })
 
   it('shows a long tool failure text whole in the generic card', () => {

@@ -272,7 +272,7 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
                 <span>{t(`changes.application.${detail.applicationState}`)}</span>
                 <span>{t(`changes.review.${detail.reviewState}`)}</span>
               </div>
-              <pre>{detail.redactedDiff ?? t('changes.noDiff')}</pre>
+              <pre tabIndex={0}>{detail.redactedDiff ?? t('changes.noDiff')}</pre>
               <div
                 className="dsh-changes-popover__review-actions"
                 role="group"
