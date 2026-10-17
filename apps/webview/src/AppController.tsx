@@ -155,11 +155,12 @@ const useAppControllerImpl = () => {
     setError,
     t,
   })
+  const trajectoryVisible = codingToolsEnabled
   const onConversationTabKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLButtonElement>): void => {
       const current = event.currentTarget.dataset.conversationView
       if (current !== 'chat' && current !== 'trajectory') return
-      const views: readonly ('chat' | 'trajectory')[] = codingToolsEnabled ? ['chat', 'trajectory'] : ['chat']
+      const views: readonly ('chat' | 'trajectory')[] = trajectoryVisible ? ['chat', 'trajectory'] : ['chat']
       const currentIndex = views.indexOf(current)
       let nextIndex: number | undefined
       if (event.key === 'ArrowRight' || event.key === 'ArrowDown')
@@ -175,7 +176,7 @@ const useAppControllerImpl = () => {
       setConversationView(next)
       document.getElementById(CONVERSATION_VIEW_IDS[next].tab)?.focus()
     },
-    [codingToolsEnabled],
+    [trajectoryVisible],
   )
 
   const setConversationFontSize = useCallback((next: ConversationFontSize): void => {
@@ -877,6 +878,7 @@ const useAppControllerImpl = () => {
     branching,
     busyAction,
     codingToolsEnabled,
+    trajectoryVisible,
     compatibilityWarning,
     composerOnCancel,
     composerOnCaptureEditorContext,

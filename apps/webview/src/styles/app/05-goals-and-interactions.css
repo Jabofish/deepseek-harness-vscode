@@ -733,3 +733,95 @@
   gap: var(--dsh-space-3);
   padding-top: var(--dsh-space-2);
 }
+/* Goals + tasks share one collapsed dock in the header rail. The summary is the
+ * everyday signal (active goal title + progress); the goal controls and the two
+ * lists stay folded behind it for the rare case where something goes wrong. */
+.dsh-goals-tasks {
+  flex: 0 0 auto;
+  width: 100%;
+  min-width: 0;
+  border-top: var(--dsh-border);
+  border-bottom: var(--dsh-border);
+}
+
+.dsh-goals-tasks__toggle {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  min-height: 28px;
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-1) var(--dsh-space-3);
+  border: 0;
+  color: var(--dsh-muted);
+  background: transparent;
+  font: inherit;
+  font-size: var(--dsh-font-size-sm);
+  text-align: start;
+  cursor: pointer;
+}
+
+.dsh-goals-tasks__toggle:hover {
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-goals-tasks__toggle:focus-visible {
+  border-radius: var(--dsh-radius-sm);
+  outline: 2px solid var(--dsh-focus, var(--dsh-accent));
+  outline-offset: 2px;
+}
+
+.dsh-goals-tasks__glyph,
+.dsh-goals-tasks__chevron {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  color: var(--dsh-muted);
+}
+
+.dsh-goals-tasks__glyph .dsh-icon,
+.dsh-goals-tasks__chevron .dsh-icon {
+  width: var(--dsh-icon-size-sm);
+  height: var(--dsh-icon-size-sm);
+}
+
+.dsh-goals-tasks__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsh-text);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-goals-tasks__count {
+  flex: 0 0 auto;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-2xs);
+}
+
+.dsh-goals-tasks__chevron {
+  transition: transform var(--dsh-motion-duration-fast) var(--dsh-motion-ease-standard);
+}
+
+.dsh-goals-tasks--open .dsh-goals-tasks__chevron {
+  transform: rotate(180deg);
+}
+
+.dsh-goals-tasks__disclosure {
+  border-top: var(--dsh-border);
+}
+
+.dsh-goals-tasks__disclosure[hidden] {
+  display: none;
+}
+
+.dsh-goals-tasks__disclosure .dsh-disclosure__inner {
+  display: grid;
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-2);
+  max-height: min(45vh, 20rem);
+  overflow: auto;
+  overscroll-behavior: contain;
+}

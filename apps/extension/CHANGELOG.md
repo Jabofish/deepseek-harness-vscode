@@ -34,6 +34,11 @@
 
 - 支持将会话行拖到编辑器区或分栏打开；重复拖入复用已有标签，保留列表内排序，取消拖动不会打开会话。
 - Supports dragging a session row into the editor area or a split group; reuses existing chat tabs, preserves list reordering, and leaves cancelled drags unopened.
+- 将目标与任务合并为会话头部的紧凑、默认收起的目标/任务坞：活跃目标作为常驻信号，附完成计数与状态徽标；展开后查看目标栏、目标待办与任务清单。
+- Folds goals and todos into a compact, collapsed-by-default dock in the conversation header: the active goal stays visible with a completion count and status pill; expanding reveals the goal bar, goal todos and task list.
+
+- 当轨迹视图被禁用（关闭开发者工具）时隐藏会话视图标签栏，会话标题改为常驻显示。
+- Hides the conversation view tab bar when the Trajectory view is disabled (Developer Tools off), and keeps the conversation title visible in the header.
 
 - 新增 DSH `0.2.1-rc.2` 精确适配，核对固定源码并验证 Search / Fetch 实时设置、密钥隔离、非法值与过期修订拒绝、恢复默认；保留动态模型目录与已选路由。
 - Adds exact DSH `0.2.1-rc.2` support with pinned source review and Search / Fetch settings coverage, including credential isolation, invalid values, stale revisions and restoring inherited defaults; preserves authoritative model catalogs and routes.

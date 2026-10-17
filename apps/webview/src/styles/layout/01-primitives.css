@@ -96,6 +96,18 @@
   overflow: visible;
 }
 
+.dsh-conversation__header-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-sm);
+  font-weight: 500;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .dsh-conversation__views {
   display: flex;
   align-items: center;

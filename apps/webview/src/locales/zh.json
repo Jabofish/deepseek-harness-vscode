@@ -1696,5 +1696,8 @@
   "sessions.openInEditorTitle": "在编辑器区打开",
   "app.notices": "通知",
   "app.showNotices": "展开 {count} 条通知",
-  "app.hideNotices": "收起 {count} 条通知"
+  "app.hideNotices": "收起 {count} 条通知",
+  "goalsTasks.aria": "目标和任务",
+  "goalsTasks.expand": "展开目标和任务",
+  "goalsTasks.collapse": "折叠目标和任务"
 }
