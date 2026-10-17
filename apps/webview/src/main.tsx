@@ -15,10 +15,13 @@ import { App } from './App.js'
 import { readThemePreference } from './app/ui-preferences.js'
 import { I18nProvider } from './i18n.js'
 import { ConversationLayoutProvider } from './app/ConversationLayoutProvider.js'
+import { watchNativeTitlebarLayout } from './app/native-titlebar-layout.js'
+import { getVsCodeApi, hasVsCodeApi } from './vscode-api.js'
 
 // Set the theme before React paints so a persisted light preference does not
 // flash the host's dark palette during Webview startup.
 document.documentElement.dataset.dshTheme = readThemePreference()
+if (hasVsCodeApi()) watchNativeTitlebarLayout(getVsCodeApi())
 
 const rootElement = document.getElementById('root')
 if (rootElement === null) throw new Error('Missing #root element')

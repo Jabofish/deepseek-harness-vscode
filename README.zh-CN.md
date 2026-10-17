@@ -31,7 +31,7 @@
 
 DeepSeek Harness 的 Chat 视图默认注册在辅助侧边栏（VS Code 默认布局中位于编辑器右侧）。如果你以前移动过视图，VS Code 可能保留已有布局；可在命令面板运行 **DSH: Move View to Secondary Side Bar**，选择 Chat 视图和 **New Secondary Side Bar Entry**，或右键视图标题使用 **Move View**。
 
-打开编辑器聊天标签后，侧边栏仍可使用。点击视图标题栏的 **+** 新建会话；窄栏将会话导航、新建会话、提醒和设置收进“更多”。
+打开编辑器聊天标签后，侧边栏仍可使用。通过视图标题栏的**会话**按钮切换或新建会话；原生标题栏在宽度足够时显示完整操作，变窄后逐步将低频操作收进“更多”，优先保留**会话**和**设置**。
 
 选择 **在编辑器区打开** 或执行 **DSH: Open Chat in Editor Area**（`/moveto:editor`）打开标签，`/moveto:sidebar` 可移回侧边栏。VS Code 可能拒绝从 Webview 拖出会话行；暂用上述入口，再拖动已打开的编辑器标签分栏。手动排序时，列表内拖动仍用于调整顺序。
 

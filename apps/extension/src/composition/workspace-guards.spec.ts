@@ -12,7 +12,7 @@ const requestTypes = (): WebviewRequest['type'][] =>
 /**
  * The only routes that may run while a project folder is untrusted: the
  * handshake, connection and read-only DSH queries that never touch workspace
- * files, plus disposal of handles the user already granted. Everything else
+ * files, pure Workbench layout, plus disposal of granted handles. Everything else
  * must be classified in the trust guard.
  */
 const routesAllowedWhileUntrusted = [
@@ -42,6 +42,7 @@ const routesAllowedWhileUntrusted = [
   'job.follow.stop',
   'settings.read',
   'surface.moveToSidebar',
+  'surface.titlebarLayout',
   'view.openLink',
   'view.showInFolder',
   'workspace.addFolder',

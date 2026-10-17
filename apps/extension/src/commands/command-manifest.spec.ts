@@ -7,7 +7,10 @@ interface Manifest {
   readonly activationEvents?: readonly string[]
   readonly contributes?: {
     readonly commands?: readonly { readonly command: string }[]
-    readonly menus?: Record<string, readonly { readonly command: string; readonly when?: string }[]>
+    readonly menus?: Record<
+      string,
+      readonly { readonly command: string; readonly when?: string; readonly group?: string }[]
+    >
   }
 }
 
@@ -30,9 +33,11 @@ describe('command manifest contributions', () => {
 
   it('offers the move action on the sidebar title and the return action on the editor tab', () => {
     const viewTitle = manifest.contributes?.menus?.['view/title'] ?? []
-    expect(viewTitle).toContainEqual(
-      expect.objectContaining({ command: 'dsh.openChatInEditor', when: 'view == dsh.chatView' }),
-    )
+    expect(
+      viewTitle.some(
+        ({ command, when }) => command === 'dsh.openChatInEditor' && when?.startsWith('view == dsh.chatView'),
+      ),
+    ).toBe(true)
     const editorTitle = manifest.contributes?.menus?.['editor/title'] ?? []
     expect(editorTitle).toContainEqual(
       expect.objectContaining({
@@ -40,5 +45,47 @@ describe('command manifest contributions', () => {
         when: `activeWebviewPanelId == ${EDITOR_CHAT_VIEW_TYPE}`,
       }),
     )
+  })
+
+  it('reserves native title-bar space for Sessions and Settings before secondary actions', () => {
+    const chatTitle = (manifest.contributes?.menus?.['view/title'] ?? []).filter(({ when }) =>
+      when?.includes('view == dsh.chatView'),
+    )
+    expect(
+      chatTitle
+        .filter(
+          ({ group, when }) => group?.startsWith('navigation') && !when?.includes('dsh.chatTitlebarLayout'),
+        )
+        .map(({ command }) => command),
+    ).toEqual(['dsh.newSession', 'dsh.openSettings'])
+    expect(
+      chatTitle.filter(({ group }) => !group?.startsWith('navigation')).map(({ command }) => command),
+    ).toEqual(
+      expect.arrayContaining([
+        'dsh.connect',
+        'dsh.reconnect',
+        'dsh.openWebUi',
+        'dsh.openChatInEditor',
+        'dsh.openSessionList',
+      ]),
+    )
+    for (const command of ['dsh.connect', 'dsh.reconnect', 'dsh.openWebUi', 'dsh.openChatInEditor']) {
+      const entries = chatTitle.filter((entry) => entry.command === command)
+      expect(entries).toHaveLength(2)
+      expect(entries.find(({ group }) => group?.startsWith('navigation'))?.when).toContain(
+        'dsh.chatTitlebarLayout == wide',
+      )
+      expect(entries.find(({ group }) => !group?.startsWith('navigation'))?.when).toContain(
+        'dsh.chatTitlebarLayout != wide',
+      )
+    }
+    const primary = chatTitle.filter(({ group }) => group?.startsWith('navigation'))
+    const order = (command: string): number =>
+      Number(primary.find((entry) => entry.command === command)?.group?.split('@')[1])
+    // Keep the frequent controls at the right edge, next to More, even while
+    // the native title is shrinking before its breakpoint update arrives.
+    expect(order('dsh.newSession')).toBeGreaterThan(order('dsh.openSettings'))
+    for (const command of ['dsh.connect', 'dsh.reconnect', 'dsh.openWebUi', 'dsh.openChatInEditor'])
+      expect(order(command)).toBeLessThan(order('dsh.openSettings'))
   })
 })

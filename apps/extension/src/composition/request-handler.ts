@@ -227,6 +227,13 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     signal: AbortSignal,
     surfaceId: string | undefined,
   ): Promise<unknown> => {
+    if (request.type === 'surface.titlebarLayout') {
+      // Editor tabs have different widths and cannot change the sidebar's chrome.
+      if (surfaceId !== SIDEBAR_SURFACE_ID) return { updated: false }
+      signal.throwIfAborted()
+      await vscode.commands.executeCommand('setContext', 'dsh.chatTitlebarLayout', request.payload.layout)
+      return { updated: true }
+    }
     if (request.type === 'app.ready') {
       if (coordinator.getState().kind !== 'connected') await connect(signal)
       signal.throwIfAborted()

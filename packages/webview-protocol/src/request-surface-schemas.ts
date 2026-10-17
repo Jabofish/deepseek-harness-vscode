@@ -11,6 +11,13 @@ import { id, requestBase } from './request-common.js'
 export const surfaceRequestSchemas = [
   z
     .object({
+      type: z.literal('surface.titlebarLayout'),
+      ...requestBase,
+      payload: z.object({ layout: z.enum(['compact', 'regular', 'wide']) }).strict(),
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal('surface.openInEditor'),
       ...requestBase,
       payload: z

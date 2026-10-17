@@ -252,32 +252,52 @@
         {
           "command": "dsh.newSession",
           "when": "view == dsh.chatView",
-          "group": "navigation@1"
+          "group": "navigation@100"
         },
         {
           "command": "dsh.connect",
-          "when": "view == dsh.chatView && !dsh.connected",
-          "group": "navigation@2"
+          "when": "view == dsh.chatView && !dsh.connected && (dsh.chatTitlebarLayout == regular || dsh.chatTitlebarLayout == wide)",
+          "group": "navigation@30"
+        },
+        {
+          "command": "dsh.connect",
+          "when": "view == dsh.chatView && !dsh.connected && dsh.chatTitlebarLayout != regular && dsh.chatTitlebarLayout != wide",
+          "group": "connection@1"
         },
         {
           "command": "dsh.reconnect",
-          "when": "view == dsh.chatView && dsh.connected",
-          "group": "navigation@2"
+          "when": "view == dsh.chatView && dsh.connected && (dsh.chatTitlebarLayout == regular || dsh.chatTitlebarLayout == wide)",
+          "group": "navigation@30"
+        },
+        {
+          "command": "dsh.reconnect",
+          "when": "view == dsh.chatView && dsh.connected && dsh.chatTitlebarLayout != regular && dsh.chatTitlebarLayout != wide",
+          "group": "connection@1"
         },
         {
           "command": "dsh.openSettings",
           "when": "view == dsh.chatView",
-          "group": "navigation@3"
+          "group": "navigation@90"
         },
         {
           "command": "dsh.openWebUi",
-          "when": "view == dsh.chatView && dsh.connected",
-          "group": "navigation@4"
+          "when": "view == dsh.chatView && dsh.connected && dsh.chatTitlebarLayout == wide",
+          "group": "navigation@10"
+        },
+        {
+          "command": "dsh.openWebUi",
+          "when": "view == dsh.chatView && dsh.connected && dsh.chatTitlebarLayout != wide",
+          "group": "session@2"
         },
         {
           "command": "dsh.openChatInEditor",
-          "when": "view == dsh.chatView",
-          "group": "navigation@5"
+          "when": "view == dsh.chatView && dsh.chatTitlebarLayout == wide",
+          "group": "navigation@20"
+        },
+        {
+          "command": "dsh.openChatInEditor",
+          "when": "view == dsh.chatView && dsh.chatTitlebarLayout != wide",
+          "group": "session@1"
         },
         {
           "command": "dsh.newSession",

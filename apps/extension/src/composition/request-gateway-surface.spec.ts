@@ -10,6 +10,7 @@ const host = vi.hoisted(() => {
     isTrusted: true,
     renamedTitle: 'Renamed session',
     commands: [] as string[],
+    contexts: [] as { readonly key: unknown; readonly value: unknown }[],
     focusFails: false,
     deliveryFails: false,
     sessionGate: undefined as Promise<void> | undefined,
@@ -23,8 +24,9 @@ vi.mock('vscode', () => ({
     },
   },
   commands: {
-    executeCommand: (command: string) => {
+    executeCommand: (command: string, ...args: unknown[]) => {
       host.commands.push(command)
+      if (command === 'setContext') host.contexts.push({ key: args[0], value: args[1] })
       if (host.focusFails) return Promise.reject(new Error('The sidebar cannot be focused.'))
       return Promise.resolve(undefined)
     },
@@ -97,6 +99,7 @@ interface Harness {
 function buildGateway(): Harness {
   host.panels.length = 0
   host.commands = []
+  host.contexts = []
   host.isTrusted = true
   host.focusFails = false
   host.deliveryFails = false
@@ -199,6 +202,30 @@ describe('request gateway editor surface routes', () => {
 
   beforeEach(() => {
     harness = buildGateway()
+  })
+
+  it('updates title-bar layout only from the sidebar, independently of connection and trust', async () => {
+    host.isTrusted = false
+    await harness.gateway.router.handle(
+      request('surface.titlebarLayout', 'layout-editor', { layout: 'compact' }),
+      'editor-1',
+    )
+    expect(host.contexts).toEqual([])
+    for (const layout of ['wide', 'regular', 'compact', 'wide'])
+      await harness.gateway.router.handle(
+        request('surface.titlebarLayout', `layout-${host.contexts.length}`, { layout }),
+        'sidebar',
+      )
+    expect(host.contexts).toEqual(
+      ['wide', 'regular', 'compact', 'wide'].map((value) => ({ key: 'dsh.chatTitlebarLayout', value })),
+    )
+    const responseCount = harness.sent.length
+    await harness.gateway.router.handle(
+      request('surface.titlebarLayout', 'invalid-layout', { layout: 'invented' }),
+      'sidebar',
+    )
+    expect(host.contexts).toHaveLength(4)
+    expect(harness.sent).toHaveLength(responseCount)
   })
 
   it('authorizes native resource drops and reuses the ordinary editor manager', async () => {
