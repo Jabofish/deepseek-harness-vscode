@@ -16,6 +16,26 @@ const MODE_OPTIONS: readonly SelectMenuOption[] = [
 describe('SelectMenu keyboard navigation', () => {
   afterEach(() => cleanup())
 
+  it('waits for visible positioning before moving focus into an overlay', () => {
+    // Forward the original method below with the actual element as its receiver.
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const nativeFocus = HTMLElement.prototype.focus
+    const focus = vi.spyOn(HTMLElement.prototype, 'focus')
+    focus.mockImplementation(function (this: HTMLElement, options?: FocusOptions) {
+      // jsdom permits focus on hidden elements; Chromium rejects this attempt.
+      const menu = this.closest<HTMLElement>('.dsh-select-menu__menu')
+      if (menu?.style.visibility === 'hidden') return
+      nativeFocus.call(this, options)
+    })
+    try {
+      renderMenu({ value: 'ask' })
+      openMenu()
+      expect(focusedOptionLabel()).toBe('Ask')
+    } finally {
+      focus.mockRestore()
+    }
+  })
+
   it('moves up to the nearest enabled option above a disabled entry', () => {
     renderMenu({ value: 'act' })
     openMenu()

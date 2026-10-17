@@ -12,7 +12,7 @@
   flex: 1 1 0%;
   flex-direction: column;
   min-width: 0;
-  min-height: 10rem;
+  min-height: 0;
   width: 100%;
   overflow: hidden;
 }
@@ -90,7 +90,6 @@
  * cover the ledger; both keep their own bounded space above the composer. */
 .dsh-trajectory-shell--inspecting {
   --dsh-trajectory-inspector-max-height: min(50%, 24rem);
-  min-height: 24rem;
 }
 
 .dsh-trajectory-inspector {
@@ -98,7 +97,7 @@
   flex: 0 1 auto;
   width: 100%;
   min-width: 0;
-  min-height: 8rem;
+  min-height: 0;
   max-height: var(--dsh-trajectory-inspector-max-height, min(50%, 24rem));
   overflow-x: hidden;
   overflow-y: auto;

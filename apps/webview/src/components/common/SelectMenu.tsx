@@ -100,9 +100,11 @@ export const SelectMenu = memo(function SelectMenu(props: SelectMenuProps): Reac
   }, [enabledOptions.length, props.disabled, props.openRequest, requestedIndex])
 
   useEffect(() => {
-    if (!open) return
+    // Chromium cannot focus an option while the positioning pass hides it.
+    // Retry when the positioned surface becomes visible, including reopen.
+    if (!open || (menuMode === 'overlay' && menuPosition?.visibility !== 'visible')) return
     optionRefs.current[activeOptionIndex]?.focus()
-  }, [activeOptionIndex, open])
+  }, [activeOptionIndex, menuMode, menuPosition?.visibility, open])
 
   function close(): void {
     setOpen(false)

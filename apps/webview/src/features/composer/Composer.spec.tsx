@@ -127,12 +127,12 @@ describe('Composer', () => {
 
     fireEvent.change(textarea, { target: { value: 'Short prompt' } })
     expect(textarea.style.height).toBe('42px')
-    expect(textarea.style.overflowY).toBe('hidden')
+    expect(textarea.style.overflowY).toBe('auto')
 
     scrollHeight = 104
     fireEvent.change(textarea, { target: { value: 'A prompt\nthat spans\nseveral lines' } })
     expect(textarea.style.height).toBe('104px')
-    expect(textarea.style.overflowY).toBe('hidden')
+    expect(textarea.style.overflowY).toBe('auto')
 
     scrollHeight = 220
     fireEvent.change(textarea, { target: { value: 'A very long prompt' } })

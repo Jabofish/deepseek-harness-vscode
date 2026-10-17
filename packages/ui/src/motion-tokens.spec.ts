@@ -64,6 +64,14 @@ describe('motion system', () => {
     expect(webviewStyles.join('\n')).not.toMatch(/prefers-reduced-motion\s*:\s*reduce/u)
   })
 
+  it('disables transitions instead of adding a nonzero transition to every element', () => {
+    // A universal duration paired with the default transition-property: all
+    // animated hidden -> visible at menu mount and made Chromium reject focus.
+    const reduced = uiStyles.slice(uiStyles.indexOf('@media (prefers-reduced-motion: reduce)'))
+    expect(reduced).toContain('transition: none !important;')
+    expect(reduced).not.toContain('transition-duration:')
+  })
+
   it('releases entry transforms so nested fixed menus keep viewport coordinates', () => {
     const entries =
       /animation:\s*dsh-(?:surface-enter|slide-in-(?:start|end)|pop-in|rise-in|toast-in|pop-once)\b([^;]*);/gu

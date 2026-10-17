@@ -23,7 +23,9 @@ export function fitComposerTextarea(
   const maximum = limits?.maximum ?? COMPOSER_MAX_HEIGHT
   const nextHeight = Math.min(contentHeight, maximum)
   element.style.height = `${nextHeight}px`
-  element.style.overflowY = contentHeight > maximum ? 'auto' : 'hidden'
+  // CSS also caps the input against the viewport. It can shrink on resize
+  // without a draft change, so let the browser decide whether it must scroll.
+  element.style.overflowY = 'auto'
 }
 
 export function pageAttachmentRail(element: HTMLUListElement | null, direction: -1 | 1): void {

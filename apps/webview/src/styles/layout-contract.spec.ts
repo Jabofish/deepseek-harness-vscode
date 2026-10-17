@@ -38,12 +38,6 @@ describe('Conversation space ownership', () => {
     }
     expect(effective(styles, '.dsh-app__notice-list', 'overflow')).toBe('auto')
     expect(effective(styles, '.dsh-conversation', 'overflow-y')).toBe('auto')
-    expect(Number.parseFloat(effective(styles, '.dsh-timeline-shell', 'min-height') ?? '0')).toBeGreaterThan(
-      0,
-    )
-    expect(
-      Number.parseFloat(effective(styles, '.dsh-trajectory-shell', 'min-height') ?? '0'),
-    ).toBeGreaterThan(0)
   })
 
   it('floats the jump control over the transcript instead of claiming a row', () => {
@@ -59,10 +53,19 @@ describe('Conversation space ownership', () => {
 })
 
 describe('Conversation interaction dock', () => {
+  it('lets the transcript and interaction stack shrink before short windows lose the composer', () => {
+    // At 240 x 380 the old 10rem timeline floor pushed input and Stop below
+    // the viewport once an approval or question occupied the tail.
+    expect(effective(layoutStyles, '.dsh-timeline-shell', 'min-height')).toBe('0')
+    expect(effective(appStyles, '.dsh-trajectory-shell', 'min-height')).toBe('0')
+    expect(effective(layoutStyles, '.dsh-trajectory-inspector', 'min-height')).toBe('0')
+    expect(declared(layoutStyles, '.dsh-trajectory-shell--inspecting', 'min-height')).toEqual([])
+    expect(cssRule(layoutStyles, '.dsh-conversation__interactions')).toContain('flex: 0 1 auto;')
+  })
+
   it('bounds the pending interaction stack above the composer without shrinking decision controls', () => {
     const interactionRule = cssRule(layoutStyles, '.dsh-conversation__interactions')
     expect(interactionRule).not.toContain('position: absolute;')
-    expect(interactionRule).toContain('flex: 0 0 auto;')
     expect(interactionRule).toContain('flex-direction: column;')
     expect(interactionRule).toContain('min-height: 0;')
     expect(interactionRule).toContain('max-height: var(--dsh-content-panel-max-height);')

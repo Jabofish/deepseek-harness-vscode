@@ -1,9 +1,8 @@
 import { cloneElement, useEffect, useRef, type ReactElement, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { useConversationLayout } from '../../app/ConversationLayoutProvider.js'
 import './focused-dialog-portal.css'
 
-/** Keep editing and confirmation surfaces independent from their scrollable list. */
+/** Keep editing and confirmation surfaces independent from their scrollable list in either layout. */
 export function FocusedDialogPortal(props: {
   readonly children: ReactElement<{ readonly children?: ReactNode }>
   readonly error?: string | undefined
@@ -25,7 +24,6 @@ export function FocusedDialogPortal(props: {
       {props.children.props.children}
     </>,
   )
-  if (useConversationLayout()?.layout !== 'focused') return content
   return createPortal(
     <div ref={layerRef} className="dsh-focused-dialog-layer">
       {content}

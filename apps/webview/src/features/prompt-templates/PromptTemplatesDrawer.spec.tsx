@@ -61,8 +61,8 @@ function renderDrawer(
 describe('PromptTemplatesDrawer', () => {
   afterEach(() => cleanup())
 
-  it('keeps focused editor failures inside the modal and preserves inputs for retry', async () => {
-    renderDrawer({ onCreate: vi.fn().mockRejectedValue(new Error('retry save')) }, true)
+  it.each([false, true])('keeps editor failures outside the clipped list (focused: %s)', async (focused) => {
+    renderDrawer({ onCreate: vi.fn().mockRejectedValue(new Error('retry save')) }, focused)
     const create = screen.getByRole('button', { name: 'Create' })
     fireEvent.click(create)
     const editor = screen.getByRole('dialog', { name: 'Create prompt template' })
@@ -147,6 +147,29 @@ describe('PromptTemplatesDrawer', () => {
     fireEvent.keyDown(screen.getByRole('textbox', { name: 'Title' }), { key: 'Escape' })
     expect(screen.queryByRole('textbox', { name: 'Title' })).toBeNull()
     expect(screen.getByRole('dialog', { name: 'Prompt template library' })).toBeDefined()
+  })
+
+  it('keeps a pending save visible on Escape and preserves the draft after failure', async () => {
+    let rejectSave!: (reason: Error) => void
+    renderDrawer({
+      onCreate: vi.fn(
+        () =>
+          new Promise<PromptTemplateSummary | undefined>((_, reject) => {
+            rejectSave = reject
+          }),
+      ),
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }))
+    const editor = screen.getByRole('dialog', { name: 'Create prompt template' })
+    fireEvent.change(within(editor).getByLabelText('Title'), { target: { value: 'Keep draft' } })
+    fireEvent.change(within(editor).getByLabelText('Template text'), { target: { value: 'Keep body' } })
+    fireEvent.submit(editor)
+    fireEvent.keyDown(within(editor).getByLabelText('Title'), { key: 'Escape' })
+    expect(screen.getByRole('dialog', { name: 'Create prompt template' })).toBe(editor)
+    rejectSave(new Error('Save failed'))
+    await waitFor(() => expect(within(editor).getByRole('alert').textContent).toBe('Save failed'))
+    expect(within(editor).getByLabelText('Title')).toHaveProperty('value', 'Keep draft')
+    expect(within(editor).getByLabelText('Template text')).toHaveProperty('value', 'Keep body')
   })
 
   it('still closes the popover on Escape when no dialog is open', () => {

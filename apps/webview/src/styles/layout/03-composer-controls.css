@@ -25,7 +25,7 @@
  * its decision buttons or clipping later cards. */
 .dsh-conversation__interactions {
   display: flex;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
@@ -124,7 +124,7 @@
   min-width: 0;
   /* Keep the empty state aligned with Composer's 42px intrinsic minimum. */
   min-height: var(--dsh-composer-input-min-height);
-  max-height: 10rem;
+  max-height: min(10rem, 33dvh);
   padding: var(--dsh-space-2);
   resize: none;
   border: 0;

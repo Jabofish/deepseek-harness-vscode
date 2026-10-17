@@ -70,7 +70,6 @@
 .dsh-select-menu--regular .dsh-select-menu__trigger {
   min-height: var(--dsh-control-height);
   padding: var(--dsh-space-2) var(--dsh-space-3);
-  font-size: var(--dsh-font-size-md);
 }
 
 .dsh-select-menu__trigger-text,

@@ -285,10 +285,9 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
     // Escape; closing the editor here would discard the in-progress form.
     if (event.key !== 'Escape' || event.defaultPrevented) return
     event.preventDefault()
-    readGeneration.current += 1
-    if (dialog !== undefined && !busy) closeEditor()
-    else if (pendingInsertion !== undefined && !busy) setPendingInsertion(undefined)
+    if (dialogOpen) dismissDialog()
     else {
+      readGeneration.current += 1
       setOpen(false)
       triggerRef.current?.focus()
     }
@@ -510,7 +509,12 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
                   >
                     {t('promptTemplates.insertUnresolved')}
                   </button>
-                  <button type="button" className="dsh-button" disabled={busy} onClick={insertWithValues}>
+                  <button
+                    type="button"
+                    className="dsh-button dsh-button--primary"
+                    disabled={busy}
+                    onClick={insertWithValues}
+                  >
                     {t('promptTemplates.insertWithValues')}
                   </button>
                 </div>
@@ -625,7 +629,7 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
                   >
                     {t('promptTemplates.cancel')}
                   </button>
-                  <button type="submit" className="dsh-button" disabled={busy}>
+                  <button type="submit" className="dsh-button dsh-button--primary" disabled={busy}>
                     {busy ? t('promptTemplates.working') : t('promptTemplates.save')}
                   </button>
                 </div>

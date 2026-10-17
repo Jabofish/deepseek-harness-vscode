@@ -269,6 +269,24 @@ describe('SettingsDrawer', () => {
     vi.unstubAllGlobals()
   })
 
+  it('folds environment facts and gives an unset default model a readable value', async () => {
+    const settings = settingsFixture()
+    renderDrawer({
+      onLoadSettings: vi.fn().mockResolvedValue({
+        ...settings,
+        defaultAgent: { ...settings.defaultAgent, model: { providerId: '', modelId: '' } },
+      }),
+    })
+    const summary = await screen.findByText('Environment details')
+    const details = summary.closest('details')
+    expect(details?.open).toBe(false)
+    expect(details?.querySelector('dd:last-child')?.textContent).toBe('Automatic')
+    expect(screen.getByRole('radiogroup', { name: 'Connection mode' })).toBeDefined()
+    fireEvent.click(summary)
+    expect(details?.open).toBe(true)
+    expect(within(details!).getByText(settings.extensionVersion)).toBeDefined()
+  })
+
   it('keeps aria-controls attached only to the mounted panel after click and keyboard changes', () => {
     renderDrawer()
     expectActiveTabControlsMountedPanel()

@@ -177,31 +177,36 @@ export function GeneralSettingsTab(input: GeneralSettingsTabProps): ReactElement
           const settings = settingsState.value
           return (
             <>
-              <dl className="dsh-settings__facts">
-                <dt>{t('settings.extensionVersion')}</dt>
-                <dd>{settings.extensionVersion}</dd>
-                <dt>{t('settings.connectionMode')}</dt>
-                <dd>{connectionModeLabel(settings.connection.mode, t)}</dd>
-                <dt>{t('settings.runtime')}</dt>
-                <dd>
-                  {t(
-                    settings.runtime.customExecutableConfigured
-                      ? 'settings.runtimeCustom'
-                      : 'settings.runtimeDiscovered',
-                  )}
-                </dd>
-                <dt>{t('settings.dshVersion')}</dt>
-                <dd>
-                  {props.connectedDshVersion ??
-                    t(props.connected ? 'settings.versionUnavailable' : 'settings.notConnected')}
-                </dd>
-                <dt>{t('settings.permissionPreset')}</dt>
-                <dd>{settings.security.defaultPermissionPreset}</dd>
-                <dt>{t('settings.defaultAgent')}</dt>
-                <dd>
-                  {settings.defaultAgent.model.providerId}/{settings.defaultAgent.model.modelId}
-                </dd>
-              </dl>
+              <details className="dsh-settings__environment">
+                <summary>{t('settings.environmentDetails')}</summary>
+                <dl className="dsh-settings__facts">
+                  <dt>{t('settings.extensionVersion')}</dt>
+                  <dd>{settings.extensionVersion}</dd>
+                  <dt>{t('settings.connectionMode')}</dt>
+                  <dd>{connectionModeLabel(settings.connection.mode, t)}</dd>
+                  <dt>{t('settings.runtime')}</dt>
+                  <dd>
+                    {t(
+                      settings.runtime.customExecutableConfigured
+                        ? 'settings.runtimeCustom'
+                        : 'settings.runtimeDiscovered',
+                    )}
+                  </dd>
+                  <dt>{t('settings.dshVersion')}</dt>
+                  <dd>
+                    {props.connectedDshVersion ??
+                      t(props.connected ? 'settings.versionUnavailable' : 'settings.notConnected')}
+                  </dd>
+                  <dt>{t('settings.permissionPreset')}</dt>
+                  <dd>{settings.security.defaultPermissionPreset}</dd>
+                  <dt>{t('settings.defaultAgent')}</dt>
+                  <dd>
+                    {[settings.defaultAgent.model.providerId, settings.defaultAgent.model.modelId]
+                      .filter(Boolean)
+                      .join('/') || t('settings.automatic')}
+                  </dd>
+                </dl>
+              </details>
               <SettingCard
                 ariaLabel={t('settings.connectionTitle')}
                 title={t('settings.connectionTitle')}

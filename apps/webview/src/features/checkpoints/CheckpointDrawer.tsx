@@ -417,7 +417,7 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
                   >
                     {t('checkpoints.cancel')}
                   </button>
-                  <button type="submit" className="dsh-button" disabled={busy}>
+                  <button type="submit" className="dsh-button dsh-button--primary" disabled={busy}>
                     {busy ? t('checkpoints.working') : t('checkpoints.createSubmit')}
                   </button>
                 </div>

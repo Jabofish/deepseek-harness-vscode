@@ -57,7 +57,7 @@
 
 .dsh-app[data-conversation-layout='focused'] .dsh-composer__textarea {
   min-height: 42px;
-  max-height: 240px;
+  max-height: min(240px, 33dvh);
   padding: 4px;
   line-height: 1.7;
 }
@@ -569,17 +569,16 @@
 
 .dsh-app[data-conversation-layout='focused'] .dsh-settings {
   width: min(100%, 50rem);
-  height: min(100%, 50rem);
 }
 
 .dsh-app[data-conversation-layout='focused'] .dsh-settings__header {
-  padding: 16px 20px;
+  padding: 12px 16px;
   border: 0;
 }
 
 .dsh-app[data-conversation-layout='focused'] .dsh-settings__body {
-  gap: 24px;
-  padding: 20px;
+  gap: var(--dsh-space-4);
+  padding: var(--dsh-space-4);
 }
 
 @media (max-width: 24rem) {
@@ -613,8 +612,8 @@
 }
 
 .dsh-app[data-conversation-layout='focused'] .dsh-settings__tab {
-  min-height: 40px;
-  border-radius: 12px;
+  min-height: var(--dsh-control-height);
+  border-radius: var(--dsh-radius-md);
 }
 
 .dsh-app[data-conversation-layout='focused'] .dsh-settings__provider {

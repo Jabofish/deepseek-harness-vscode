@@ -179,7 +179,8 @@ describe('CheckpointDrawer', () => {
     const trigger = screen.getByRole('button', { name: 'Create' })
     trigger.focus()
     fireEvent.click(trigger)
-    expect(screen.getByLabelText('Label')).toBeDefined()
+    const input = screen.getByLabelText('Label')
+    expect(input.closest('.dsh-checkpoints-popover__menu')).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
 
@@ -268,7 +269,7 @@ describe('CheckpointDrawer', () => {
     // The row list is the sibling content the dialog claims to hide from
     // assistive tech: it must actually be inert while the confirmation is up.
     const rows = document.querySelector('.dsh-checkpoints-popover__rows')
-    expect(rows?.hasAttribute('inert')).toBe(true)
+    expect(rows?.closest('[inert]')).toBeInstanceOf(HTMLElement)
 
     fireEvent.keyDown(document, { key: 'Tab' })
     expect(document.activeElement).toBe(confirm)
@@ -279,6 +280,6 @@ describe('CheckpointDrawer', () => {
 
     fireEvent.click(cancel)
     expect(screen.queryByRole('alertdialog')).toBeNull()
-    expect(rows?.hasAttribute('inert')).toBe(false)
+    expect(rows?.closest('[inert]')).toBeNull()
   })
 })

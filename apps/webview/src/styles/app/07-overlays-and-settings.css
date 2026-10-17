@@ -67,7 +67,9 @@
 
 .dsh-settings {
   width: min(100%, 64rem);
-  height: min(100%, 48rem);
+  max-height: min(100%, 48rem);
+  /* Short pages size to their content while tabs keep the same origin. */
+  align-self: start;
 }
 
 .dsh-settings__header,
@@ -251,6 +253,28 @@
   grid-template-columns: minmax(0, auto) minmax(0, 1fr);
   gap: var(--dsh-space-2) var(--dsh-space-4);
   margin: 0;
+}
+
+.dsh-settings__environment {
+  min-width: 0;
+  font-size: var(--dsh-font-size-sm);
+}
+
+.dsh-settings__environment > summary {
+  width: fit-content;
+  max-width: 100%;
+  padding-block: var(--dsh-space-1);
+  color: var(--dsh-muted);
+  cursor: pointer;
+}
+
+.dsh-settings__environment > summary:hover,
+.dsh-settings__environment > summary:focus-visible {
+  color: var(--dsh-text);
+}
+
+.dsh-settings__environment[open] > summary {
+  margin-bottom: var(--dsh-space-2);
 }
 
 .dsh-settings__facts dt,

@@ -1,4 +1,5 @@
 .dsh-focused-dialog-layer {
+  --dsh-dialog-padding: var(--dsh-space-4);
   position: fixed;
   inset: 0;
   z-index: 110;
@@ -6,22 +7,37 @@
   place-items: center;
   padding: 12px;
   background: rgb(0 0 0 / 30%);
-  font-family: var(--vscode-font-family, sans-serif);
+  font-family: var(--vscode-font-family, system-ui, sans-serif);
+  font-size: var(--dsh-font-size-sm);
+  line-height: var(--dsh-line-height-body);
 }
 .dsh-focused-dialog-layer > :is(form, section) {
   box-sizing: border-box;
   width: min(520px, calc(100vw - 24px));
   max-height: calc(100vh - 24px);
   margin: 0;
-  padding: 20px;
+  padding: var(--dsh-dialog-padding);
   overflow: auto;
   border: 1px solid var(--dsh-border-color);
   border-radius: 12px;
   color: var(--dsh-text);
   background: var(--dsh-widget-bg);
   box-shadow: var(--dsh-shadow);
-  font-size: var(--dsh-font-size-xs);
+  font-size: inherit;
   scrollbar-width: thin;
+}
+.dsh-focused-dialog-layer > :is(form, section) > strong {
+  font-size: var(--dsh-font-size-md);
+  font-weight: 600;
+}
+.dsh-focused-dialog-layer .dsh-button {
+  min-height: var(--dsh-control-height);
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  border-radius: var(--dsh-radius-md);
+  font-weight: 400;
+}
+.dsh-focused-dialog-layer :is(input:not([type='checkbox']), textarea, .dsh-select-menu__trigger) {
+  font-size: var(--dsh-font-size-sm);
 }
 .dsh-focused-dialog-layer :is(input:not([type='checkbox']), textarea) {
   box-sizing: border-box;
@@ -51,11 +67,21 @@
 .dsh-focused-dialog-layer
   :is(.dsh-checkpoints-popover__dialog-actions, .dsh-prompt-templates-popover__dialog-actions) {
   position: sticky;
-  bottom: -20px;
-  margin: 0 -20px -20px;
-  padding: 12px 20px;
+  bottom: calc(-1 * var(--dsh-dialog-padding));
+  margin: 0 calc(-1 * var(--dsh-dialog-padding)) calc(-1 * var(--dsh-dialog-padding));
+  padding: var(--dsh-space-2) var(--dsh-dialog-padding);
   border-top: 1px solid var(--dsh-border-color);
   background: var(--dsh-widget-bg);
+}
+@media (max-width: 24rem), (max-height: 30rem) {
+  .dsh-focused-dialog-layer {
+    --dsh-dialog-padding: var(--dsh-space-3);
+    padding: var(--dsh-space-2);
+  }
+  .dsh-focused-dialog-layer > :is(form, section) {
+    width: min(520px, calc(100vw - 16px));
+    max-height: calc(100dvh - 16px);
+  }
 }
 .dsh-focused-dialog-layer .dsh-checkpoints-popover__preview-list > li {
   display: grid;
