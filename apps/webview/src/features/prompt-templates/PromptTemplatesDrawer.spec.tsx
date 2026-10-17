@@ -88,7 +88,7 @@ describe('PromptTemplatesDrawer', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Insert' }))
     await waitFor(() => expect(screen.getByRole('alertdialog')).toBeDefined())
-    expect(screen.getByText('Template context is missing')).toBeDefined()
+    expect(screen.getByText('Fill in template variables')).toBeDefined()
     fireEvent.click(screen.getByRole('button', { name: 'Keep placeholders' }))
     expect(onApply).toHaveBeenCalledWith(template.templateText)
     expect(props.onInsert).toHaveBeenCalledWith(summary.templateId, undefined)

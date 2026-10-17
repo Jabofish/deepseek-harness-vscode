@@ -22,6 +22,11 @@ describe('MessageActions feedback controls', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Bad response' }))
     expect(onFeedback).not.toHaveBeenCalled()
     expect(screen.getByRole('dialog', { name: 'Submit feedback' })).toBeDefined()
+    const editor = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Feedback details' })
+    const notice = document.getElementById(editor.getAttribute('aria-describedby') ?? '')
+    expect(notice?.textContent).toContain('includes the current conversation log')
+    expect(editor.placeholder).toBe('What worked well, or what went wrong? (Optional)')
+    expect(editor.placeholder).not.toBe(notice?.textContent)
 
     fireEvent.click(screen.getByRole('button', { name: 'Task result' }))
     fireEvent.change(screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Feedback details' }), {

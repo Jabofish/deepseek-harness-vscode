@@ -20,9 +20,9 @@ describe('RuntimeMissingView', () => {
       />,
     )
 
-    expect(screen.getByRole('heading', { name: "DeepSeek Harness isn't ready yet" })).toBeDefined()
-    expect(screen.getByText(/DSH runs locally in the VS Code Extension Host/)).toBeDefined()
-    expect(screen.getByText(/the extension reconnects automatically/)).toBeDefined()
+    expect(screen.getByRole('heading', { name: 'DSH was not found' })).toBeDefined()
+    expect(screen.getByText(/environment where this VS Code workspace runs/)).toBeDefined()
+    expect(screen.getByText(/After a manual installation, choose Retry/)).toBeDefined()
     expect(screen.getByRole('button', { name: 'Install DSH' })).toBeDefined()
     expect(screen.getByRole('button', { name: 'Select DSH' })).toBeDefined()
     expect(screen.getByRole('button', { name: 'Copy command' })).toBeDefined()

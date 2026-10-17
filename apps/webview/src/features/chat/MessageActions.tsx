@@ -313,7 +313,7 @@ export function MessageActions(props: MessageActionsProps): ReactElement {
                   className="dsh-feedback-dialog__detail dsh-session-dialog__input"
                   aria-describedby={feedbackHintId}
                   value={dialogDraft}
-                  placeholder={translate('message.feedbackHint')}
+                  placeholder={translate('message.feedbackDetailsPlaceholder')}
                   rows={5}
                   maxLength={8_192}
                   readOnly={dialogSaving}

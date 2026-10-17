@@ -49,7 +49,7 @@ describe('DiagnosticsDrawer', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Diagnostics' }))
     await waitFor(() =>
-      expect(screen.getByRole('alert').textContent).toBe('The diagnostics snapshot is unavailable.'),
+      expect(screen.getByRole('alert').textContent).toBe('Diagnostics are temporarily unavailable.'),
     )
     fireEvent.click(screen.getByRole('button', { name: 'Refresh diagnostics' }))
     await waitFor(() => expect(onRead).toHaveBeenCalledTimes(2))
@@ -72,9 +72,11 @@ describe('DiagnosticsDrawer', () => {
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Diagnostics' })).toBeDefined())
     fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }))
 
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('That action failed'))
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toContain('The action could not be completed'),
+    )
     // The refusal must not replace the snapshot the user was just reading.
     expect(screen.getByRole('heading', { name: 'Diagnostics' })).toBeDefined()
-    expect(screen.queryByText('The diagnostics snapshot is unavailable.')).toBeNull()
+    expect(screen.queryByText('Diagnostics are temporarily unavailable.')).toBeNull()
   })
 })

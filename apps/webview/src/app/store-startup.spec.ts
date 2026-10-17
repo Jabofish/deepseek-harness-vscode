@@ -1684,7 +1684,9 @@ describe('AppStore startup session restoration', () => {
     // host will refuse, so a directory without it is no directory at all.
     expect(store.sessionModels).toEqual([])
     expect(store.sessionModelRoutable).toBeUndefined()
-    expect(store.sessionModelDirectoryError).toBe('DSH returned a malformed session model directory.')
+    expect(store.sessionModelDirectoryError).toBe(
+      'Could not load the model list: DSH returned unsupported data.',
+    )
     store.dispose()
   })
 
@@ -1711,7 +1713,9 @@ describe('AppStore startup session restoration', () => {
     // "default" for a host that may already be running something else.
     expect(store.sessionModels).toEqual([])
     expect(store.sessionModelCurrent).toBeUndefined()
-    expect(store.sessionModelDirectoryError).toBe('DSH returned a malformed session model directory.')
+    expect(store.sessionModelDirectoryError).toBe(
+      'Could not load the model list: DSH returned unsupported data.',
+    )
     store.dispose()
   })
 
@@ -1742,7 +1746,9 @@ describe('AppStore startup session restoration', () => {
     // The label is what the seat shows and the id is what travels back in a
     // selection; a level missing either would render as a nameless row.
     expect(store.sessionModels).toEqual([])
-    expect(store.sessionModelDirectoryError).toBe('DSH returned a malformed session model directory.')
+    expect(store.sessionModelDirectoryError).toBe(
+      'Could not load the model list: DSH returned unsupported data.',
+    )
     store.dispose()
   })
 

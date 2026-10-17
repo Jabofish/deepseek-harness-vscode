@@ -112,7 +112,7 @@ describe('ChangesDrawer', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '1 changes' }))
     expect(screen.getByText('src/main.ts')).toBeDefined()
-    expect(screen.getByText('Proposal')).toBeDefined()
+    expect(screen.getByText('Proposed change')).toBeDefined()
     fireEvent.click(screen.getByRole('button', { name: 'Review src/main.ts' }))
     await waitFor(() => expect(document.querySelector('pre')?.textContent).toBe('--- old\nold\n+++ new\nnew'))
     fireEvent.click(screen.getByTitle('src/main.ts'))
@@ -155,12 +155,12 @@ describe('ChangesDrawer', () => {
     // The list with its state must survive the detail dismissal, and the row
     // control that opened the preview takes the keyboard back.
     expect(screen.queryByRole('region', { name: 'Change detail' })).toBeNull()
-    expect(screen.getByRole('dialog', { name: 'Structured changes' })).toBeDefined()
+    expect(screen.getByRole('dialog', { name: 'File changes' })).toBeDefined()
     expect(document.activeElement).toBe(detailOpener)
 
     fireEvent.keyDown(document.querySelector('.dsh-changes-popover')!, { key: 'Escape' })
 
-    expect(screen.queryByRole('dialog', { name: 'Structured changes' })).toBeNull()
+    expect(screen.queryByRole('dialog', { name: 'File changes' })).toBeNull()
     expect(document.activeElement).toBe(trigger)
   })
 

@@ -394,7 +394,7 @@ describe('SettingsDrawer', () => {
     expect(screen.getByRole('button', { name: '中文' })).toBeDefined()
 
     fireEvent.click(screen.getByRole('tab', { name: '模型' }))
-    expect(screen.getByText('1 个 Provider · 2 个模型')).toBeDefined()
+    expect(screen.getByText('1 个服务商 · 2 个模型')).toBeDefined()
     expect(screen.getByText('缺失')).toBeDefined()
     expect(screen.getByRole('button', { name: '配置' })).toBeDefined()
   })
@@ -510,8 +510,8 @@ describe('SettingsDrawer', () => {
     renderDrawer({ onConfigureConnection })
 
     await screen.findByRole('heading', { name: 'DSH connection' })
-    fireEvent.click(screen.getByRole('radio', { name: /Custom endpoint/ }))
-    fireEvent.change(screen.getByRole('textbox', { name: 'Service endpoint' }), {
+    fireEvent.click(screen.getByRole('radio', { name: /Custom connection/ }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'DSH service address' }), {
       target: { value: 'http://127.0.0.1:4310' },
     })
     fireEvent.click(screen.getByRole('button', { name: 'Apply and reconnect' }))
@@ -525,11 +525,11 @@ describe('SettingsDrawer', () => {
     renderDrawer({ onConfigureConnection })
 
     await screen.findByRole('heading', { name: 'DSH connection' })
-    fireEvent.click(screen.getByRole('radio', { name: /Custom endpoint/ }))
+    fireEvent.click(screen.getByRole('radio', { name: /Custom connection/ }))
     fireEvent.click(screen.getByRole('button', { name: 'Apply and reconnect' }))
 
     expect(onConfigureConnection).not.toHaveBeenCalled()
-    expect((await screen.findByRole('alert')).textContent).toContain('Enter a DSH endpoint first.')
+    expect((await screen.findByRole('alert')).textContent).toContain('Enter a DSH service address first.')
   })
 
   it('does not preselect a connection mode the page cannot represent and blocks Apply until one is chosen', async () => {
@@ -544,10 +544,10 @@ describe('SettingsDrawer', () => {
 
     await screen.findByRole('heading', { name: 'DSH connection' })
     const automatic = screen.getByRole('radio', { name: /Automatic/ })
-    const custom = screen.getByRole('radio', { name: /Custom endpoint/ })
+    const custom = screen.getByRole('radio', { name: /Custom connection/ })
     expect(automatic).toHaveProperty('checked', false)
     expect(custom).toHaveProperty('checked', false)
-    expect(screen.getByText(/is set in VS Code settings and is not listed here/)).toBeDefined()
+    expect(screen.getByText(/is managed in VS Code settings/)).toBeDefined()
 
     const apply = screen.getByRole('button', { name: 'Apply and reconnect' })
     expect(apply).toHaveProperty('disabled', true)
@@ -573,14 +573,14 @@ describe('SettingsDrawer', () => {
 
     await screen.findByRole('heading', { name: 'DSH connection' })
     expect(screen.getByText('new-isolated')).toBeDefined()
-    expect(screen.getByRole('radio', { name: /Custom endpoint/ })).toHaveProperty('checked', false)
+    expect(screen.getByRole('radio', { name: /Custom connection/ })).toHaveProperty('checked', false)
 
     view.rerender(drawerElement({ open: false, onLoadSettings }))
     view.rerender(drawerElement({ open: true, onLoadSettings }))
 
     await screen.findByRole('heading', { name: 'DSH connection' })
     await waitFor(() =>
-      expect(screen.getByRole('radio', { name: /Custom endpoint/ })).toHaveProperty('checked', true),
+      expect(screen.getByRole('radio', { name: /Custom connection/ })).toHaveProperty('checked', true),
     )
   })
 
@@ -609,7 +609,7 @@ describe('SettingsDrawer', () => {
 
     await waitFor(() => expect(onLoadSettings).toHaveBeenCalledTimes(2))
     await waitFor(() =>
-      expect(screen.getByRole('radio', { name: /Custom endpoint/ })).toHaveProperty('checked', true),
+      expect(screen.getByRole('radio', { name: /Custom connection/ })).toHaveProperty('checked', true),
     )
   })
 
@@ -686,7 +686,7 @@ describe('SettingsDrawer', () => {
     const onInstallDshVersion = vi.fn().mockResolvedValue(dshUpdate)
     renderDrawer({ dshUpdate, onCheckDshUpdates, onInstallDshVersion })
 
-    expect(await screen.findByText('An upstream update is available: 0.1.0-rc.8.')).toBeDefined()
+    expect(await screen.findByText('DSH 0.1.0-rc.8 is available.')).toBeDefined()
     fireEvent.click(screen.getByRole('button', { name: 'Check now' }))
     await waitFor(() => expect(onCheckDshUpdates).toHaveBeenCalledWith(true))
     fireEvent.click(screen.getByRole('button', { name: /Version to install: 0\.1\.0-rc\.8/u }))
@@ -771,7 +771,7 @@ describe('SettingsDrawer', () => {
       onInstallDshVersion: vi.fn().mockResolvedValue(dshUpdate),
     })
 
-    expect(await screen.findByText(/Extension Host could not start npm/i)).toBeDefined()
+    expect(await screen.findByText(/Could not run npm in the extension environment/i)).toBeDefined()
   })
 
   it('opens the host-owned settings document when the host advertises one', async () => {
@@ -799,7 +799,7 @@ describe('SettingsDrawer', () => {
     await waitFor(() => expect(screen.getByRole('group', { name: 'Permission' })).toBeDefined())
     expect(screen.getByRole('group', { name: 'Interface language' })).toBeDefined()
     expect(screen.getByRole('group', { name: 'Appearance' })).toBeDefined()
-    expect(screen.getByRole('group', { name: 'Composer Enter' })).toBeDefined()
+    expect(screen.getByRole('group', { name: 'Enter while running' })).toBeDefined()
     // Non-enum and non-General fields never gain a fabricated control.
     expect(screen.queryByRole('group', { name: 'timeoutMs' })).toBeNull()
     // The current permission value renders as the pressed segment.
@@ -1069,7 +1069,7 @@ describe('SettingsDrawer', () => {
       onLoadDshSettings: vi.fn().mockResolvedValue(rc2GeneralSettingsFixture({ writable: false })),
     })
 
-    await waitFor(() => expect(screen.getByText(/settings provider is read-only/i)).toBeDefined())
+    await waitFor(() => expect(screen.getByText(/DSH settings are read-only/i)).toBeDefined())
     expect(screen.queryByRole('group', { name: 'Workflow display' })).toBeNull()
     expect(screen.queryByRole('group', { name: 'Performance and usage' })).toBeNull()
     expect(screen.queryByRole('switch', { name: 'Developer Tools' })).toBeNull()
@@ -1177,7 +1177,7 @@ describe('SettingsDrawer', () => {
       onUpdateDshSetting,
     })
 
-    expect(await screen.findByText(/settings provider is read-only/i)).toBeDefined()
+    expect(await screen.findByText(/DSH settings are read-only/i)).toBeDefined()
     expect(screen.getByRole<HTMLButtonElement>('button', { name: 'dark' }).disabled).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: 'dark' }))
     expect(onUpdateDshSetting).not.toHaveBeenCalled()
@@ -1189,7 +1189,7 @@ describe('SettingsDrawer', () => {
     const onUpdateDshSetting = vi.fn().mockRejectedValue(failure)
     const onLoadDshSettings = vi.fn().mockResolvedValue(fixture)
     renderDrawer({ onUpdateDshSetting, onLoadDshSettings })
-    await waitFor(() => expect(screen.getByRole('group', { name: 'Composer Enter' })).toBeDefined())
+    await waitFor(() => expect(screen.getByRole('group', { name: 'Enter while running' })).toBeDefined())
     fireEvent.click(screen.getByRole('button', { name: 'steer' }))
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('settings-conflict'))
     await waitFor(() => expect(onLoadDshSettings).toHaveBeenCalledTimes(2))
@@ -1419,7 +1419,7 @@ describe('SettingsDrawer', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
 
     await waitFor(() => expect(onLoadDshSettings).toHaveBeenCalledTimes(2))
-    expect(await screen.findByRole('group', { name: 'Composer Enter' })).toBeDefined()
+    expect(await screen.findByRole('group', { name: 'Enter while running' })).toBeDefined()
   })
 
   it('configures a secret and refreshes the catalog afterwards', async () => {
@@ -1640,8 +1640,8 @@ describe('SettingsDrawer', () => {
     fireEvent.click(within(card).getByRole('button', { name: 'Save provider' }))
 
     await waitFor(() => expect(onCreateCustomProvider).toHaveBeenCalledOnce())
-    expect(within(card).getByRole('button', { name: 'Retry API key' })).toBeDefined()
-    fireEvent.click(within(card).getByRole('button', { name: 'Retry API key' }))
+    expect(within(card).getByRole('button', { name: 'Configure API key again' })).toBeDefined()
+    fireEvent.click(within(card).getByRole('button', { name: 'Configure API key again' }))
 
     await waitFor(() => expect(onConfigureSecret).toHaveBeenCalledWith('gateway', 'apiKeyEnv'))
     expect(onCreateCustomProvider).toHaveBeenCalledOnce()

@@ -236,7 +236,7 @@ describe('OptionalBundleManager', () => {
     await screen.findByText('Package: @dsh-community/new-plugin · 2.0.0')
     fireEvent.click(screen.getByRole('button', { name: 'Install' }))
     expect(await screen.findByText(/Installed version: 1\.2\.3\./u)).toBeTruthy()
-    expect(screen.getByText(/The running host uses modules from this package\./u)).toBeTruthy()
+    expect(screen.getByText(/DSH is using this package and must restart to update it\./u)).toBeTruthy()
   })
   it('renders live profile bundles, linked and standalone plugin entries, and DSH registry choices', async () => {
     const { requests } = mountManager()

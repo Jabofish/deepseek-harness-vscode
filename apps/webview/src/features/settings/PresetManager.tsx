@@ -354,7 +354,14 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
         className="dsh-presets__creator-card"
         type="button"
         disabled={!codingToolsEnabled || creatorBusy}
-        title={codingToolsEnabled ? t('presets.creatorDraftTitle') : t('presets.creatorDraftDisabled')}
+        title={
+          codingToolsEnabled
+            ? t('presets.creatorDraftTitle')
+            : t('presets.creatorDraftDisabled', {
+                section: t('settings.general'),
+                setting: t('settings.codingTools.label'),
+              })
+        }
         onClick={() => {
           if (creatorBusy) return
           setCreatorBusy(true)

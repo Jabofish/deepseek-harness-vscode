@@ -929,9 +929,7 @@ describe('App connected rendering', () => {
 
     expect((createButton as HTMLButtonElement).disabled).toBe(true)
     expect(
-      screen.getByText(
-        /DSH did not report a default preset, so creating a session could reuse an outdated selection/,
-      ),
+      screen.getByText(/DSH did not provide a default preset, and preset selection is unavailable/),
     ).toBeDefined()
     fireEvent.click(createButton)
 
@@ -940,7 +938,7 @@ describe('App connected rendering', () => {
 
   it.each([
     ['idle', 'Preparing DSH connection'],
-    ['starting', 'Opening DSH'],
+    ['starting', 'Starting DSH'],
     ['connecting', 'Connecting to DSH'],
   ] as const)('shows connection progress instead of an empty-session message (%s)', (kind, title) => {
     currentStore = storeFor({ ...connectedState(false), backend: { kind } })
@@ -1077,7 +1075,7 @@ describe('App connected rendering', () => {
       </I18nProvider>,
     )
 
-    const busyEnter = await screen.findByRole('group', { name: 'Composer Enter' })
+    const busyEnter = await screen.findByRole('group', { name: 'Enter while running' })
     fireEvent.click(within(busyEnter).getByRole('button', { name: 'steer' }))
     await waitFor(() =>
       expect(updateDshSetting).toHaveBeenCalledWith('ui-conversation.busyEnter', 'steer', 1),
@@ -1110,7 +1108,7 @@ describe('App connected rendering', () => {
     currentStore = store
     const view = render(<App />)
 
-    const busyEnter = await screen.findByRole('group', { name: 'Composer Enter' })
+    const busyEnter = await screen.findByRole('group', { name: 'Enter while running' })
     fireEvent.click(within(busyEnter).getByRole('button', { name: 'steer' }))
     await waitFor(() => expect(updateDshSetting).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(readDshSettings).toHaveBeenCalledTimes(3))
@@ -1240,7 +1238,7 @@ describe('App connected rendering', () => {
 
     render(<App />)
 
-    expect(screen.getByRole('heading', { name: "DeepSeek Harness isn't ready yet" })).toBeDefined()
+    expect(screen.getByRole('heading', { name: 'DSH was not found' })).toBeDefined()
     fireEvent.click(screen.getByRole('button', { name: 'Open settings' }))
     expect(setDrawer).toHaveBeenCalledWith('settings')
   })

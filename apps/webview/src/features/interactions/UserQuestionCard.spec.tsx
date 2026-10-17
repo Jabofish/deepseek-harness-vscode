@@ -57,7 +57,7 @@ describe('UserQuestionCard', () => {
     )
 
     // A plan-review intent inside a multi-question ask stays in the generic flow.
-    expect(screen.getByText('INPUT NEEDED')).toBeDefined()
+    expect(screen.getByText('Your input is needed')).toBeDefined()
     expect(screen.getByText('Refactor')).toBeDefined()
     expect(screen.getByText('1. Do it')).toBeDefined()
     expect(screen.getByText('Run the plan now')).toBeDefined()
@@ -183,7 +183,7 @@ describe('UserQuestionCard', () => {
       />,
     )
 
-    expect(screen.getByText('INPUT NEEDED')).toBeDefined()
+    expect(screen.getByText('Your input is needed')).toBeDefined()
     expect(screen.getByLabelText('Answer for Choose')).toBeDefined()
     fireEvent.click(screen.getByLabelText('Allow'))
     fireEvent.click(submitButton())
@@ -279,7 +279,7 @@ describe('UserQuestionCard', () => {
         onCancel={onCancel}
       />,
     )
-    expect(screen.getByText('PLAN REVIEW')).toBeDefined()
+    expect(screen.getByText('Review plan')).toBeDefined()
     expect(screen.queryByRole('button', { name: 'Skip this question' })).toBeNull()
     // The generic Submit can never be enabled for a review, so the decision row
     // is the only footer.
@@ -349,6 +349,7 @@ describe('UserQuestionCard', () => {
     fireEvent.click(screen.getByRole('radio', { name: /workspace/ }))
     await waitFor(() => expect(onReleaseWait).toHaveBeenCalled())
 
+    expect(screen.getByText('The timer has ended. You can still try submitting an answer.')).toBeDefined()
     expect(submitButton().disabled).toBe(false)
     fireEvent.click(submitButton())
     await waitFor(() => expect(onRespond).toHaveBeenCalledOnce())
@@ -382,7 +383,7 @@ describe('UserQuestionCard', () => {
       />,
     )
 
-    expect(await screen.findByText('Connecting to the timed question…')).toBeDefined()
+    expect(await screen.findByText('Checking question status…')).toBeDefined()
     fireEvent.click(screen.getByRole('radio', { name: /workspace/ }))
     expect(submitButton().disabled).toBe(false)
     fireEvent.click(submitButton())
@@ -391,7 +392,7 @@ describe('UserQuestionCard', () => {
 
   it('freezes the answer fields when the timed wait fails', async () => {
     // A failed claim is the one timed state where Submit is genuinely blocked
-    // (`question.waitUnavailable` says to reconnect). While that message is on
+    // (the card offers Retry). While that message is on
     // screen the fields must not keep accepting edits, or the user retypes an
     // answer into a card whose Submit is disabled and whose only exit is Retry.
     render(
@@ -414,7 +415,7 @@ describe('UserQuestionCard', () => {
       />,
     )
 
-    expect(await screen.findByText(/could not be claimed/u)).toBeDefined()
+    expect(await screen.findByText(/Could not connect to this question/u)).toBeDefined()
     expect(screen.getByRole('radio', { name: /workspace/ }).hasAttribute('disabled')).toBe(true)
     expect(screen.getByLabelText('Answer for Which scope?').hasAttribute('disabled')).toBe(true)
     expect(submitButton().disabled).toBe(true)

@@ -610,6 +610,7 @@ describe('registry-only preset policy', () => {
     renderManager({ onStartCreatorDraft, codingToolsEnabled: false })
     const button = await screen.findByRole('button', { name: 'Ask Agent to create a mode' })
     expect(button.hasAttribute('disabled')).toBe(true)
+    expect(button.title).toBe('Enable Developer Tools in General settings first.')
     fireEvent.click(button)
     expect(onStartCreatorDraft).not.toHaveBeenCalled()
   })

@@ -10,8 +10,8 @@ describe('RuntimeConnectionView', () => {
   it.each([
     ['idle', 'Preparing DSH connection'],
     ['discovering', 'Finding DSH'],
-    ['locating-runtime', 'Locating DSH runtime'],
-    ['starting', 'Opening DSH'],
+    ['locating-runtime', 'Looking for DSH'],
+    ['starting', 'Starting DSH'],
     ['connecting', 'Connecting to DSH'],
   ] as const)('renders the live connection stage for %s', (kind, title) => {
     render(<RuntimeConnectionView state={{ kind }} />)

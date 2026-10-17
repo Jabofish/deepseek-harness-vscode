@@ -140,7 +140,7 @@ describe('ProtocolClient', () => {
     const client = new ProtocolClient({ postMessage, getState: () => undefined, setState: () => undefined })
     const request = client.request<unknown>({ type: 'app.ready', requestId: 'same' })
     await expect(client.request({ type: 'app.ready', requestId: 'same' })).rejects.toThrow(
-      'Duplicate request id',
+      'This request is already in use',
     )
     client.handle({
       protocolVersion: PROTOCOL_VERSION,
@@ -460,8 +460,8 @@ describe('ProtocolClient', () => {
     const first = client.request({ type: 'app.ready', requestId: 'one' })
     const second = client.request({ type: 'connection.retry', requestId: 'two' })
     client.dispose()
-    await expect(first).rejects.toThrow('disposed')
-    await expect(second).rejects.toThrow('disposed')
+    await expect(first).rejects.toThrow('This view has closed')
+    await expect(second).rejects.toThrow('This view has closed')
   })
 
   it('does not persist prompts, tool output, endpoints, or credentials', () => {
