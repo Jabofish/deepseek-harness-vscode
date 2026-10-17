@@ -45,6 +45,7 @@
     "../apps/extension/src/view/transcript-window.ts",
     "../apps/extension/src/schedules/schedule-feature-handler.ts",
     "../packages/dsh-adapter/test/fixtures/alpha211-contract.ts",
-    "../packages/dsh-adapter/test/support/contract-harness.ts"
+    "../packages/dsh-adapter/test/support/contract-harness.ts",
+    "../packages/dsh-adapter/test/support/streaming-mux.ts"
   ]
 }

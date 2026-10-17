@@ -587,6 +587,46 @@ describe('DSH 0.1.3-alpha.1 Session v2 contract', () => {
     ).toThrow(/abandoned with a pending durable settlement/u)
   })
 
+  it('validates a repair baseline before replacing progress and resets only a complete replay', () => {
+    const projector = new Alpha13AssistantStreamProjector()
+    const baseline = (texts: string[]): unknown => ({
+      revision: texts.length + 1,
+      activeAttempt: {
+        attemptId: 'repair',
+        startedAfterSeq: 0,
+        turn: 1,
+        step: 1,
+        nextIndex: texts.length,
+        stream: [{ type: 'text-chunks', time0: 1, index: 0, dt: texts.slice(1).map(() => 0), texts }],
+      },
+    })
+    expect(projector.open(baseline(['prefix']), 's1')).toMatchObject([{ transientSequence: 1, index: 0 }])
+    expect(() =>
+      projector.open(
+        {
+          revision: 3,
+          activeAttempt: {
+            attemptId: 'repair',
+            startedAfterSeq: 0,
+            turn: 1,
+            step: 1,
+            nextIndex: 99,
+            stream: [{ type: 'text-chunks', time0: 1, index: 0, dt: [], texts: ['prefix'] }],
+          },
+        },
+        's1',
+        true,
+      ),
+    ).toThrow(/nextIndex/u)
+    expect(projector.open(baseline(['prefix', ' suffix']), 's1', true)).toMatchObject([
+      { transientSequence: 2, index: 1, chunk: { text: ' suffix' } },
+    ])
+    expect(projector.open(baseline(['prefix', ' suffix']), 's1')).toMatchObject([
+      { transientSequence: 1, index: 0, chunk: { text: 'prefix' } },
+      { transientSequence: 2, index: 1, chunk: { text: ' suffix' } },
+    ])
+  })
+
   it('keeps transient ordering across a durable event and a retry attempt', () => {
     const projector = new Alpha13AssistantStreamProjector()
     projector.open({ revision: 0 }, 's1')

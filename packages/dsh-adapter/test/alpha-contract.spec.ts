@@ -1936,7 +1936,7 @@ async function waitForEvent(predicate: () => boolean): Promise<void> {
 }
 
 describe('alpha remote mux receive queue', () => {
-  it('keeps a logical stream alive when its buffer passes the receive queue limit', async () => {
+  it('preserves session frames in a burst beyond the old receive frame bound', async () => {
     FakeWebSocket.instances.length = 0
     const transport = client(
       vi.fn((_input: RequestInfo | URL, init?: RequestInit) => Promise.resolve(response(init, undefined))),
@@ -1964,13 +1964,8 @@ describe('alpha remote mux receive queue', () => {
       value: { type: 'session/subscribed', lastSeq: 0 },
     })
 
-    // The stream consumer can await inside its read loop (history recovery on
-    // a seq gap), so the host can keep pushing mid-turn delta frames while the
-    // generator is suspended at its yield. The queue stays bounded, but
-    // overflowing it drops only the buffered frames: failing the stream here
-    // tore down the mux generation mid-answer and cascaded into reconnect
-    // storms. The dropped range resurfaces as an ordinary sequence hole that
-    // stream-controller gap detection heals from history.
+    // A small burst is not a sequence gap. The async consumer may resume only
+    // after all these frames arrive; retain the complete ordered range.
     for (let index = 1; index <= 300; index += 1)
       socket.message(
         streamItem(socket, {
@@ -1978,19 +1973,11 @@ describe('alpha remote mux receive queue', () => {
           event: { type: 'turn/start', seq: index, time: index, data: { turn: 1 } },
         }),
       )
-    // The buffered frames beyond the bound were dropped, so the first frame
-    // the consumer observes after resuming is a later one from the burst.
-    const resumed = await iterator.next()
-    expect(resumed).toMatchObject({ done: false, value: { type: 'session/event' } })
-    expect((resumed.value as { readonly event?: { readonly seq?: number } }).event?.seq ?? 0).toBeGreaterThan(
-      0,
-    )
-    // The stream itself survives the overflow; the next frame still arrives
-    // instead of the previous PROTOCOL_ERROR teardown.
-    await expect(iterator.next()).resolves.toMatchObject({
-      done: false,
-      value: { type: 'session/event' },
-    })
+    for (let seq = 1; seq <= 300; seq += 1)
+      await expect(iterator.next()).resolves.toMatchObject({
+        done: false,
+        value: { type: 'session/event', event: { seq } },
+      })
     await transport.close()
   })
 

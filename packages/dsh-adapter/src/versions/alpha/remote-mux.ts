@@ -21,7 +21,13 @@ export interface AlphaWebSocket {
 }
 
 export interface AlphaWebSocketConstructor {
-  new (url: string, options?: { readonly headers?: Readonly<Record<string, string>> }): AlphaWebSocket
+  new (
+    url: string,
+    options?: {
+      readonly headers?: Readonly<Record<string, string>>
+      readonly allowSynchronousEvents?: boolean
+    },
+  ): AlphaWebSocket
 }
 
 /** Normalize one upstream alpha Remote code into the local compatibility vocabulary. */
@@ -114,7 +120,9 @@ export class AlphaRemoteMux {
 
     const state: AlphaMuxStream = {
       endpoint,
-      queue: new AsyncQueue<unknown>(RECEIVE_QUEUE_LIMIT, endpoint === 'session/follow'),
+      queue: new AsyncQueue<unknown>(
+        endpoint === 'session/follow' ? SESSION_RECEIVE_QUEUE_LIMIT : RECEIVE_QUEUE_LIMIT,
+      ),
       terminal: false,
     }
     const streamId = randomUUID()
@@ -236,10 +244,13 @@ export class AlphaRemoteMux {
     const target = new URL('/api/remote.mux', this.options.endpoint.baseUrl)
     target.protocol = target.protocol === 'https:' ? 'wss:' : 'ws:'
     const cookie = this.options.authCookie?.(this.options.endpoint)
-    const socket =
-      cookie === undefined || cookie.trim() === ''
-        ? new WebSocketConstructor(target.toString())
-        : new WebSocketConstructor(target.toString(), { headers: { Cookie: cookie } })
+    // ws otherwise drains every frame in one socket read synchronously. Let
+    // async consumers and Host delivery run between frames instead of filling
+    // the receive queue before its iterator gets a turn. This adds no timer.
+    const socket = new WebSocketConstructor(target.toString(), {
+      allowSynchronousEvents: false,
+      ...(cookie === undefined || cookie.trim() === '' ? {} : { headers: { Cookie: cookie } }),
+    })
     this.connectingSocket = socket
 
     return new Promise<AlphaWebSocket>((resolve, reject) => {
@@ -336,9 +347,11 @@ export class AlphaRemoteMux {
 
   private dispatch(socket: AlphaWebSocket, event: unknown, cleanup: () => void): void {
     let frame: Record<string, unknown>
+    let chars: number
     try {
       const text = textOfSocketData(event)
-      if (text.length > 8 * 1024 * 1024) throw new Error('frame too large')
+      chars = text.length
+      if (chars > RECEIVE_QUEUE_MAX_CHARS) throw new Error('frame too large')
       const decoded: unknown = JSON.parse(text)
       if (!isPlainRecord(decoded)) throw new Error('frame is not an object')
       frame = decoded
@@ -357,7 +370,7 @@ export class AlphaRemoteMux {
     if (state === undefined || state.terminal) return
     switch (frame.type) {
       case 'item':
-        if (!state.queue.push(frame.value)) {
+        if (!state.queue.push(frame.value, chars)) {
           state.terminal = true
           this.sendCancel(streamId, state)
         }
@@ -455,9 +468,15 @@ export class AlphaRemoteMux {
 
 /** Matches the rc.6 transport's per-stream receive queue bound. */
 const RECEIVE_QUEUE_LIMIT = 256
+// Token frames are tiny and a single WebSocket read may deliver many before
+// the async iterator runs. Bound their bytes as well as their count instead of
+// dropping them every 256 frames and repeatedly rereading the same history.
+const SESSION_RECEIVE_QUEUE_LIMIT = 4_096
+const RECEIVE_QUEUE_MAX_CHARS = 8 * 1024 * 1024
 
 class AsyncQueue<T> implements AsyncIterable<T> {
-  private readonly values: T[] = []
+  private readonly values: { readonly value: T; readonly chars: number }[] = []
+  private chars = 0
   private readonly waiters: Array<{
     resolve: (result: IteratorResult<T>) => void
     reject: (error: unknown) => void
@@ -465,39 +484,29 @@ class AsyncQueue<T> implements AsyncIterable<T> {
   private finished = false
   private failure: unknown
 
-  public constructor(
-    private readonly capacity: number,
-    private readonly recoverableSequenceGaps: boolean,
-  ) {}
+  public constructor(private readonly capacity: number) {}
 
-  public push(value: T): boolean {
+  public push(value: T, chars: number): boolean {
     if (this.finished) return false
     const waiter = this.waiters.shift()
     if (waiter === undefined) {
-      // The stream consumer can await inside its read loop (history recovery
-      // on a seq gap), so the host can keep pushing frames while the
-      // generator is suspended at its yield. Bound the buffer like the rc.6
-      // transport does, but keep the stream alive past the bound: dropping
-      // the buffered frames turns into an ordinary sequence hole that the
-      // stream controller's gap detection and history recovery heal, while
-      // failing the stream here tore down the mux generation mid-answer and
-      // cascaded into reconnect storms that lost whole turns.
-      if (this.values.length >= this.capacity) {
+      if (this.values.length >= this.capacity || this.chars + chars > RECEIVE_QUEUE_MAX_CHARS) {
+        // Session/follow includes transient frames that history cannot heal.
+        // Losing even one requires a fresh authoritative baseline. Fail only
+        // this logical stream; never silently discard part of an attempt.
         this.values.length = 0
-        // Control projections, jobs and interaction streams have no durable
-        // sequence recovery. Force a fresh baseline rather than lose updates.
-        if (!this.recoverableSequenceGaps) {
-          this.fail(
-            new AppError({
-              code: 'PROTOCOL_ERROR',
-              message: 'The DSH logical stream exceeded its receive queue limit.',
-              retryable: true,
-            }),
-          )
-          return false
-        }
+        this.chars = 0
+        this.fail(
+          new AppError({
+            code: 'PROTOCOL_ERROR',
+            message: 'The DSH logical stream exceeded its receive queue limit.',
+            retryable: true,
+          }),
+        )
+        return false
       }
-      this.values.push(value)
+      this.values.push({ value, chars })
+      this.chars += chars
       return true
     }
     waiter.resolve({ value, done: false })
@@ -520,7 +529,11 @@ class AsyncQueue<T> implements AsyncIterable<T> {
   public [Symbol.asyncIterator](): AsyncIterator<T> {
     return {
       next: (): Promise<IteratorResult<T>> => {
-        if (this.values.length > 0) return Promise.resolve({ value: this.values.shift() as T, done: false })
+        const entry = this.values.shift()
+        if (entry !== undefined) {
+          this.chars -= entry.chars
+          return Promise.resolve({ value: entry.value, done: false })
+        }
         if (this.finished) {
           if (this.failure === undefined) return Promise.resolve({ value: undefined as T, done: true })
           return Promise.reject(

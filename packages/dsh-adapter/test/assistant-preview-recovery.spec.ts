@@ -222,8 +222,8 @@ describe('assistant preview recovery', () => {
       deltas.map((event) => [event.transientAttemptId, event.transientIndex, event.transientSequence]),
     ).toEqual([
       ['a1', 0, 1],
-      ['a1', 1, 1],
-      ['a1', 2, 2],
+      ['a1', 1, 2],
+      ['a1', 2, 3],
     ])
 
     await controller.close()

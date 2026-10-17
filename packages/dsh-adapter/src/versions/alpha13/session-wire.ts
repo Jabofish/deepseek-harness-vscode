@@ -128,17 +128,27 @@ export class Alpha13AssistantStreamProjector {
   ): readonly Alpha13ProjectedChunk[] {
     const baseline = parseBaseline(baselineValue)
     const previous = preserveProgress ? this.activeAttempt : undefined
+    const attempt = baseline.activeAttempt
+    const chunks = attempt === undefined ? [] : expandAssistantStream(attempt.stream)
+    if (attempt !== undefined && chunks.length !== attempt.nextIndex)
+      throw new Error('assistant stream baseline nextIndex does not match its compact stream')
+    const continuing =
+      previous !== undefined &&
+      attempt !== undefined &&
+      previous.attemptId === attempt.attemptId &&
+      previous.startedAfterSeq === attempt.startedAfterSeq &&
+      previous.turn === attempt.turn &&
+      previous.step === attempt.step &&
+      previous.nextIndex <= attempt.nextIndex
     this.revision = baseline.revision
-    this.transientSequence = 0
+    // A repair publishes only the missing suffix of this follow's attempt.
+    // Keep its delivery identity too: sequence 1 tells the timeline to replace
+    // the old prefix, which is correct only for a complete baseline replay.
+    if (!continuing) this.transientSequence = 0
     this.pendingSettlements.clear()
     this.activeAttempt = undefined
     this.trimPublishedSequences()
-    if (baseline.activeAttempt === undefined) return []
-
-    const attempt = baseline.activeAttempt
-    const chunks = expandAssistantStream(attempt.stream)
-    if (chunks.length !== attempt.nextIndex)
-      throw new Error('assistant stream baseline nextIndex does not match its compact stream')
+    if (attempt === undefined) return []
     this.activeAttempt = {
       attemptId: attempt.attemptId,
       startedAfterSeq: attempt.startedAfterSeq,
@@ -147,14 +157,7 @@ export class Alpha13AssistantStreamProjector {
       nextIndex: attempt.nextIndex,
     }
     this.trimPublishedSequences()
-    const alreadyDelivered =
-      previous?.attemptId === attempt.attemptId &&
-      previous.startedAfterSeq === attempt.startedAfterSeq &&
-      previous.turn === attempt.turn &&
-      previous.step === attempt.step &&
-      previous.nextIndex <= attempt.nextIndex
-        ? previous.nextIndex
-        : 0
+    const alreadyDelivered = continuing ? previous.nextIndex : 0
     return chunks.slice(alreadyDelivered).map((item, offset) =>
       this.projectChunk(
         sessionId,

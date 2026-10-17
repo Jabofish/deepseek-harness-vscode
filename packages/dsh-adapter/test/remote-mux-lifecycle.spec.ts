@@ -68,6 +68,23 @@ async function opening(
 afterEach(() => vi.useRealTimers())
 
 describe('Remote mux lifecycle regressions', () => {
+  it('preserves a small session token burst while the async consumer is suspended', async () => {
+    const mux = fixture()
+    try {
+      const { iterator, first, socket, id } = await opening(mux, 'session/follow')
+      socket.item(id, { type: 'snapshot' })
+      await first
+      // One network read can dispatch hundreds of tiny frames before the async
+      // iterator resumes. They are ordered data, not recoverable history rows.
+      for (let index = 0; index < 1_000; index++) socket.item(id, { index, text: 'token' })
+      for (let index = 0; index < 1_000; index++)
+        expect(await iterator.next()).toEqual({ done: false, value: { index, text: 'token' } })
+      expect(socket.sent.filter((frame) => frame.type === 'cancel')).toHaveLength(0)
+    } finally {
+      await mux.close()
+    }
+  })
+
   it('does not drain buffered items after the caller cancels', async () => {
     const mux = fixture()
     const controller = new AbortController()
@@ -80,6 +97,26 @@ describe('Remote mux lifecycle regressions', () => {
     expect(socket.sent.filter((frame) => frame.type === 'cancel')).toHaveLength(1)
     await mux.close()
   })
+
+  it.each(['count', 'bytes'] as const)(
+    'rebaselines only the overflowing session (%s budget)',
+    async (budget) => {
+      const mux = fixture()
+      try {
+        const { iterator, first, socket, id } = await opening(mux, 'session/follow')
+        socket.item(id, { type: 'snapshot' })
+        await first
+        const value = budget === 'bytes' ? 'x'.repeat(2 * 1024 * 1024) : 'token'
+        for (let index = 0; index < 10_000 && !socket.sent.some((frame) => frame.type === 'cancel'); index++)
+          socket.item(id, value)
+        await expect(iterator.next()).rejects.toMatchObject({ code: 'PROTOCOL_ERROR', retryable: true })
+        expect(socket.sent).toContainEqual({ type: 'cancel', streamId: id })
+        expect(socket.readyState).toBe(1)
+      } finally {
+        await mux.close()
+      }
+    },
+  )
 
   it('settles a pending handshake immediately when disposed without a socket close event', async () => {
     vi.useFakeTimers()
