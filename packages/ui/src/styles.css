@@ -334,7 +334,8 @@
   border-radius: var(--dsh-radius-md);
   background: var(--dsh-surface-raised);
   box-shadow: 0 1rem 3rem color-mix(in srgb, var(--dsh-text) 20%, transparent);
-  animation: dsh-slide-in-end var(--dsh-motion-duration-slow) var(--dsh-motion-ease-emphasized-enter) both;
+  animation: dsh-slide-in-end var(--dsh-motion-duration-slow) var(--dsh-motion-ease-emphasized-enter)
+    backwards;
 }
 
 .dsh-drawer--left {
@@ -674,7 +675,7 @@
   min-width: 0;
   padding: var(--dsh-tool-detail-padding);
   border-top: var(--dsh-border);
-  animation: dsh-surface-enter var(--dsh-motion-duration-standard) var(--dsh-motion-ease-standard) both;
+  animation: dsh-surface-enter var(--dsh-motion-duration-standard) var(--dsh-motion-ease-standard) backwards;
 }
 
 .dsh-tool-card__section,

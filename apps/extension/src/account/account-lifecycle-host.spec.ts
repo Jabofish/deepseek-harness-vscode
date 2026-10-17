@@ -141,6 +141,30 @@ function harness(
 }
 
 describe('AccountLifecycleHost', () => {
+  it('projects alpha.5 localized notices without optional metadata and acknowledges through the Host', async () => {
+    const notice = { orderId: attemptId, title: 'Welcome\nnotice', message: 'Granted', expiresAt: '' }
+    const ackBonusNotified = vi.fn().mockResolvedValue(true)
+    const active = harness({
+      getState: vi.fn().mockResolvedValue(signedIn),
+      getUnnotifiedBonuses: vi.fn().mockResolvedValue({ accountId: 'private-account', bonuses: [notice] }),
+      ackBonusNotified,
+    })
+    active.host.start()
+    try {
+      const details = await active.host.readDetails()
+      expect(details.bonus).toEqual({ status: 'ready', value: { ...notice, title: 'Welcome notice' } })
+      expect(JSON.stringify(details)).not.toContain('private-account')
+      expect(await active.host.acknowledgeBonus(attemptId)).toBe(true)
+      expect(ackBonusNotified).toHaveBeenCalledWith(
+        'private-account',
+        attemptId,
+        client,
+        expect.any(AbortSignal),
+      )
+    } finally {
+      await active.host.dispose()
+    }
+  })
   it('uses only a validated DSH loopback baseUrl as callbackOrigin', async () => {
     const active = harness()
     active.host.start()

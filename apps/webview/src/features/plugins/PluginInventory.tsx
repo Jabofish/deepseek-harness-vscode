@@ -525,15 +525,6 @@ export function PluginInventory(props: PluginInventoryProps): ReactElement {
                   label={t('plugins.inventory.global')}
                 />
               </h4>
-              {snapshot?.managementAvailable === undefined ? null : (
-                <span>
-                  {t(
-                    snapshot.managementAvailable
-                      ? 'plugins.managementInDsh'
-                      : 'plugins.managementUnavailable',
-                  )}
-                </span>
-              )}
               <span
                 data-plugin-count={filteredGlobal.length}
                 data-plugin-total={globalEntries.length}
@@ -542,6 +533,13 @@ export function PluginInventory(props: PluginInventoryProps): ReactElement {
                 {countLabel(filteredGlobal.length, globalEntries.length, searching, t)}
               </span>
             </div>
+            {snapshot?.managementAvailable === undefined ? null : (
+              <p className="dsh-plugin-inventory__management-note">
+                {t(
+                  snapshot.managementAvailable ? 'plugins.managementInDsh' : 'plugins.managementUnavailable',
+                )}
+              </p>
+            )}
             {openGroupsInEffect.has('global') ? (
               <div className="dsh-plugin-inventory__group-body" id={globalBodyId}>
                 {globalEntries.length === 0 ? (

@@ -97,5 +97,7 @@ export function createInitialState(composerPreferences: ComposerPreferences): Ap
     questions: [],
     busyEnter: 'queue',
     drawer: undefined,
+    surface: undefined,
+    editorChats: 0,
   }
 }

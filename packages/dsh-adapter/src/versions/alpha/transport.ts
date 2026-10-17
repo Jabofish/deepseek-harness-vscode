@@ -942,10 +942,14 @@ export class AlphaLoopbackApiClient implements DshTransport {
   }
 
   private async *readWorkspace(signal: AbortSignal): AsyncGenerator<unknown> {
-    const pinnedWorkspace = this.options.workspaceWireVersion === 'pinned-v2'
+    const pinnedWorkspace =
+      this.options.workspaceWireVersion !== undefined && this.options.workspaceWireVersion !== 'archive-v1'
     for await (const item of this.openRemoteStream('workspace/follow', {}, signal)) {
       const frame = recordOrUndefined(item)
-      if (frame?.type === 'baseline') {
+      if (
+        frame?.type === 'baseline' ||
+        (frame?.type === 'replace' && this.options.workspaceWireVersion === 'pinned-replace-v3')
+      ) {
         const value = recordOrUndefined(frame.value)
         if (
           value === undefined ||

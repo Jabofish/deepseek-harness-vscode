@@ -74,7 +74,9 @@ describe('createWebviewHtml', () => {
 
     provider.resolveWebviewView({
       webview,
+      visible: true,
       onDidDispose: vi.fn(() => ({ dispose: vi.fn() })),
+      onDidChangeVisibility: vi.fn(() => ({ dispose: vi.fn() })),
     } as never)
 
     expect(webview.html).toContain('<html lang="zh-CN">')

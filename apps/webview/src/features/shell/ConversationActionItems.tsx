@@ -1,8 +1,8 @@
-import type { Dispatch, ReactElement, RefObject, SetStateAction } from 'react'
+import type { ReactElement } from 'react'
 import type { AppStore } from '../../app/store.js'
 import { setDraft } from '../../app/draft-store.js'
 import type { useI18n } from '../../i18n.js'
-import { Icon } from '../../ui/Icon.js'
+import { SelectMenu } from '../../components/common/SelectMenu.js'
 import { JobsDrawer } from '../jobs/JobsDrawer.js'
 import { ChangesDrawer } from '../changes/ChangesDrawer.js'
 import { TasksDrawer } from '../tasks/TasksDrawer.js'
@@ -44,9 +44,7 @@ interface ConversationActionItemsProps {
   readonly setShowDshEvents: (visible: boolean) => void
   readonly visibleExportSessionId: string | undefined
   readonly toggleExport: () => void
-  readonly localeControlRef: RefObject<HTMLSpanElement | null>
-  readonly localeOpen: boolean
-  readonly setLocaleOpen: Dispatch<SetStateAction<boolean>>
+  readonly closeMenu: () => void
   readonly locale: ReturnType<typeof useI18n>['locale']
   readonly applyLocale: (locale: 'en' | 'zh') => void
   readonly timelineOnOpenLink: (href: string) => Promise<void>
@@ -66,9 +64,7 @@ export function ConversationActionItems({
   setShowDshEvents,
   visibleExportSessionId,
   toggleExport,
-  localeControlRef,
-  localeOpen,
-  setLocaleOpen,
+  closeMenu,
   locale,
   applyLocale,
   timelineOnOpenLink,
@@ -212,46 +208,32 @@ export function ConversationActionItems({
           type="button"
           className="dsh-conversation__export-trigger"
           aria-expanded={visibleExportSessionId !== undefined}
-          onClick={toggleExport}
+          onClick={() => {
+            closeMenu()
+            toggleExport()
+          }}
         >
           {t('export.trigger')}
         </button>
       ) : null}
-      <span ref={localeControlRef} className="dsh-conversation__locale-control">
-        <button
-          type="button"
-          className="dsh-conversation__locale-switch"
-          aria-label={t('locale.label')}
-          title={t('locale.label')}
-          aria-haspopup="listbox"
-          aria-expanded={localeOpen}
-          onClick={() => setLocaleOpen((current) => !current)}
-        >
-          <span>{locale === 'zh' ? t('locale.chinese') : t('locale.english')}</span>
-          <Icon name="chevron-down" />
-        </button>
-        {localeOpen ? (
-          <div className="dsh-conversation__locale-menu" role="listbox" aria-label={t('locale.label')}>
-            {(['en', 'zh'] as const).map((option) => (
-              <button
-                key={option}
-                type="button"
-                role="option"
-                aria-selected={locale === option}
-                className={`dsh-conversation__locale-option${
-                  locale === option ? ' dsh-conversation__locale-option--selected' : ''
-                }`}
-                onClick={() => {
-                  applyLocale(option)
-                  setLocaleOpen(false)
-                }}
-              >
-                {option === 'zh' ? t('locale.chinese') : t('locale.english')}
-              </button>
-            ))}
-          </div>
-        ) : null}
-      </span>
+      <SelectMenu
+        className="dsh-conversation__locale-control"
+        icon="list"
+        density="regular"
+        displayLabel
+        label={t(locale === 'zh' ? 'locale.chinese' : 'locale.english')}
+        ariaLabel={t('locale.label')}
+        title={t('locale.label')}
+        placement="below"
+        value={locale}
+        options={[
+          { value: 'en', label: t('locale.english') },
+          { value: 'zh', label: t('locale.chinese') },
+        ]}
+        onChange={(value) => {
+          if (value === 'en' || value === 'zh') applyLocale(value)
+        }}
+      />
     </>
   )
 }

@@ -254,6 +254,7 @@ export function isValidRegistry(value: string): boolean {
 }
 
 export function failureKey(result: PluginBundleChangeResult): string {
+  if (result.errorCode === 'already-installed') return 'plugins.manager.failure.alreadyInstalled'
   if (result.errorCode === 'incompatible-version') return 'plugins.manager.failure.incompatible'
   if (result.errorCode === 'management-required' || result.errorCode === 'unaddressable')
     return 'plugins.manager.failure.protected'
@@ -283,7 +284,12 @@ export function resultText(t: Translate, result: PluginBundleChangeResult): stri
     result.version === undefined
       ? ''
       : ` ${t('plugins.manager.install.version', { version: result.version })}`
-  if (result.application === 'restart-required') return t('plugins.bundles.result.restart') + version
+  if (result.application === 'restart-required')
+    return (
+      t('plugins.bundles.result.restart') +
+      version +
+      (result.restartReason === undefined ? '' : ` ${t(`plugins.bundles.restart.${result.restartReason}`)}`)
+    )
   if (result.application === 'overridden') return t('plugins.bundles.result.overridden')
   if (result.application === 'cancelled') return t('plugins.bundles.result.cancelled')
   if (!result.changed) return t('plugins.bundles.result.unchanged')

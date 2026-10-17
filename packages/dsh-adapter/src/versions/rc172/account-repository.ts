@@ -125,7 +125,7 @@ export class Rc172AccountLifecycleRepository implements AccountLifecycleReposito
     client: AccountClientMetadata,
     signal?: AbortSignal,
   ): Promise<AccountBonusBatch | null> {
-    return readBonusBatch(
+    return this.readBonusBatch(
       await this.call('account/getUnnotifiedBonuses', { client }, signal),
       'account/getUnnotifiedBonuses',
     )
@@ -166,6 +166,10 @@ export class Rc172AccountLifecycleRepository implements AccountLifecycleReposito
     )
       throw malformed('account/getState')
     return page === 'usage' ? usage.href : topUp.href
+  }
+
+  protected readBonusBatch(value: unknown, method: string): AccountBonusBatch | null {
+    return readBonusBatch(value, method)
   }
 
   private async call(

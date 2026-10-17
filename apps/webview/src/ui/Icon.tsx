@@ -22,6 +22,7 @@ export type IconName =
   | 'list'
   | 'model'
   | 'more'
+  | 'open-in-editor'
   | 'paperclip'
   | 'plan'
   | 'person'
@@ -198,6 +199,15 @@ function renderIcon(name: IconName): ReactElement {
           <circle cx="5" cy="12" r="1" fill="currentColor" stroke="none" />
           <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
           <circle cx="19" cy="12" r="1" fill="currentColor" stroke="none" />
+        </>
+      )
+    case 'open-in-editor':
+      return (
+        <>
+          <rect x="3" y="5" width="18" height="14" rx="2" />
+          <path d="M15 5v14" />
+          <path d="M6.5 12h5" />
+          <path d="m9.5 9.5 2.5 2.5-2.5 2.5" />
         </>
       )
     case 'paperclip':

@@ -64,6 +64,17 @@ describe('motion system', () => {
     expect(webviewStyles.join('\n')).not.toMatch(/prefers-reduced-motion\s*:\s*reduce/u)
   })
 
+  it('releases entry transforms so nested fixed menus keep viewport coordinates', () => {
+    const entries =
+      /animation:\s*dsh-(?:surface-enter|slide-in-(?:start|end)|pop-in|rise-in|toast-in|pop-once)\b([^;]*);/gu
+    for (const styles of [uiStyles, ...webviewStyles]) {
+      for (const declaration of styles.matchAll(entries)) {
+        expect(declaration[1]).toContain('backwards')
+        expect(declaration[1]).not.toMatch(/\b(?:both|forwards)\b/u)
+      }
+    }
+  })
+
   it('does not put raw animation or transition durations in feature styles', () => {
     const rawDuration = /(?:animation|transition)(?:-[\w-]+)?\s*:[^;{}]*\b\d+(?:\.\d+)?(?:ms|s)\b/giu
     for (const styles of webviewStyles) expect(styles).not.toMatch(rawDuration)

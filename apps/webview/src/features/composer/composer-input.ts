@@ -1,4 +1,5 @@
 import type { OpenFileCandidate, ReferenceCandidate } from '../../app/store.js'
+import { normalizeClientCommandText } from '../../app/client-commands.js'
 import { formatPermissionLabel } from './SessionControls.js'
 import type { CommandArgumentOption } from '../commands/CommandPalette.js'
 import type { DynamicCommand, RunningInputMode } from '@dsh-vscode/domain'
@@ -101,7 +102,9 @@ export function slashCommandQuery(value: string): string | undefined {
   // lines below it.
   if (value.includes('\n')) return undefined
   const firstLine = value.split('\n', 1)[0] ?? ''
-  return /^\/(?:[a-z][a-z0-9_-]*(?:[ \t]+[^\n]*)?)?$/u.test(firstLine) ? firstLine : undefined
+  // `/<client command>:<target>` is rewritten before the grammar sees it.
+  const normalized = normalizeClientCommandText(firstLine)
+  return /^\/(?:[a-z][a-z0-9_-]*(?:[ \t]+[^\n]*)?)?$/u.test(normalized) ? normalized : undefined
 }
 
 /** Official enter adjudication parses the full trimmed draft — exactly one
@@ -111,7 +114,7 @@ export function leadingSlashCommandLine(
   value: string,
 ): { readonly name: string; readonly args: string } | undefined {
   if (value.includes('\n')) return undefined
-  const match = /^\/([a-z][a-z0-9_-]*)(?:[ \t]+(.*))?$/u.exec(value.trim())
+  const match = /^\/([a-z][a-z0-9_-]*)(?:[ \t]+(.*))?$/u.exec(normalizeClientCommandText(value).trim())
   if (match === null || match[1] === undefined) return undefined
   return { name: match[1], args: match[2] === undefined ? '' : match[2].trim() }
 }

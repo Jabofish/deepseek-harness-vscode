@@ -9,10 +9,13 @@ import { EmptySessionPosture } from './features/sessions/EmptySessionPosture.js'
 import { ConnectedComposer } from './features/composer/ConnectedComposer.js'
 import { ModsBand } from './features/mods/ModsBand.js'
 import { SessionInspector } from './features/inspector/SessionInspector.js'
+import { AppNotices, type AppNotice } from './features/shell/AppNotices.js'
 import { AppHeader } from './features/shell/AppHeader.js'
 import { SessionLineage } from './features/subagents/SessionLineage.js'
 import { ConversationActionsMenu } from './features/shell/ConversationActionsMenu.js'
 import { ExportDialog } from './features/export/ExportDialog.js'
+import { SurfaceHandoffPlaceholder } from './features/surface/SurfaceHandoffPlaceholder.js'
+import { isHandoffSidebar } from './app/store/surface-actions.js'
 import { GoalBar } from './features/goals/GoalBar.js'
 import { GoalTodoStrip } from './features/goals/GoalTodoStrip.js'
 import { Timeline } from './features/chat/Timeline.js'
@@ -50,7 +53,6 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
     beginNewDraft,
     branching,
     busyAction,
-    closeConversationActions,
     codingToolsEnabled,
     compatibilityWarning,
     composerOnCancel,
@@ -134,6 +136,8 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
     store,
     streaming,
     subagentReadOnlyReason,
+    surfaceOnMoveToSidebar,
+    surfaceOnOpenSessions,
     t,
     themePreference,
     timelineOnBranch,
@@ -170,6 +174,61 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
     state.workspaces.length > 0 &&
     welcomeVisible
   const showConnectionAlert = connectionMessage !== undefined && connectionKey !== dismissedConnection
+  const notices: AppNotice[] = []
+  if (error !== undefined) {
+    notices.push({
+      id: 'error',
+      tone: 'danger',
+      title: error,
+      dismissLabel: t('app.dismissError'),
+      onDismiss: () => setError(undefined),
+    })
+  }
+  if (showConnectionAlert) {
+    notices.push({
+      id: 'connection',
+      tone: compatibilityWarning === undefined ? 'danger' : 'warning',
+      title:
+        compatibilityWarning !== undefined
+          ? t('app.compatibilityWarning')
+          : backend.kind === 'port-conflict'
+            ? t('app.portConflict')
+            : t('app.connectionFailed'),
+      message: connectionMessage,
+      dismissLabel: t('app.dismissConnectionError'),
+      onDismiss: () => setDismissedConnection(connectionKey),
+    })
+  }
+  if (runtimeUpdateVisible) {
+    notices.push({
+      id: 'runtime-update',
+      tone: 'warning',
+      title: t('runtime.updateAvailable'),
+      message: t('runtime.updateAvailableDetail', { version: state.dshUpdate?.latestVersion ?? '—' }),
+      dismissLabel: t('runtime.dismissUpdate'),
+      onDismiss: () => {
+        setDismissedRuntimeUpdateVersion(runtimeUpdateVersion)
+        rememberRuntimeUpdateDismissal(runtimeUpdateVersion)
+      },
+      action: { label: t('runtime.openSettings'), icon: 'settings', run: () => store.setDrawer('settings') },
+    })
+  }
+  if (showWelcome) {
+    notices.push({
+      id: 'welcome',
+      tone: 'info',
+      title: t('welcome.title'),
+      message: t('welcome.description'),
+      dismissLabel: t('welcome.dismiss'),
+      onDismiss: () => {
+        setWelcomeVisible(false)
+        rememberWelcomeDismissal()
+      },
+    })
+  }
+  // Show handoff until the user explicitly returns a conversation to the
+  // sidebar; other editor conversations can stay open during that return.
+  const showSurfaceHandoff = isHandoffSidebar(state)
   return (
     <AppErrorBoundary>
       <main
@@ -208,103 +267,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
           onOpenLinkedSession={scheduleOnOpenLinkedSession}
           connectionEpoch={state.connectionEpoch ?? 0}
         />
-        {runtimeUpdateVisible || error !== undefined || showConnectionAlert || showWelcome ? (
-          <div className="dsh-app__notices">
-            {runtimeUpdateVisible ? (
-              <div className="dsh-app__runtime-update dsh-toast" role="status">
-                <div className="dsh-app__runtime-update-copy">
-                  <strong>{t('runtime.updateAvailable')}</strong>
-                  <span>
-                    {t('runtime.updateAvailableDetail', {
-                      version: state.dshUpdate?.latestVersion ?? '—',
-                    })}
-                  </span>
-                  <div className="dsh-app__runtime-update-actions">
-                    <button
-                      className="dsh-button dsh-button--secondary dsh-button--compact"
-                      type="button"
-                      onClick={() => store.setDrawer('settings')}
-                    >
-                      {t('runtime.openSettings')}
-                    </button>
-                  </div>
-                </div>
-                <button
-                  className="dsh-icon-button dsh-app__runtime-update-dismiss"
-                  type="button"
-                  aria-label={t('runtime.dismissUpdate')}
-                  title={t('runtime.dismissUpdate')}
-                  onClick={() => {
-                    setDismissedRuntimeUpdateVersion(runtimeUpdateVersion)
-                    rememberRuntimeUpdateDismissal(runtimeUpdateVersion)
-                  }}
-                >
-                  <Icon name="close" />
-                </button>
-              </div>
-            ) : null}
-            {error === undefined ? null : (
-              <div key={error} className="dsh-app__error dsh-toast" role="alert" aria-live="assertive">
-                <span>{error}</span>
-                <button
-                  className="dsh-icon-button"
-                  type="button"
-                  aria-label={t('app.dismissError')}
-                  title={t('app.dismissError')}
-                  onClick={() => setError(undefined)}
-                >
-                  <Icon name="close" />
-                </button>
-              </div>
-            )}
-            {!showConnectionAlert ? null : (
-              <div
-                className={`dsh-app__connection-alert dsh-toast${compatibilityWarning === undefined ? '' : ' dsh-app__connection-alert--warning'}`}
-                role="alert"
-              >
-                <div>
-                  <strong>
-                    {compatibilityWarning !== undefined
-                      ? t('app.compatibilityWarning')
-                      : backend.kind === 'port-conflict'
-                        ? t('app.portConflict')
-                        : t('app.connectionFailed')}
-                  </strong>
-                  <span>{connectionMessage}</span>
-                </div>
-                <button
-                  className="dsh-icon-button"
-                  type="button"
-                  aria-label={t('app.dismissConnectionError')}
-                  title={t('app.dismissConnectionError')}
-                  onClick={() => setDismissedConnection(connectionKey)}
-                >
-                  <Icon name="close" />
-                </button>
-              </div>
-            )}
-            {showWelcome ? (
-              <div className="dsh-welcome-notice dsh-toast" role="status">
-                <div>
-                  <strong>{t('welcome.title')}</strong>
-                  <span>{t('welcome.description')}</span>
-                </div>
-                <button
-                  className="dsh-icon-button"
-                  type="button"
-                  aria-label={t('welcome.dismiss')}
-                  title={t('welcome.dismiss')}
-                  onClick={() => {
-                    setWelcomeVisible(false)
-                    rememberWelcomeDismissal()
-                  }}
-                >
-                  <Icon name="close" />
-                </button>
-              </div>
-            ) : null}
-          </div>
-        ) : null}
+        {notices.length === 0 ? null : <AppNotices notices={notices} />}
         <section className="dsh-app__body">
           {backend.kind === 'runtime-missing' ? (
             <RuntimeMissingView
@@ -317,6 +280,14 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
               onReconnectDiagnostics={() => store.reconnect()}
               onShowDiagnosticsOutput={() => store.showDiagnostics()}
             />
+          ) : showSurfaceHandoff ? (
+            <div className="dsh-app__empty">
+              <SurfaceHandoffPlaceholder
+                editorChats={state.editorChats}
+                onMoveToSidebar={surfaceOnMoveToSidebar}
+                onOpenSessions={surfaceOnOpenSessions}
+              />
+            </div>
           ) : (
             <>
               {active === undefined && state.pendingSession !== undefined ? (
@@ -478,10 +449,10 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                         onOpenSession={lineageOnOpenSession}
                       />
                     ) : null}
-                    <ConversationActionsMenu onClose={closeConversationActions}>
+                    <ConversationActionsMenu>
                       {(closeMenu) => (
                         <>
-                          {conversationActionItems}
+                          {conversationActionItems(closeMenu)}
                           <button
                             type="button"
                             className="dsh-button dsh-button--secondary dsh-button--compact dsh-conversation__inspector-trigger"
@@ -521,6 +492,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                   {visibleExportSessionId === undefined ? null : (
                     <ExportDialog
                       sessionId={visibleExportSessionId}
+                      onClose={() => setExportOpen(false)}
                       onExport={(options) => {
                         setExportOpen(false)
                         void store
@@ -610,6 +582,16 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                     // a queued reply), and the composer's own `role="status"`
                     // already reports a newly arrived question.
                     <div className="dsh-conversation__interactions">
+                      <button
+                        className="dsh-button dsh-button--danger"
+                        type="button"
+                        aria-label={t('composer.stopResponse')}
+                        disabled={backend.kind !== 'connected'}
+                        onClick={composerOnCancel}
+                      >
+                        <Icon name="stop" />
+                        {t('composer.stop')}
+                      </button>
                       {pendingPermissions.map(({ request, command }) => (
                         <ApprovalCard
                           key={request.id}
@@ -689,7 +671,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                               ? {}
                               : { contextBreakdown: contextPressure.breakdown })}
                             promptMode={state.promptMode}
-                            configurationDisabled={backend.kind !== 'connected' || activeRunning}
+                            configurationDisabled={backend.kind !== 'connected'}
                             presetMutable={
                               activeSubagent === undefined && active.blank && active.status === 'idle'
                             }

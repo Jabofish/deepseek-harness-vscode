@@ -302,7 +302,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
       modelFailures,
       presets,
       permissionPresets,
-      disabled: props.configurationDisabled ?? (props.disabled || props.running),
+      disabled: props.configurationDisabled ?? props.disabled,
       presetMutable: props.presetMutable === true,
       surface,
       ...(props.commands === undefined ? {} : { commands: props.commands }),

@@ -23,6 +23,31 @@ const appStyles = readStylesheet(new URL('./app.css', import.meta.url), [
   new URL('./compatibility.css', import.meta.url),
 ])
 
+describe('Conversation space ownership', () => {
+  it('keeps notifications, jump controls and trajectory details in document flow', () => {
+    const styles = `${appStyles}\n${layoutStyles}`
+    for (const selector of [
+      '.dsh-app__notices',
+      '.dsh-app__notice-summary',
+      '.dsh-app__notice-list',
+      '.dsh-scroll-to-latest',
+      '.dsh-trajectory-inspector',
+    ]) {
+      expect(ruleBodies(styles, selector).length, selector).toBeGreaterThan(0)
+      expect(declared(styles, selector, 'position'), selector).not.toContain('absolute')
+      expect(declared(styles, selector, 'position'), selector).not.toContain('fixed')
+    }
+    expect(effective(styles, '.dsh-app__notice-list', 'overflow')).toBe('auto')
+    expect(effective(styles, '.dsh-conversation', 'overflow-y')).toBe('auto')
+    expect(Number.parseFloat(effective(styles, '.dsh-timeline-shell', 'min-height') ?? '0')).toBeGreaterThan(
+      0,
+    )
+    expect(
+      Number.parseFloat(effective(styles, '.dsh-trajectory-shell', 'min-height') ?? '0'),
+    ).toBeGreaterThan(0)
+  })
+})
+
 describe('Conversation interaction dock', () => {
   it('docks pending interaction cards in the composer slot with a scrolling question body', () => {
     const interactionRule = cssRule(layoutStyles, '.dsh-conversation__interactions')

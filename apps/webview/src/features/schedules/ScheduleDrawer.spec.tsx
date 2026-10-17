@@ -47,11 +47,13 @@ describe('ScheduleDrawer', () => {
     fireEvent.click(trigger)
 
     expect(screen.getByRole('dialog', { name: 'Schedules' })).toBeDefined()
+    expect(trigger.closest('[inert]')).not.toBeNull()
     expect(screen.getByRole('button', { name: 'Close schedules' })).toBeDefined()
     fireEvent.keyDown(document, { key: 'Escape' })
 
     expect(screen.queryByRole('dialog', { name: 'Schedules' })).toBeNull()
     expect(document.activeElement).toBe(trigger)
+    expect(trigger.closest('[inert]')).toBeNull()
   })
 
   it('dismisses when the backdrop is clicked', () => {

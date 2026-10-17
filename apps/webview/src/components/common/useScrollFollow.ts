@@ -491,16 +491,28 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
   ])
 
   useLayoutEffect(() => {
-    if (options.observeContentSize === false) return
     const element = scrollRef.current
     if (element === null || typeof ResizeObserver === 'undefined') return
 
     const content = contentRef.current
-    if (content === null || content === element) return
-
     const observedSizes = { width: 0, height: 0 }
+    const viewportSizes = { width: 0, height: 0 }
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
+        if (entry.target === element) {
+          const { width, height } = entry.contentRect
+          const changed =
+            Math.abs(width - viewportSizes.width) >= 0.5 || Math.abs(height - viewportSizes.height) >= 0.5
+          const measured = viewportSizes.width > 0
+          viewportSizes.width = width
+          viewportSizes.height = height
+          // Notifications and in-flow helpers resize the scroll owner without
+          // changing its content. Reconcile only through the existing intent
+          // guard: a free reader or an active gesture always keeps control.
+          if (measured && changed && !userScrollActiveRef.current)
+            scheduleScrollToLatest({ preserveBottom: true, immediate: true })
+          continue
+        }
         if (entry.target !== content) continue
         const rect = entry.contentRect
         const previous = { ...observedSizes }
@@ -508,15 +520,13 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
         observedSizes.height = rect.height
         const widthChanged = Math.abs(rect.width - previous.width) >= 0.5
         const heightChanged = Math.abs(rect.height - previous.height) >= 0.5
-        if (previous.width > 0 && heightChanged && !widthChanged)
+        if (previous.width > 0 && heightChanged && !widthChanged && !userScrollActiveRef.current)
           scheduleScrollToLatest({ preserveBottom: true, immediate: true })
       }
     })
-    // Only content changes can require append-to-tail reconciliation. The
-    // viewport itself changes when the composer, inspector, or host chrome
-    // resizes; observing it creates a second path that can move a reader
-    // while they are scrolling.
-    observer.observe(content)
+    observer.observe(element)
+    if (options.observeContentSize !== false && content !== null && content !== element)
+      observer.observe(content)
     return () => {
       observer.disconnect()
       cancelScheduledFollow()

@@ -65,10 +65,11 @@ export type AccountBalanceQuery =
 
 export interface AccountBonusNotification {
   readonly orderId: string
-  readonly campaign: string
-  readonly amount: string
-  readonly currency: AccountWalletCurrency
-  readonly grantedAt: string
+  readonly title?: string
+  readonly campaign?: string
+  readonly amount?: string
+  readonly currency?: AccountWalletCurrency
+  readonly grantedAt?: string
   readonly expiresAt: string
   /** Localized plain text authored by DSH Platform. */
   readonly message: string
@@ -92,9 +93,10 @@ export interface AccountProfileDisplay {
 
 export interface AccountBonusNoticeDisplay {
   readonly orderId: string
+  readonly title?: string
   readonly message: string
-  readonly amount: string
-  readonly currency: AccountWalletCurrency
+  readonly amount?: string
+  readonly currency?: AccountWalletCurrency
   readonly expiresAt: string
 }
 

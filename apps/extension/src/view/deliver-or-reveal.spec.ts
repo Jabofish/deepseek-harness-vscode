@@ -9,6 +9,77 @@ import { deliverOrRevealView } from './deliver-or-reveal.js'
 import { DshWebviewViewProvider } from './dsh-webview-view-provider.js'
 
 describe('deliverOrRevealView', () => {
+  it('ignores a delayed dispose notification from a superseded view', async () => {
+    const provider = new DshWebviewViewProvider({
+      extensionUri: { toString: () => 'extension-root' } as never,
+      onMessage: () => Promise.resolve(),
+    })
+    const resolveView = (): (() => void) => {
+      let receive: ((message: unknown) => void) | undefined
+      let dispose: (() => void) | undefined
+      provider.resolveWebviewView({
+        webview: {
+          cspSource: 'vscode-resource:',
+          asWebviewUri: (uri: unknown) => uri,
+          postMessage: () => Promise.resolve(true),
+          onDidReceiveMessage: (listener: (message: unknown) => void) => {
+            receive = listener
+            return { dispose: () => undefined }
+          },
+        },
+        visible: true,
+        onDidDispose: (listener: () => void) => {
+          dispose = listener
+          return { dispose: () => undefined }
+        },
+        onDidChangeVisibility: () => ({ dispose: () => undefined }),
+      } as never)
+      receive?.({ protocolVersion: 1, message: { type: 'app.ready', requestId: 'ready' } })
+      return () => dispose?.()
+    }
+    try {
+      const oldDispose = resolveView()
+      await Promise.resolve()
+      resolveView()
+      await Promise.resolve()
+      expect(provider.isReady).toBe(true)
+      oldDispose()
+      expect(provider.isReady).toBe(true)
+      expect(await provider.postMessage({ action: 'still-current' })).toBe(true)
+    } finally {
+      provider.dispose()
+    }
+  })
+
+  it('waits across initial view resolution after focus has returned', async () => {
+    let receive: ((message: unknown) => void) | undefined
+    const provider = new DshWebviewViewProvider({
+      extensionUri: { toString: () => 'extension-root' } as never,
+      onMessage: () => Promise.resolve(),
+    })
+    try {
+      const ready = provider.waitUntilReady()
+      provider.resolveWebviewView({
+        webview: {
+          cspSource: 'vscode-resource:',
+          asWebviewUri: (uri: unknown) => uri,
+          postMessage: () => Promise.resolve(true),
+          onDidReceiveMessage: (listener: (message: unknown) => void) => {
+            receive = listener
+            return { dispose: () => undefined }
+          },
+        },
+        visible: true,
+        onDidDispose: () => ({ dispose: () => undefined }),
+        onDidChangeVisibility: () => ({ dispose: () => undefined }),
+      } as never)
+      receive?.({ protocolVersion: 1, message: { type: 'app.ready', requestId: 'initial-ready' } })
+      await expect(ready).resolves.toBe(true)
+    } finally {
+      provider.dispose()
+    }
+  })
+
   it('releases readiness waiters on timeout and provider disposal', async () => {
     vi.useFakeTimers()
     const provider = new DshWebviewViewProvider({
@@ -46,7 +117,9 @@ describe('deliverOrRevealView', () => {
           return { dispose: () => undefined }
         },
       },
+      visible: true,
       onDidDispose: () => ({ dispose: () => undefined }),
+      onDidChangeVisibility: () => ({ dispose: () => undefined }),
     } as never)
     expect(await provider.postMessage({ action: 'toggle' })).toBe(false)
     receive?.({ message: { type: 'app.ready' } })

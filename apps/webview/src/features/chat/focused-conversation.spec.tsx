@@ -181,9 +181,8 @@ describe('focused conversation interactions', () => {
 
   it('preserves classic rendering and persists the switch across remounts', () => {
     const view = render(session())
-    fireEvent.change(screen.getByRole('combobox', { name: 'Conversation layout' }), {
-      target: { value: 'classic' },
-    })
+    fireEvent.click(screen.getByRole('button', { name: /Conversation layout:/ }))
+    fireEvent.click(screen.getByRole('option', { name: 'Classic' }))
     expect(screen.getByText('I am examining the implementation')).toBeDefined()
     expect(view.container.querySelector('.dsh-timeline')?.getAttribute('data-conversation-layout')).toBe(
       'classic',
@@ -195,7 +194,7 @@ describe('focused conversation interactions', () => {
         <ConversationLayoutControl />
       </ConversationLayoutProvider>,
     )
-    expect(screen.getByRole<HTMLSelectElement>('combobox').value).toBe('classic')
+    expect(screen.getByRole('button', { name: 'Conversation layout: Classic' })).toBeDefined()
   })
 
   it('never automatically folds active or interrupted work, or verbose history', () => {

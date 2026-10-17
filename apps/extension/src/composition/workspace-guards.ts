@@ -37,9 +37,7 @@ export function requiresTrustedWorkspace(type: WebviewRequest['type']): boolean 
     case 'session.sendPrompt':
     case 'session.queue.list':
     case 'session.queue.update':
-    case 'session.queue.remove':
     case 'session.queue.steer':
-    case 'session.cancel':
     case 'session.configure':
     case 'attachment.pick':
     case 'attachment.ingest':
@@ -60,7 +58,6 @@ export function requiresTrustedWorkspace(type: WebviewRequest['type']): boolean 
     case 'plugin.credential.remove':
     case 'interaction.permission.respond':
     case 'interaction.question.respond':
-    case 'interaction.question.cancel':
     case 'settings.update':
     case 'settings.unset':
     case 'settings.mutate':
@@ -70,7 +67,6 @@ export function requiresTrustedWorkspace(type: WebviewRequest['type']): boolean 
     case 'goal.update':
     case 'goal.clear':
     case 'subagent.send':
-    case 'subagent.interrupt':
     case 'subagent.list':
     case 'subagent.history':
     case 'skill.list':
@@ -78,14 +74,13 @@ export function requiresTrustedWorkspace(type: WebviewRequest['type']): boolean 
     case 'command.list':
     case 'command.execute':
     case 'job.list':
-    case 'job.kill':
     case 'job.follow.start':
-    case 'job.follow.stop':
     case 'preset.read':
     case 'preset.copy':
     case 'preset.openDocument':
     case 'preset.remove':
     case 'session.export':
+    case 'surface.openInEditor':
       return true
     default:
       return false

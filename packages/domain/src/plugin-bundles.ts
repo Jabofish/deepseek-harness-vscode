@@ -8,6 +8,7 @@ export type PluginBundleFailureCode =
   | 'unaddressable'
   | 'unknown-plugin'
   | 'invalid-spec'
+  | 'already-installed'
   | 'ambiguous-install'
   | 'not-bundle'
   | 'not-removable'
@@ -18,6 +19,9 @@ export type PluginBundleFailureCode =
   | 'operation-error'
 
 export type PluginBundleApplication = 'applied' | 'restart-required' | 'overridden' | 'failed' | 'cancelled'
+
+export type PluginRestartReason =
+  'no-hmr' | 'package-moved' | 'host-module' | 'unmanaged-plugin' | 'module-comparison'
 
 export type PluginInstallFailureKind =
   | 'pnpm-missing'
@@ -116,6 +120,7 @@ export interface PluginBundleChangeResult {
   readonly name: string
   readonly changed: boolean
   readonly application: PluginBundleApplication
+  readonly restartReason?: PluginRestartReason
   readonly enabled?: boolean
   readonly stage?: 'install' | 'enable' | 'remove'
   readonly errorCode?: PluginBundleFailureCode

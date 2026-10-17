@@ -11,6 +11,8 @@ export interface AppLifecycleActionDependencies {
   readonly attemptStartupRestore: () => Promise<void>
   readonly checkDshUpdates: DshUpdateActions['checkDshUpdates']
   readonly client: ProtocolClient
+  /** True when the Host assigned this Webview the editor surface. */
+  readonly isEditorSurface: () => boolean
   readonly invalidateFeedback: () => void
   readonly markStartupRestoreArmed: () => void
   readonly refresh: () => Promise<void>
@@ -24,6 +26,7 @@ export function createAppLifecycleActions(
     attemptStartupRestore,
     checkDshUpdates,
     client,
+    isEditorSurface,
     invalidateFeedback,
     markStartupRestoreArmed,
     refresh,
@@ -45,7 +48,13 @@ export function createAppLifecycleActions(
       const refreshPromise = refresh()
       void applyBusyEnterPreference()
       await refreshPromise
-      await attemptStartupRestore()
+      // An editor surface is bound to its own session, which the surface
+      // assignment opens; the side bar's remembered/last-session restore would
+      // otherwise load a different conversation into the tab. The Host posts
+      // `ui.surface.assigned` before it answers `app.ready`, so the assignment
+      // is already in state here; the reverse order is covered by the same
+      // guard inside `attemptStartupRestore`.
+      if (!isEditorSurface()) await attemptStartupRestore()
     },
     reconnect: async () => {
       invalidateFeedback()

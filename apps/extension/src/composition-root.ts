@@ -35,6 +35,7 @@ import { createBackendAttach } from './composition/backend-attach.js'
 import { createFeatureContext } from './composition/feature-context.js'
 import { createFeatureRequestHandler } from './composition/feature-request-handler.js'
 import { createRequestGateway } from './composition/request-handler.js'
+import { WebviewSurfaceRegistry } from './view/webview-surface-registry.js'
 import { createCommandsAssembly } from './composition/commands-assembly.js'
 
 export interface CompositionRoot extends vscode.Disposable {
@@ -69,19 +70,25 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       activeEditor === undefined ? undefined : vscode.workspace.getWorkspaceFolder(activeEditor.document.uri)
     return activeFolder ?? currentWorkspaceFolders()[0]
   }
-  // The Webview provider is created below, so `post` reads it through this
-  // binding; no message can be posted before composition has finished.
-  const post = (message: HostMessage | FeatureHostMessage): Thenable<boolean> => {
+  // Every live chat Webview. Surfaces are registered below, so `post` and
+  // `postTo` read them through this binding; no message can be posted before
+  // composition has finished.
+  const surfaces = new WebviewSurfaceRegistry()
+  const hostEnvelope = (message: HostMessage | FeatureHostMessage): object | undefined => {
     const legacy = hostMessageSchema.safeParse(message)
-    if (legacy.success)
-      return provider.postMessage(hostEnvelopeSchema.parse({ protocolVersion: 1, message: legacy.data }))
+    if (legacy.success) return hostEnvelopeSchema.parse({ protocolVersion: 1, message: legacy.data })
     const feature = featureHostMessageSchema.safeParse(message)
-    if (feature.success)
-      return provider.postMessage(
-        featureHostEnvelopeSchema.parse({ protocolVersion: 1, message: feature.data }),
-      )
+    if (feature.success) return featureHostEnvelopeSchema.parse({ protocolVersion: 1, message: feature.data })
     diagnostics.log('warn', 'host-message-rejected', { code: 'PROTOCOL_ERROR' })
-    return Promise.resolve(false)
+    return undefined
+  }
+  const post = (message: HostMessage | FeatureHostMessage): Thenable<boolean> => {
+    const envelope = hostEnvelope(message)
+    return envelope === undefined ? Promise.resolve(false) : surfaces.post(envelope)
+  }
+  const postTo = (surfaceId: string, message: HostMessage | FeatureHostMessage): Thenable<boolean> => {
+    const envelope = hostEnvelope(message)
+    return envelope === undefined ? Promise.resolve(false) : surfaces.postTo(surfaceId, envelope)
   }
   const currentWorkspaceFolderId = (): string | undefined => {
     const folder = currentWorkspaceFolder()
@@ -167,11 +174,13 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     publishAccountError,
     postEditorContextAvailabilityEvent,
     postEvent,
+    postEventTo,
     postBackendEvent,
     publishState,
     nextFeatureLocalSequence,
   } = createHostEventPipeline({
     post,
+    postTo,
     backendService,
     diagnostics,
     editorContextUseCases,
@@ -270,8 +279,12 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     promptTemplateUseCases,
     currentWorkspaceFolders,
   })
-  const { router, provider } = createRequestGateway({
+  const { router, provider, editorSurfaces, moveChatToSidebar } = createRequestGateway({
     post,
+    postTo,
+    postEvent,
+    postEventTo,
+    surfaces,
     handleFeatureRequest,
     diagnostics,
     context,
@@ -321,6 +334,9 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     coordinator,
     router,
     provider,
+    editorSurfaces,
+    moveChatToSidebar,
+    surfaces,
     runtimeLocator,
     runtimeInstaller,
     endpointLaunchUrls,

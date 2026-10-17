@@ -11,6 +11,7 @@ import type { createFeatureActions } from './feature-actions.js'
 import type { createAccountActions } from './account-actions.js'
 import type { createGapHealing } from './gap-heal.js'
 import type { createTurnWatchers } from './turn-watchers.js'
+import type { createSurfaceActions } from './surface-actions.js'
 import { parseHostDomainEvent, timelineSequenceOptions } from './event-parser.js'
 import { backendEventSessionId, applyHostMessage } from './host-message-reducers.js'
 import { object } from './unknown-record.js'
@@ -27,6 +28,7 @@ type FeatureEventActions = Pick<
 >
 type CommandDirectory = Pick<ReturnType<typeof createCommandDirectoryCache>, 'invalidate'>
 type TurnWatchers = ReturnType<typeof createTurnWatchers>
+type SurfaceActions = ReturnType<typeof createSurfaceActions>
 
 export interface HostEventSubscriptionLifecycle {
   readonly invalidateGlobalCatalogs: () => void
@@ -62,6 +64,7 @@ export interface HostEventSubscriptionDependencies {
   readonly scheduleLedgerRebuild: GapHealingOperations['scheduleLedgerRebuild']
   readonly rememberHostOnlyNodes: GapHealingOperations['rememberHostOnlyNodes']
   readonly setState: StateSetter
+  readonly surfaceActions: SurfaceActions
   readonly turnWatchers: TurnWatchers
 }
 
@@ -90,11 +93,17 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
     scheduleLedgerRebuild,
     rememberHostOnlyNodes,
     setState,
+    surfaceActions,
     turnWatchers,
   } = deps
   let permissionCatalogGeneration = 0
   const unsubscribe = client.subscribe((message) => {
     if (lifecycle.isDisposed()) return
+    // Surface frames are Host-owned UI control messages whose handling includes
+    // store side effects (opening the bound session, asking the Host to open the
+    // active session in the editor area). They own their own reduction and never
+    // reach the conversation pipeline.
+    if (surfaceActions.applySurfaceEvent(message)) return
     if (
       message.type === 'event' &&
       (message.name === 'connection.snapshot' || message.name === 'connection.lost')

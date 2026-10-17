@@ -26,6 +26,8 @@ export interface SessionRowProps {
   readonly disabled: boolean
   readonly sorting: SessionSorting
   readonly onOpen: (session: SessionSummary) => void
+  /** Absent when the surface cannot host an editor tab (no such action shown). */
+  readonly onOpenInEditor?: (session: SessionSummary) => void
   readonly onArchive: (session: SessionSummary) => void
   readonly onRename: (session: SessionSummary, trigger: HTMLElement) => void
   readonly onMove: (workspaceId: string, sessionId: string, beforeSessionId: string) => void
@@ -42,6 +44,7 @@ export function SessionRow({
   disabled,
   sorting,
   onOpen,
+  onOpenInEditor,
   onArchive,
   onRename,
   onMove,
@@ -61,17 +64,28 @@ export function SessionRow({
     waiting === undefined ? `sessions.status.${session.status}` : `sessions.waiting.${waiting}`,
   )
   const canReorder = sorting === 'manual' && reorderWorkspaceId !== undefined
+  // A cancelled drag and an unaccepted external drop cannot be distinguished.
+  // Opening an editor requires its explicit action; drags only reorder.
+  const dragHint = canReorder ? t('sessions.dragSession') : undefined
   return (
     <li
       aria-busy={removing}
       draggable={canReorder}
-      title={canReorder ? t('sessions.dragSession') : undefined}
+      title={dragHint}
       onDragStart={(event) => {
-        if (!canReorder) return
+        if (!canReorder || disabled) {
+          event.preventDefault()
+          return
+        }
         event.dataTransfer.effectAllowed = 'move'
+        // A custom MIME keeps the payload separate from ordinary editor text.
         event.dataTransfer.setData(
           ORDER_DRAG_MIME,
-          JSON.stringify({ kind: 'session', workspaceId: reorderWorkspaceId, itemId: session.id }),
+          JSON.stringify({
+            kind: 'session',
+            workspaceId: reorderWorkspaceId ?? '',
+            itemId: session.id,
+          }),
         )
       }}
       onDragOver={(event) => {
@@ -123,6 +137,18 @@ export function SessionRow({
         </span>
       </button>
       <div className="dsh-session-item__actions">
+        {onOpenInEditor === undefined ? null : (
+          <button
+            className="dsh-icon-button dsh-session-item__open-in-editor"
+            type="button"
+            aria-label={t('sessions.openInEditor', { title })}
+            title={t('sessions.openInEditorTitle')}
+            disabled={disabled}
+            onClick={() => onOpenInEditor(session)}
+          >
+            <Icon name="open-in-editor" />
+          </button>
+        )}
         <button
           className="dsh-icon-button dsh-session-item__rename"
           type="button"

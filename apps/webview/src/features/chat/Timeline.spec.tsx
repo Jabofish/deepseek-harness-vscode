@@ -392,6 +392,8 @@ describe('Timeline', () => {
           .querySelector('.dsh-timeline__canvas')
           ?.classList.contains('dsh-timeline__canvas--virtualized-ready'),
       ).toBe(true)
+      expect(container.querySelector('.dsh-timeline__row[data-index="47"]')).not.toBeNull()
+      expect(container.querySelectorAll('.dsh-timeline__row').length).toBeLessThan(12)
       const firstVisibleRow = container.querySelector<HTMLElement>('.dsh-timeline__row[data-index="0"]')
       expect(firstVisibleRow).not.toBeNull()
       const copyButton = within(firstVisibleRow!).getByRole('button', { name: 'Copy' })
@@ -399,6 +401,7 @@ describe('Timeline', () => {
       expect(document.activeElement).toBe(copyButton)
 
       fireEvent.wheel(timeline, { deltaY: -120 })
+      expect(container.querySelector('.dsh-timeline__row[data-index="47"]')).toBeNull()
       view.rerender(
         <Timeline
           sessionId="session-1"
@@ -2233,3 +2236,43 @@ function resizeEntry(target: Element, width: number, height: number): ResizeObse
     contentRect: { width, height } as DOMRectReadOnly,
   } as ResizeObserverEntry
 }
+
+describe('Timeline transcript copy fallback', () => {
+  afterEach(cleanup)
+
+  it('copies the addressed row as Markdown when the menu Copy has no selection', () => {
+    const { container } = render(
+      <Timeline
+        sessionId="session-1"
+        nodes={[
+          { kind: 'user-message', id: 'user-1', markdown: 'run it' },
+          {
+            kind: 'assistant-message',
+            id: 'assistant-1',
+            markdown: '## Done\n\n- one',
+            streaming: false,
+            turn: 1,
+          },
+        ]}
+        streaming={false}
+      />,
+    )
+
+    const row = container.querySelector<HTMLElement>('[data-node-id="assistant-1"]')
+    expect(row).not.toBeNull()
+    fireEvent.contextMenu(row!)
+
+    const written: string[] = []
+    const event = new Event('copy', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'clipboardData', {
+      value: { setData: (type: string, text: string): void => void written.push(`${type}:${text}`) },
+    })
+    act(() => {
+      document.dispatchEvent(event)
+    })
+
+    expect(written).toEqual(['text/plain:## Done\n\n- one'])
+    expect(event.defaultPrevented).toBe(true)
+    expect(screen.getByRole('status').textContent).toBe('Copied')
+  })
+})

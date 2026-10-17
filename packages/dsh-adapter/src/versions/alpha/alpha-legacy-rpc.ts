@@ -426,7 +426,9 @@ export function createAlphaLegacyRpc(dependencies: AlphaLegacyRpcDependencies): 
       !Array.isArray(baseline.items) ||
       !baseline.items.every(isPlainRecord) ||
       !isNonEmptyStringArray(baseline.archivedSessionIds) ||
-      (options.workspaceWireVersion === 'pinned-v2' && !isNonEmptyStringArray(baseline.pinnedSessionIds))
+      (options.workspaceWireVersion !== undefined &&
+        options.workspaceWireVersion !== 'archive-v1' &&
+        !isNonEmptyStringArray(baseline.pinnedSessionIds))
     )
       throw malformedResponse('workspace/follow baseline value')
     return { rpcId: randomUUID(), result: { ok: true, value: baseline } }

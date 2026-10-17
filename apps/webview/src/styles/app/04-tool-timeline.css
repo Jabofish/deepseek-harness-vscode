@@ -419,7 +419,7 @@
 }
 
 .dsh-timeline__tool-group[open] > .dsh-timeline__tool-group-list {
-  animation: dsh-surface-enter var(--dsh-motion-duration-standard) var(--dsh-motion-ease-standard) both;
+  animation: dsh-surface-enter var(--dsh-motion-duration-standard) var(--dsh-motion-ease-standard) backwards;
 }
 
 .dsh-timeline__tool-group-disclosure {

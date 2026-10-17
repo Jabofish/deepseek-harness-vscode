@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type ReactElement } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
 import type { DiagnosticsSnapshot } from '@dsh-vscode/domain'
 import {
   ContentFlow,
@@ -63,6 +63,10 @@ export function DiagnosticsDrawer(props: DiagnosticsDrawerProps): ReactElement {
     onEscape: close,
   })
 
+  useEffect(() => {
+    if (open) panelRef.current?.focus()
+  }, [open])
+
   const toggle = (): void => {
     if (open) {
       close()
@@ -108,9 +112,15 @@ export function DiagnosticsDrawer(props: DiagnosticsDrawerProps): ReactElement {
           ref={panelRef}
           className="dsh-diagnostics-popover__menu"
           role="dialog"
+          tabIndex={-1}
           aria-label={t('diagnostics.aria')}
           style={menuPosition}
         >
+          <div className="dsh-diagnostics-popover__close">
+            <button className="dsh-icon-button" type="button" aria-label={t('common.close')} onClick={close}>
+              <Icon name="close" />
+            </button>
+          </div>
           {loading ? (
             <ContentFlow as="p" className="dsh-diagnostics-popover__status" role="status">
               {t('diagnostics.loading')}

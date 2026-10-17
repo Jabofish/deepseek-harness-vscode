@@ -17,6 +17,7 @@
 - Choose the models, providers, permissions, and agent options exposed by the connected DSH runtime.
 - Use local prompt templates, checkpoints, a Changes view, and a task center when their prerequisites are available.
 - Use the DSH-style focused layout with collapsible process details and a compact composer. Choose the focused or classic layout in **Settings → General → Conversation layout**; the choice is saved locally.
+- Move the chat into the editor area as a full-width tab, one per session, and back to the side bar. Use **DSH: Open Chat in Editor Area**, the `/moveto:editor` composer command, or **Open in Editor Area** on a session row; `/moveto:sidebar` or the tab's button returns it. Editor tabs are restored with their session after a window reload.
 
 The connected DSH version determines which advanced capabilities are available. Unsupported operations show a clear unavailable state. The [compatibility contract](docs/dsh-contract.md) lists exact adapter boundaries; the [capability matrix](docs/capability-matrix.md) distinguishes implementation, automated tests, and real runtime verification.
 
@@ -29,6 +30,8 @@ Install [DeepSeek Harness Companion for VS Code](https://marketplace.visualstudi
 3. Choose or create a workspace, start a session, and send a task.
 
 The DeepSeek Harness Chat view appears in VS Code's Secondary Side Bar by default (on the right in the default workbench layout). If you previously moved it, VS Code may keep your saved layout. Run **DSH: Move View to Secondary Side Bar** from the Command Palette to choose the Chat view and **New Secondary Side Bar Entry**, or right-click the view title and use **Move View**.
+
+While an editor chat tab is open, the side bar shows a short notice instead of a second copy of the conversation, so replies, approvals and questions stay in one place.
 
 The extension first looks for a compatible local DSH. It starts one only when the selected connection mode permits it and discovery has finished. It never stops a DSH process it did not create.
 

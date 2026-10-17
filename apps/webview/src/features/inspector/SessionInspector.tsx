@@ -10,6 +10,8 @@ import './inspector.css'
 import { createDisplayNodeProjector } from '../chat/timeline-projection.js'
 import { timelineSourceNodeIds } from '../chat/timeline-inspector-target.js'
 import type { TranscriptViewMode } from '../../app/ui-preferences.js'
+import { Icon } from '../../ui/Icon.js'
+import { SelectMenu } from '../../components/common/SelectMenu.js'
 
 const PAGE_SIZE = 100
 export function SessionInspector(props: {
@@ -36,6 +38,7 @@ export function SessionInspector(props: {
   const [picking, setPicking] = useState(false)
   const [loadFailed, setLoadFailed] = useState(false)
   const loading = useRef(false)
+  const selectedRowRef = useRef<HTMLLIElement>(null)
   if (lastOpenRequestId !== props.openRequestId) {
     setLastOpenRequestId(props.openRequestId)
     setPicking(false)
@@ -58,6 +61,9 @@ export function SessionInspector(props: {
   const end = Math.max(0, filtered.length - offset)
   const start = Math.max(0, end - PAGE_SIZE)
   const selected = records.find((record) => record.id === selectedId)
+  useEffect(() => {
+    if (open) selectedRowRef.current?.scrollIntoView?.({ block: 'nearest' })
+  }, [open, selectedId])
   const matches =
     selected?.sequence === undefined
       ? []
@@ -122,7 +128,11 @@ export function SessionInspector(props: {
       {picking ? (
         <span role="status">
           {t('inspector.pickHint')}{' '}
-          <button type="button" onClick={() => setPicking(false)}>
+          <button
+            className="dsh-button dsh-button--secondary dsh-button--compact"
+            type="button"
+            onClick={() => setPicking(false)}
+          >
             {t('inspector.cancelPick')}
           </button>
         </span>
@@ -130,138 +140,165 @@ export function SessionInspector(props: {
       <Drawer title={t('inspector.title')} open={open} onClose={() => setOpen(false)}>
         {open ? (
           <div className="dsh-session-inspector">
-            <p>{t('inspector.scope')}</p>
-            <label>
-              {t('inspector.source')}{' '}
-              <select
-                value={source}
-                onChange={(event) => {
-                  setSource(event.target.value === 'nodes' ? 'nodes' : 'events')
-                  setFilter('')
-                  setOffset(0)
-                  setSelectedId(undefined)
-                }}
-              >
-                <option value="events">{t('inspector.events')}</option>
-                <option value="nodes">{t('inspector.nodes')}</option>
-              </select>
-            </label>
-            <label>
-              {t('inspector.filter')}{' '}
-              <select
-                value={filter}
-                onChange={(event) => {
-                  setFilter(event.target.value)
-                  setOffset(0)
-                }}
-              >
-                <option value="">{t('inspector.all')}</option>
-                {types.map((type) => (
-                  <option key={type} value={type}>
-                    {type}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="dsh-session-inspector__actions">
-              <button
-                type="button"
-                disabled={start === 0}
-                onClick={() => setOffset((value) => value + PAGE_SIZE)}
-              >
-                {t('inspector.previous')}
-              </button>
-              <button
-                type="button"
-                disabled={offset === 0}
-                onClick={() => setOffset((value) => Math.max(0, value - PAGE_SIZE))}
-              >
-                {t('inspector.next')}
-              </button>
-              <button
-                type="button"
-                disabled={!props.hasMore || props.loading}
-                onClick={() => {
-                  if (loading.current) return
-                  loading.current = true
-                  setLoadFailed(false)
-                  void Promise.resolve()
-                    .then(() => props.loadOlder())
-                    .catch(() => setLoadFailed(true))
-                    .finally(() => {
-                      loading.current = false
-                    })
-                }}
-              >
-                {t('inspector.loadOlder')}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setOpen(false)
-                  setPicking(true)
-                }}
-              >
-                {t('inspector.pick')}
-              </button>
+            <p className="dsh-session-inspector__scope">{t('inspector.scope')}</p>
+            <div className="dsh-session-inspector__filters">
+              <label>
+                <span>{t('inspector.source')}</span>
+                <SelectMenu
+                  icon="list"
+                  density="regular"
+                  label={t(source === 'events' ? 'inspector.events' : 'inspector.nodes')}
+                  ariaLabel={t('inspector.source')}
+                  title={t('inspector.source')}
+                  value={source}
+                  options={[
+                    { value: 'events', label: t('inspector.events') },
+                    { value: 'nodes', label: t('inspector.nodes') },
+                  ]}
+                  onChange={(value) => {
+                    setSource(value === 'nodes' ? 'nodes' : 'events')
+                    setFilter('')
+                    setOffset(0)
+                    setSelectedId(undefined)
+                  }}
+                />
+              </label>
+              <label>
+                <span>{t('inspector.filter')}</span>
+                <SelectMenu
+                  icon="list"
+                  density="regular"
+                  label={filter || t('inspector.all')}
+                  ariaLabel={t('inspector.filter')}
+                  title={t('inspector.filter')}
+                  value={filter}
+                  options={[
+                    { value: '', label: t('inspector.all') },
+                    ...types.map((type) => ({ value: type, label: type })),
+                  ]}
+                  onChange={(value) => {
+                    setFilter(value)
+                    setOffset(0)
+                    setSelectedId(undefined)
+                  }}
+                />
+              </label>
+            </div>
+            <div className="dsh-session-inspector__toolbar">
+              <div className="dsh-session-inspector__actions">
+                <button
+                  type="button"
+                  disabled={start === 0}
+                  onClick={() => setOffset((value) => value + PAGE_SIZE)}
+                >
+                  <Icon name="chevron-left" />
+                  {t('inspector.previous')}
+                </button>
+                <button
+                  type="button"
+                  disabled={offset === 0}
+                  onClick={() => setOffset((value) => Math.max(0, value - PAGE_SIZE))}
+                >
+                  {t('inspector.next')}
+                  <Icon name="chevron-right" />
+                </button>
+              </div>
+              <div className="dsh-session-inspector__actions">
+                <button
+                  type="button"
+                  disabled={!props.hasMore || props.loading}
+                  onClick={() => {
+                    if (loading.current) return
+                    loading.current = true
+                    setLoadFailed(false)
+                    void Promise.resolve()
+                      .then(() => props.loadOlder())
+                      .catch(() => setLoadFailed(true))
+                      .finally(() => {
+                        loading.current = false
+                      })
+                  }}
+                >
+                  {t('inspector.loadOlder')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpen(false)
+                    setPicking(true)
+                  }}
+                >
+                  {t('inspector.pick')}
+                </button>
+              </div>
             </div>
             {loadFailed ? <p role="alert">{t('inspector.loadFailed')}</p> : null}
-            <p role="status">
-              {t('inspector.rows', {
-                count: filtered.length,
-                start: filtered.length === 0 ? 0 : start + 1,
-                end,
-              })}
-            </p>
+            <InspectorDevtoolsActions featureRequest={props.featureRequest} />
+            <div className="dsh-session-inspector__results-header">
+              <h3>{t(source === 'events' ? 'inspector.events' : 'inspector.nodes')}</h3>
+              <p role="status">
+                {t('inspector.rows', {
+                  count: filtered.length,
+                  start: filtered.length === 0 ? 0 : start + 1,
+                  end,
+                })}
+              </p>
+            </div>
+            {filtered.length === 0 ? (
+              <p className="dsh-session-inspector__empty">{t('inspector.empty')}</p>
+            ) : null}
             <ol className="dsh-session-inspector__rows" start={start + 1}>
               {filtered.slice(start, end).map((record) => (
-                <li key={record.id}>
+                <li key={record.id} ref={selectedId === record.id ? selectedRowRef : undefined}>
                   <button
                     type="button"
+                    className="dsh-session-inspector__row"
                     aria-pressed={selectedId === record.id}
                     onClick={() => setSelectedId(record.id)}
                   >
-                    {record.sequence === undefined ? '' : `#${record.sequence} `}
-                    {record.type}
+                    {record.sequence === undefined ? null : (
+                      <span className="dsh-session-inspector__sequence">#{record.sequence}</span>
+                    )}{' '}
+                    <span className="dsh-session-inspector__type">{record.type}</span>
+                    <Icon name="chevron-right" />
                   </button>
+                  {selected === undefined || selected.id !== record.id ? null : (
+                    <section className="dsh-session-inspector__detail" aria-label={t('inspector.detail')}>
+                      <h3>{selected.type}</h3>
+                      {Object.entries(selected.fields).map(([field, value]) => (
+                        <details key={field} open>
+                          <summary>{field}</summary>
+                          <dl>
+                            {Object.entries(value).map(([key, count]) => (
+                              <div key={key}>
+                                <dt>{key}</dt>
+                                <dd>{String(count)}</dd>
+                              </div>
+                            ))}
+                          </dl>
+                        </details>
+                      ))}
+                      {matches.map((record) => (
+                        <button key={record.id} type="button" onClick={() => selectRecord(record)}>
+                          {t('inspector.match', { type: record.type })}
+                        </button>
+                      ))}
+                      {selected.nodeId === undefined || props.onRevealNode === undefined ? null : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setOpen(false)
+                            if (selected.nodeId !== undefined) props.onRevealNode?.(selected.nodeId)
+                          }}
+                        >
+                          {t('inspector.reveal')}
+                        </button>
+                      )}
+                    </section>
+                  )}
                 </li>
               ))}
             </ol>
-            {selected === undefined ? null : (
-              <section aria-label={t('inspector.detail')}>
-                <h3>{selected.type}</h3>
-                {Object.entries(selected.fields).map(([field, value]) => (
-                  <details key={field} open>
-                    <summary>{field}</summary>
-                    <dl>
-                      {Object.entries(value).map(([key, count]) => (
-                        <div key={key}>
-                          <dt>{key}</dt>
-                          <dd>{String(count)}</dd>
-                        </div>
-                      ))}
-                    </dl>
-                  </details>
-                ))}
-                {matches.map((record) => (
-                  <button key={record.id} type="button" onClick={() => selectRecord(record)}>
-                    {t('inspector.match', { type: record.type })}
-                  </button>
-                ))}
-                {selected.nodeId === undefined || props.onRevealNode === undefined ? null : (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setOpen(false)
-                      if (selected.nodeId !== undefined) props.onRevealNode?.(selected.nodeId)
-                    }}
-                  >
-                    {t('inspector.reveal')}
-                  </button>
-                )}
-              </section>
-            )}
-            <InspectorDevtoolsActions featureRequest={props.featureRequest} />
           </div>
         ) : null}
       </Drawer>

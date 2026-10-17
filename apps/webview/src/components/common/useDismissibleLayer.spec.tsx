@@ -74,6 +74,32 @@ function NestedLayers({
 }
 
 describe('useDismissibleLayer focus trap', () => {
+  it('skips controls in closed disclosures while keeping their summary reachable', () => {
+    function DisclosureModal(): ReactElement {
+      const ref = useRef<HTMLDivElement>(null)
+      useDismissibleLayer({ open: true, refs: [ref], trapFocus: true, onDismiss: () => undefined })
+      return (
+        <div ref={ref}>
+          <button type="button">First</button>
+          <details>
+            <summary>Advanced</summary>
+            <button type="button">Hidden action</button>
+          </details>
+          <button type="button">Last</button>
+        </div>
+      )
+    }
+    render(<DisclosureModal />)
+    const first = screen.getByRole('button', { name: 'First' })
+    const last = screen.getByRole('button', { name: 'Last' })
+    first.focus()
+    fireEvent.keyDown(document, { key: 'Tab' })
+    expect(document.activeElement).toBe(screen.getByText('Advanced'))
+    fireEvent.keyDown(document, { key: 'Tab' })
+    expect(document.activeElement).toBe(last)
+    fireEvent.keyDown(document, { key: 'Tab' })
+    expect(document.activeElement).toBe(first)
+  })
   it('does not dismiss an ancestor when a pointer lands inside a portalled child layer', () => {
     const onOuterDismiss = vi.fn()
     const onChildDismiss = vi.fn()

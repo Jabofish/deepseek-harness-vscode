@@ -59,8 +59,8 @@ export function InspectorDevtoolsActions(props: {
       })
   }
   return (
-    <section aria-label={t('inspector.devtools')}>
-      <h3>{t('inspector.devtools')}</h3>
+    <details className="dsh-session-inspector__devtools" aria-label={t('inspector.devtools')}>
+      <summary>{t('inspector.devtools')}</summary>
       <p role="status">
         {status === 'loading'
           ? t('inspector.devtools.loading')
@@ -100,6 +100,6 @@ export function InspectorDevtoolsActions(props: {
           {t('inspector.refresh')}
         </button>
       </div>
-    </section>
+    </details>
   )
 }

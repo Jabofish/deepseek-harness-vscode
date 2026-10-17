@@ -5,6 +5,7 @@ import { attachmentRequestSchemas } from './request-attachment-schemas.js'
 import { settingsRequestSchemas } from './request-settings-schemas.js'
 import { workflowRequestSchemas } from './request-workflow-schemas.js'
 import { presetRequestSchemas } from './request-preset-schemas.js'
+import { surfaceRequestSchemas } from './request-surface-schemas.js'
 
 export const webviewRequestSchema = z.discriminatedUnion('type', [
   ...connectionRequestSchemas,
@@ -13,4 +14,5 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
   ...settingsRequestSchemas,
   ...workflowRequestSchemas,
   ...presetRequestSchemas,
+  ...surfaceRequestSchemas,
 ])

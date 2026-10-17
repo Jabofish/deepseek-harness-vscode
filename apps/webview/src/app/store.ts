@@ -32,6 +32,7 @@ import { createInteractionActions } from './store/interaction-actions.js'
 import { createSessionCatalogActions } from './store/session-catalog-actions.js'
 import { createSessionOpenController } from './store/session-open-controller.js'
 import { createTurnWatchers } from './store/turn-watchers.js'
+import { createSurfaceActions, isHandoffSidebar } from './store/surface-actions.js'
 import { subscribeHostEvents } from './store/host-event-subscription.js'
 import { createPromptActions } from './store/prompt-actions.js'
 import { createHistoryActions } from './store/history-actions.js'
@@ -520,7 +521,27 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     // session switcher has to reflect that backend, not the previous one.
     void refresh()
   }
-  callbacks.openCreatedSession = open
+  const openCreatedSession = async (sessionId: string): Promise<void> => {
+    if (state.surface?.kind === 'editor') {
+      await client.request<unknown>({
+        type: 'surface.openInEditor',
+        requestId: requestId(),
+        payload: { sessionId, replaceCurrent: true },
+      })
+      setState((current) => ({ ...current, surface: { kind: 'editor', sessionId } }))
+      await open(sessionId)
+    } else await openSession(sessionId)
+  }
+  callbacks.openCreatedSession = openCreatedSession
+  // Surface identity arrives on the same generic event channel as the domain
+  // traffic. The Host assigns it (never the Webview), and an editor assignment
+  // opens its bound session through the ordinary open path above.
+  const surfaceActions = createSurfaceActions({
+    client,
+    getState: () => state,
+    setState,
+    openSession: open,
+  })
   const unsubscribeHostEvents = subscribeHostEvents({
     accountActions,
     appendLiveHistory,
@@ -561,10 +582,20 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     scheduleLedgerRebuild,
     rememberHostOnlyNodes,
     setState,
+    surfaceActions,
     turnWatchers,
   })
   const attemptStartupRestore = (): Promise<void> => {
-    if (disposed || !startupRestorePending || state.activeSessionId !== undefined) return Promise.resolve()
+    // An editor surface is bound to one session: its assignment opens that
+    // session, and the side bar's "remembered/last session" choice must never
+    // load a different conversation into the tab.
+    if (
+      disposed ||
+      state.surface?.kind === 'editor' ||
+      !startupRestorePending ||
+      state.activeSessionId !== undefined
+    )
+      return Promise.resolve()
     if (startupRestorePromise !== undefined) return startupRestorePromise
     const sessionId = selectStartupSessionId(
       state.sessions,
@@ -589,6 +620,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     attemptStartupRestore,
     checkDshUpdates,
     client,
+    isEditorSurface: () => state.surface?.kind === 'editor',
     invalidateFeedback,
     markStartupRestoreArmed: () => {
       startupRestoreArmed = true
@@ -612,7 +644,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     getState: () => state,
     setState,
     refresh,
-    open,
+    open: (sessionId) => openSession(sessionId),
     loadArchivedSessions,
     nextOpenIntent: () => ++openIntent,
     currentOpenIntent: () => openIntent,
@@ -645,7 +677,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     nextOpenIntent: () => ++openIntent,
     nextOpenVersion: () => ++openVersion,
     nextPendingSessionRevision: () => ++pendingSessionRevision,
-    openSession: open,
+    openSession: openCreatedSession,
     persistWebviewState: () => persistWebviewState(),
     rememberComposerConfiguration,
     refresh,
@@ -662,6 +694,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     setState,
     executeCommandRequest,
     sendUserTurn,
+    runMovetoCommand: surfaceActions.methods.runMovetoCommand,
     refreshCommands: (sessionId) => refreshCommands(sessionId),
     refreshSessionModelDirectoryForSession,
     rememberComposerConfiguration,
@@ -677,10 +710,26 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     refreshGoals: refreshLiveGoals,
   })
 
+  /**
+   * The public open path. While the side bar is handed off, the conversation is
+   * not rendered there, so opening a session must ask the Host for an editor
+   * tab; the internal open below stays untouched for the editor surface's own
+   * assignment, session creation and startup restore.
+   */
+  const openSession = (sessionId: string): Promise<void> => {
+    if (
+      isHandoffSidebar(state) ||
+      (state.surface?.kind === 'editor' && state.surface.sessionId !== sessionId)
+    )
+      return surfaceActions.methods.openSessionInEditor(sessionId)
+    return open(sessionId)
+  }
   const store: StoreWithoutStateView = {
     ...accountActions.methods,
     ...jobActions.methods,
     ...featureActions.methods,
+    ...surfaceActions.methods,
+    openSession,
     ...settingsActions,
     ...feedbackActions,
     ...interactionActions,
@@ -710,7 +759,6 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       if (target === undefined) return
       await refreshSessionModelDirectoryForSession(target)
     },
-    openSession: open,
     loadOlderHistory,
     openSubagent,
     ...sessionActions,

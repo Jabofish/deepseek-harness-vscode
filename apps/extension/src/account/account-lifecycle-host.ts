@@ -469,8 +469,9 @@ function firstVisibleBonus(batch: AccountBonusBatch, now: number): AccountBonusN
   return {
     orderId: candidate.orderId,
     message: displayText(candidate.message) ?? '',
-    amount: candidate.amount,
-    currency: candidate.currency,
+    ...(candidate.title === undefined ? {} : { title: displayText(candidate.title) ?? '' }),
+    ...(candidate.amount === undefined ? {} : { amount: candidate.amount }),
+    ...(candidate.currency === undefined ? {} : { currency: candidate.currency }),
     expiresAt: candidate.expiresAt,
   }
 }

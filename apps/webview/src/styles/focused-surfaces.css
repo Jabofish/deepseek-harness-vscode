@@ -487,12 +487,6 @@
   border-radius: 12px;
 }
 
-.dsh-app[data-conversation-layout='focused'] .dsh-session-inspector__rows > li {
-  min-height: 32px;
-  padding: 6px 8px;
-  border-radius: 8px;
-}
-
 .dsh-app[data-conversation-layout='focused'] .dsh-message-actions {
   min-height: 28px;
   gap: 4px;
@@ -512,8 +506,6 @@
 }
 
 .dsh-app[data-conversation-layout='focused'] .dsh-scroll-to-latest {
-  inset-inline-start: auto;
-  inset-inline-end: max(16px, calc((100% - var(--dsh-timeline-content-max-width)) / 2));
   width: 40px;
   height: 40px;
   min-height: 40px;

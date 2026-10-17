@@ -90,6 +90,40 @@ function answer(request: WebviewRequest): unknown {
 describe('AppStore subagent transport routing', () => {
   afterEach(() => vi.restoreAllMocks())
 
+  it('routes Stop for an ordinary session to session.cancel without requiring a subagent', async () => {
+    const client = new FakeClient((request) => {
+      if (request.type === 'session.cancel') return undefined
+      return answer(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+    try {
+      await store.cancelSession('ordinary')
+      expect(client.requests).toEqual([
+        expect.objectContaining({ type: 'session.cancel', payload: { sessionId: 'ordinary' } }),
+      ])
+    } finally {
+      store.dispose()
+    }
+  })
+
+  it('preserves a failed ordinary Stop so the caller can display the error and retry', async () => {
+    let fail = true
+    const client = new FakeClient((request) => {
+      if (request.type !== 'session.cancel') return answer(request)
+      if (fail) throw new Error('Cancellation unavailable')
+      return undefined
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+    try {
+      await expect(store.cancelSession('ordinary')).rejects.toThrow('Cancellation unavailable')
+      fail = false
+      await expect(store.cancelSession('ordinary')).resolves.toBeUndefined()
+      expect(client.requests.map((request) => request.type)).toEqual(['session.cancel', 'session.cancel'])
+    } finally {
+      store.dispose()
+    }
+  })
+
   it('opens durable history and routes text follow-up plus Stop to subagent RPCs', async () => {
     const client = new FakeClient(answer)
     const store = createAppStore(client as unknown as ProtocolClient)

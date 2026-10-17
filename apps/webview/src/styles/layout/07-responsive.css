@@ -252,21 +252,6 @@
   white-space: pre-wrap;
 }
 
-/* The language picker uses the same top-level rail, so it follows the same
- * viewport contract instead of being clipped by the rail's scrollport. */
-.dsh-conversation__locale-menu {
-  position: fixed;
-  inset-block-start: calc(var(--dsh-space-3) + var(--dsh-control-height) + var(--dsh-space-2));
-  inset-inline-end: max(var(--dsh-space-2), env(safe-area-inset-right));
-  inset-inline-start: auto;
-  z-index: 60;
-  width: min(14rem, calc(100vw - var(--dsh-space-4)));
-  min-width: min(10rem, calc(100vw - var(--dsh-space-4)));
-  max-width: calc(100vw - var(--dsh-space-4));
-  max-height: min(20rem, calc(100vh - 5rem));
-  box-sizing: border-box;
-}
-
 @media (max-width: 36rem) {
   .dsh-changes-popover__menu,
   .dsh-tasks-popover__menu,
@@ -275,7 +260,9 @@
   .dsh-jobs-popover__menu {
     inset-inline-end: var(--dsh-space-2);
     inset-inline-start: var(--dsh-space-2);
-    width: auto;
+    /* The positioning hook measures before writing an inline width. An auto
+     * fixed width with right:auto collapses to the content on the next pass. */
+    width: min(34rem, calc(100vw - var(--dsh-space-4)));
     min-width: 0;
     max-width: none;
   }

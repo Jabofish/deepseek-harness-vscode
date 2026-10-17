@@ -63,6 +63,10 @@ export class Rc6InteractionRepository implements InteractionRepository {
     return this.permissions.get(requestId)?.sessionId
   }
 
+  public permissionOptionKind(requestId: string, optionId: string): PermissionOption['kind'] | undefined {
+    return this.permissions.get(requestId)?.options.find((option) => option.id === optionId)?.kind
+  }
+
   /** Return the session that owns a currently remembered question item. */
   public sessionForQuestion(questionId: string): string | undefined {
     return this.questions.get(questionId)?.sessionId

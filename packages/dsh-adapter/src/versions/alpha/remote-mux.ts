@@ -29,7 +29,7 @@ export type AlphaErrorCodeNormalizer = (code: string, details: Readonly<Record<s
 
 export type AlphaSessionWireVersion = 'v0' | 'v2' | 'v3' | 'v4'
 export type AlphaSessionControlWireVersion = 'queue-v1' | 'inbox-v1' | 'projection-v2'
-export type AlphaWorkspaceWireVersion = 'archive-v1' | 'pinned-v2'
+export type AlphaWorkspaceWireVersion = 'archive-v1' | 'pinned-v2' | 'pinned-replace-v3'
 export type AlphaPresetWireVersion = 'legacy-v1' | 'registry-v2'
 
 export interface AlphaLoopbackApiClientOptions {

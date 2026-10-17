@@ -128,7 +128,7 @@
 }
 
 .dsh-todo-list__state-icon--completed .dsh-icon {
-  animation: dsh-pop-once var(--dsh-motion-duration-fast) var(--dsh-motion-ease-pop) both;
+  animation: dsh-pop-once var(--dsh-motion-duration-fast) var(--dsh-motion-ease-pop) backwards;
 }
 
 .dsh-todo-list__content {

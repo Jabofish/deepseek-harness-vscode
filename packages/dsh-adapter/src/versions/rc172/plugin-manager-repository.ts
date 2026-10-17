@@ -60,8 +60,22 @@ const FIBER_PHASES = ['pending', 'loading', 'active', 'failed', 'unloading'] as 
 const MAX_BUNDLES = 5_000
 const MAX_PLUGINS = 10_000
 
+export interface PluginManagerWireProfile {
+  readonly restartReason?: boolean
+  readonly alreadyInstalled?: boolean
+}
+
+const RESTART_REASONS = [
+  'no-hmr',
+  'package-moved',
+  'host-module',
+  'unmanaged-plugin',
+  'module-comparison',
+] as const
+
 /** Exact DSH 0.1.7-rc.2 Plugin Manager Remotes, reduced to bounded safe DTOs. */
 export class Rc172PluginBundleRepository implements PluginBundleRepository {
+  protected readonly wireProfile: PluginManagerWireProfile = {}
   public constructor(private readonly transport: DshTransport) {}
 
   public async listBundles(signal?: AbortSignal): Promise<readonly PluginManagerBundle[]> {
@@ -174,7 +188,7 @@ export class Rc172PluginBundleRepository implements PluginBundleRepository {
   }
 
   protected mapBundleInfo(value: unknown): PluginManagerBundle {
-    return bundleInfo(value)
+    return bundleInfo(value, this.wireProfile)
   }
 
   protected mapInstallOptions(_options: PluginInstallOptions): Readonly<Record<string, unknown>> {
@@ -182,11 +196,11 @@ export class Rc172PluginBundleRepository implements PluginBundleRepository {
   }
 
   protected mapInstallResult(value: unknown, expectedSpec: string): PluginBundleChangeResult {
-    return installChangeResult(value, expectedSpec)
+    return installChangeResult(value, expectedSpec, this.wireProfile)
   }
 
   protected mapInstallRecoveryResult(value: unknown): PluginBundleChangeResult {
-    return installRecoveryResult(value)
+    return installRecoveryResult(value, this.wireProfile)
   }
 
   public async removeBundle(name: string, signal?: AbortSignal): Promise<PluginBundleChangeResult> {
@@ -195,7 +209,7 @@ export class Rc172PluginBundleRepository implements PluginBundleRepository {
       await this.transport.remoteRequest('pluginManager/removeBundle', { name }, signal),
       'pluginManager/removeBundle',
     )
-    return changeResult(value, 'remove', name)
+    return changeResult(value, 'remove', name, undefined, this.wireProfile)
   }
 
   public async setPluginEnabled(
@@ -208,7 +222,7 @@ export class Rc172PluginBundleRepository implements PluginBundleRepository {
       await this.transport.remoteRequest('pluginManager/setPluginEnabled', { id: entryId, enabled }, signal),
       'pluginManager/setPluginEnabled',
     )
-    return changeResult(value, 'enable', entryId, enabled)
+    return changeResult(value, 'enable', entryId, enabled, this.wireProfile)
   }
 
   public async setBundleEnabled(
@@ -221,11 +235,11 @@ export class Rc172PluginBundleRepository implements PluginBundleRepository {
       await this.transport.remoteRequest('pluginManager/setBundleEnabled', { name, enabled }, signal),
       'pluginManager/setBundleEnabled',
     )
-    return changeResult(value, 'enable', name, enabled)
+    return changeResult(value, 'enable', name, enabled, this.wireProfile)
   }
 }
 
-function bundleInfo(value: unknown): PluginManagerBundle {
+function bundleInfo(value: unknown, profile: PluginManagerWireProfile): PluginManagerBundle {
   const record = requiredRecord(value, 'listBundles entry')
   if (
     !isBoundedNonEmpty(record.name, 512) ||
@@ -243,7 +257,7 @@ function bundleInfo(value: unknown): PluginManagerBundle {
     throw malformed('listBundles entry')
   const readOnlyReason = optionalOneOf(READ_ONLY_REASONS, record.readOnlyReason, 'bundle readOnlyReason')
   const errorCode =
-    record.error === undefined ? undefined : readManagementErrorCode(record.error, 'bundle error')
+    record.error === undefined ? undefined : readManagementErrorCode(record.error, 'bundle error', profile)
   const meta = record.meta === undefined ? undefined : metadata(record.meta, 'bundle metadata')
   const rows = record.rows.map((item) => {
     const row = requiredRecord(item, 'bundle row')
@@ -374,6 +388,7 @@ function changeResult(
   expectedStage: 'install' | 'enable' | 'remove',
   expectedTarget: string,
   expectedEnabled?: boolean,
+  profile: PluginManagerWireProfile = {},
 ): PluginBundleChangeResult {
   const record = requiredRecord(value, `${expectedStage} result`)
   if (
@@ -388,7 +403,14 @@ function changeResult(
   )
     throw malformed(`${expectedStage} result`)
   const errorCode =
-    record.error === undefined ? undefined : readManagementErrorCode(record.error, `${expectedStage} error`)
+    record.error === undefined
+      ? undefined
+      : readManagementErrorCode(record.error, `${expectedStage} error`, profile)
+  const restartReason = profile.restartReason
+    ? optionalOneOf(RESTART_REASONS, record.restartReason, 'restart reason')
+    : undefined
+  if (restartReason !== undefined && record.application !== 'restart-required')
+    throw malformed('restart reason')
   const packageResult =
     record.packageResult === undefined ? undefined : requiredRecord(record.packageResult, 'package result')
   const failureKind =
@@ -410,6 +432,7 @@ function changeResult(
     name: expectedStage === 'install' ? (record.bundle ?? 'plugin') : expectedTarget,
     changed: record.changed,
     application: record.application,
+    ...(restartReason === undefined ? {} : { restartReason }),
     ...(record.enabled === undefined ? {} : { enabled: record.enabled }),
     stage: expectedStage,
     ...(errorCode === undefined ? {} : { errorCode }),
@@ -420,36 +443,45 @@ function changeResult(
   }
 }
 
-function installChangeResult(value: unknown, expectedSpec: string): PluginBundleChangeResult {
+function installChangeResult(
+  value: unknown,
+  expectedSpec: string,
+  profile: PluginManagerWireProfile,
+): PluginBundleChangeResult {
   const record = requiredRecord(value, 'install result')
-  if (record.stage === 'install') return changeResult(value, 'install', expectedSpec, true)
+  if (record.stage === 'install') return changeResult(value, 'install', expectedSpec, true, profile)
 
   // RC2 mutates a successful install result after pnpm completes: `target` and `stage`
   // become the installed bundle and its activation step. Preserve the call-level
   // operation as `install` for consumers, while validating the upstream target.
   if (record.stage !== 'enable' || !isBoundedNonEmpty(record.bundle, 512) || record.target !== record.bundle)
     throw malformed('install result')
-  const result = changeResult(value, 'enable', record.bundle, true)
+  const result = changeResult(value, 'enable', record.bundle, true, profile)
   return { ...result, stage: 'install' }
 }
 
-function installRecoveryResult(value: unknown): PluginBundleChangeResult {
+function installRecoveryResult(value: unknown, profile: PluginManagerWireProfile): PluginBundleChangeResult {
   const record = requiredRecord(value, 'waitForInstall result')
   if (record.stage === 'install') {
     if (!isBoundedNonEmpty(record.target, 4_096)) throw malformed('waitForInstall result')
-    return changeResult(value, 'install', record.target, true)
+    return changeResult(value, 'install', record.target, true, profile)
   }
 
   // The successful install mutates the active result to the bundle's enable stage.
   // `waitForInstall` has no original spec argument, so only validate the bundle target.
   if (record.stage !== 'enable' || !isBoundedNonEmpty(record.bundle, 512) || record.target !== record.bundle)
     throw malformed('waitForInstall result')
-  const result = changeResult(value, 'enable', record.bundle, true)
+  const result = changeResult(value, 'enable', record.bundle, true, profile)
   return { ...result, stage: 'install' }
 }
 
-function readManagementErrorCode(value: unknown, part: string): PluginBundleFailureCode {
+function readManagementErrorCode(
+  value: unknown,
+  part: string,
+  profile: PluginManagerWireProfile,
+): PluginBundleFailureCode {
   const error = requiredRecord(value, part)
+  if (profile.alreadyInstalled && error.code === 'already-installed') return error.code
   if (!isOneOf(MANAGEMENT_ERROR_CODES, error.code)) throw malformed(part)
   return error.code
 }

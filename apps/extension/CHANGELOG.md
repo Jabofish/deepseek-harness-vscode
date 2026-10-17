@@ -1,5 +1,36 @@
 # Change Log
 
+## Unreleased
+
+- 新增 DSH `0.2.1-rc.2` 精确适配，核对固定源码并验证 Search / Fetch 实时设置、密钥隔离、非法值与过期修订拒绝、恢复默认；保留动态模型目录与已选路由。
+- Adds exact DSH `0.2.1-rc.2` support with pinned source review and Search / Fetch settings coverage, including credential isolation, invalid values, stale revisions and restoring inherited defaults; preserves authoritative model catalogs and routes.
+
+- 将更新、连接、错误和欢迎提示合并为默认收起的紧凑通知栏；返回最新消息和轨迹详情各占独立空间，短窗口提供滚动退路，修复通知挤压、辅助控件覆盖正文及长会话跳转后再次偏离尾部的问题。
+- Combines persistent notices into a compact collapsed bar; reserves separate rows for jump controls and trajectory details, keeps short windows scrollable, and preserves the measured tail of long conversations after a jump.
+
+- 修复菜单同级入口字号与行高不统一：任务、导出、语言和检查器采用相同文字角色；共享选择菜单不再继承表单字号，菜单和工具详情正确跟随会话字号设置。
+- Unifies typography across peer menu actions, including tasks, export, language and Inspector; gives shared choice menus an explicit text role and makes menu/tool detail roles follow conversation font settings.
+
+- 系统修复 Webview 布局和弹层：会话状态与行操作不再重叠，任务等菜单保持可读宽度；重排检查器和插件页，统一选择器主题及锚点定位，修复诊断和导出层级、嵌套 Esc、焦点恢复与动画残留坐标偏移。
+- Repairs Webview layout and overlays: separates session status from row actions, keeps feature menus readable, reorganizes Inspector and plugins, unifies themed anchored selectors, and fixes diagnostics/export stacking, nested Escape, focus restoration and retained animation transforms.
+
+- 适配 DSH 的后续精确入口，涵盖工作区完整替换、插件重启原因及重复安装错误、账号奖励通知变化；版本与固定来源见 [DSH 契约](../../docs/dsh-contract.md)。
+- Adds subsequent exact DSH adapters, including workspace replacement baselines, plugin restart reasons and already-installed failures, and optional account bonus fields; see the pinned [DSH contract](../../docs/dsh-contract.md).
+- 修复 [Issue #3](https://github.com/Jabofish/deepseek-harness-vscode/issues/3) 的普通会话停止被误判为子代理问题；审批和提问期间保持停止入口，允许运行时调整模型与权限，撤回控制不被工作区信任变化阻挡。
+- Fixes ordinary-session Stop routing in [Issue #3](https://github.com/Jabofish/deepseek-harness-vscode/issues/3), preserves Stop during approvals and questions, enables model and permission choices while running, and keeps withdrawal controls available after workspace trust changes.
+- 深入修复 [PR #4](https://github.com/Jabofish/deepseek-harness-vscode/pull/4) 的跨窗口取消串扰、会话绑定错位、关闭后的迟到消息和移动失败丢失错误；感谢 [ggeorgovassilis](https://github.com/ggeorgovassilis) 的贡献。
+- Hardens [PR #4](https://github.com/Jabofish/deepseek-harness-vscode/pull/4) against cancellation across surfaces, stale session bindings, queued messages after close, and lost move failures; thanks to [ggeorgovassilis](https://github.com/ggeorgovassilis).
+
+- 新增编辑器区聊天入口：命令面板的 **DSH: Open Chat in Editor Area** 将当前会话以编辑器标签打开（每个会话一个标签，窗口重载后恢复），侧边栏显示“聊天已在编辑器区打开”的占位提示并提供移回操作。
+- Adds an editor-area chat entry point: **DSH: Open Chat in Editor Area** opens the current session as an editor tab (one tab per session, restored after a window reload) while the side bar shows a "chat is open in the editor area" notice with a move-back action.
+- 新增聊天输入框命令 `/moveto:editor`（等同 `/moveto editor`）与 `/moveto:sidebar`，可在编辑器区与侧边栏之间移动聊天；未知目标只在本机报错，不会作为提示词发送。
+- Adds the composer commands `/moveto:editor` (same as `/moveto editor`) and `/moveto:sidebar` for moving the chat between the editor area and the side bar; an unknown target fails locally instead of being sent as a prompt.
+- 会话列表的每一行新增“在编辑器区打开”操作，可直接把该会话作为编辑器标签打开；重命名会话会同步更新已打开标签的标题。
+- Adds an "Open in Editor Area" action to every session row, opening that conversation as an editor tab; renaming a session now updates the title of its open tab.
+
+- 修复 Webview 上下文菜单的“复制”在未选中文本时无任何效果：现在复制所指行（助手回答或用户提问）的 Markdown，不含思考、工具调用和通知；该行没有可读文本时保持剪贴板不变。
+- Fixes the Webview context menu's Copy doing nothing without a selection: it copies the Markdown of the addressed row (assistant answer or user prompt) without reasoning, tool calls or notices, and leaves the clipboard untouched when that row has no readable text.
+
 ## 0.3.1
 
 - 修复远程工作区的凭据作用域、附件文件系统与 Inspector 转发边界，避免不同 SSH / 容器环境复用授权。

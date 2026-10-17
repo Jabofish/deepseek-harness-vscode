@@ -417,7 +417,7 @@
   border-radius: var(--dsh-radius-md);
   background: var(--dsh-surface-soft);
   transition: border-color var(--dsh-motion-duration-fast) var(--dsh-motion-ease-standard);
-  animation: dsh-surface-enter var(--dsh-motion-duration-standard) var(--dsh-motion-ease-standard) both;
+  animation: dsh-surface-enter var(--dsh-motion-duration-standard) var(--dsh-motion-ease-standard) backwards;
 }
 
 .dsh-settings__custom-provider:hover,

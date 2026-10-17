@@ -116,6 +116,157 @@ describe('DSH workspace navigation posture', () => {
   })
 })
 
+describe('session dragging respects cancellation and explicit opening', () => {
+  afterEach(cleanup)
+
+  function stubWidePanel(): void {
+    vi.stubGlobal('matchMedia', () => ({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }))
+  }
+
+  function sessionRow(): HTMLElement {
+    const row = screen.getAllByRole('button', { name: /Fix login bug/u })[0]?.closest('li')
+    if (row === null || row === undefined) throw new Error('the session row is missing')
+    return row
+  }
+
+  it('does not interpret an unaccepted external drop as an editor-open request', () => {
+    const onOpenInEditor = vi.fn()
+    stubWidePanel()
+    renderDrawer({ onOpenInEditor }, 'focused')
+    const row = sessionRow()
+    const dataTransfer = createDataTransfer()
+
+    fireEvent.dragStart(row, { dataTransfer })
+    // The editor area is outside the Webview viewport. jsdom's DragEvent drops
+    // MouseEvent coordinates, so the native event is dispatched directly.
+    const outside = new Event('drag', { bubbles: true })
+    Object.assign(outside, { clientX: 5_000, clientY: 5_000 })
+    document.dispatchEvent(outside)
+    dataTransfer.dropEffect = 'none'
+    fireEvent.dragEnd(row, { dataTransfer })
+
+    expect(onOpenInEditor).not.toHaveBeenCalled()
+  })
+
+  it('does not interpret dragleave and cancellation as an editor-open request', () => {
+    const onOpenInEditor = vi.fn()
+    stubWidePanel()
+    renderDrawer({ onOpenInEditor }, 'focused')
+    const row = sessionRow()
+    const dataTransfer = createDataTransfer()
+
+    fireEvent.dragStart(row, { dataTransfer })
+    fireEvent.dragLeave(document, { relatedTarget: null })
+    fireEvent.keyDown(document, { key: 'Escape' })
+    dataTransfer.dropEffect = 'none'
+    fireEvent.dragEnd(row, { dataTransfer })
+
+    expect(onOpenInEditor).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['the pointer stayed inside the panel', false, 'none'],
+    ['a drop target accepted the drag', true, 'move'],
+  ])('opens nothing when %s', (_name, leftPanel: boolean, dropEffect: string) => {
+    const onOpenInEditor = vi.fn()
+    stubWidePanel()
+    renderDrawer({ onOpenInEditor }, 'focused')
+    const row = sessionRow()
+    const dataTransfer = createDataTransfer()
+
+    fireEvent.dragStart(row, { dataTransfer })
+    if (leftPanel) {
+      const outside = new Event('drag', { bubbles: true })
+      Object.assign(outside, { clientX: 5_000, clientY: 5_000 })
+      document.dispatchEvent(outside)
+    }
+    dataTransfer.dropEffect = dropEffect
+    fireEvent.dragEnd(row, { dataTransfer })
+
+    expect(onOpenInEditor).not.toHaveBeenCalled()
+  })
+
+  it('requires the explicit open action when the list cannot reorder', () => {
+    const onOpenInEditor = vi.fn()
+    stubWidePanel()
+    renderDrawer({ onOpenInEditor }, 'focused')
+
+    // Recency order has no drag action; the explicit editor action remains.
+    fireEvent.click(screen.getByRole('button', { name: 'Sort sessions by last updated' }))
+    const row = screen.getByRole('button', { name: 'Open Fix login bug in the editor area' }).closest('li')
+    if (row === null) throw new Error('the session row is missing')
+    expect(row.getAttribute('draggable')).toBe('false')
+
+    const dataTransfer = createDataTransfer()
+    fireEvent.dragStart(row, { dataTransfer })
+    fireEvent.dragLeave(document, { relatedTarget: null })
+    dataTransfer.dropEffect = 'none'
+    fireEvent.dragEnd(row, { dataTransfer })
+
+    expect(onOpenInEditor).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Open Fix login bug in the editor area' }))
+    expect(onOpenInEditor).toHaveBeenCalledOnce()
+    expect(onOpenInEditor).toHaveBeenCalledWith('s1')
+  })
+
+  it('still reorders without opening a tab when the list is in manual order', () => {
+    const onOpenInEditor = vi.fn()
+    const onMoveSession = vi.fn().mockResolvedValue(undefined)
+    stubWidePanel()
+    renderDrawer({ onOpenInEditor, onMoveSession }, 'focused')
+
+    const rows = screen.getAllByTitle('Drag to reorder session')
+    const dataTransfer = createDataTransfer()
+    fireEvent.dragStart(rows[1]!, { dataTransfer })
+    const outside = new Event('drag', { bubbles: true })
+    Object.assign(outside, { clientX: 5_000, clientY: 5_000 })
+    document.dispatchEvent(outside)
+    fireEvent.dragOver(rows[0]!, { dataTransfer })
+    fireEvent.drop(rows[0]!, { dataTransfer })
+    dataTransfer.dropEffect = 'none'
+    fireEvent.dragEnd(rows[1]!, { dataTransfer })
+
+    expect(onMoveSession).toHaveBeenCalledTimes(1)
+    expect(onOpenInEditor).not.toHaveBeenCalled()
+  })
+})
+
+describe('opening a session in the editor area', () => {
+  afterEach(cleanup)
+
+  it('offers the action on every row and reports the picked session', () => {
+    vi.stubGlobal('matchMedia', () => ({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }))
+    const onOpenInEditor = vi.fn()
+    renderDrawer({ onOpenInEditor }, 'focused')
+
+    const action = screen.getByRole('button', { name: 'Open Fix login bug in the editor area' })
+    expect(action.getAttribute('title')).toBe('Open in Editor Area')
+
+    fireEvent.click(action)
+
+    expect(onOpenInEditor).toHaveBeenCalledExactlyOnceWith('s1')
+  })
+
+  it('shows no such action when the surface cannot host an editor tab', () => {
+    vi.stubGlobal('matchMedia', () => ({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }))
+    renderDrawer({}, 'focused')
+
+    expect(screen.queryByTitle('Open in Editor Area')).toBeNull()
+  })
+})
+
 function createDataTransfer(): {
   effectAllowed: string
   dropEffect: string

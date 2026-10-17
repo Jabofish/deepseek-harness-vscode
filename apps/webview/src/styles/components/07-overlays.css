@@ -45,6 +45,60 @@
   animation: dsh-pop-in var(--dsh-motion-duration-standard) var(--dsh-motion-ease-enter) backwards;
 }
 
+.dsh-modal-dialog {
+  box-sizing: border-box;
+  width: min(34rem, 100%);
+  max-width: 100%;
+  max-height: calc(100dvh - 2 * var(--dsh-panel-gutter));
+  padding: var(--dsh-space-4);
+  overflow: auto;
+  border: var(--dsh-border);
+  border-radius: var(--dsh-radius-lg);
+  color: var(--dsh-text);
+  background: var(--dsh-widget-bg);
+  box-shadow: var(--dsh-shadow);
+}
+
+.dsh-modal-dialog__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--dsh-space-3);
+  margin-bottom: var(--dsh-space-4);
+}
+
+.dsh-modal-dialog__header h2 {
+  min-width: 0;
+  margin: 0;
+  font-size: var(--dsh-font-size-lg);
+  overflow-wrap: anywhere;
+}
+
+.dsh-modal-dialog__header > button {
+  flex: 0 0 auto;
+}
+
+.dsh-modal-dialog .dsh-export {
+  gap: var(--dsh-space-3);
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.dsh-export__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--dsh-space-2);
+  padding-top: var(--dsh-space-3);
+  border-top: var(--dsh-border);
+}
+
+.dsh-export__actions > button {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .dsh-session-header {
   display: flex;
   align-items: center;

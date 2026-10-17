@@ -60,7 +60,7 @@ function routedTypes(body: string): ReadonlySet<string> {
 const handleFeatureRequestBody = handlerBody(FEATURE_HANDLER_SOURCE, 'const handleFeatureRequest = ')
 const gatewayRequestBody = handlerBody(
   REQUEST_HANDLER_SOURCE,
-  'const handleRequest = async (request: WebviewRequest',
+  'const handleRequest = async (',
   'const router = new WebviewMessageRouter({',
 )
 const handleRequestBody = [gatewayRequestBody, SESSION_HANDLER_SOURCE, ATTACHMENT_HANDLER_SOURCE].join('\n')

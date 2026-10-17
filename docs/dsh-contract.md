@@ -4,7 +4,7 @@
 
 ## 上游来源与安装默认
 
-当前上游最新发布包为 `@deepseek-ai/dsh@0.2.1-alpha.2`；扩展引导安装默认包为 `@deepseek-ai/dsh@0.2.0-rc.2`。`LATEST_PUBLISHED_DSH_VERSION` 与 `DEFAULT_INSTALL_DSH_VERSION` 分别记录发布版本和明确选定的安装默认，支持新 alpha 入口不自动切换稳定安装默认。安装始终使用精确版本，不解析浮动 dist-tag。真实 timed 提问与 VS Code 交互验收仍未完成，见能力矩阵 UQ-01；默认版本不代表这项能力已标为 `DONE`。npm 通道指向会改变，不在规范中复制“当前 latest/next/alpha”快照。更新功能可从上游目录选择经过验证的**精确**版本，不能把源码适配视为已完成真实运行验证。
+当前上游最新发布包为 `@deepseek-ai/dsh@0.2.1-rc.2`；扩展引导安装默认包为 `@deepseek-ai/dsh@0.2.0-rc.2`。`LATEST_PUBLISHED_DSH_VERSION` 与 `DEFAULT_INSTALL_DSH_VERSION` 分别记录发布版本和明确选定的安装默认，增加精确版本入口不自动切换稳定安装默认。安装始终使用精确版本，不解析浮动 dist-tag。真实 timed 提问与 VS Code 交互验收仍未完成，见能力矩阵 UQ-01；默认版本不代表这项能力已标为 `DONE`。npm 通道指向会改变，不在规范中复制“当前 latest/next/alpha”快照。更新功能可从上游目录选择经过验证的**精确**版本，不能把源码适配视为已完成真实运行验证。
 
 历史 Host API 的固定基线是提交 [`47f943859bef60e4160492346772ded9b24f765a`](https://github.com/deepseek-ai/deepseek-harness/tree/47f943859bef60e4160492346772ded9b24f765a)：[RPC map](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/host/apiproxy/src/api/rpc-map.ts)、[events](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/host/apiproxy/src/api/events.ts)、[tool catalog](https://github.com/deepseek-ai/deepseek-harness/tree/47f943859bef60e4160492346772ded9b24f765a/packages/core/tools)。它只证明该 Host API 家族；较新的 Connection/Gateway、typed Remote 和 Session Controller 必须从**目标版本自己的 tag/commit 和实际存在的接口文件**核对。尤其 `0.1.5-rc.2` 与 `0.1.5-rc.3` 的 wire 比较不能引用上述已不存在的旧 RPC 文件；两者被适配器消费的 Session Controller、typed Remote、Connection/Gateway 与工具运行时源码相同，仍保留各自精确身份。
 
@@ -30,6 +30,11 @@
 | `0.2.0-rc.2`                                                                        | `rc202`                                         | 保留 rc.1 的精确契约，新增 timed `userQuestions/answer` 与 `userQuestions/attachWait`、`userQuestions` 会话投影及结构化迟到答复；非幂等 answer 不重试；仅精确身份 |
 | `0.2.1-alpha.1`                                                                     | `alpha211`                                      | 独立 V4 codec 与 catalog v0/v1、projection 子代理目录；保留 timed question，新增 Schedule 子代理拒绝、账号失败归一与插件实际安装版本；仅精确身份                  |
 | `0.2.1-alpha.2`                                                                     | `alpha212`                                      | 独立 V4 格式库与工作目录事件、external 子代理目录、迁移状态和禁止隐式迁移的 fork；官方按需插件目录与精确安装；仅精确身份                                          |
+| `0.2.1-alpha.3`                                                                     | `alpha213`                                      | Workspace replace 基线、Gateway 错误与插件 restartReason；仅精确身份                                                                                              |
+| `0.2.1-alpha.4`                                                                     | `alpha214`                                      | 继承已核对 wire，增加插件 already-installed 业务错误；仅精确身份                                                                                                  |
+| `0.2.1-alpha.5`                                                                     | `alpha215`                                      | 账号奖励通知标题与可选显示字段；任意 JSON 元数据留在 Host；仅精确身份                                                                                             |
+| `0.2.1-rc.1`                                                                        | `rc211`                                         | 独立入口，复用已核对 alpha.5 消费契约；不作为未知版本回退                                                                                                         |
+| `0.2.1-rc.2`                                                                        | `rc212`                                         | 独立入口，复用已核对 rc.1 消费契约；动态承接 Search / Fetch 设置；不作为未知版本回退                                                                              |
 
 `0.1.7-rc.2` 的固定源码是 [tag `dsh-v0.1.7-rc.2`](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.1.7-rc.2)，提交 `477b4f420553e8a52c2fbccc464d7561b239c443`。其他新增版本也必须在 fixture 注明 tag、commit、文件和类型；版本身份、schema、错误词汇、启动参数与能力声明一起核对。
 
@@ -51,7 +56,7 @@
 - [Inspector](https://github.com/deepseek-ai/deepseek-harness/tree/5badb15009ae1756c3afe0ae0cef1faafc290ccc/packages/experimental/inspector) 发现先访问已认证 bootstrap，再访问它明确公告的 numeric loopback Worker；禁止重定向和端口扫描，Worker 不接收主 Cookie 或 ingest token。仅接受固定 Worker 身份、唯一 Host target 与精确 CDP/frontend 路径。DevTools URI 只留在 Host，原生打开与复制只由用户操作触发，Webview 接收可用性和动作结果。会话检查器本地展示事件/节点的 allowlist 元数据、类型过滤、分页、权威 sequence 匹配、聚合行拾取与虚拟列表定位；原始日志、模型/工具正文及内部对象不跨安全边界。
 - captured Markdown 文件在现有用户触发的 Host 脱敏预览内显示 frontmatter 字段和安全 Markdown。只识别完整前导 YAML mapping；保留数字拼写、集合/alias 源文本，不展开 alias，限制源码、字段、AST 节点与深度；畸形值回退文本。统计明细使用既有权威时间/usage 分桶，不生成缺失的缓存或 total 值。
 
-这些入口遵循 VS Code 宿主安全边界，不复制上游桌面布局或原始诊断对象。mods 与 Inspector 是可选插件，不是标准后端必需服务。各项适配及现场缺口见 [alpha211 适配审计](../reviews/dsh-alpha211-adaptation-audit.md)。
+这些入口遵循 VS Code 宿主安全边界，不复制上游桌面布局或原始诊断对象。mods 与 Inspector 是可选插件，不是标准后端必需服务。各项适配及现场缺口见 [能力矩阵](capability-matrix.md)。
 
 脱敏增量 fixture 与精确探测/错误/取消/释放测试见 `alpha211-*-contract.spec.ts`、`alpha211-mods-band.spec.ts` 和 `alpha211-inspector.spec.ts`；`tests/alpha211-feature-projection.spec.ts` 与 Extension composition 规格覆盖 Adapter→Application→Host→严格协议，Webview 规格覆盖最终动作、安装恢复、解析与长列表。隔离真实包 smoke 与 `tests/live-dsh/alpha211-surfaces.spec.ts` 已验证精确入口、Session/Workspace、timed question 的未知 call 与空 wait 路由、默认 Schedule/Plugin Manager 目录、账号空状态/watch、Creator roster 和未挂载可选服务。`alpha211-optional-surfaces.spec.ts` 在精确发布实验包的隔离 overlay 下验证实际 Inspector bootstrap/Worker、mods 读取/按钮执行/取消/过期拒绝及两个端口释放；测试专用 mod 不使用模型或工具。本机 VS Code managed E2E 已通过扩展 Host connect/reconnect；真实 timed 问答、委派提醒拒绝、插件安装恢复、OAuth、模型参数预览、Chrome 原生打开及新增 Webview 交互仍需独立现场证据，相关能力维持 `PARTIAL`。
 
@@ -65,6 +70,26 @@
 - Connection/Gateway、timed userQuestions、Account、Workspace、Job、Schedule、动态命令/Settings，以及可选 mods/Inspector 保留经过固定源码核对的能力入口。上游移除 tool mode `both` 不产生本扩展静态选项；运行目录、Preset 与 Settings 继续由上游目录决定。受管启动仍限定验证过的 loopback HTTP 与所有权。
 
 这些入口不作为未知版本回退；真实模型运行、外部执行和新增 VS Code 交互缺少独立现场证据时，能力保持 `PARTIAL`。
+
+### 后续精确入口的固定来源
+
+| Adapter    | 目标版本        | 上游固定提交                                                                                                                                |
+| ---------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `alpha213` | `0.2.1-alpha.3` | [`2fbf4359b82fb94c03dcce0b831660d87f12ea5c`](https://github.com/deepseek-ai/deepseek-harness/tree/2fbf4359b82fb94c03dcce0b831660d87f12ea5c) |
+| `alpha214` | `0.2.1-alpha.4` | [`86a402200d95fecef4529d969836f1fe13c6cb0d`](https://github.com/deepseek-ai/deepseek-harness/tree/86a402200d95fecef4529d969836f1fe13c6cb0d) |
+| `alpha215` | `0.2.1-alpha.5` | [`1517a4dbca0a2789ff1d41ba439600f8547d23fa`](https://github.com/deepseek-ai/deepseek-harness/tree/1517a4dbca0a2789ff1d41ba439600f8547d23fa) |
+| `rc211`    | `0.2.1-rc.1`    | [`1600d8a1e140dcde43a1a0941940a0480712c011`](https://github.com/deepseek-ai/deepseek-harness/tree/1600d8a1e140dcde43a1a0941940a0480712c011) |
+| `rc212`    | `0.2.1-rc.2`    | [`687f282e8625c6b8d11ff58211a90524be2e4317`](https://github.com/deepseek-ai/deepseek-harness/tree/687f282e8625c6b8d11ff58211a90524be2e4317) |
+
+逐提交比较 Connection/Gateway、typed Remote、Session V4、Workspace、Plugin Manager、Account 和工具目录后，五个入口按顺序继承已核对能力；Session V4 codec 源码与前一已支持入口相同，继续使用既有独立格式库。Gateway 新增 peer 专用载体不取消根客户端的 Cookie/token 交换，扩展保持已验证的根客户端路径，不把自己伪装成 peer。
+
+Workspace `replace` 是同一 generation 的完整目录基线，必须替换旧缓存并保留 pinned/archive；旧 wire 仍拒绝这个新帧。Gateway 的 `interactions-forbidden` 映射权限拒绝，`peer-disposed` 映射连接不可达；写操作不因此自动重试。
+
+Plugin Manager 只在新入口读取并校验五种 `restartReason`，从 mutation、install 和同 ID 恢复一直传递到本地化提示。后续入口接纳 `already-installed`，旧入口继续拒绝未知业务结果。新的 requirements/incompatibility 原文和 bundle source 不跨 Webview。Plugin Market 的新增专用 Remote 尚未提供独立页面，已有 registry/spec/安装和清单能力不冒充市场功能。
+
+账号奖励通知的 `title` 和 display 字段可以缺省；`campaign`、`amount`、`currency`、`grantedAt` 可以是任意 JSON，不能据此拒绝整批通知，也不能把它们原样投影。只发送安全字符串显示字段和有界标题，缺省金额仍允许显示及确认奖励；`orderId` 继续严格校验，确认身份留在 Host。
+
+rc.2 与 rc.1 的 Connection / Gateway、全部 API Remote、Session V4、Account、Plugin Manager 和工具声明源码相同。新增 Search / Fetch provider 通过 `settings.describe` 暴露 `web` 的实时 provider 选择和 `web-deepseek-api` 的配置，包括结果数量及是否发送原始问题；通用插件配置界面从运行时 schema 生成控件，不内置 provider 清单。密钥继续通过 Host 原生凭据入口管理。上游临时模型标签只改变展示，不改变目录名称、model ID 或路由，本扩展保持权威目录原值。精确准入、继承的错误 / 取消 / 释放及隔离真实配置读写入口见 `rc211-contract.spec.ts`、`rc211-incremental-contract.spec.ts` 和 `tests/live-dsh/rc211-surfaces.spec.ts`；逐项运行结果和 PR 审查边界见[交付检查记录](../reviews/dsh-rc212-release-review.md)。
 
 ### 未知版本
 

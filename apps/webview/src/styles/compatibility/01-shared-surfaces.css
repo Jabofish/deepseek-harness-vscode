@@ -329,7 +329,11 @@
 }
 
 .dsh-diagnostics-popover__menu {
+  position: fixed;
+  z-index: 60;
   width: min(32rem, calc(100vw - 1rem));
+  max-height: calc(100dvh - var(--dsh-space-4));
+  overflow: auto;
   padding: 0;
 }
 
@@ -446,4 +450,10 @@
   color: var(--dsh-text);
   background: color-mix(in srgb, var(--dsh-text) 50%, transparent);
   cursor: pointer;
+}
+
+.dsh-diagnostics-popover__close {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--dsh-space-2) var(--dsh-space-2) 0;
 }

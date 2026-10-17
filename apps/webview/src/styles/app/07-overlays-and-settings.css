@@ -130,6 +130,7 @@
 
 .dsh-settings__body {
   display: grid;
+  align-content: start;
   gap: var(--dsh-space-4);
   min-width: 0;
   padding: var(--dsh-space-4);

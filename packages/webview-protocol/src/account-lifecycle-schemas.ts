@@ -80,12 +80,19 @@ export const accountProfileDetailsSnapshotSchema = z
           value: z
             .object({
               orderId: z.string().uuid(),
+              title: z.string().max(4_096).optional(),
               message: z.string().max(4_096),
-              amount: accountDecimal,
-              currency: accountCurrency,
+              amount: accountDecimal.optional(),
+              currency: accountCurrency.optional(),
               expiresAt: z.string().max(128),
             })
             .strict()
+            .transform(({ title, amount, currency, ...notice }) => ({
+              ...notice,
+              ...(title === undefined ? {} : { title }),
+              ...(amount === undefined ? {} : { amount }),
+              ...(currency === undefined ? {} : { currency }),
+            }))
             .nullable(),
         })
         .strict(),

@@ -10,19 +10,8 @@
   font-size: var(--dsh-font-size-sm);
 }
 
-.dsh-conversation-layout select {
-  min-height: var(--dsh-control-height);
+.dsh-conversation-layout > .dsh-select-menu {
   max-width: 100%;
-  padding: var(--dsh-space-1) var(--dsh-space-2);
-  color: var(--dsh-text);
-  background: var(--dsh-input-bg);
-  border: var(--dsh-border);
-  border-radius: var(--dsh-radius-sm);
-}
-
-.dsh-conversation-layout select:focus-visible {
-  outline: 2px solid var(--dsh-focus-ring);
-  outline-offset: 2px;
 }
 
 .dsh-app[data-conversation-layout='focused'],

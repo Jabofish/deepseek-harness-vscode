@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef, type PropsWithChildren, type ReactElement } from 'react'
+import { useDismissibleLayer } from '../useDismissibleLayer.js'
 
 export interface DrawerProps extends PropsWithChildren {
   readonly title: string
@@ -52,39 +53,12 @@ export function Drawer(props: DrawerProps): ReactElement | null {
     if (!open) return
     previousFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
     dialogRef.current?.focus()
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        onClose()
-        return
-      }
-      if (event.key !== 'Tab' || dialogRef.current === null) return
-      const focusable = Array.from(
-        dialogRef.current.querySelectorAll<HTMLElement>(
-          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
-        ),
-      ).filter((element) => !element.hasAttribute('disabled'))
-      if (focusable.length === 0) {
-        event.preventDefault()
-        dialogRef.current.focus()
-        return
-      }
-      const first = focusable[0]
-      const last = focusable[focusable.length - 1]
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault()
-        last?.focus()
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault()
-        first?.focus()
-      }
-    }
-    document.addEventListener('keydown', onKeyDown)
     return () => {
-      document.removeEventListener('keydown', onKeyDown)
       previousFocus.current?.focus()
     }
-  }, [open, onClose])
+  }, [open])
+
+  useDismissibleLayer({ open, refs: [dialogRef], trapFocus: true, onDismiss: onClose })
 
   if (!mounted) return null
   return (

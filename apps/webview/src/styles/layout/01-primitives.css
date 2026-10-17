@@ -71,6 +71,10 @@
   position: relative;
   flex: 1 1 0%;
   gap: var(--dsh-space-2);
+  /* When chrome and the composer exceed a short viewport, keep every row
+   * reachable instead of collapsing the transcript or painting over it. */
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 /* The topbar is a single compact line. Low-frequency actions live in a

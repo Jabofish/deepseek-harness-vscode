@@ -53,6 +53,8 @@ export interface SessionDrawerProps {
   readonly onOpenChange?: (open: boolean) => void
   readonly showTrigger?: boolean
   readonly onOpen: (sessionId: string) => void
+  /** Open one conversation as an editor-area chat tab instead of switching here. */
+  readonly onOpenInEditor?: (sessionId: string) => void
   readonly onCreate: (workspaceId: string | undefined) => void
   readonly onArchive: (sessionId: string) => Promise<void>
   /** Archived rows the host still holds; fetched on demand by the section. */
@@ -287,6 +289,12 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
     props.onOpen(session.id)
   }
 
+  const openSessionInEditor = (session: SessionSummary): void => {
+    setSelectedWorkspaceId(session.workspaceId)
+    if (!docked) setOpen(false)
+    props.onOpenInEditor?.(session.id)
+  }
+
   const archiveSession = (session: SessionSummary): void => {
     setArchiveError(undefined)
     setRemovingSessionId(session.id)
@@ -414,6 +422,7 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
       disabled={removingSessionId !== undefined || mutationBusy}
       sorting={sorting}
       onOpen={openSession}
+      {...(props.onOpenInEditor === undefined ? {} : { onOpenInEditor: openSessionInEditor })}
       onArchive={archiveSession}
       onRename={(target, trigger) => {
         dialogTriggerRef.current = trigger

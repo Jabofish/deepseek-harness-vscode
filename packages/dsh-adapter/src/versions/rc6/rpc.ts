@@ -162,7 +162,10 @@ function mapRpcError(code: string): AppErrorCode {
     case 'settings-conflict':
       return 'SETTINGS_CONFLICT'
     case 'credential-rejected':
+    case 'interactions-forbidden':
       return 'PERMISSION_DENIED'
+    case 'peer-disposed':
+      return 'BACKEND_UNREACHABLE'
     case 'host-provider-services-unavailable':
     case 'account-provider-models-unavailable':
       return 'CAPABILITY_UNAVAILABLE'
@@ -212,6 +215,8 @@ function safeRpcMessage(
     'writer-held': 'The DSH session is currently owned by another DSH writer.',
     'settings-conflict': 'The DSH settings changed; reload and retry.',
     'credential-rejected': 'The DSH credential change was rejected.',
+    'interactions-forbidden': 'This DSH connection cannot answer interactions.',
+    'peer-disposed': 'The DSH connection is no longer active. Reconnect before continuing.',
     'bad-request': 'The DSH request was invalid.',
     'session-conflict': 'The DSH session conflicts with the requested workspace.',
     'session-not-found': 'The requested DSH session was not found.',

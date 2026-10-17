@@ -393,8 +393,34 @@
   font-weight: 400;
 }
 
-/* Source rows reveal actions on hover. Keep them in the tab order and show
- * them for keyboard focus as well; touch devices retain persistent actions. */
+.dsh-app[data-conversation-layout='focused'] .dsh-session-switcher__results .dsh-session-switcher__list > li {
+  margin-inline-start: var(--dsh-space-3);
+  padding-inline-start: 0;
+  border-radius: 8px;
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-session-switcher__list > li:is(:hover, :focus-within) {
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-app[data-conversation-layout='focused']
+  .dsh-session-switcher__list
+  > li:has(> .dsh-session-item__button[aria-current='page']) {
+  color: var(--dsh-selection-text);
+  background: var(--dsh-selection-bg);
+}
+
+.dsh-app[data-conversation-layout='focused']
+  .dsh-session-switcher__list
+  > li:has(> .dsh-session-item__button[aria-current='page'])
+  .dsh-session-item__actions
+  > .dsh-icon-button {
+  color: inherit;
+}
+
+/* Hidden actions leave room for the title. Once revealed, their actual width
+ * participates in the grid, including optional actions and keyboard focus.
+ * Touch devices retain persistent actions. */
 @media (hover: hover) and (pointer: fine) {
   .dsh-app[data-conversation-layout='focused']
     :is(.dsh-session-switcher__workspace, .dsh-session-switcher__list > li) {
@@ -415,16 +441,18 @@
   }
 
   .dsh-app[data-conversation-layout='focused']
-    :is(.dsh-session-switcher__workspace, .dsh-session-switcher__list > li):is(:hover, :focus-within)
-    > :is(.dsh-session-switcher__workspace-button, .dsh-session-item__button) {
-    padding-inline-end: 64px;
+    :is(.dsh-session-switcher__workspace, .dsh-session-switcher__list > li):is(:hover, :focus-within) {
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 
   .dsh-app[data-conversation-layout='focused']
     :is(.dsh-session-switcher__workspace, .dsh-session-switcher__list > li):is(:hover, :focus-within)
     :is(.dsh-session-switcher__workspace-actions, .dsh-session-item__actions) {
+    position: static;
+    transform: none;
     opacity: 1;
     pointer-events: auto;
+    background: transparent;
   }
 }
 
@@ -487,33 +515,28 @@
   gap: 2px;
 }
 
-.dsh-app[data-conversation-layout='focused'] .dsh-conversation__actions-grid button {
+.dsh-app[data-conversation-layout='focused'] .dsh-conversation__actions-grid > button,
+.dsh-app[data-conversation-layout='focused'] .dsh-conversation__actions-grid > * > button {
   border-color: transparent;
   border-radius: 6px;
   background: transparent;
-  font-weight: 400;
 }
 
-.dsh-app[data-conversation-layout='focused'] .dsh-conversation__actions-grid button:hover {
+.dsh-app[data-conversation-layout='focused'] .dsh-conversation__actions-grid > button:hover,
+.dsh-app[data-conversation-layout='focused'] .dsh-conversation__actions-grid > * > button:hover {
   background: var(--dsh-surface-hover);
 }
 
-.dsh-app[data-conversation-layout='focused'] .dsh-conversation__actions-grid strong {
-  font-weight: inherit;
-}
-
 .dsh-app[data-conversation-layout='focused']
   .dsh-conversation__actions-grid
-  button
+  > button
+  > .dsh-icon:last-child:not(:first-child),
+.dsh-app[data-conversation-layout='focused']
+  .dsh-conversation__actions-grid
+  > *
+  > button
   > .dsh-icon:last-child:not(:first-child) {
   margin-inline-start: auto;
-}
-
-.dsh-app[data-conversation-layout='focused']
-  .dsh-conversation__actions-grid
-  .dsh-conversation__events-toggle--menu {
-  flex-wrap: nowrap;
-  white-space: nowrap;
 }
 
 .dsh-app[data-conversation-layout='focused']
@@ -530,8 +553,14 @@
 }
 
 .dsh-app[data-conversation-layout='focused'] .dsh-session-item__button[aria-current='page'] {
-  background: var(--dsh-selection-bg);
+  background: transparent;
   color: var(--dsh-selection-text);
+}
+
+.dsh-app[data-conversation-layout='focused']
+  .dsh-session-switcher__list
+  .dsh-session-item__button:hover:not(:disabled) {
+  background: transparent;
 }
 
 .dsh-app[data-conversation-layout='focused']
@@ -780,7 +809,11 @@
   }
 
   .dsh-app[data-conversation-layout='focused']
-    :is(.dsh-session-item__button[aria-current='page'], .dsh-model-picker [aria-checked='true']) {
+    :is(
+      .dsh-session-switcher__list > li:has(> .dsh-session-item__button[aria-current='page']),
+      .dsh-session-item__button[aria-current='page'],
+      .dsh-model-picker [aria-checked='true']
+    ) {
     forced-color-adjust: none;
   }
 

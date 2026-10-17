@@ -39,6 +39,7 @@ import { useComposerAttachments } from './app/useComposerAttachments.js'
 import { welcomeWasDismissed, dismissedRuntimeUpdateVersionFromStorage } from './app/dismissed-notices.js'
 import { resolveAssistantModelLabel } from './app/model-label.js'
 import { useStableCallback } from './app/useStableCallback.js'
+import { MOVETO_COMMAND_NAME, isMovetoCommandLine } from './app/client-commands.js'
 import {
   readContextPressure,
   readTokenUsageProjection,
@@ -54,7 +55,6 @@ import {
   type ThemePreference,
 } from './app/ui-preferences.js'
 import { useI18n } from './i18n.js'
-import { useDismissibleLayer } from './components/common/useDismissibleLayer.js'
 import { hasVsCodeApi } from './vscode-api.js'
 import { PopupSelectRegistry } from './features/commands/popupSelectRegistry.js'
 
@@ -99,6 +99,20 @@ const useAppControllerImpl = () => {
     setErrorState(message)
     setErrorRevision((current) => current + 1)
   }, [])
+  useEffect(() => {
+    let previous: { readonly message: string } | undefined
+    const publishFailure = (): void => {
+      const next = store.getState().surfaceError
+      if (next !== undefined && next !== previous) setError(next.message)
+      previous = next
+    }
+    const unsubscribe = store.subscribe(publishFailure)
+    const timer = window.setTimeout(publishFailure, 0)
+    return () => {
+      window.clearTimeout(timer)
+      unsubscribe()
+    }
+  }, [store, setError])
   const [welcomeVisible, setWelcomeVisible] = useState(() => !welcomeWasDismissed())
   const [dismissedRuntimeUpdateVersion, setDismissedRuntimeUpdateVersion] = useState(() =>
     dismissedRuntimeUpdateVersionFromStorage(),
@@ -112,12 +126,10 @@ const useAppControllerImpl = () => {
   }>({ sessionId: undefined, visible: false })
   const [exportOpen, setExportOpen] = useState(false)
   const [exportSessionId, setExportSessionId] = useState<string | undefined>()
-  const [localeOpen, setLocaleOpen] = useState(false)
   const [conversationFontSize, setConversationFontSizeState] = useState<ConversationFontSize>(() =>
     readConversationFontSize(),
   )
   const [themePreference, setThemePreferenceState] = useState<ThemePreference>(() => readThemePreference())
-  const localeControlRef = useRef<HTMLSpanElement>(null)
   const {
     adoptExplicitLocaleFromDsh,
     readDshSettingsForUi,
@@ -225,16 +237,6 @@ const useAppControllerImpl = () => {
     const timer = window.setTimeout(() => setErrorState(undefined), ERROR_TOAST_DISMISS_MS)
     return () => window.clearTimeout(timer)
   }, [error, errorRevision])
-
-  // Escape belongs to the layer hook alone. The language listbox is nested in
-  // the conversation-tools panel, whose own layer consumes the key for the
-  // whole surface; a raw window listener here would run after that layer
-  // already closed both surfaces with a single press.
-  useDismissibleLayer({
-    open: localeOpen,
-    refs: [localeControlRef],
-    onDismiss: () => setLocaleOpen(false),
-  })
 
   const backend = state.backend
   const compatibilityWarning = state.dshCompatibilityWarning
@@ -483,6 +485,15 @@ const useAppControllerImpl = () => {
         setError(reason instanceof Error ? reason.message : t('app.error.openSession')),
       )
   })
+  const sessionOnOpenInEditor = useStableCallback((sessionId: string): void => {
+    // The Host owns the tab: it either creates one for the session or reveals
+    // the existing tab, so this stays a request rather than local navigation.
+    void store
+      .openSessionInEditor(sessionId)
+      .catch((reason: unknown) =>
+        setError(reason instanceof Error ? reason.message : t('app.error.openSession')),
+      )
+  })
   const timelineOnOpenSession = useStableCallback((sessionId: string): void => {
     sessionOnOpen(sessionId)
   })
@@ -624,6 +635,23 @@ const useAppControllerImpl = () => {
   })
   const composerOnCommand = useStableCallback(
     async (command: string, commandAttachments: readonly PromptAttachment[] = []): Promise<void> => {
+      // Client-owned commands run before the session guard: moving the chat back
+      // to the side bar must work even when no session is selected.
+      if (isMovetoCommandLine(command)) {
+        if (commandAttachments.length > 0)
+          throw new Error(t('app.error.commandImagesUnsupported', { command: MOVETO_COMMAND_NAME }))
+        const outcome = await store.runMovetoCommand(command)
+        if (outcome === 'unknown-target' || outcome === 'no-session') {
+          // `onCommand`'s rejection is swallowed by the composer's in-flight
+          // latch, so the reason is raised on the error surface as well; the
+          // rejection keeps the draft so the target can be corrected.
+          setError(
+            t(outcome === 'unknown-target' ? 'commands.movetoUnknownTarget' : 'commands.movetoNoSession'),
+          )
+          throw new Error(`The /${MOVETO_COMMAND_NAME} command could not run: ${outcome}.`)
+        }
+        return
+      }
       if (active === undefined) return
       if (command.trim() === '/model') {
         if (commandAttachments.length > 0)
@@ -703,6 +731,7 @@ const useAppControllerImpl = () => {
         preferredWorkspaceId={state.pendingSession?.workspaceId}
         onOpenChange={sessionOnOpenChange}
         onOpen={sessionOnOpen}
+        onOpenInEditor={sessionOnOpenInEditor}
         onCreate={sessionOnCreate}
         onArchive={sessionOnArchive}
         archivedSessions={state.archivedSessions}
@@ -728,6 +757,7 @@ const useAppControllerImpl = () => {
       sessionOnMoveSession,
       sessionOnMoveWorkspace,
       sessionOnOpen,
+      sessionOnOpenInEditor,
       sessionOnOpenChange,
       sessionOnRemoveWorkspace,
       sessionOnRename,
@@ -758,6 +788,16 @@ const useAppControllerImpl = () => {
   const headerOnOpenSchedules = useStableCallback((): void => {
     store.setDrawer('schedules')
   })
+  const surfaceOnMoveToSidebar = useStableCallback((): void => {
+    void store
+      .moveChatToSidebar()
+      .catch((reason: unknown) =>
+        setError(reason instanceof Error ? reason.message : t('surface.handoff.moveFailed')),
+      )
+  })
+  const surfaceOnOpenSessions = useStableCallback((): void => {
+    store.setDrawer('sessions')
+  })
   const {
     getLinkedSession: getScheduleLinkedSession,
     onOpenLinkedSession: scheduleOnOpenLinkedSession,
@@ -775,9 +815,6 @@ const useAppControllerImpl = () => {
   const acknowledgeAccountBonusFromSettings = useStableCallback((orderId: string): Promise<boolean> =>
     store.acknowledgeAccountBonus(orderId),
   )
-  const closeConversationActions = useCallback((): void => {
-    setLocaleOpen(false)
-  }, [])
   const toggleExport = useCallback((): void => {
     if (visibleExportSessionId !== undefined) {
       setExportOpen(false)
@@ -788,8 +825,8 @@ const useAppControllerImpl = () => {
     setExportOpen(true)
   }, [activeSessionId, visibleExportSessionId])
   const activeId = active?.id
-  const conversationActionItems = useMemo<ReactElement | null>(
-    () =>
+  const conversationActionItems = useCallback(
+    (closeMenu: () => void): ReactElement | null =>
       activeId === undefined ? null : (
         <ConversationActionItems
           activeId={activeId}
@@ -802,9 +839,7 @@ const useAppControllerImpl = () => {
           setShowDshEvents={setShowDshEvents}
           visibleExportSessionId={visibleExportSessionId}
           toggleExport={toggleExport}
-          localeControlRef={localeControlRef}
-          localeOpen={localeOpen}
-          setLocaleOpen={setLocaleOpen}
+          closeMenu={closeMenu}
           locale={locale}
           applyLocale={applyLocale}
           timelineOnOpenLink={timelineOnOpenLink}
@@ -819,7 +854,6 @@ const useAppControllerImpl = () => {
       discardAttachmentDrafts,
       dshEventCount,
       locale,
-      localeOpen,
       applyLocale,
       setError,
       setShowDshEvents,
@@ -852,7 +886,6 @@ const useAppControllerImpl = () => {
     beginNewDraft,
     branching,
     busyAction,
-    closeConversationActions,
     codingToolsEnabled,
     compatibilityWarning,
     composerOnCancel,
@@ -937,6 +970,8 @@ const useAppControllerImpl = () => {
     store,
     streaming,
     subagentReadOnlyReason,
+    surfaceOnMoveToSidebar,
+    surfaceOnOpenSessions,
     t,
     themePreference,
     timelineOnBranch,

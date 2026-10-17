@@ -14,7 +14,7 @@ import {
   type TimelineState,
 } from '@dsh-vscode/timeline'
 import { translate } from '../../i18n.js'
-import { domainEvent, timelineSequenceOptions } from './event-parser.js'
+import { domainEvent, isSurfaceEventName, timelineSequenceOptions } from './event-parser.js'
 import { historyTime, hydrateTimelineFromEntries } from './history-replay.js'
 import { mergeHistory } from './history-ledger.js'
 import { parseDshUpdateProgress } from './host-settings.js'
@@ -67,6 +67,10 @@ export function applyHostMessage(
     setState({ ...state, drawer: state.drawer === 'settings' ? undefined : 'settings' })
     return
   }
+  // Surface identity and handoff are Host-owned UI control frames with store
+  // side effects (the bound-session open, the open-in-editor request). They are
+  // applied by the surface actions and must never reach the timeline.
+  if (isSurfaceEventName(message.name)) return
   if (message.name === 'connection.snapshot') {
     const snapshot = object(message.payload)
     const kind = snapshot?.kind

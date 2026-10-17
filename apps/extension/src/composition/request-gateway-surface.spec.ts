@@ -1,0 +1,403 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const host = vi.hoisted(() => {
+  const panels: {
+    readonly title: string
+    disposeCount: number
+  }[] = []
+  return {
+    panels,
+    isTrusted: true,
+    renamedTitle: 'Renamed session',
+    commands: [] as string[],
+    focusFails: false,
+    deliveryFails: false,
+    sessionGate: undefined as Promise<void> | undefined,
+  }
+})
+
+vi.mock('vscode', () => ({
+  workspace: {
+    get isTrusted() {
+      return host.isTrusted
+    },
+  },
+  commands: {
+    executeCommand: (command: string) => {
+      host.commands.push(command)
+      if (host.focusFails) return Promise.reject(new Error('The sidebar cannot be focused.'))
+      return Promise.resolve(undefined)
+    },
+  },
+  window: {
+    createWebviewPanel: (viewType: string, title: string) => {
+      void viewType
+      const listeners = new Set<() => void>()
+      const panel = {
+        title,
+        disposeCount: 0,
+        visible: true,
+        webview: {
+          options: undefined,
+          html: '',
+          cspSource: 'vscode-resource:',
+          asWebviewUri: (uri: unknown) => uri,
+          postMessage: () => Promise.resolve(true),
+          onDidReceiveMessage: () => ({ dispose: () => undefined }),
+        },
+        onDidDispose: (listener: () => void) => {
+          listeners.add(listener)
+          return { dispose: () => listeners.delete(listener) }
+        },
+        onDidChangeViewState: () => ({ dispose: () => undefined }),
+        reveal: () => undefined,
+        dispose: () => {
+          panel.disposeCount += 1
+          for (const listener of [...listeners]) listener()
+        },
+      }
+      host.panels.push(panel)
+      return panel
+    },
+  },
+  env: { language: 'en' },
+  ViewColumn: { Active: -1 },
+  Uri: {
+    joinPath: (base: { readonly toString: () => string }, ...parts: readonly string[]) => ({
+      toString: () => [base.toString(), ...parts].join('/'),
+    }),
+  },
+}))
+
+import { createRequestGateway } from './request-handler.js'
+import { WebviewSurfaceRegistry } from '../view/webview-surface-registry.js'
+
+type Sent = {
+  readonly surfaceId: string | undefined
+  readonly type: string
+  readonly requestId?: string
+  readonly name?: string
+  readonly payload?: unknown
+  readonly ok?: boolean
+  readonly error?: { readonly code?: string }
+}
+
+interface Harness {
+  readonly gateway: ReturnType<typeof createRequestGateway>
+  readonly sent: Sent[]
+  readonly events: Sent[]
+  readonly surfaces: WebviewSurfaceRegistry
+  readonly teardowns: string[]
+  readonly openSidebar: () => void
+  readonly receive: (message: unknown) => void
+  readonly rejectSession: (sessionId: string) => void
+}
+
+function buildGateway(): Harness {
+  host.panels.length = 0
+  host.commands = []
+  host.isTrusted = true
+  host.focusFails = false
+  host.deliveryFails = false
+  host.sessionGate = undefined
+  const sent: Sent[] = []
+  const events: Sent[] = []
+  const rejected = new Set<string>()
+  const listeners: ((message: unknown) => void)[] = []
+  const teardowns: string[] = []
+  const surfaces = new WebviewSurfaceRegistry()
+  const record = (target: Sent[], surfaceId: string | undefined, message: unknown): void => {
+    const parsed = message as { readonly message?: { readonly type?: string } }
+    const entry = message as Sent
+    target.push({
+      ...entry,
+      surfaceId,
+      type: parsed.message?.type ?? entry.type ?? 'unknown',
+    })
+  }
+  const gateway = createRequestGateway({
+    post: (message: unknown) => {
+      record(sent, undefined, message)
+      return Promise.resolve(true)
+    },
+    postTo: (surfaceId: string, message: unknown) => {
+      record(sent, surfaceId, message)
+      return Promise.resolve(true)
+    },
+    postEvent: (name: string, payload: unknown) => {
+      events.push({ surfaceId: undefined, type: 'event', name, payload })
+      return Promise.resolve(true)
+    },
+    postEventTo: (surfaceId: string, name: string, payload: unknown) => {
+      events.push({ surfaceId, type: 'event', name, payload })
+      return Promise.resolve(!host.deliveryFails)
+    },
+    surfaces,
+    diagnostics: { log: () => {}, show: () => {}, recentEvents: () => [] },
+    context: {
+      extensionUri: { fsPath: '/extension' },
+      subscriptions: [],
+      workspaceState: { update: () => Promise.resolve() },
+    },
+    currentWorkspaceFolders: () => [{ uri: { fsPath: '/project' }, name: 'project', index: 0 }],
+    stopAllJobFollows: () => teardowns.push('job-follows'),
+    backendService: {
+      requireBackend: () => ({ sessions: { rename: () => Promise.resolve(host.renamedTitle) } }),
+    },
+    editorContextProvider: { dispose: () => teardowns.push('editor-context') },
+    requireCurrentWorkspaceSession: (sessionId: string) =>
+      Promise.resolve(host.sessionGate).then(() => {
+        if (rejected.has(sessionId)) throw new Error('the session is not owned by this workspace')
+        return { id: sessionId }
+      }),
+  } as never)
+  const openSidebar = (): void => {
+    gateway.provider.resolveWebviewView({
+      webview: {
+        cspSource: 'vscode-resource:',
+        asWebviewUri: (uri: unknown) => uri,
+        postMessage: () => Promise.resolve(true),
+        onDidReceiveMessage: (listener: (message: unknown) => void) => {
+          listeners.push(listener)
+          return { dispose: () => undefined }
+        },
+      },
+      visible: true,
+      onDidDispose: () => ({ dispose: () => undefined }),
+      onDidChangeVisibility: () => ({ dispose: () => undefined }),
+    } as never)
+    for (const listener of [...listeners]) {
+      listener({ protocolVersion: 1, message: { type: 'app.ready', requestId: 'ready-1' } })
+    }
+  }
+  return {
+    gateway,
+    sent,
+    events,
+    surfaces,
+    teardowns,
+    openSidebar,
+    receive: (message: unknown) => {
+      for (const listener of [...listeners]) listener(message)
+    },
+    rejectSession: (sessionId: string) => rejected.add(sessionId),
+  }
+}
+
+const request = (type: string, requestId: string, payload?: unknown): unknown => ({
+  protocolVersion: 1,
+  message: { type, requestId, ...(payload === undefined ? {} : { payload }) },
+})
+
+describe('request gateway editor surface routes', () => {
+  let harness: Harness
+
+  beforeEach(() => {
+    harness = buildGateway()
+  })
+
+  it('opens one editor tab per session and answers the surface that asked', async () => {
+    await harness.gateway.router.handle(
+      request('surface.openInEditor', 'r1', { sessionId: 'session-1', title: 'Session one' }),
+      'sidebar',
+    )
+    await harness.gateway.router.handle(
+      request('surface.openInEditor', 'r2', { sessionId: 'session-1' }),
+      'sidebar',
+    )
+
+    expect(host.panels).toHaveLength(1)
+    expect(host.panels[0]?.title).toBe('Session one')
+    expect(harness.gateway.editorSurfaces.count).toBe(1)
+    expect(harness.surfaces.editorCount).toBe(1)
+    const responses = harness.sent.filter((entry) => entry.type === 'response')
+    expect(responses.map((entry) => entry.surfaceId)).toEqual(['sidebar', 'sidebar'])
+    expect(responses.map((entry) => entry.ok)).toEqual([true, true])
+  })
+
+  it('sanitizes the editor tab title instead of trusting the Webview label', async () => {
+    await harness.gateway.router.handle(
+      request('surface.openInEditor', 'r1', { sessionId: 'session-1', title: '  Bad\u0000\n\tTitle  ' }),
+      'sidebar',
+    )
+
+    expect(host.panels[0]?.title).toBe('Bad Title')
+  })
+
+  it('cannot open a late editor after the originating surface is closed during ownership validation', async () => {
+    let release!: () => void
+    host.sessionGate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const opening = harness.gateway.router.handle(
+      request('surface.openInEditor', 'late', { sessionId: 'session-1' }),
+      'sidebar',
+    )
+    harness.gateway.router.cancelSurface('sidebar')
+    release()
+    await opening
+    expect(host.panels).toHaveLength(0)
+    expect(harness.gateway.editorSurfaces.count).toBe(0)
+  })
+
+  it('refuses a session this workspace does not own without opening a tab', async () => {
+    harness.rejectSession('foreign-session')
+
+    await harness.gateway.router.handle(
+      request('surface.openInEditor', 'r1', { sessionId: 'foreign-session' }),
+      'sidebar',
+    )
+
+    expect(host.panels).toHaveLength(0)
+    expect(harness.sent[0]?.ok).toBe(false)
+  })
+
+  it('retitles an open editor tab when its session is renamed', async () => {
+    await harness.gateway.router.handle(
+      request('surface.openInEditor', 'r1', { sessionId: 'session-1', title: 'Original title' }),
+      'sidebar',
+    )
+    expect(host.panels[0]?.title).toBe('Original title')
+
+    host.renamedTitle = 'A much better title'
+    await harness.gateway.router.handle(
+      request('session.rename', 'r2', { sessionId: 'session-1', title: 'ignored by the host' }),
+      'sidebar',
+    )
+
+    // The Host applies the title it accepted, so the tab never shows a name the
+    // session log does not hold.
+    expect(host.panels[0]?.title).toBe('A much better title')
+  })
+
+  it('moves a single editor tab back but every tab from the sidebar', async () => {
+    harness.openSidebar()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await harness.gateway.router.handle(
+      request('surface.openInEditor', 'r1', { sessionId: 'session-1' }),
+      'sidebar',
+    )
+    await harness.gateway.router.handle(
+      request('surface.openInEditor', 'r2', { sessionId: 'session-2' }),
+      'sidebar',
+    )
+
+    await harness.gateway.router.handle(request('surface.moveToSidebar', 'r3'), 'editor:session-1')
+    expect(host.panels[0]?.disposeCount).toBe(1)
+    expect(host.panels[1]?.disposeCount).toBe(0)
+    expect(harness.gateway.editorSurfaces.count).toBe(1)
+    expect(host.commands).toContain('dsh.chatView.focus')
+    expect(harness.events).toContainEqual(
+      expect.objectContaining({
+        surfaceId: 'sidebar',
+        name: 'ui.surface.openInSidebar',
+        payload: { sessionId: 'session-1' },
+      }),
+    )
+
+    await harness.gateway.router.handle(request('surface.moveToSidebar', 'r4'), 'sidebar')
+    expect(host.panels[1]?.disposeCount).toBe(1)
+    expect(harness.gateway.editorSurfaces.count).toBe(0)
+  })
+
+  it.each(['focus', 'delivery'] as const)('preserves editor chats when sidebar %s fails', async (failure) => {
+    harness.openSidebar()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await harness.gateway.router.handle(
+      request('surface.openInEditor', 'open', { sessionId: 'session-1' }),
+      'sidebar',
+    )
+    host.focusFails = failure === 'focus'
+    host.deliveryFails = failure === 'delivery'
+    await harness.gateway.router.handle(request('surface.moveToSidebar', 'move'), 'sidebar')
+    expect(host.panels[0]?.disposeCount).toBe(0)
+    expect(harness.sent.find((entry) => entry.requestId === 'move')?.ok).toBe(false)
+  })
+
+  it('rebinds a created session using the Host sender identity and preserves both session lookups', async () => {
+    await harness.gateway.router.handle(
+      request('surface.openInEditor', 'open', { sessionId: 'session-1' }),
+      'sidebar',
+    )
+    await harness.gateway.router.handle(
+      request('surface.openInEditor', 'bind', { sessionId: 'session-2', replaceCurrent: true }),
+      'editor:session-1',
+    )
+    expect(harness.gateway.editorSurfaces.forSession('session-2')?.surfaceId).toBe('editor:session-1')
+    await harness.gateway.router.handle(
+      request('surface.openInEditor', 'reopen', { sessionId: 'session-1' }),
+      'sidebar',
+    )
+    expect(harness.gateway.editorSurfaces.count).toBe(2)
+    expect(harness.gateway.editorSurfaces.forSession('session-1')?.surfaceId).not.toBe('editor:session-1')
+    harness.gateway.editorSurfaces.closeAll()
+    expect(harness.gateway.editorSurfaces.forSession('session-2')).toBeUndefined()
+    expect(harness.gateway.editorSurfaces.forSession('session-1')).toBeUndefined()
+  })
+
+  it('announces the sidebar surface identity once its Webview is ready', async () => {
+    harness.openSidebar()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    // The identity and the current editor-tab count travel together, so a
+    // surface that becomes ready after a handoff broadcast still learns it.
+    expect(harness.events).toEqual([
+      { surfaceId: 'sidebar', type: 'event', name: 'ui.surface.assigned', payload: { kind: 'sidebar' } },
+      {
+        surfaceId: 'sidebar',
+        type: 'event',
+        name: 'ui.surface.handoff',
+        payload: { editorChats: 0 },
+      },
+    ])
+  })
+
+  it('keeps the sidebar routable across a re-resolved view and out of a sibling tab close', async () => {
+    harness.openSidebar()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    // Closing an editor tab while the sidebar is ready must not tear down
+    // another surface's job follows or editor context.
+    await harness.gateway.router.handle(
+      request('surface.openInEditor', 'r1', { sessionId: 'session-1' }),
+      'sidebar',
+    )
+    harness.gateway.editorSurfaces.closeAll()
+    expect(harness.teardowns).toEqual([])
+
+    // Hiding and re-showing the view disposes the Webview, not the surface: the
+    // registration and the ready handshake must both come back.
+    const surface = harness.gateway.provider
+    harness.openSidebar()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(harness.surfaces.get('sidebar')).toBe(surface)
+    // Phase 1 keeps the pre-existing behaviour that re-resolving the view runs
+    // the shared teardown; making that idle-aware is a Phase 4 follow-up.
+    expect(harness.teardowns).toEqual(['job-follows', 'editor-context'])
+
+    harness.sent.length = 0
+    await harness.gateway.router.handle(request('diagnostics.show', 'r2'), 'sidebar')
+    expect(harness.sent.filter((entry) => entry.type === 'response').map((entry) => entry.surfaceId)).toEqual(
+      ['sidebar'],
+    )
+
+    // Disposing the provider is the end of the surface: it leaves routing and
+    // the shared teardown runs because no ready surface is left.
+    surface.dispose()
+    expect(harness.surfaces.get('sidebar')).toBeUndefined()
+    expect(harness.teardowns.slice(-2)).toEqual(['job-follows', 'editor-context'])
+  })
+
+  it('registers the sidebar surface and reports the handoff count when tabs change', async () => {
+    expect(harness.surfaces.get('sidebar')).toBe(harness.gateway.provider)
+
+    await harness.gateway.router.handle(
+      request('surface.openInEditor', 'r1', { sessionId: 'session-1' }),
+      'sidebar',
+    )
+    harness.gateway.editorSurfaces.closeAll()
+
+    const handoff = harness.events.filter((entry) => entry.name === 'ui.surface.handoff')
+    expect(handoff.map((entry) => entry.payload)).toEqual([{ editorChats: 1 }, { editorChats: 0 }])
+  })
+})

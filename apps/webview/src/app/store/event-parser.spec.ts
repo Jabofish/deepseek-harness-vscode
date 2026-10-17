@@ -267,6 +267,9 @@ describe('parseHostDomainEvent', () => {
       'runtime.update.progress',
       'ui.sessions.toggle',
       'ui.settings.toggle',
+      'ui.surface.assigned',
+      'ui.surface.handoff',
+      'ui.surface.openInEditor',
       'connection.snapshot',
     ])
       expect(parseHostDomainEvent({ type: 'event', sequence: 1, name, payload: {} })).toBeUndefined()

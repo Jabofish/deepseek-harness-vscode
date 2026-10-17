@@ -58,6 +58,18 @@ export default tseslint.config(
     },
   },
   {
+    files: ['apps/webview/src/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'JSXOpeningElement[name.name="select"]',
+          message: 'Use SelectMenu so options, keyboard interaction and themes stay inside the Webview.',
+        },
+      ],
+    },
+  },
+  {
     files: [
       '**/*.config.{js,mjs,ts}',
       'eslint.config.mjs',

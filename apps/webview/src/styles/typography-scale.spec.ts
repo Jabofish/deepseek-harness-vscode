@@ -29,6 +29,8 @@ const uiStyles = readFileSync(new URL('../../../../packages/ui/src/styles.css', 
 const appStyles = readStylesheet(new URL('./app.css', import.meta.url), [
   new URL('./compatibility.css', import.meta.url),
 ])
+const layoutStyles = readStylesheet(new URL('./layout.css', import.meta.url))
+const selectionStyles = readFileSync(new URL('./components/02-selection.css', import.meta.url), 'utf8')
 
 function blankComments(stylesheet: string): string {
   return stylesheet.replace(/\/\*[\s\S]*?\*\//gu, (block) => block.replace(/[^\n]/gu, ' '))
@@ -97,6 +99,34 @@ describe('Webview typography scale', () => {
       .filter((declaration) => !/^var\(--dsh-[a-z0-9-]+\)$/u.test(declaration.value))
       .map((declaration) => `${declaration.file}:${declaration.line} → font-size: ${declaration.value}`)
     expect(offenders).toEqual([])
+  })
+
+  it('rebinds every font role alias to the local conversation scale', () => {
+    const conversation = appStyles.match(/\.dsh-conversation\s*\{([^}]+)\}/u)?.[1]
+    const aliases = [...uiStyles.matchAll(/(--dsh-[a-z0-9-]+):\s*(var\(--dsh-font-size-[a-z0-9]+\));/gu)]
+    expect(aliases.length).toBeGreaterThan(0)
+    for (const [, role, value] of aliases) {
+      expect(conversation, role).toContain(`${role}: ${value};`)
+    }
+  })
+
+  it('gives plain and wrapped conversation menu entries the same text role', () => {
+    const entries = layoutStyles.match(
+      /\.dsh-conversation__actions-grid > button,\s*\.dsh-conversation__actions-grid > \* > button\s*\{([^}]+)\}/u,
+    )?.[1]
+    expect(entries).toContain('font-family: inherit;')
+    expect(entries).toContain('font-size: var(--dsh-menu-font-size);')
+    expect(entries).toContain('font-weight: 400;')
+    expect(entries).toContain('line-height: var(--dsh-menu-line-height);')
+  })
+
+  it('gives shared choice menus an explicit role instead of their surrounding form font', () => {
+    const menu = selectionStyles.match(/\.dsh-select-menu__menu\s*\{([^}]+)\}/u)?.[1]
+    expect(menu).toContain('font-size: var(--dsh-menu-font-size);')
+    expect(menu).toContain('font-weight: 400;')
+    expect(menu).toContain('line-height: var(--dsh-menu-line-height);')
+    const option = selectionStyles.match(/\.dsh-select-menu__option\s*\{([^}]+)\}/u)?.[1]
+    expect(option).toContain('font: inherit;')
   })
 
   it('keeps headings off the browser default scale', () => {

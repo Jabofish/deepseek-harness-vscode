@@ -22,8 +22,21 @@ export interface UnexpectedErrorEntry {
 }
 
 export interface MessageRouterDependencies {
-  readonly postMessage: (message: HostMessage | FeatureHostMessage) => Thenable<boolean>
-  readonly handleRequest?: (request: WebviewRequest, signal: AbortSignal) => Promise<unknown>
+  /**
+   * Deliver a message to one surface. `surfaceId` is the surface that owns the
+   * request; `undefined` means the caller has no surface identity (broadcast).
+   * One router serves every surface, so the answer must travel back to the
+   * Webview that asked instead of the first one that happens to be open.
+   */
+  readonly postMessage: (
+    message: HostMessage | FeatureHostMessage,
+    surfaceId: string | undefined,
+  ) => Thenable<boolean>
+  readonly handleRequest?: (
+    request: WebviewRequest,
+    signal: AbortSignal,
+    surfaceId: string | undefined,
+  ) => Promise<unknown>
   readonly handleFeatureRequest?: (request: FeatureRequest, signal: AbortSignal) => Promise<unknown>
   /**
    * Non-AppError handler failures are reduced to a generic INTERNAL_ERROR for
@@ -36,11 +49,15 @@ export interface MessageRouterDependencies {
 interface InFlightRequest {
   readonly controller: AbortController
   readonly kind: 'request' | 'cancellation'
+  /** The surface that sent this request; its terminal response goes back here. */
+  readonly surfaceId: string | undefined
   phase: 'running' | 'responding'
 }
 
 interface QuestionWaitRoute {
   readonly key: string
+  /** The surface that attached the wait; its own teardown releases the wait. */
+  readonly surfaceId: string | undefined
   readonly lifetime: AbortController
   readonly signal: AbortSignal
   unlinkRequest?: () => void
@@ -49,11 +66,11 @@ interface QuestionWaitRoute {
 
 export class WebviewMessageRouter {
   private readonly inFlight = new Map<string, InFlightRequest>()
-  private readonly questionWaits = new Map<string, Set<AbortController>>()
+  private readonly questionWaits = new Map<string, Set<QuestionWaitRoute>>()
 
   public constructor(private readonly dependencies: MessageRouterDependencies) {}
 
-  public async handle(rawMessage: unknown): Promise<void> {
+  public async handle(rawMessage: unknown, surfaceId?: string): Promise<void> {
     // An invalid envelope has no trustworthy correlation id. Never answer it
     // with a fabricated id such as "invalid": that could settle an unrelated
     // live request which happens to use the same id.
@@ -67,18 +84,20 @@ export class WebviewMessageRouter {
     // Once a request id is occupied, a second envelope cannot be answered
     // independently: both responses would target the same Webview promise.
     // Ignore the duplicate and preserve the original operation's ownership.
-    if (this.inFlight.has(request.requestId)) return
+    const operationKey = requestKey(surfaceId, request.requestId)
+    if (this.inFlight.has(operationKey)) return
     const operation: InFlightRequest = {
       controller: new AbortController(),
       kind: isFeature && request.type === 'feature.request.cancel' ? 'cancellation' : 'request',
+      surfaceId,
       phase: 'running',
     }
-    this.inFlight.set(request.requestId, operation)
+    this.inFlight.set(operationKey, operation)
     if (isFeature && request.type === 'feature.request.cancel') {
       const target =
         request.payload.targetRequestId === request.requestId
           ? undefined
-          : this.inFlight.get(request.payload.targetRequestId)
+          : this.inFlight.get(requestKey(surfaceId, request.payload.targetRequestId))
       const accepted =
         target !== undefined &&
         target.kind === 'request' &&
@@ -86,7 +105,8 @@ export class WebviewMessageRouter {
         !target.controller.signal.aborted
       if (accepted) target.controller.abort()
       await this.complete(
-        request.requestId,
+        operationKey,
+        operation,
         request.type,
         response(
           request.requestId,
@@ -103,12 +123,20 @@ export class WebviewMessageRouter {
       )
       return
     }
+    // A wait belongs to the surface that attached it: another surface closing
+    // or releasing the same session/call must not cancel a question the user is
+    // still looking at.
     if (isFeature && request.type === 'user-question.wait.release')
-      this.abortQuestionWait(questionWaitKey(request.payload.sessionId, request.payload.callId))
+      this.abortQuestionWait(questionWaitKey(surfaceId, request.payload.sessionId, request.payload.callId))
 
     const waitRoute =
       isFeature && request.type === 'user-question.wait.attach'
-        ? this.beginQuestionWait(request.payload.sessionId, request.payload.callId, operation.controller)
+        ? this.beginQuestionWait(
+            surfaceId,
+            request.payload.sessionId,
+            request.payload.callId,
+            operation.controller,
+          )
         : undefined
     try {
       const payload = isFeature
@@ -120,9 +148,14 @@ export class WebviewMessageRouter {
             )
         : this.dependencies.handleRequest === undefined
           ? routeNotEnabled('The Webview request route is not enabled.')
-          : await this.dependencies.handleRequest(request as WebviewRequest, operation.controller.signal)
+          : await this.dependencies.handleRequest(
+              request as WebviewRequest,
+              operation.controller.signal,
+              surfaceId,
+            )
       const delivered = await this.complete(
-        request.requestId,
+        operationKey,
+        operation,
         request.type,
         response(request.requestId, true, payload, undefined, isFeature),
       )
@@ -140,7 +173,8 @@ export class WebviewMessageRouter {
       }
       if (!(error instanceof AppError)) this.reportUnexpectedError(unexpectedErrorEntry(request.type, error))
       await this.complete(
-        request.requestId,
+        operationKey,
+        operation,
         request.type,
         response(request.requestId, false, undefined, publicError(error, request.type), isFeature),
       )
@@ -151,63 +185,101 @@ export class WebviewMessageRouter {
     for (const operation of this.inFlight.values())
       if (operation.kind === 'request' && operation.phase === 'running') operation.controller.abort()
     this.inFlight.clear()
-    for (const controllers of this.questionWaits.values())
-      for (const controller of [...controllers]) controller.abort()
+    for (const routes of this.questionWaits.values()) for (const route of [...routes]) route.lifetime.abort()
     this.questionWaits.clear()
   }
 
-  private beginQuestionWait(sessionId: string, callId: string, request: AbortController): QuestionWaitRoute {
-    const key = questionWaitKey(sessionId, callId)
-    const lifetimes = this.questionWaits.get(key) ?? new Set<AbortController>()
+  /**
+   * One surface went away (its view was re-resolved, its panel was closed).
+   * Only that surface's operations are cancelled: another surface's in-flight
+   * request, question wait, or job follow must survive.
+   */
+  public cancelSurface(surfaceId: string): void {
+    for (const [requestId, operation] of [...this.inFlight]) {
+      if (operation.surfaceId !== surfaceId) continue
+      if (operation.kind === 'request' && operation.phase === 'running') operation.controller.abort()
+      this.inFlight.delete(requestId)
+    }
+    this.cancelSurfaceQuestionWaits(surfaceId)
+  }
+
+  private beginQuestionWait(
+    surfaceId: string | undefined,
+    sessionId: string,
+    callId: string,
+    request: AbortController,
+  ): QuestionWaitRoute {
+    const key = questionWaitKey(surfaceId, sessionId, callId)
     const lifetime = new AbortController()
-    lifetimes.add(lifetime)
-    this.questionWaits.set(key, lifetimes)
+    const route: QuestionWaitRoute = {
+      key,
+      surfaceId,
+      lifetime,
+      signal: lifetime.signal,
+    }
+    const routes = this.questionWaits.get(key) ?? new Set<QuestionWaitRoute>()
+    routes.add(route)
+    this.questionWaits.set(key, routes)
     const abortLifetime = (): void => {
       request.signal.removeEventListener('abort', abortRequest)
-      lifetimes.delete(lifetime)
-      if (lifetimes.size === 0 && this.questionWaits.get(key) === lifetimes) this.questionWaits.delete(key)
+      routes.delete(route)
+      if (routes.size === 0 && this.questionWaits.get(key) === routes) this.questionWaits.delete(key)
     }
     const abortRequest = (): void => lifetime.abort(request.signal.reason)
     lifetime.signal.addEventListener('abort', abortLifetime, { once: true })
     request.signal.addEventListener('abort', abortRequest, { once: true })
     if (lifetime.signal.aborted) abortLifetime()
     if (request.signal.aborted) abortRequest()
-    return {
-      key,
-      lifetime,
-      signal: lifetime.signal,
-      unlinkRequest: () => request.signal.removeEventListener('abort', abortRequest),
-      unlink: () => {
-        lifetime.signal.removeEventListener('abort', abortLifetime)
-        request.signal.removeEventListener('abort', abortRequest)
-      },
+    route.unlinkRequest = () => request.signal.removeEventListener('abort', abortRequest)
+    route.unlink = () => {
+      lifetime.signal.removeEventListener('abort', abortLifetime)
+      request.signal.removeEventListener('abort', abortRequest)
     }
+    return route
   }
 
   private abortQuestionWait(key: string, expected?: AbortController): void {
-    const controllers = this.questionWaits.get(key)
-    if (controllers === undefined) return
+    const routes = this.questionWaits.get(key)
+    if (routes === undefined) return
     if (expected !== undefined) {
-      if (!controllers.has(expected)) return
-      controllers.delete(expected)
-      expected.abort()
+      const route = [...routes].find((entry) => entry.lifetime === expected)
+      if (route === undefined) return
+      routes.delete(route)
+      route.lifetime.abort()
     } else {
       this.questionWaits.delete(key)
-      for (const controller of [...controllers]) controller.abort()
+      for (const route of [...routes]) route.lifetime.abort()
     }
-    if (controllers.size === 0 && this.questionWaits.get(key) === controllers) this.questionWaits.delete(key)
+    if (routes.size === 0 && this.questionWaits.get(key) === routes) this.questionWaits.delete(key)
+  }
+
+  /**
+   * A question wait outlives the request that attached it, so cancelling a
+   * surface has to release the waits that surface owns; another surface's
+   * pending question must stay answerable.
+   */
+  private cancelSurfaceQuestionWaits(surfaceId: string): void {
+    for (const [key, routes] of [...this.questionWaits]) {
+      for (const route of [...routes]) {
+        if (route.surfaceId !== surfaceId) continue
+        routes.delete(route)
+        route.lifetime.abort()
+      }
+      if (routes.size === 0 && this.questionWaits.get(key) === routes) this.questionWaits.delete(key)
+    }
   }
 
   private async complete(
-    requestId: string,
+    operationKey: string,
+    operation: InFlightRequest,
     requestType: string,
     message: HostMessage | FeatureHostMessage,
   ): Promise<boolean> {
-    const operation = this.inFlight.get(requestId)
-    if (operation === undefined) return false
+    if (this.inFlight.get(operationKey) !== operation) return false
     operation.phase = 'responding'
     try {
-      const delivered = await this.dependencies.postMessage(message)
+      // Route the terminal answer back to the surface that asked for it.
+      const delivered = await this.dependencies.postMessage(message, operation.surfaceId)
       if (!delivered) throw new Error('The Webview did not accept the response.')
       return true
     } catch (error) {
@@ -216,7 +288,7 @@ export class WebviewMessageRouter {
       this.reportUnexpectedError(unexpectedErrorEntry(requestType, error))
       return false
     } finally {
-      if (this.inFlight.get(requestId) === operation) this.inFlight.delete(requestId)
+      if (this.inFlight.get(operationKey) === operation) this.inFlight.delete(operationKey)
     }
   }
 
@@ -313,8 +385,8 @@ function publicError(
   }
 }
 
-function questionWaitKey(sessionId: string, callId: string): string {
-  return JSON.stringify([sessionId, callId])
+function questionWaitKey(surfaceId: string | undefined, sessionId: string, callId: string): string {
+  return JSON.stringify([surfaceId ?? null, sessionId, callId])
 }
 
 function isQuestionWaitActive(value: unknown): boolean {
@@ -498,4 +570,9 @@ function withRuntimeUpdateDetail(base: string, value: string | number | boolean 
   if (typeof value !== 'string') return base
   const detail = safeCommandDiagnostic(value)
   return detail === undefined ? base : `${base} Detail: ${detail}`
+}
+
+/** Correlation ids are local to a Webview, never global Host authority. */
+function requestKey(surfaceId: string | undefined, requestId: string): string {
+  return JSON.stringify([surfaceId ?? null, requestId])
 }

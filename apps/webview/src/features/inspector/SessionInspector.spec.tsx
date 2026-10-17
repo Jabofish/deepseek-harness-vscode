@@ -43,20 +43,51 @@ it('bounds large histories, filters types and joins authoritative sequences with
   expect(screen.getAllByRole('listitem')).toHaveLength(100)
   fireEvent.click(screen.getByRole('button', { name: 'Earlier rows' }))
   expect(screen.getByText('10000 rows; showing 9801–9900')).toBeDefined()
-  fireEvent.change(screen.getByRole('combobox', { name: 'Source' }), { target: { value: 'nodes' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Source: Session events' }))
+  fireEvent.click(screen.getByRole('option', { name: 'Chat nodes' }))
   fireEvent.click(screen.getByRole('button', { name: '#4 assistant-message' }))
   expect(screen.getByText('textCharacters')).toBeDefined()
   fireEvent.click(screen.getByRole('button', { name: 'Inspect matching unknown' }))
-  const sourceSelect = screen.getByRole('combobox', { name: 'Source' })
-  if (!(sourceSelect instanceof HTMLSelectElement)) throw new Error('Expected a source selector')
-  expect(sourceSelect.value).toBe('events')
+  expect(screen.getByRole('button', { name: 'Source: Session events' })).toBeDefined()
   expect(screen.getByText('10000 rows; showing 1–100')).toBeDefined()
   expect(screen.getByRole('button', { name: '#4 unknown' }).getAttribute('aria-pressed')).toBe('true')
+  const selectedRow = screen.getByRole('button', { name: '#4 unknown' })
+  expect(selectedRow.closest('li')?.querySelector('.dsh-session-inspector__detail')).not.toBeNull()
   expect(document.body.textContent).not.toMatch(/PRIVATE_/)
   fireEvent.click(screen.getByRole('button', { name: 'Load older history' }))
   fireEvent.click(screen.getByRole('button', { name: 'Load older history' }))
   await waitFor(() => expect(loadOlder).toHaveBeenCalledTimes(1))
   expect(JSON.stringify(inspectChatNode(node, 0))).not.toContain('PRIVATE_PROMPT')
+})
+
+it('keeps focus on inspected rows and lets Escape dismiss a filter before the drawer', () => {
+  render(
+    <SessionInspector
+      history={[]}
+      nodes={[node]}
+      hasMore={false}
+      loading={false}
+      loadOlder={() => {}}
+      featureRequest={unavailable}
+    />,
+  )
+  const trigger = screen.getByRole('button', { name: 'Session Inspector' })
+  trigger.focus()
+  fireEvent.click(trigger)
+  fireEvent.click(screen.getByRole('button', { name: 'Source: Session events' }))
+  fireEvent.keyDown(document, { key: 'Escape' })
+  expect(screen.queryByRole('listbox', { name: 'Source' })).toBeNull()
+  expect(screen.getByRole('dialog', { name: 'Session Inspector' })).toBeDefined()
+  fireEvent.click(screen.getByRole('button', { name: 'Source: Session events' }))
+  fireEvent.click(screen.getByRole('option', { name: 'Chat nodes' }))
+  const row = screen.getByRole('button', { name: '#4 assistant-message' })
+  row.focus()
+  fireEvent.click(row)
+  expect(document.activeElement).toBe(row)
+  expect(screen.getByRole('region', { name: 'Structured details' }).closest('li')).toBe(row.closest('li'))
+  fireEvent.keyDown(document, { key: 'Escape' })
+  expect(screen.queryByRole('dialog', { name: 'Session Inspector' })).toBeNull()
+  expect(document.activeElement).toBe(trigger)
 })
 
 it('picks an existing visible chat row without activating its content action', async () => {
@@ -129,6 +160,7 @@ it('routes DevTools actions to Host, prevents duplicate clicks and offers copy a
     } as T)
   }
   render(<InspectorDevtoolsActions featureRequest={request} />)
+  fireEvent.click(screen.getByText('Chrome DevTools'))
   const open = screen.getByRole('button', { name: 'Open DevTools' })
   await waitFor(() => expect(open.hasAttribute('disabled')).toBe(false))
   fireEvent.click(open)

@@ -8,6 +8,7 @@ import { Alpha212VersionAdapter } from '@dsh-vscode/dsh-adapter'
 vi.mock('vscode', () => ({ workspace: { isTrusted: true } }))
 
 import { createRequestGateway } from './request-handler.js'
+import { WebviewSurfaceRegistry } from '../view/webview-surface-registry.js'
 
 describe('interaction cancellation through the Host and real alpha transport', () => {
   it('keeps one accepted answer alive for its other caller and refuses a conflicting answer', async () => {
@@ -111,6 +112,10 @@ describe('interaction cancellation through the Host and real alpha transport', (
             value.requestId === requestId,
         )
       gateway = createRequestGateway({
+        postTo: () => Promise.resolve(true),
+        postEvent: () => Promise.resolve(true),
+        postEventTo: () => Promise.resolve(true),
+        surfaces: new WebviewSurfaceRegistry(),
         post: (message: unknown) => {
           posted.push(message)
           return Promise.resolve(true)

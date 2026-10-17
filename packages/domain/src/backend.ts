@@ -41,7 +41,7 @@ import type {
   SubagentHistoryPage,
   SubagentHistoryQuery,
 } from './sessions.js'
-import type { QuestionAnswer } from './tools.js'
+import type { PermissionOption, QuestionAnswer } from './tools.js'
 import type { UserQuestionRepository } from './user-questions.js'
 import type { WorkspaceCreateInput, WorkspaceSummary } from './workspaces.js'
 
@@ -147,6 +147,12 @@ export interface InteractionRepository {
   cancelQuestion(questionId: string, signal?: AbortSignal): Promise<void>
   /** Host-side ownership facts used to authorize Webview interaction routes. */
   readonly sessionForPermission?: (this: InteractionRepository, requestId: string) => string | undefined
+  /** Authoritative pending choice semantics, never inferred from a Webview label or ID. */
+  readonly permissionOptionKind?: (
+    this: InteractionRepository,
+    requestId: string,
+    optionId: string,
+  ) => PermissionOption['kind'] | undefined
   readonly sessionForQuestion?: (this: InteractionRepository, questionId: string) => string | undefined
 }
 

@@ -2,8 +2,10 @@
 
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { ReactElement } from 'react'
+import type { HostMessage, FeatureHostMessage, WebviewRequest } from '@dsh-vscode/webview-protocol'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AppState, AppStore, DshSettingsSnapshot, OpenFileCandidate } from './app/store.js'
+import type * as StoreModule from './app/store.js'
 
 let currentStore: AppStore
 
@@ -141,6 +143,8 @@ function connectedState(activeSession: boolean): AppState {
     questions: [],
     busyEnter: 'queue',
     drawer: undefined,
+    surface: undefined,
+    editorChats: 0,
   }
 }
 
@@ -253,6 +257,8 @@ function storeFor(state: AppState): AppStore {
     searchSessions: vi.fn().mockResolvedValue({ items: [] }),
     refreshCommands: vi.fn().mockResolvedValue(undefined),
     openSession: vi.fn().mockResolvedValue(undefined),
+    openSessionInEditor: vi.fn().mockResolvedValue(undefined),
+    runMovetoCommand: vi.fn().mockResolvedValue('editor'),
     loadOlderHistory: vi.fn().mockResolvedValue(undefined),
     openSubagent: vi.fn().mockResolvedValue(undefined),
     renameSession: vi.fn().mockResolvedValue(undefined),
@@ -361,6 +367,7 @@ function storeFor(state: AppState): AppStore {
     updateGoal: vi.fn().mockResolvedValue(undefined),
     clearGoal: vi.fn().mockResolvedValue(undefined),
     exportSession: vi.fn().mockResolvedValue(undefined),
+    moveChatToSidebar: vi.fn().mockResolvedValue(undefined),
     setDrawer: vi.fn(),
     featureRequest: vi.fn().mockResolvedValue(undefined),
     subscribeFeature: vi.fn(() => () => undefined),
@@ -430,6 +437,138 @@ async function selectEmptySessionPreset(presetId: string): Promise<void> {
 }
 
 describe('App connected rendering', () => {
+  it.each(['ordinary', 'approval', 'question'] as const)(
+    'delivers %s Stop through the real store, protocol and Host router despite a failed model catalog',
+    async (mode) => {
+      const { createAppStore } = await vi.importActual<typeof StoreModule>('./app/store.js')
+      const { ProtocolClient } = await import('./app/protocol-client.js')
+      // Load the actual Host at runtime: it belongs to a separate TypeScript
+      // project. This narrow test port keeps Host implementation types out of UI.
+      const { WebviewMessageRouter } = await vi.importActual<{
+        WebviewMessageRouter: new (dependencies: {
+          postMessage: (message: HostMessage | FeatureHostMessage) => Promise<boolean>
+          handleRequest: (request: WebviewRequest) => Promise<unknown>
+          handleFeatureRequest: () => Promise<unknown>
+        }) => { handle(message: unknown, surfaceId: string): Promise<void>; cancelAll(): void }
+      }>('../../extension/src/view/message-router.js')
+      const { AppError } = await import('@dsh-vscode/domain')
+      const initial = connectedState(true)
+      const requests: Array<{ type: string; payload?: unknown }> = []
+      let failStop = true
+      const router = new WebviewMessageRouter({
+        postMessage: (message) => {
+          window.dispatchEvent(new MessageEvent('message', { data: { protocolVersion: 1, message } }))
+          return Promise.resolve(true)
+        },
+        handleRequest: (request) => {
+          requests.push(request)
+          if (request.type === 'session.open')
+            return Promise.resolve({
+              ...initial.sessions[0],
+              configuration: initial.configuration,
+              history: [],
+            })
+          if (request.type === 'models.session.list')
+            throw new AppError({
+              code: 'BACKEND_UNREACHABLE',
+              message: 'Catalog unavailable',
+              retryable: true,
+            })
+          if (request.type === 'session.cancel' && failStop)
+            throw new AppError({
+              code: 'BACKEND_UNREACHABLE',
+              message: 'Stop delivery failed',
+              retryable: true,
+            })
+          if (request.type === 'subagent.list') return Promise.resolve({ entries: [], parentAvailable: true })
+          return Promise.resolve([])
+        },
+        handleFeatureRequest: () => Promise.resolve({ kind: 'empty' }),
+      })
+      const client = new ProtocolClient({
+        getState: () => undefined,
+        setState: () => undefined,
+        postMessage: (message) => {
+          void router.handle(message, 'sidebar')
+        },
+      })
+      const realStore = createAppStore(client)
+      try {
+        await realStore.openSession('s1')
+        const permissions: AppState['permissions'] =
+          mode === 'approval'
+            ? [
+                {
+                  id: 'p1',
+                  sessionId: 's1',
+                  title: 'User approval',
+                  description: 'Choose an action',
+                  risk: 'low',
+                  options: [{ id: 'custom-deny-id', label: 'Reject', kind: 'deny' }],
+                },
+              ]
+            : []
+        const questions: AppState['questions'] =
+          mode === 'question'
+            ? [
+                {
+                  id: 'q1',
+                  sessionId: 's1',
+                  prompt: 'Choose a mode',
+                  choices: [],
+                  allowFreeText: true,
+                },
+              ]
+            : []
+        const sessions = initial.sessions.map((session) => ({ ...session, status: 'running' as const }))
+        const backend = { kind: 'connected' as const }
+        let source = realStore.getState()
+        let snapshot = { ...source, backend, permissions, questions, sessions }
+        currentStore = {
+          ...realStore,
+          initialize: () => Promise.resolve(),
+          getState: () => {
+            const next = realStore.getState()
+            if (next !== source) {
+              source = next
+              snapshot = { ...next, backend, permissions, questions, sessions }
+            }
+            return snapshot
+          },
+        }
+        render(<App />)
+        const stop = screen.getByRole('button', { name: 'Stop response' })
+        expect(stop.hasAttribute('disabled')).toBe(false)
+        fireEvent.click(stop)
+        await screen.findByText('The local DSH instance is unreachable.')
+        expect(requests.filter((request) => request.type === 'session.cancel')).toEqual([
+          expect.objectContaining({ payload: { sessionId: 's1' } }),
+        ])
+        failStop = false
+        fireEvent.click(stop)
+        await waitFor(() =>
+          expect(requests.filter((request) => request.type === 'session.cancel')).toHaveLength(2),
+        )
+        if (mode === 'approval') {
+          fireEvent.click(screen.getByRole('button', { name: 'Reject' }))
+          await waitFor(() =>
+            expect(requests).toContainEqual(
+              expect.objectContaining({
+                type: 'interaction.permission.respond',
+                payload: { interactionId: 'p1', optionId: 'custom-deny-id' },
+              }),
+            ),
+          )
+        }
+      } finally {
+        cleanup()
+        realStore.dispose()
+        router.cancelAll()
+      }
+    },
+    30_000,
+  )
+
   afterEach(() => {
     cleanup()
     window.localStorage.clear()
@@ -451,6 +590,96 @@ describe('App connected rendering', () => {
     expect(screen.getByRole('button', { name: 'New session here' })).toBeDefined()
     expect(screen.queryByText('Create a session to begin.')).toBeDefined()
     expect(document.querySelector('.dsh-empty-state')).toBeNull()
+  })
+
+  it('replaces the side-bar conversation with the editor handoff card', () => {
+    // Exactly one surface is live: while an editor tab holds the chat, the
+    // side bar must not render a second conversation behind it.
+    const moveChatToSidebar = vi.fn().mockResolvedValue(undefined)
+    const setDrawer = vi.fn()
+    currentStore = {
+      ...storeFor({ ...connectedState(true), surface: { kind: 'sidebar' }, editorChats: 2 }),
+      moveChatToSidebar,
+      setDrawer,
+    }
+    render(<App />)
+
+    expect(screen.getByRole('heading', { name: 'Chat is open in the editor area' })).toBeDefined()
+    expect(screen.getByText(/one tab per session \(2 open\)/u)).toBeDefined()
+    expect(screen.queryByTestId('timeline')).toBeNull()
+    expect(screen.queryByRole('textbox', { name: 'Prompt' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Move back to side bar' }))
+    expect(moveChatToSidebar).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+    expect(setDrawer).toHaveBeenCalledWith('sessions')
+  })
+
+  it('runs the client /moveto command instead of sending it to DSH', async () => {
+    const executeCommand = vi.fn().mockResolvedValue(true)
+    const sendPrompt = vi.fn().mockResolvedValue(undefined)
+    const runMovetoCommand = vi.fn().mockResolvedValue('editor')
+    currentStore = {
+      ...storeFor({
+        ...connectedState(true),
+        commands: [{ name: 'moveto', description: 'Move the chat', input: { hint: '[editor|sidebar]' } }],
+      }),
+      executeCommand,
+      sendPrompt,
+      runMovetoCommand,
+    }
+    render(<App />)
+
+    const prompt = screen.getByRole('textbox', { name: 'Prompt' })
+    fireEvent.change(prompt, { target: { value: '/moveto:editor' } })
+    await act(async () => {
+      fireEvent.keyDown(prompt, { key: 'Enter' })
+      await Promise.resolve()
+    })
+
+    expect(runMovetoCommand).toHaveBeenCalledWith('/moveto editor')
+    expect(executeCommand).not.toHaveBeenCalled()
+    expect(sendPrompt).not.toHaveBeenCalled()
+  })
+
+  it('reports an unusable /moveto target on the error surface', async () => {
+    const executeCommand = vi.fn().mockResolvedValue(true)
+    const sendPrompt = vi.fn().mockResolvedValue(undefined)
+    const runMovetoCommand = vi.fn().mockResolvedValue('unknown-target')
+    currentStore = {
+      ...storeFor({
+        ...connectedState(true),
+        commands: [{ name: 'moveto', description: 'Move the chat', input: { hint: '[editor|sidebar]' } }],
+      }),
+      executeCommand,
+      sendPrompt,
+      runMovetoCommand,
+    }
+    render(<App />)
+
+    const prompt = screen.getByRole('textbox', { name: 'Prompt' })
+    fireEvent.change(prompt, { target: { value: '/moveto:bogus' } })
+    await act(async () => {
+      fireEvent.keyDown(prompt, { key: 'Enter' })
+      await Promise.resolve()
+    })
+
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Unknown /moveto'))
+    expect(executeCommand).not.toHaveBeenCalled()
+    expect(sendPrompt).not.toHaveBeenCalled()
+  })
+
+  it('renders the conversation on an editor surface even while editor tabs exist', () => {
+    currentStore = storeFor({
+      ...connectedState(true),
+      surface: { kind: 'editor', sessionId: 's1' },
+      editorChats: 1,
+    })
+    render(<App />)
+
+    expect(screen.queryByRole('heading', { name: 'Chat is open in the editor area' })).toBeNull()
+    expect(screen.getByTestId('timeline')).toBeDefined()
   })
 
   it('renders a local draft and routes its first message through deferred creation', async () => {
@@ -896,11 +1125,12 @@ describe('App connected rendering', () => {
 
     render(<App />)
 
-    const updateNotice = screen.getByText('DSH update available').closest('.dsh-app__runtime-update')
-    expect(updateNotice?.classList.contains('dsh-toast')).toBe(true)
+    const updateNotice = screen.getByText('DSH update available').closest('.dsh-app__notice-summary')
     const notices = document.querySelector('.dsh-app__notices')
     expect(updateNotice?.parentElement).toBe(notices)
-    expect(screen.getByText('Welcome to DSH').closest('.dsh-welcome-notice')?.parentElement).toBe(notices)
+    expect(document.querySelector('.dsh-app__notice-list')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Show notifications (2)' }))
+    expect(screen.getByText('Welcome to DSH').closest('article')?.parentElement?.parentElement).toBe(notices)
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss update notice' }))
     expect(screen.queryByText('DSH update available')).toBeNull()
     expect(window.localStorage.getItem('dsh-runtime-update-dismissed-version')).toBe('0.1.0-rc.9')
@@ -922,8 +1152,7 @@ describe('App connected rendering', () => {
 
     render(<App />)
 
-    const updateNotice = screen.getByText('DSH update available').closest('.dsh-app__runtime-update')
-    expect(updateNotice?.classList.contains('dsh-toast')).toBe(true)
+    expect(screen.getByText('DSH update available').closest('.dsh-app__notice-summary')).not.toBeNull()
   })
 
   it('hides the top update notice once the latest version is installed globally', () => {
@@ -1865,7 +2094,7 @@ describe('App connected rendering', () => {
     await waitFor(() => expect(readDshSettings).toHaveBeenCalledTimes(1))
 
     fireEvent.click(screen.getByRole('button', { name: 'Conversation tools' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Interface language' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Interface language:/ }))
     fireEvent.click(screen.getByRole('option', { name: '中文' }))
 
     expect(screen.getByRole('banner', { name: '对话' })).toBeDefined()
@@ -1889,10 +2118,8 @@ describe('App connected rendering', () => {
       </ConversationLayoutProvider>,
     )
     expect(document.querySelector('.dsh-app')?.getAttribute('data-conversation-layout')).toBe('focused')
-    const picker = await screen.findByRole<HTMLSelectElement>('combobox', { name: 'Conversation layout' })
-    fireEvent.change(picker, {
-      target: { value: 'classic' },
-    })
+    fireEvent.click(await screen.findByRole('button', { name: /^Conversation layout:/ }))
+    fireEvent.click(screen.getByRole('option', { name: 'Classic' }))
     expect(document.querySelector('.dsh-app')?.getAttribute('data-conversation-layout')).toBe('classic')
     view.unmount()
     expect(updateDshSetting).not.toHaveBeenCalled()
@@ -1933,7 +2160,7 @@ describe('App connected rendering', () => {
     render(<App />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Conversation tools' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Interface language' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Interface language:/ }))
     expect(screen.getByRole('listbox', { name: 'Interface language' })).toBeDefined()
 
     fireEvent.keyDown(document, { key: 'Escape' })
@@ -1943,7 +2170,7 @@ describe('App connected rendering', () => {
 
     // The listbox still dismisses on an outside press, and the panel stays
     // reachable for the Escape that no nested surface consumes any more.
-    fireEvent.click(screen.getByRole('button', { name: 'Interface language' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Interface language:/ }))
     expect(screen.getByRole('listbox', { name: 'Interface language' })).toBeDefined()
     fireEvent.pointerDown(screen.getByRole('dialog', { name: 'Conversation tools' }))
     expect(screen.queryByRole('listbox', { name: 'Interface language' })).toBeNull()
@@ -1953,24 +2180,25 @@ describe('App connected rendering', () => {
     expect(screen.queryByRole('dialog', { name: 'Conversation tools' })).toBeNull()
   })
 
-  it('keeps the export form mounted once the pointer leaves the conversation tools panel', async () => {
+  it('opens export above the conversation, dismisses its parent and restores focus after nested Escape', async () => {
     currentStore = storeFor(connectedState(true))
     render(<App />)
-
-    fireEvent.click(screen.getByRole('button', { name: 'Conversation tools' }))
+    const tools = screen.getByRole('button', { name: 'Conversation tools' })
+    fireEvent.click(tools)
     fireEvent.click(screen.getByRole('button', { name: 'Export' }))
-    await screen.findByRole('heading', { name: 'Export session' })
-
-    // The form lives in the conversation column, not in the panel: the first
-    // press on any of its controls is an outside press for the panel.
+    const dialog = await screen.findByRole('dialog', { name: 'Export session' })
+    expect(screen.queryByRole('dialog', { name: 'Conversation tools' })).toBeNull()
+    expect(dialog.getAttribute('aria-modal')).toBe('true')
+    expect(dialog.contains(document.activeElement)).toBe(true)
     fireEvent.pointerDown(screen.getByRole('checkbox', { name: 'Include attachments' }))
-
-    expect(screen.getByRole('heading', { name: 'Export session' })).toBeDefined()
-
-    // Its own trigger stays the owner of that lifetime.
-    fireEvent.click(screen.getByRole('button', { name: 'Conversation tools' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Export' }))
-    expect(screen.queryByRole('heading', { name: 'Export session' })).toBeNull()
+    expect(screen.getByRole('dialog', { name: 'Export session' })).toBe(dialog)
+    fireEvent.click(screen.getByRole('button', { name: 'Format: Markdown' }))
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('listbox', { name: 'Format' })).toBeNull()
+    expect(screen.getByRole('dialog', { name: 'Export session' })).toBe(dialog)
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Export session' })).toBeNull()
+    expect(document.activeElement).toBe(tools)
   })
 
   it('drops the export form when the conversation it was opened for is left', async () => {
@@ -2020,6 +2248,7 @@ describe('App connected rendering', () => {
     expect(screen.queryByRole('heading', { name: 'Export session' })).toBeNull()
 
     // Reopening it targets the conversation the user is looking at now.
+    fireEvent.click(screen.getByRole('button', { name: 'Conversation tools' }))
     fireEvent.click(screen.getByRole('button', { name: 'Export' }))
     fireEvent.click(screen.getByRole('button', { name: 'Choose destination and export' }))
     expect(exportSession).toHaveBeenCalledWith({

@@ -21,6 +21,9 @@
   border-radius: var(--dsh-radius-md);
   background: var(--dsh-widget-bg);
   box-shadow: var(--dsh-shadow);
+  font-size: var(--dsh-menu-font-size);
+  font-weight: 400;
+  line-height: var(--dsh-menu-line-height);
   transform-origin: top left;
   /* `backwards`, never `both`: an entry animation that fills forwards leaves
    * `transform: scale(1)` on the finished element, and any transform — even an
@@ -109,6 +112,7 @@
   border-color: transparent;
   color: var(--dsh-text);
   background: transparent;
+  font: inherit;
   text-align: start;
 }
 

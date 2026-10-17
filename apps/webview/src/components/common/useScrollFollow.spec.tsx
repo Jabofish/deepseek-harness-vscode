@@ -9,6 +9,7 @@ describe('useScrollFollow user jump', () => {
   afterEach(() => {
     cleanup()
     vi.unstubAllGlobals()
+    vi.useRealTimers()
   })
 
   it('uses smooth scrolling for an explicit jump when motion is allowed', () => {
@@ -132,14 +133,93 @@ describe('useScrollFollow user jump', () => {
     expect(viewport.scrollTop).toBe(700)
     expect(screen.getByTestId('jump-state').getAttribute('data-visible')).toBe('true')
   })
+
+  it('keeps a pinned tail visible when a notification changes viewport height', () => {
+    vi.useFakeTimers()
+    const resize = stubViewportResize()
+    const { viewport } = renderHarness()
+    setScrollMetrics(viewport, 600, 1_000, 400)
+    act(() => resize(viewport, 400))
+
+    setScrollMetrics(viewport, 600, 1_000, 300)
+    act(() => resize(viewport, 300))
+    expect(viewport.scrollTop).toBe(700)
+    expect(screen.getByTestId('jump-state').getAttribute('data-visible')).toBe('false')
+
+    setScrollMetrics(viewport, 700, 1_000, 400)
+    act(() => resize(viewport, 400))
+    expect(viewport.scrollTop).toBe(600)
+  })
+
+  it('preserves a free reader across notification resizing', () => {
+    vi.useFakeTimers()
+    const resize = stubViewportResize()
+    const { viewport } = renderHarness()
+    setScrollMetrics(viewport, 200, 1_000, 400)
+    act(() => resize(viewport, 400))
+    fireEvent.scroll(viewport)
+    act(() => {
+      vi.runAllTimers()
+    })
+
+    setScrollMetrics(viewport, 200, 1_000, 300)
+    act(() => resize(viewport, 300))
+    expect(viewport.scrollTop).toBe(200)
+    expect(screen.getByTestId('jump-state').getAttribute('data-visible')).toBe('true')
+  })
+
+  it('does not overwrite a gesture before its native scroll event arrives', () => {
+    vi.useFakeTimers()
+    const resize = stubViewportResize()
+    const { viewport } = renderHarness()
+    setScrollMetrics(viewport, 600, 1_000, 400)
+    act(() => resize(viewport, 400))
+    const content = screen.getByTestId('content')
+    act(() => resize(content, 1_000))
+    fireEvent.wheel(viewport, { deltaY: -30 })
+    setScrollMetrics(viewport, 500, 1_400, 300)
+
+    act(() => {
+      resize(viewport, 300)
+      resize(content, 1_400)
+    })
+    expect(viewport.scrollTop).toBe(500)
+    fireEvent.scroll(viewport)
+    act(() => {
+      vi.runAllTimers()
+    })
+    expect(viewport.scrollTop).toBe(500)
+    expect(screen.getByTestId('jump-state').getAttribute('data-visible')).toBe('true')
+  })
 })
+
+function stubViewportResize(): (target: Element, height: number) => void {
+  let notify: ((entry: ResizeObserverEntry) => void) | undefined
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      constructor(callback: ResizeObserverCallback) {
+        notify = (entry) => callback([entry], this)
+      }
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    },
+  )
+  return (target, height) => {
+    if (notify === undefined) throw new Error('Viewport is not observed')
+    notify({ target, contentRect: new DOMRect(0, 0, 240, height) } as ResizeObserverEntry)
+  }
+}
 
 function renderHarness(): { viewport: HTMLDivElement; scrollTo: ReturnType<typeof vi.fn> } {
   function Harness(): ReactElement {
     const follow = useScrollFollow({ contentKey: 'tail', itemCount: 1, sessionId: 'session-1' })
     return (
       <>
-        <div ref={follow.scrollRef} data-testid="viewport" onScroll={follow.handleScroll} />
+        <div ref={follow.scrollRef} data-testid="viewport" onScroll={follow.handleScroll}>
+          <div ref={follow.contentRef} data-testid="content" />
+        </div>
         <button type="button" onClick={follow.userScrollToLatest}>
           Jump to latest
         </button>

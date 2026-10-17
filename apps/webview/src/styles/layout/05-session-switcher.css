@@ -614,27 +614,31 @@
   align-items: stretch;
 }
 
-.dsh-conversation__actions-grid .dsh-jobs-popover__trigger,
-.dsh-conversation__actions-grid .dsh-changes-popover__trigger,
-.dsh-conversation__actions-grid .dsh-tasks-popover__trigger,
-.dsh-conversation__actions-grid .dsh-checkpoints-popover__trigger,
-.dsh-conversation__actions-grid .dsh-prompt-templates-popover__trigger,
-.dsh-conversation__actions-grid .dsh-diagnostics-popover__trigger,
-.dsh-conversation__actions-grid .dsh-subagent-tree__trigger,
-.dsh-conversation__actions-grid .dsh-conversation__export-trigger,
-.dsh-conversation__actions-grid .dsh-conversation__inspector-trigger,
-.dsh-conversation__actions-grid .dsh-conversation__locale-switch,
-.dsh-conversation__actions-grid .dsh-conversation__events-toggle--menu {
+/* All peer entries share one role, whether they are a plain action or a
+ * wrapped feature/selection trigger. Stop at the entry boundary so nested
+ * dialogs, form controls and their headings retain their own text roles. */
+.dsh-conversation__actions-grid > button,
+.dsh-conversation__actions-grid > * > button {
   justify-content: flex-start;
   width: 100%;
   min-width: 0;
   max-width: 100%;
+  min-height: var(--dsh-menu-item-height);
+  padding: var(--dsh-space-2) var(--dsh-space-3);
   border-radius: var(--dsh-radius-md);
+  font-family: inherit;
+  font-size: var(--dsh-menu-font-size);
+  font-weight: 400;
+  line-height: var(--dsh-menu-line-height);
   text-align: start;
 }
 
-.dsh-conversation__actions-grid .dsh-conversation__export-trigger,
-.dsh-conversation__actions-grid .dsh-conversation__locale-switch {
+.dsh-conversation__actions-grid > button > strong,
+.dsh-conversation__actions-grid > * > button > strong {
+  font-weight: inherit;
+}
+
+.dsh-conversation__actions-grid .dsh-conversation__export-trigger {
   display: inline-flex;
   align-items: center;
   gap: var(--dsh-space-1);
@@ -645,16 +649,6 @@
 
 .dsh-conversation__actions-grid .dsh-conversation__locale-control {
   position: relative;
-}
-
-.dsh-conversation__actions-grid .dsh-conversation__locale-switch .dsh-icon {
-  width: 1rem;
-  height: 1rem;
-  margin-inline-start: auto;
-}
-
-.dsh-conversation__actions-grid .dsh-conversation__locale-menu {
-  position: fixed;
 }
 
 @media (max-width: 36rem) {

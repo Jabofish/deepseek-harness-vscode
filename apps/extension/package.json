@@ -38,9 +38,12 @@
   "main": "./dist/extension.cjs",
   "activationEvents": [
     "onView:dsh.chatView",
+    "onWebviewPanel:dsh.chatPanel",
     "onCommand:dsh.connect",
     "onCommand:dsh.reconnect",
     "onCommand:dsh.newSession",
+    "onCommand:dsh.openChatInEditor",
+    "onCommand:dsh.moveChatToSidebar",
     "onCommand:dsh.openWebUi",
     "onCommand:dsh.installRuntime",
     "onCommand:dsh.addSelectionContext",
@@ -141,6 +144,16 @@
         "title": "DSH: Move View to Secondary Side Bar"
       },
       {
+        "command": "dsh.openChatInEditor",
+        "title": "DSH: Open Chat in Editor Area",
+        "icon": "$(open-preview)"
+      },
+      {
+        "command": "dsh.moveChatToSidebar",
+        "title": "DSH: Move Chat to Side Bar",
+        "icon": "$(layout-sidebar-right)"
+      },
+      {
         "command": "dsh.showDiagnostics",
         "title": "DSH: Show Redacted Diagnostics"
       },
@@ -201,6 +214,18 @@
           "command": "dsh.openWebUi",
           "when": "view == dsh.chatView && dsh.connected",
           "group": "navigation@4"
+        },
+        {
+          "command": "dsh.openChatInEditor",
+          "when": "view == dsh.chatView",
+          "group": "navigation@5"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "dsh.moveChatToSidebar",
+          "when": "activeWebviewPanelId == dsh.chatPanel",
+          "group": "navigation@1"
         }
       ],
       "editor/context": [

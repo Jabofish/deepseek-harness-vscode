@@ -42,6 +42,8 @@ describe('registerCommands', () => {
       'dsh.copyInstallCommand',
       'dsh.openDocumentation',
       'dsh.openInSecondarySidebar',
+      'dsh.openChatInEditor',
+      'dsh.moveChatToSidebar',
       'dsh.showDiagnostics',
       'dsh.addSelectionContext',
       'dsh.addFileContext',

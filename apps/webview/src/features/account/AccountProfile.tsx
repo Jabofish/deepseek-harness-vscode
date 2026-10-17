@@ -382,7 +382,7 @@ export function AccountProfile({
 
       {visibleNotice === null ? null : (
         <div ref={bonusCard} className="account-profile__bonus" role="status" aria-live="polite">
-          <strong>{labels.bonusNotice}</strong>
+          <strong>{visibleNotice.title?.trim() || labels.bonusNotice}</strong>
           <p>{visibleNotice.message}</p>
           {failedForThisNotice ? (
             <div role="alert">

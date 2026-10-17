@@ -10,6 +10,26 @@ import {
 const id = 'd80ff092-0cdd-4a34-b5fb-05503d8574d8'
 
 describe('account lifecycle Webview DTO schemas', () => {
+  it('accepts localized notices without optional Platform metadata and rejects raw metadata', () => {
+    const notice = { orderId: id, title: 'Welcome', message: 'Granted', expiresAt: '' }
+    const snapshot = {
+      accountScopeRevision: 1,
+      profile: { status: 'unavailable' },
+      balance: { status: 'unavailable' },
+      bonus: { status: 'ready', value: notice },
+    }
+    expect(accountProfileDetailsSnapshotSchema.parse(snapshot)).toEqual(snapshot)
+    for (const value of [
+      { ...notice, campaign: { raw: true } },
+      { ...notice, amount: { raw: true } },
+      { ...notice, title: 1 },
+    ]) {
+      expect(
+        accountProfileDetailsSnapshotSchema.safeParse({ ...snapshot, bonus: { status: 'ready', value } })
+          .success,
+      ).toBe(false)
+    }
+  })
   it('accepts only the safe status and attempt projection', () => {
     expect(
       accountLifecycleSnapshotSchema.parse({

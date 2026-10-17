@@ -928,6 +928,33 @@ describe('Composer', () => {
     expect(onSubmit).not.toHaveBeenCalled()
   })
 
+  it('normalizes the colon short form of a client command before dispatch', () => {
+    const onCommand = vi.fn()
+    const onDraftChange = vi.fn()
+    const onSubmit = vi.fn()
+    render(
+      <Composer
+        {...baseProps()}
+        draft="/moveto:editor"
+        commands={[
+          ...commandFixtures(),
+          { name: 'moveto', description: 'Move the chat', input: { hint: '[editor|sidebar]' } },
+        ]}
+        onCommand={onCommand}
+        onDraftChange={onDraftChange}
+        onSubmit={onSubmit}
+      />,
+    )
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Prompt' }), { key: 'Enter' })
+    // The shared command grammar has no `:`, so the documented short form is
+    // rewritten into the one shape every parser accepts before dispatch.
+    expect(onCommand).toHaveBeenCalledWith('/moveto editor')
+    expect(onSubmit).not.toHaveBeenCalled()
+    // The dispatched line is the rewritten form, so an exact-string comparison
+    // would leave the short form sitting in the draft after it ran.
+    expect(onDraftChange).toHaveBeenCalledWith('')
+  })
+
   it('keeps text typed while a submitted command line is still in flight', async () => {
     let admit: (() => void) | undefined
     const onCommand = vi.fn(
@@ -1084,6 +1111,38 @@ describe('Composer', () => {
 
 describe('Composer model availability notice', () => {
   afterEach(() => cleanup())
+
+  it('lets the user choose an exact model while a turn is running', () => {
+    const onConfigurationChange = vi.fn()
+    const configuration: AgentConfiguration = {
+      preset: 'standard',
+      toolMode: 'native',
+      permissionPreset: 'custom-access',
+      planMode: false,
+      model: { providerId: 'current', modelId: 'current-model' },
+    }
+    render(
+      <Composer
+        {...baseProps()}
+        running
+        configuration={configuration}
+        models={[
+          { id: 'chosen-model', providerId: 'user-provider', label: 'User model', supportsReasoning: false },
+        ]}
+        onConfigurationChange={onConfigurationChange}
+      />,
+    )
+    const picker = screen.getByRole('button', { name: /^Model and reasoning/u })
+    expect(picker.hasAttribute('disabled')).toBe(false)
+    fireEvent.click(picker)
+    fireEvent.click(screen.getByRole('menuitem'))
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /User model/u }))
+    expect(onConfigurationChange).toHaveBeenCalledWith({
+      ...configuration,
+      model: { providerId: 'user-provider', modelId: 'chosen-model' },
+    })
+    expect(screen.getByRole('button', { name: 'Stop response' }).hasAttribute('disabled')).toBe(false)
+  })
 
   it('keeps the input usable and shows the host reason when the selected model is not routable', () => {
     const configuration: AgentConfiguration = {

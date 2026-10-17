@@ -53,6 +53,38 @@ afterEach(() => {
 })
 
 describe('AccountProfile', () => {
+  it.each(['Localized title', undefined])(
+    'renders a notice with optional title %s and no amount metadata',
+    async (title) => {
+      const onAcknowledgeBonus = vi.fn().mockResolvedValue(true)
+      render(
+        <AccountProfile
+          snapshot={{
+            ...snapshot,
+            bonus: {
+              status: 'ready',
+              value: {
+                orderId: bonusNotice.orderId,
+                message: 'Localized message',
+                expiresAt: '',
+                ...(title === undefined ? {} : { title }),
+              },
+            },
+          }}
+          signedIn
+          labels={labels}
+          locale="en-US"
+          onRefresh={vi.fn()}
+          onAcknowledgeBonus={onAcknowledgeBonus}
+          onOpenUsage={vi.fn()}
+          onOpenTopUp={vi.fn()}
+        />,
+      )
+      expect(screen.getByText(title ?? labels.bonusNotice)).toBeTruthy()
+      expect(screen.getByText('Localized message')).toBeTruthy()
+      await waitFor(() => expect(onAcknowledgeBonus).toHaveBeenCalledWith(bonusNotice.orderId))
+    },
+  )
   it('renders the display profile and both wallet types and sends page actions to the Host', () => {
     const onOpenUsage = vi.fn()
     const onOpenTopUp = vi.fn()

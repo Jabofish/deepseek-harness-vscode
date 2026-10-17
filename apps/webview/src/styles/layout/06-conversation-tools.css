@@ -142,7 +142,7 @@
   width: min(34rem, calc(100vw - var(--dsh-space-4)));
   min-width: min(20rem, calc(100vw - var(--dsh-space-4)));
   max-width: calc(100vw - var(--dsh-space-4));
-  max-height: min(34rem, calc(100vh - 5rem));
+  max-height: min(34rem, calc(100vh - var(--dsh-space-4)));
   margin: 0;
   padding: var(--dsh-space-2);
   overflow: auto;
@@ -213,7 +213,10 @@
   color: var(--dsh-muted);
   font-size: var(--dsh-font-size-xs);
   line-height: 1.45;
+  max-width: none;
+  overflow: visible;
   overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .dsh-tasks-popover__scope {
@@ -375,7 +378,7 @@
 .dsh-changes-popover__evidence,
 .dsh-tasks-popover__kind,
 .dsh-tasks-popover__session,
-.dsh-tasks-popover__status,
+.dsh-tasks-popover__main > .dsh-tasks-popover__status,
 .dsh-prompt-templates-popover__row-main em {
   flex: 0 0 auto;
   max-width: 10rem;

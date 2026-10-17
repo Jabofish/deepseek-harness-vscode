@@ -28,6 +28,11 @@ import { Rc172VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc1
 import { Rc201VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc201/adapter.js'
 import { Rc202VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc202/adapter.js'
 import { Alpha212VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha212/adapter.js'
+import { Alpha213VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha213/adapter.js'
+import { Alpha214VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha214/adapter.js'
+import { Alpha215VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha215/adapter.js'
+import { Rc211VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc211/adapter.js'
+import { Rc212VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc212/adapter.js'
 import { Alpha211VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha211/adapter.js'
 import { acquireManagedRuntimeScope, type ManagedRuntimeScope } from './runtime-scope.js'
 import { resolveLiveRuntime } from './runtime.js'
@@ -199,6 +204,11 @@ export async function startManagedRuntime(options?: {
     steps.push(`managed start pid=${started.pid} endpoint=${started.endpoint.baseUrl}`)
 
     const adapters = [
+      new Rc212VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
+      new Rc211VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
+      new Alpha215VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
+      new Alpha214VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
+      new Alpha213VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
       new Alpha212VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
       new Alpha211VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
       new Rc202VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),

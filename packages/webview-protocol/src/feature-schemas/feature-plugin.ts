@@ -42,6 +42,7 @@ export const pluginBundleErrorCodeSchema = z.enum([
   'unaddressable',
   'unknown-plugin',
   'invalid-spec',
+  'already-installed',
   'ambiguous-install',
   'not-bundle',
   'not-removable',
@@ -94,6 +95,9 @@ export const pluginBundleChangeResultSchema = z
     name: safeLabel,
     changed: z.boolean(),
     application: z.enum(['applied', 'restart-required', 'overridden', 'failed', 'cancelled']),
+    restartReason: z
+      .enum(['no-hmr', 'package-moved', 'host-module', 'unmanaged-plugin', 'module-comparison'])
+      .optional(),
     enabled: z.boolean().optional(),
     stage: z.enum(['install', 'enable', 'remove']).optional(),
     errorCode: pluginBundleErrorCodeSchema.optional(),

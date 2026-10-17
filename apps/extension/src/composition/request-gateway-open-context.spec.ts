@@ -26,6 +26,7 @@ vi.mock('./editor-files.js', async (load) => ({
 }))
 
 import { createRequestGateway } from './request-handler.js'
+import { WebviewSurfaceRegistry } from '../view/webview-surface-registry.js'
 
 describe('open-file context route', () => {
   it('returns one editor context instead of storing a second attachment', async () => {
@@ -51,6 +52,10 @@ describe('open-file context route', () => {
       previewAvailable: true,
     })
     const { router } = createRequestGateway({
+      postTo: () => Promise.resolve(true),
+      postEvent: () => Promise.resolve(true),
+      postEventTo: () => Promise.resolve(true),
+      surfaces: new WebviewSurfaceRegistry(),
       post: (message: unknown) => {
         sent.push(message)
         return Promise.resolve(true)
@@ -94,6 +99,10 @@ describe('open-file context route', () => {
         new AppError({ code: 'CONTEXT_LIMIT', message: 'Context is full.', retryable: false }),
       )
     const { router } = createRequestGateway({
+      postTo: () => Promise.resolve(true),
+      postEvent: () => Promise.resolve(true),
+      postEventTo: () => Promise.resolve(true),
+      surfaces: new WebviewSurfaceRegistry(),
       post: (message: unknown) => {
         sent.push(message)
         return Promise.resolve(true)

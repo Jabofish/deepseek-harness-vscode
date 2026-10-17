@@ -12,16 +12,15 @@
   flex: 1 1 0%;
   flex-direction: column;
   min-width: 0;
-  min-height: 0;
+  min-height: 10rem;
   width: 100%;
   overflow: hidden;
 }
 
 .dsh-scroll-to-latest {
-  position: absolute;
-  inset-inline-start: 50%;
-  inset-block-end: var(--dsh-scroll-to-latest-bottom, var(--dsh-space-3));
-  z-index: 9;
+  position: static;
+  flex: 0 0 auto;
+  align-self: center;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -30,12 +29,13 @@
   min-height: var(--dsh-control-height);
   gap: var(--dsh-space-2);
   padding: var(--dsh-space-1) var(--dsh-space-3);
-  transform: translateX(-50%);
+  margin-block: var(--dsh-space-1);
+  overflow: hidden;
   border-color: color-mix(in srgb, var(--dsh-info) 54%, var(--dsh-border-color));
   border-radius: 999px;
   color: var(--dsh-text);
   background: color-mix(in srgb, var(--dsh-info) 84%, var(--dsh-surface-raised));
-  box-shadow: var(--dsh-shadow);
+  box-shadow: none;
   white-space: nowrap;
 }
 
@@ -50,7 +50,7 @@
   align-items: center;
   min-width: 0;
   gap: var(--dsh-space-2);
-  animation: dsh-rise-in var(--dsh-motion-duration-standard) var(--dsh-motion-ease-enter) both;
+  animation: dsh-rise-in var(--dsh-motion-duration-standard) var(--dsh-motion-ease-enter) backwards;
 }
 
 .dsh-scroll-to-latest__content > span {
@@ -82,22 +82,19 @@
   outline-offset: -1px;
 }
 
-/* A selected trajectory record is an inspector layer, not a second layout
- * column. It floats above the ledger and ends at the composer boundary, so
- * the ledger keeps all remaining vertical space. Its own scroll owner keeps
- * long input/output details reachable without creating page overflow. */
+/* Details reserve their own row. Neither the inspector nor jump controls may
+ * cover the ledger; both keep their own bounded space above the composer. */
 .dsh-trajectory-shell--inspecting {
   --dsh-trajectory-inspector-max-height: min(50%, 24rem);
-  --dsh-scroll-to-latest-bottom: calc(var(--dsh-trajectory-inspector-max-height) + var(--dsh-space-2));
+  min-height: 24rem;
 }
 
 .dsh-trajectory-inspector {
-  position: absolute;
-  inset-inline: 0;
-  inset-block-end: 0;
-  z-index: 8;
+  position: relative;
+  flex: 0 1 auto;
   width: 100%;
   min-width: 0;
+  min-height: 8rem;
   max-height: var(--dsh-trajectory-inspector-max-height, min(50%, 24rem));
   overflow-x: hidden;
   overflow-y: auto;

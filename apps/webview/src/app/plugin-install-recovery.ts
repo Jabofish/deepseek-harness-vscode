@@ -320,6 +320,7 @@ function toDomainChangeResult(result: PluginBundleChangedPayload['result']): Plu
     name: result.name,
     changed: result.changed,
     application: result.application,
+    ...(result.restartReason === undefined ? {} : { restartReason: result.restartReason }),
     ...(result.enabled === undefined ? {} : { enabled: result.enabled }),
     ...(result.stage === undefined ? {} : { stage: result.stage }),
     ...(result.errorCode === undefined ? {} : { errorCode: result.errorCode }),

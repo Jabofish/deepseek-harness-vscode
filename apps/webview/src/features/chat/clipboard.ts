@@ -19,6 +19,9 @@ export async function writeClipboard(text: string): Promise<boolean> {
   textarea.style.position = 'fixed'
   textarea.style.opacity = '0'
   document.body.appendChild(textarea)
+  // In Chromium this also focuses the textarea, so the copy event this raises
+  // stays owned by this payload: `useTranscriptCopyFallback` reads the focused
+  // element to tell a focused text field from an addressed transcript row.
   textarea.select()
   try {
     return document.execCommand('copy')

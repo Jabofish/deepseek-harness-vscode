@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactElement } from 'react'
+import { useEffect, useRef, useState, type ReactElement } from 'react'
 import type { FeatureHostEvent, FeatureRequest } from '@dsh-vscode/webview-protocol'
 
 import { useI18n } from '../../i18n.js'
@@ -27,7 +27,7 @@ export function ScheduleDrawer(props: ScheduleDrawerProps): ReactElement | null 
 
   if (props.open && !hasOpened) setHasOpened(true)
 
-  useDismissibleLayer({ open: props.open, refs: [dialogRef], onDismiss: props.onClose })
+  useDismissibleLayer({ open: props.open, refs: [dialogRef], trapFocus: true, onDismiss: props.onClose })
 
   useEffect(() => {
     if (!props.open) return
@@ -39,31 +39,6 @@ export function ScheduleDrawer(props: ScheduleDrawerProps): ReactElement | null 
     }
   }, [props.open])
 
-  const trapTab = (event: KeyboardEvent<HTMLDivElement>): void => {
-    if (event.key !== 'Tab') return
-    const dialog = dialogRef.current
-    if (dialog === null) return
-    const focusable = [
-      ...dialog.querySelectorAll<HTMLElement>(
-        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      ),
-    ].filter((element) => element.closest('[hidden], [inert], [aria-hidden="true"]') === null)
-    const first = focusable[0]
-    const last = focusable[focusable.length - 1]
-    if (first === undefined || last === undefined) {
-      event.preventDefault()
-      closeRef.current?.focus()
-      return
-    }
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault()
-      last.focus()
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault()
-      first.focus()
-    }
-  }
-
   if (!props.open && !hasOpened) return null
 
   return (
@@ -74,7 +49,6 @@ export function ScheduleDrawer(props: ScheduleDrawerProps): ReactElement | null 
         role="dialog"
         aria-modal={props.open}
         aria-label={t('schedules.title')}
-        onKeyDown={trapTab}
       >
         <button
           ref={closeRef}

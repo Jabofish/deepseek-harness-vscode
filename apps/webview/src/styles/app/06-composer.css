@@ -547,7 +547,7 @@ occupancy so the overflow is visible without opening the details. */
     ),
     color-mix(in srgb, var(--dsh-surface-raised) 78%, transparent);
   box-shadow: var(--dsh-shadow);
-  animation: dsh-surface-enter var(--dsh-motion-duration-standard) var(--dsh-motion-ease-enter) both;
+  animation: dsh-surface-enter var(--dsh-motion-duration-standard) var(--dsh-motion-ease-enter) backwards;
 }
 
 .dsh-runtime-connection--failure {

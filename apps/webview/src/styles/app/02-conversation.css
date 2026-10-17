@@ -17,6 +17,10 @@
   --dsh-font-size-sm: calc(0.8125rem * var(--dsh-conversation-font-scale));
   --dsh-font-size-md: calc(0.875rem * var(--dsh-conversation-font-scale));
   --dsh-font-size-lg: calc(1rem * var(--dsh-conversation-font-scale));
+  /* Rebind role aliases here: inherited custom properties have already resolved
+   * against the root scale and would otherwise ignore the conversation setting. */
+  --dsh-menu-font-size: var(--dsh-font-size-md);
+  --dsh-tool-detail-font-size: var(--dsh-font-size-xs);
   --dsh-markdown-heading-1: calc(1.35rem * var(--dsh-conversation-font-scale));
   --dsh-markdown-heading-2: calc(1.15rem * var(--dsh-conversation-font-scale));
   --dsh-markdown-heading-3: calc(1rem * var(--dsh-conversation-font-scale));
@@ -84,8 +88,14 @@
 }
 
 .dsh-conversation__events-toggle--menu .dsh-conversation__events-toggle-count {
+  flex: 0 0 auto;
   margin-inline-start: auto;
   color: var(--dsh-muted);
+}
+
+.dsh-conversation__events-toggle--menu > span:not(.dsh-conversation__events-toggle-count) {
+  min-width: 0;
+  white-space: normal;
 }
 
 .dsh-conversation__events-toggle:hover:not(:disabled),
@@ -139,7 +149,6 @@
   border-radius: var(--dsh-radius-sm);
 }
 
-.dsh-conversation__locale-menu,
 .dsh-model-picker__menu,
 .dsh-open-file-picker,
 .dsh-context-meter__details {
@@ -154,13 +163,6 @@
   border-radius: var(--dsh-radius-md);
   background: var(--dsh-widget-bg);
   box-shadow: var(--dsh-shadow);
-}
-
-.dsh-conversation__locale-menu {
-  top: calc(100% + var(--dsh-space-2));
-  inset-inline-end: 0;
-  display: grid;
-  gap: var(--dsh-space-1);
 }
 
 /* The header stays visible; every directory state shares one scrollport. */
