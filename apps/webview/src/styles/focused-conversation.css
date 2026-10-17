@@ -16,12 +16,12 @@
 
 .dsh-app[data-conversation-layout='focused'],
 .dsh-timeline[data-conversation-layout='focused'] {
-  --dsh-timeline-content-max-width: 748px;
+  --dsh-timeline-content-max-width: 100%;
   --dsh-message-content-max-width: 100%;
 }
 
 .dsh-timeline[data-conversation-layout='focused'] {
-  padding: var(--dsh-space-4) clamp(8px, 2.5vw, 24px) var(--dsh-space-4);
+  padding: var(--dsh-space-4) var(--dsh-space-2) var(--dsh-space-4);
 }
 
 .dsh-timeline[data-conversation-layout='focused'] .dsh-timeline__row {

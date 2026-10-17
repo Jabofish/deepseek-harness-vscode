@@ -16,14 +16,12 @@ import { ConversationActionsMenu } from './features/shell/ConversationActionsMen
 import { ExportDialog } from './features/export/ExportDialog.js'
 import { SurfaceHandoffPlaceholder } from './features/surface/SurfaceHandoffPlaceholder.js'
 import { isHandoffSidebar } from './app/store/surface-actions.js'
-import { GoalBar } from './features/goals/GoalBar.js'
-import { GoalTodoStrip } from './features/goals/GoalTodoStrip.js'
+import { GoalsTasksStrip } from './features/goals/GoalsTasksStrip.js'
 import { Timeline } from './features/chat/Timeline.js'
 import { TrajectoryView } from './features/trajectory/TrajectoryView.js'
 import { QueuePanel } from './features/input/QueuePanel.js'
 import { ApprovalCard } from './features/interactions/ApprovalCard.js'
 import { UserQuestionCard } from './features/interactions/UserQuestionCard.js'
-import { TodoList } from './features/goals/TodoList.js'
 import { Icon } from './ui/Icon.js'
 import { rememberWelcomeDismissal, rememberRuntimeUpdateDismissal } from './app/dismissed-notices.js'
 import type { OpenFileCandidate } from './app/store.js'
@@ -54,6 +52,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
     branching,
     busyAction,
     codingToolsEnabled,
+    trajectoryVisible,
     compatibilityWarning,
     composerOnCancel,
     composerOnCaptureEditorContext,
@@ -383,34 +382,29 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                   {...(conversationFontStyle === undefined ? {} : { style: conversationFontStyle })}
                   aria-label={active.title.trim() === '' ? t('app.conversation') : active.title}
                 >
-                  {layoutPreference?.layout === 'focused' ? (
-                    <h1 className="dsh-conversation__title" title={active.title}>
-                      {active.title.trim() === '' ? t('app.conversation') : active.title}
-                    </h1>
-                  ) : null}
                   <div className="dsh-conversation__topbar">
-                    <div
-                      className="dsh-conversation__views"
-                      role="tablist"
-                      aria-label={t('app.conversationView')}
-                    >
-                      <button
-                        id={CONVERSATION_VIEW_IDS.chat.tab}
-                        data-conversation-view="chat"
-                        className={`dsh-conversation__view-tab${
-                          conversationView === 'chat' ? ' dsh-conversation__view-tab--active' : ''
-                        }`}
-                        type="button"
-                        role="tab"
-                        aria-selected={conversationView === 'chat'}
-                        aria-controls={CONVERSATION_VIEW_IDS.chat.panel}
-                        tabIndex={conversationView === 'chat' ? 0 : -1}
-                        onKeyDown={onConversationTabKeyDown}
-                        onClick={() => setConversationView('chat')}
+                    {trajectoryVisible ? (
+                      <div
+                        className="dsh-conversation__views"
+                        role="tablist"
+                        aria-label={t('app.conversationView')}
                       >
-                        {t('app.chat')}
-                      </button>
-                      {codingToolsEnabled ? (
+                        <button
+                          id={CONVERSATION_VIEW_IDS.chat.tab}
+                          data-conversation-view="chat"
+                          className={`dsh-conversation__view-tab${
+                            conversationView === 'chat' ? ' dsh-conversation__view-tab--active' : ''
+                          }`}
+                          type="button"
+                          role="tab"
+                          aria-selected={conversationView === 'chat'}
+                          aria-controls={CONVERSATION_VIEW_IDS.chat.panel}
+                          tabIndex={conversationView === 'chat' ? 0 : -1}
+                          onKeyDown={onConversationTabKeyDown}
+                          onClick={() => setConversationView('chat')}
+                        >
+                          {t('app.chat')}
+                        </button>
                         <button
                           id={CONVERSATION_VIEW_IDS.trajectory.tab}
                           data-conversation-view="trajectory"
@@ -427,8 +421,14 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                         >
                           {t('app.trajectory')}
                         </button>
-                      ) : null}
-                    </div>
+                      </div>
+                    ) : null}
+                    <span
+                      className="dsh-conversation__header-title"
+                      title={active.title.trim() === '' ? t('app.conversation') : active.title}
+                    >
+                      {active.title.trim() === '' ? t('app.conversation') : active.title}
+                    </span>
                     <AppHeader
                       runtime={backend}
                       connectedDshVersion={state.connectedDshVersion}
@@ -468,6 +468,12 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                       )}
                     </ConversationActionsMenu>
                   </div>
+                  <GoalsTasksStrip
+                    goals={state.goals}
+                    todos={state.todos}
+                    onUpdateGoal={goalOnUpdate}
+                    onClearGoal={goalOnClear}
+                  />
                   <SessionInspector
                     key={`${state.connectionEpoch}:${active.id}`}
                     history={state.history}
@@ -503,20 +509,18 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                       }}
                     />
                   )}
-                  {state.goals.length > 0 ? (
-                    <>
-                      <GoalBar goals={state.goals} onUpdate={goalOnUpdate} onClear={goalOnClear} />
-                      <GoalTodoStrip goals={state.goals} />
-                    </>
-                  ) : null}
-                  {conversationView === 'chat' ? (
+                  {conversationView === 'chat' || !trajectoryVisible ? (
                     <Timeline
                       sessionId={active.id}
                       {...(inspectorReveal?.sessionKey === `${state.connectionEpoch}:${active.id}`
                         ? { revealTarget: inspectorReveal }
                         : {})}
-                      panelId={CONVERSATION_VIEW_IDS.chat.panel}
-                      panelLabelledBy={CONVERSATION_VIEW_IDS.chat.tab}
+                      {...(trajectoryVisible
+                        ? {
+                            panelId: CONVERSATION_VIEW_IDS.chat.panel,
+                            panelLabelledBy: CONVERSATION_VIEW_IDS.chat.tab,
+                          }
+                        : {})}
                       nodes={state.timeline.nodes}
                       {...(state.timeline.nodeChangeStart === undefined
                         ? {}
@@ -619,7 +623,6 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                     </div>
                   ) : null}
                   <div className="dsh-compose-area">
-                    <TodoList key={active?.id ?? 'todo-list'} todos={state.todos} />
                     {backend.kind === 'connected' ? (
                       <ModsBand
                         key={`${state.connectionEpoch}:${active.id}`}

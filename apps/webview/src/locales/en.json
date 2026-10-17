@@ -1708,5 +1708,8 @@
   "sessions.openInEditorTitle": "Open in Editor Area",
   "app.notices": "Notifications",
   "app.showNotices": "Show notifications ({count})",
-  "app.hideNotices": "Collapse notifications ({count})"
+  "app.hideNotices": "Collapse notifications ({count})",
+  "goalsTasks.aria": "Goals and tasks",
+  "goalsTasks.expand": "Expand goals and tasks",
+  "goalsTasks.collapse": "Collapse goals and tasks"
 }

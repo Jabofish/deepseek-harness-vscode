@@ -1001,6 +1001,18 @@ describe('App connected rendering', () => {
     await waitFor(() => expect(screen.getByLabelText('Trajectory ledger')).toBeDefined())
   })
 
+  it('hides the tab bar when the Trajectory view is disabled', async () => {
+    const readDshSettings = vi.fn().mockResolvedValue(dshUiSettingsSnapshot(false))
+    currentStore = { ...storeFor(connectedState(true)), readDshSettings }
+    render(<App />)
+
+    await waitFor(() => expect(readDshSettings).toHaveBeenCalled())
+    expect(screen.queryByRole('tab', { name: 'Chat' })).toBeNull()
+    expect(screen.queryByRole('tab', { name: 'Trajectory' })).toBeNull()
+    expect(document.querySelector('.dsh-conversation__views')).toBeNull()
+    expect(screen.getByTestId('timeline')).toBeDefined()
+  })
+
   it('uses the accepted Host busy-send value after a successful write even if refresh fails', async () => {
     const active = connectedState(true)
     const runningState = {
@@ -2482,7 +2494,7 @@ describe('App connected rendering', () => {
     },
   )
 
-  it('keeps structured todo content directly above the composer', () => {
+  it('folds todo content into the goals/tasks header dock', () => {
     const state = connectedState(true)
     currentStore = storeFor({
       ...state,
@@ -2493,12 +2505,14 @@ describe('App connected rendering', () => {
     })
     const { container } = render(<App />)
 
-    const composeArea = container.querySelector('.dsh-compose-area')
-    const todoList = composeArea?.querySelector('.dsh-todo-list')
+    const dock = container.querySelector('.dsh-goals-tasks')
+    expect(dock).not.toBeNull()
+    const todoList = dock?.querySelector('.dsh-todo-list')
     expect(todoList).not.toBeNull()
     const todoToggle = todoList?.querySelector<HTMLButtonElement>('.dsh-todo-list__toggle')
     expect(todoToggle?.textContent).toContain('执行子代理调研')
     expect(todoToggle?.textContent).not.toContain('查询系统信息')
+    expect(container.querySelector('.dsh-compose-area .dsh-todo-list')).toBeNull()
     expect(container.querySelector('.dsh-conversation > .dsh-goal-strip')).toBeNull()
   })
 
