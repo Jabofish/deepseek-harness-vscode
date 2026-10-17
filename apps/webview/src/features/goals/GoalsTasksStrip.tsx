@@ -1,10 +1,11 @@
-import { memo, useState, type ReactElement } from 'react'
+import { memo, useId, useRef, useState, type ReactElement } from 'react'
 import type { GoalView, TodoView } from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
 import { GoalBar } from './GoalBar.js'
 import { GoalTodoStrip } from './GoalTodoStrip.js'
 import { TodoList } from './TodoList.js'
+import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 
 export interface GoalsTasksStripProps {
   readonly goals: readonly GoalView[]
@@ -24,6 +25,18 @@ export const GoalsTasksStrip = memo(function GoalsTasksStrip(
 ): ReactElement | null {
   const { t } = useI18n()
   const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const panelId = useId()
+  useDismissibleLayer({
+    open,
+    refs: [rootRef],
+    onDismiss: () => setOpen(false),
+    onEscape: () => {
+      setOpen(false)
+      triggerRef.current?.focus()
+    },
+  })
   const { goals, todos } = props
 
   if (goals.length === 0 && todos.length === 0) return null
@@ -37,13 +50,16 @@ export const GoalsTasksStrip = memo(function GoalsTasksStrip(
 
   return (
     <section
+      ref={rootRef}
       className={`dsh-goals-tasks${open ? ' dsh-goals-tasks--open' : ''}`}
       aria-label={t('goalsTasks.aria')}
     >
       <button
+        ref={triggerRef}
         className="dsh-goals-tasks__toggle"
         type="button"
         aria-expanded={open}
+        aria-controls={panelId}
         aria-label={open ? t('goalsTasks.collapse') : t('goalsTasks.expand')}
         onClick={() => setOpen((current) => !current)}
       >
@@ -65,7 +81,12 @@ export const GoalsTasksStrip = memo(function GoalsTasksStrip(
           <Icon name="chevron-down" />
         </span>
       </button>
-      <div className="dsh-disclosure dsh-goals-tasks__disclosure" data-open={open}>
+      <div
+        id={panelId}
+        className="dsh-disclosure dsh-goals-tasks__disclosure"
+        data-open={open}
+        hidden={!open}
+      >
         <div className="dsh-disclosure__inner">
           {activeGoal === undefined ? null : (
             <GoalBar

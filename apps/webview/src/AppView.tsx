@@ -469,6 +469,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                     </ConversationActionsMenu>
                   </div>
                   <GoalsTasksStrip
+                    key={active.id}
                     goals={state.goals}
                     todos={state.todos}
                     onUpdateGoal={goalOnUpdate}

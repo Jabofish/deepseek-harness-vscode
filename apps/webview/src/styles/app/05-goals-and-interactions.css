@@ -665,8 +665,15 @@
   border-top: var(--dsh-border);
 }
 
+.dsh-goals-tasks__disclosure[hidden] {
+  display: none;
+}
+
 .dsh-goals-tasks__disclosure .dsh-disclosure__inner {
   display: grid;
   gap: var(--dsh-space-2);
   padding: var(--dsh-space-2);
+  max-height: min(45vh, 20rem);
+  overflow: auto;
+  overscroll-behavior: contain;
 }
