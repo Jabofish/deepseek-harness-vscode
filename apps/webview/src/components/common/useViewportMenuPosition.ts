@@ -59,10 +59,14 @@ export function useViewportMenuPosition({
       // and the menu could never grow back to its stylesheet width when the
       // viewport widened again.
       menu.style.width = ''
+      menu.style.minWidth = ''
       const width = Math.min(Math.max(menu.offsetWidth, 1), availableWidth)
       // Applied here, not only through React state, so a re-measure that
       // produces the current style (a scroll with unchanged geometry) still
       // leaves the correct inline width on the element.
+      // A feature's CSS minimum is a preferred size, not permission to escape
+      // the viewport. Lift it only after measuring that preferred width.
+      menu.style.minWidth = '0'
       menu.style.width = `${width}px`
       const height = Math.min(Math.max(menu.offsetHeight, 1), availableHeight)
       const direction = getComputedStyle(anchor).direction
@@ -95,6 +99,7 @@ export function useViewportMenuPosition({
         bottom: 'auto',
         left: `${left}px`,
         width: `${width}px`,
+        minWidth: 0,
         maxWidth: 'none',
         visibility: 'visible',
       }

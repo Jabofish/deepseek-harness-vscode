@@ -166,6 +166,40 @@ describe('shared Host session navigation', () => {
     expect(retitleEditorTab).not.toHaveBeenCalled()
   })
 
+  it.each([
+    ['session.projection', { sessionId: 's1', key: 'title', value: 'Projected title' }],
+    [
+      'session.projection.baseline',
+      { projections: { s1: { asOfSequence: 12, values: { title: 'Projected title' } } } },
+    ],
+    [
+      'session.subscribed',
+      { sessionId: 's1', projection: { asOfSequence: 12, values: { title: 'Projected title' } } },
+    ],
+  ])('retitles from the authoritative title in %s', (name, payload) => {
+    const { navigation, retitleEditorTab } = fixture()
+    navigation.acceptEvent(name, payload)
+    expect(retitleEditorTab).toHaveBeenCalledExactlyOnceWith('s1', 'Projected title')
+  })
+
+  it('ignores absent, malformed and unrelated title projections without hiding valid baseline entries', () => {
+    const { navigation, retitleEditorTab } = fixture()
+    navigation.acceptEvent('session.projection', { sessionId: 's1', key: 'messages', value: 'Text' })
+    navigation.acceptEvent('session.projection', { sessionId: 's1', key: 'title', value: null })
+    navigation.acceptEvent('session.projection', { key: 'title', value: 'Missing id' })
+    navigation.acceptEvent('session.subscribed', { sessionId: 's1', projection: { values: {} } })
+    navigation.acceptEvent('session.projection.baseline', { projections: null })
+    navigation.acceptEvent('session.projection.baseline', {
+      projections: {
+        s1: { values: { title: null } },
+        s2: { values: { title: 'Recovered title' } },
+        s3: null,
+        s4: { values: { title: 42 } },
+      },
+    })
+    expect(retitleEditorTab).toHaveBeenCalledExactlyOnceWith('s2', 'Recovered title')
+  })
+
   it('uses validated existing mutation routes and refreshes archives without clearing editor context', async () => {
     const { navigation, request, deps, signal } = fixture()
     await navigation.rename('s1', 'Renamed', signal)

@@ -5,11 +5,11 @@
 - 修复编辑器区标签页标题在会话命名后不更新的问题：会话标题变化（含 DSH 自动命名）现在会同步到已打开的编辑器标签页，无需关闭再重开。
 - Fixes editor-tab titles not updating after a session is named: session title changes (including DSH auto-titling) now propagate to open editor tabs without closing and reopening them.
 
-- 修复新会话的 Agent 选择被禁用的问题：Agent 预设选择只由 DSH roster 决定，不再因 Developer Tools（Coding Tools）关闭或设置读取失败而失效。
-- Fixes disabled agent selection in new sessions: agent preset selection now follows the DSH roster alone, so an off Developer Tools (Coding Tools) preference or a failed settings read no longer withdraws it.
+- 修复新会话和设置页的 Agent 预设选择及 Creator 被错误禁用的问题；关闭 Developer Tools 或辅助设置读取失败不再阻断可用功能，仍保留上游能力和设置写入校验。
+- Fixes incorrectly disabled agent choices and Creator actions across new sessions and Settings. Developer Tools preferences and auxiliary settings failures no longer block available actions; upstream capabilities and settings-write checks remain authoritative.
 
-- 修复聚焦布局中新会话的 Agent 模式选择器显示为禁用：启用时与相邻模型选择器使用同样的可用文字样式，窄栏保留模式名称和箭头，不再提前折叠为无标签图标。
-- Fixes the agent-mode picker looking disabled beside the model picker in the focused layout, and keeps its name and chevron instead of collapsing to an unlabeled icon in a narrow composer.
+- 统一选择器的可用与禁用样式，清理旧窄栏宽度覆盖；两种布局在空间不足时分行，保留 Agent、模型和权限信息及完整菜单。
+- Unifies enabled and disabled selector styling and removes legacy narrow-width overrides. Both layouts reflow when needed, retaining agent, model and permission information and complete menus.
 
 ## 0.3.3
 

@@ -41,7 +41,7 @@ describe('useViewportMenuPosition', () => {
 
   it('re-measures the stylesheet width after a narrow viewport clamped the menu', async () => {
     const naturalWidth = { current: MENU_WIDTH }
-    render(<FlexibleMenuHarness naturalWidth={naturalWidth} />)
+    render(<FlexibleMenuHarness naturalWidth={naturalWidth} stylesheetMinWidth={MENU_WIDTH} />)
     const menu = screen.getByRole('menu')
     await waitFor(() => expect(menu.style.width).toBe(`${MENU_WIDTH}px`))
 
@@ -55,6 +55,7 @@ describe('useViewportMenuPosition', () => {
       // inline width pins that clamped value.
       setViewportWidth(220)
       await waitFor(() => expect(menu.style.width).toBe('204px'))
+      expect(menu.offsetWidth).toBe(204)
 
       // The sidebar widens again: the clamp must lift, so the measurement
       // cannot come from the previously written inline width.
@@ -78,9 +79,11 @@ function MenuHarness({ open = true }: { open?: boolean }): ReactElement {
 function FlexibleMenuHarness({
   open = true,
   naturalWidth,
+  stylesheetMinWidth = 0,
 }: {
   open?: boolean
   naturalWidth: { current: number }
+  stylesheetMinWidth?: number
 }): ReactElement {
   const anchorRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -112,7 +115,11 @@ function FlexibleMenuHarness({
           Object.defineProperty(node, 'offsetWidth', {
             get: () => {
               const inline = Number.parseFloat(node.style.width)
-              return Number.isFinite(inline) ? inline : naturalWidth.current
+              const minimum = Number.parseFloat(node.style.minWidth)
+              return Math.max(
+                Number.isFinite(minimum) ? minimum : stylesheetMinWidth,
+                Number.isFinite(inline) ? inline : naturalWidth.current,
+              )
             },
             configurable: true,
           })

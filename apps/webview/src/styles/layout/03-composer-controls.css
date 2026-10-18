@@ -227,18 +227,19 @@
   max-width: 100%;
 }
 
-.dsh-unified-composer .dsh-session-controls--primary .dsh-session-controls__metrics {
+.dsh-unified-composer .dsh-session-controls__metrics {
   display: flex;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   min-width: 0;
+  max-width: 100%;
   /* This is a dl. Reset the browser's default block margins or the metrics
    * row adds an invisible 2em to the composer's height. */
   margin: 0;
   margin-inline-start: auto;
 }
 
-.dsh-unified-composer .dsh-session-controls--primary .dsh-session-controls__metrics > div,
-.dsh-unified-composer .dsh-session-controls--primary .dsh-session-controls__context-cell {
+.dsh-unified-composer .dsh-session-controls__metrics > div,
+.dsh-unified-composer .dsh-session-controls__context-cell {
   display: flex;
   align-items: center;
   min-width: 0;

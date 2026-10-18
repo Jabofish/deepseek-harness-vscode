@@ -182,10 +182,7 @@ export function createSessionNavigation(
         }
         return
       }
-      if (name === 'session.title') {
-        const title = sessionTitlePayload(payload)
-        if (title !== undefined) deps.retitleEditorTab?.(title.sessionId, title.title)
-      }
+      syncSessionTitles(name, payload, deps.retitleEditorTab)
       if (
         DIRECTORY_EVENTS.has(name) ||
         (name === 'session.projection' &&
@@ -199,14 +196,39 @@ export function createSessionNavigation(
   }
 }
 
-/** A `session.title` payload carries exactly the session id and its new title. */
-function sessionTitlePayload(
+/** Use the upstream title view directly, including reconnect and follow baselines. */
+function syncSessionTitles(
+  name: string,
   payload: unknown,
-): { readonly sessionId: string; readonly title: string } | undefined {
-  if (typeof payload !== 'object' || payload === null) return undefined
-  const record = payload as { readonly sessionId?: unknown; readonly title?: unknown }
-  return typeof record.sessionId === 'string' && typeof record.title === 'string'
-    ? { sessionId: record.sessionId, title: record.title }
+  retitle: NavigationDependencies['retitleEditorTab'],
+): void {
+  if (retitle === undefined) return
+  if (
+    name !== 'session.title' &&
+    name !== 'session.projection' &&
+    name !== 'session.projection.baseline' &&
+    name !== 'session.subscribed'
+  )
+    return
+  const event = objectRecord(payload)
+  if (event === undefined) return
+  const apply = (sessionId: unknown, title: unknown): void => {
+    if (typeof sessionId === 'string' && sessionId.trim() !== '' && typeof title === 'string')
+      retitle(sessionId, title)
+  }
+  if (name === 'session.title') apply(event.sessionId, event.title)
+  else if (name === 'session.projection' && event.key === 'title') apply(event.sessionId, event.value)
+  else if (name === 'session.subscribed')
+    apply(event.sessionId, objectRecord(objectRecord(event.projection)?.values)?.title)
+  else if (name === 'session.projection.baseline') {
+    for (const [sessionId, projection] of Object.entries(objectRecord(event.projections) ?? {}))
+      apply(sessionId, objectRecord(objectRecord(projection)?.values)?.title)
+  }
+}
+
+function objectRecord(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Readonly<Record<string, unknown>>)
     : undefined
 }
 

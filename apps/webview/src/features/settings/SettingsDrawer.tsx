@@ -629,7 +629,6 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                 t={t}
                 dshState={dshState}
                 dshSettingsSnapshotFresh={dshSettingsSnapshotFresh}
-                codingToolsEnabled={dshUiPreferences?.codingToolsEnabled === true}
                 updateDisplayedSetting={updateDisplayedSetting}
               />
             ),

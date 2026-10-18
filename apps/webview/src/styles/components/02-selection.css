@@ -55,7 +55,7 @@
   gap: var(--dsh-space-2);
   padding: var(--dsh-space-1) var(--dsh-space-2);
   border-color: var(--dsh-border-color);
-  color: var(--dsh-muted);
+  color: var(--dsh-text);
   background: var(--dsh-surface-raised);
   font-size: var(--dsh-font-size-sm);
   text-align: start;
@@ -65,6 +65,10 @@
 .dsh-select-menu--open .dsh-select-menu__trigger {
   color: var(--dsh-text);
   background: var(--dsh-surface-hover);
+}
+
+.dsh-select-menu__trigger:disabled {
+  color: var(--dsh-muted);
 }
 
 .dsh-select-menu--regular .dsh-select-menu__trigger {
@@ -93,7 +97,8 @@
 }
 
 .dsh-select-menu--labelled .dsh-select-menu__trigger-label {
-  display: inline;
+  display: block;
+  flex: 1 1 auto;
 }
 
 .dsh-select-menu--labelled .dsh-select-menu__trigger-text {

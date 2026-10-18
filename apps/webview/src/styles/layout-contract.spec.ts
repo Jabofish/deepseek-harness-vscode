@@ -23,9 +23,7 @@ const appStyles = readStylesheet(new URL('./app.css', import.meta.url), [
   new URL('./compatibility.css', import.meta.url),
 ])
 const focusedStyles = readStylesheet(new URL('./focused-workbench.css', import.meta.url))
-// What the composer's agent-mode picker resolves to: the compatibility sheet
-// loads first, then the layout fragments, then the focused workbench.
-const composerCascade = `${compatibilityStyles}\n${layoutStyles}\n${focusedStyles}`
+const selectionStyles = readStylesheet(new URL('./components/02-selection.css', import.meta.url))
 
 describe('Conversation space ownership', () => {
   it('keeps notifications and trajectory details in document flow', () => {
@@ -134,38 +132,37 @@ describe('Form control base styles', () => {
   })
 })
 
-describe('Focused composer agent picker', () => {
-  const modeRoot =
-    '.dsh-unified-composer\n    .dsh-session-controls--primary\n    .dsh-session-controls__selectors\n    > .dsh-session-controls__mode'
-  const modeTrigger = `${modeRoot}\n    .dsh-select-menu__trigger`
-
-  it('reads an enabled agent mode as active text beside the model picker', () => {
-    // The mode chip inherits the trigger's muted "unavailable" colour. Only the
-    // model label was forced to --dsh-text, so the two pickers disagreed about
-    // whether a fresh seat's choices were enabled.
-    expect(
-      effective(
-        focusedStyles,
-        ".dsh-app[data-conversation-layout='focused']\n  .dsh-session-controls--model\n  .dsh-select-menu__trigger:not(:disabled)\n  .dsh-select-menu__trigger-label",
-        'color',
-      ),
-    ).toBe('var(--dsh-text)')
+describe('Readable session choices', () => {
+  it('gives enabled and disabled selectors distinct text in both layouts', () => {
+    expect(effective(selectionStyles, '.dsh-select-menu__trigger', 'color')).toBe('var(--dsh-text)')
+    expect(effective(selectionStyles, '.dsh-select-menu__trigger:disabled', 'color')).toBe('var(--dsh-muted)')
   })
 
-  it('keeps the agent mode label and chevron when the composer rail narrows', () => {
-    // The 32rem rule used to turn every non-model picker into a 2rem icon
-    // button. The mode names the whole seat, so it keeps its label; only the
-    // low-frequency selects may collapse.
-    expect(layoutStyles).toContain(
-      '> .dsh-select-menu:not(.dsh-model-picker):not(.dsh-session-controls__mode)',
-    )
-    expect(effective(composerCascade, modeRoot, 'flex')).toBe('0 1 auto')
-    expect(effective(composerCascade, modeRoot, 'width')).toBe('auto')
-    expect(effective(composerCascade, modeRoot, 'min-width')).toBe('0')
-    expect(effective(composerCascade, modeRoot, 'max-width')).toBe('min(9rem, 45%)')
-    expect(effective(composerCascade, modeTrigger, 'width')).toBe('100%')
-    expect(hasRule(composerCascade, `${modeRoot}\n    .dsh-select-menu__trigger-label`)).toBe(false)
-    expect(hasRule(composerCascade, `${modeRoot}\n    .dsh-select-menu__chevron`)).toBe(false)
+  it('removes compatibility rules that turn labelled choices into 28px icons', () => {
+    for (const selector of [
+      '.dsh-select-menu--labelled',
+      '.dsh-session-controls__mode',
+      '.dsh-model-picker',
+      '.dsh-session-controls__selectors > .dsh-select-menu',
+      '.dsh-session-controls__selectors > .dsh-session-controls__mode',
+    ]) {
+      for (const body of ruleBodies(compatibilityStyles, selector)) {
+        expect(declaration(body, 'width')).toBeUndefined()
+        expect(declaration(body, 'max-width')).toBeUndefined()
+        expect(declaration(body, 'flex')).toBeUndefined()
+      }
+    }
+  })
+
+  it('reserves a full-width choices rail before text competes with Send', () => {
+    expect(
+      effective(
+        layoutStyles,
+        '.dsh-app .dsh-unified-composer .dsh-composer__toolbar:has(.dsh-session-controls__mode)',
+        'grid-template-areas',
+      ),
+    ).toBe("'controls controls' 'start submit'")
+    expect(focusedStyles).not.toContain("'start start' 'controls submit'")
   })
 })
 
@@ -344,11 +341,6 @@ function ruleBodies(styles: string, selector: string): readonly string[] {
     if (selectors.includes(selector)) bodies.push(match[2] ?? '')
   }
   return bodies
-}
-
-/** Whether any rule in the cascade names this exact selector. */
-function hasRule(styles: string, selector: string): boolean {
-  return ruleBodies(styles, selector).length > 0
 }
 
 function declaration(body: string, property: string): string | undefined {

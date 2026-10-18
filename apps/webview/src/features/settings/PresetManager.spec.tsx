@@ -44,7 +44,6 @@ function renderManager(
 ): ReturnType<typeof render> {
   return render(
     <PresetManager
-      codingToolsEnabled={true}
       onLoadRoster={vi.fn().mockResolvedValue(rosterFixture())}
       onReadDocument={vi.fn().mockResolvedValue(undefined)}
       onCopy={vi.fn().mockResolvedValue(undefined)}
@@ -597,7 +596,6 @@ describe('registry-only preset policy', () => {
         compositionReadable: true,
       }),
       onStartCreatorDraft,
-      codingToolsEnabled: true,
     })
     const button = await screen.findByRole('button', { name: 'Ask Agent to create a mode' })
     expect(button.hasAttribute('disabled')).toBe(false)
@@ -605,28 +603,28 @@ describe('registry-only preset policy', () => {
     await waitFor(() => expect(onStartCreatorDraft).toHaveBeenCalledOnce())
   })
 
-  it('gates the Creator entry when rc.2 Developer Tools are disabled', async () => {
-    const onStartCreatorDraft = vi.fn()
-    renderManager({ onStartCreatorDraft, codingToolsEnabled: false })
+  it('keeps Creator available independently of default-setting write access', async () => {
+    const onStartCreatorDraft = vi.fn().mockResolvedValue(undefined)
+    renderManager({ onStartCreatorDraft, defaultWritable: false })
     const button = await screen.findByRole('button', { name: 'Ask Agent to create a mode' })
-    expect(button.hasAttribute('disabled')).toBe(true)
-    expect(button.title).toBe('Enable Developer Tools in General settings first.')
+    expect(button.hasAttribute('disabled')).toBe(false)
+    expect(screen.getByRole('button', { name: 'Set as default: Cordis' })).toHaveProperty('disabled', true)
     fireEvent.click(button)
-    expect(onStartCreatorDraft).not.toHaveBeenCalled()
+    await waitFor(() => expect(onStartCreatorDraft).toHaveBeenCalledOnce())
   })
 
-  it('keeps preset selection and Creator closed while Developer Tools are unresolved', async () => {
+  it('uses roster capabilities without requiring a Developer Tools settings snapshot', async () => {
     const onMakeDefault = vi.fn().mockResolvedValue(undefined)
-    const onStartCreatorDraft = vi.fn()
-    renderManager({ onMakeDefault, onStartCreatorDraft, codingToolsEnabled: undefined })
+    const onStartCreatorDraft = vi.fn().mockResolvedValue(undefined)
+    renderManager({ onMakeDefault, onStartCreatorDraft })
 
     const mode = await screen.findByRole('button', { name: 'Set as default: Cordis' })
     const creator = screen.getByRole('button', { name: 'Ask Agent to create a mode' })
-    expect(mode).toHaveProperty('disabled', true)
-    expect(creator).toHaveProperty('disabled', true)
+    expect(mode).toHaveProperty('disabled', false)
+    expect(creator).toHaveProperty('disabled', false)
     fireEvent.click(mode)
+    await waitFor(() => expect(onMakeDefault).toHaveBeenCalledOnce())
     fireEvent.click(creator)
-    expect(onMakeDefault).not.toHaveBeenCalled()
-    expect(onStartCreatorDraft).not.toHaveBeenCalled()
+    await waitFor(() => expect(onStartCreatorDraft).toHaveBeenCalledOnce())
   })
 })

@@ -817,7 +817,7 @@ describe('SettingsDrawer', () => {
     expect(screen.getByRole('spinbutton', { name: 'Conversation font size' })).toHaveProperty('value', '14')
   })
 
-  it('gates preset selection on Developer Tools and saves the default through the RC2 store path', async () => {
+  it('keeps preset selection and Creator independent of Developer Tools and writes the exact default path', async () => {
     let hostSnapshot = rc2GeneralSettingsFixture({ values: {} })
     const onLoadDshSettings = vi.fn().mockImplementation(() => Promise.resolve(hostSnapshot))
     const onUpdateDshSetting = vi.fn().mockImplementation((path: string, value: unknown) => {
@@ -866,12 +866,14 @@ describe('SettingsDrawer', () => {
       const mode = await screen.findByRole('button', { name: 'Set as default: PTC' })
       const creator = await screen.findByRole('button', { name: 'Ask Agent to create a mode' })
       expect(store.presets).toEqual(presetRoster.presets)
-      expect(mode).toHaveProperty('disabled', true)
-      expect(creator).toHaveProperty('disabled', true)
+      expect(mode).toHaveProperty('disabled', false)
+      expect(creator).toHaveProperty('disabled', false)
       fireEvent.click(mode)
-      fireEvent.click(creator)
-      expect(onUpdateDshSetting).not.toHaveBeenCalled()
-      expect(onStartCreatorDraft).not.toHaveBeenCalled()
+      await waitFor(() =>
+        expect(onUpdateDshSetting).toHaveBeenCalledWith('agent-preset-registry.selectedDefault', 'ptc', 10),
+      )
+      fireEvent.click(await screen.findByRole('button', { name: 'Ask Agent to create a mode' }))
+      await waitFor(() => expect(onStartCreatorDraft).toHaveBeenCalledOnce())
 
       fireEvent.click(screen.getByRole('tab', { name: 'General' }))
       fireEvent.click(screen.getByRole('switch', { name: 'Developer Tools', checked: false }))
@@ -879,23 +881,50 @@ describe('SettingsDrawer', () => {
       await waitFor(() =>
         expect(screen.getByRole('switch', { name: 'Developer Tools', checked: true })).toBeDefined(),
       )
-      await waitFor(() => expect(onLoadDshSettings).toHaveBeenCalledTimes(2))
 
       fireEvent.click(screen.getByRole('tab', { name: 'Presets' }))
       const enabledMode = await screen.findByRole('button', { name: 'Set as default: PTC' })
       const enabledCreator = screen.getByRole('button', { name: 'Ask Agent to create a mode' })
       expect(enabledMode).toHaveProperty('disabled', false)
       expect(enabledCreator).toHaveProperty('disabled', false)
-      fireEvent.click(enabledMode)
-      fireEvent.click(enabledCreator)
-      await waitFor(() =>
-        expect(onUpdateDshSetting).toHaveBeenCalledWith('agent-preset-registry.selectedDefault', 'ptc', 10),
-      )
-      await waitFor(() => expect(onStartCreatorDraft).toHaveBeenCalledOnce())
     } finally {
       store.dispose()
     }
   })
+
+  it.each(['pending', 'failed'] as const)(
+    'keeps Creator usable when auxiliary settings are %s while guarding default writes',
+    async (status) => {
+      const onStartCreatorDraft = vi.fn().mockResolvedValue(undefined)
+      const onLoadDshSettings = vi.fn(() =>
+        status === 'pending'
+          ? new Promise<DshSettingsSnapshot>(() => undefined)
+          : Promise.reject(new Error('settings unavailable')),
+      )
+      const onUpdateDshSetting = vi.fn()
+      renderDrawer({
+        onLoadDshSettings,
+        onUpdateDshSetting,
+        onStartCreatorDraft,
+        onLoadPresetRoster: vi.fn().mockResolvedValue({
+          authorable: false,
+          presets: [
+            { id: 'standard', trust: 'system', isDefault: true },
+            { id: 'cordis', name: 'Cordis', trust: 'system', isDefault: false },
+          ],
+        }),
+      })
+      fireEvent.click(screen.getByRole('tab', { name: 'Presets' }))
+      const creator = await screen.findByRole('button', { name: 'Ask Agent to create a mode' })
+      const makeDefault = screen.getByRole('button', { name: 'Set as default: Cordis' })
+      expect(makeDefault).toHaveProperty('disabled', true)
+      expect(creator).toHaveProperty('disabled', false)
+      fireEvent.click(makeDefault)
+      fireEvent.click(creator)
+      await waitFor(() => expect(onStartCreatorDraft).toHaveBeenCalledOnce())
+      expect(onUpdateDshSetting).not.toHaveBeenCalled()
+    },
+  )
 
   it('reads legacy transcript values without offering or writing them back', async () => {
     const base = rc2GeneralSettingsFixture({

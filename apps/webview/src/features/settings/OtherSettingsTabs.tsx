@@ -12,7 +12,6 @@ interface PresetsSettingsTabProps {
   readonly t: Translate
   readonly dshState: DshSettingsState
   readonly dshSettingsSnapshotFresh: boolean
-  readonly codingToolsEnabled: boolean
   readonly updateDisplayedSetting: (path: string, value: unknown) => Promise<void>
 }
 
@@ -21,7 +20,6 @@ export function PresetsSettingsTab({
   t,
   dshState,
   dshSettingsSnapshotFresh,
-  codingToolsEnabled,
   updateDisplayedSetting,
 }: PresetsSettingsTabProps): ReactElement {
   return (
@@ -33,7 +31,6 @@ export function PresetsSettingsTab({
       aria-label={t('settings.presetsAria')}
     >
       <PresetManager
-        codingToolsEnabled={dshState.status === 'ready' && dshSettingsSnapshotFresh && codingToolsEnabled}
         defaultWritable={
           dshState.status === 'ready' && dshSettingsSnapshotFresh && dshState.snapshot.schema.writable
         }

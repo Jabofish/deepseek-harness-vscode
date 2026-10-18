@@ -123,11 +123,6 @@
   min-width: 0;
 }
 
-.dsh-session-controls__mode {
-  flex: 0 1 112px;
-  max-width: 112px;
-}
-
 /* Session picker and risk-surface compatibility: these rules complete the
    shared row contract for headless and regular picker variants. */
 .dsh-session-switcher--headless .dsh-session-switcher__list > li {

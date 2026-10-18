@@ -290,6 +290,20 @@ describe('request gateway editor surface routes', () => {
     await expect(harness.gateway.sessionNavigation.rename('s1', 'Title', signal)).rejects.toThrow('Trust')
   })
 
+  it('retitles only an already-open editor from upstream title views using the shared label sanitizer', async () => {
+    await harness.gateway.openDroppedSession('s1', 2, new AbortController().signal)
+    harness.gateway.sessionNavigation.acceptEvent('session.projection', {
+      sessionId: 's1',
+      key: 'title',
+      value: `  Updated\n\u0007${'title '.repeat(30)}  `,
+    })
+    expect(host.panels[0]?.title).toBe(`Updated ${'title '.repeat(30)}`.trim().slice(0, 120))
+    harness.gateway.sessionNavigation.acceptEvent('session.title', { sessionId: 's1', title: ' \n ' })
+    harness.gateway.sessionNavigation.acceptEvent('session.title', { sessionId: 'unopened', title: 'Other' })
+    expect(host.panels).toHaveLength(1)
+    expect(host.panels[0]?.title).toHaveLength(120)
+  })
+
   it('opens one editor tab per session and answers the surface that asked', async () => {
     await harness.gateway.router.handle(
       request('surface.openInEditor', 'r1', { sessionId: 'session-1', title: 'Session one' }),
