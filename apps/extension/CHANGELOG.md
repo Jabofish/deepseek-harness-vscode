@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 修复编辑器区标签页标题在会话命名后不更新的问题：会话标题变化（含 DSH 自动命名）现在会同步到已打开的编辑器标签页，无需关闭再重开。
+- Fixes editor-tab titles not updating after a session is named: session title changes (including DSH auto-titling) now propagate to open editor tabs without closing and reopening them.
+
 - 修复新会话的 Agent 选择被禁用的问题：Agent 预设选择只由 DSH roster 决定，不再因 Developer Tools（Coding Tools）关闭或设置读取失败而失效。
 - Fixes disabled agent selection in new sessions: agent preset selection now follows the DSH roster alone, so an off Developer Tools (Coding Tools) preference or a failed settings read no longer withdraws it.
 

@@ -21,6 +21,8 @@ export interface SessionDirectoryView {
 type NavigationDependencies = DirectoryDependencies &
   Pick<RequestGatewayDependencies, 'requireCurrentWorkspaceSession' | 'postEventTo' | 'postEvent'> & {
     readonly backendService: Pick<RequestGatewayDependencies['backendService'], 'requireBackend'>
+    /** Keep an open editor tab's label in step with a session title change. */
+    readonly retitleEditorTab?: (sessionId: string, title: string) => void
   }
 
 export interface SessionNavigation {
@@ -180,6 +182,10 @@ export function createSessionNavigation(
         }
         return
       }
+      if (name === 'session.title') {
+        const title = sessionTitlePayload(payload)
+        if (title !== undefined) deps.retitleEditorTab?.(title.sessionId, title.title)
+      }
       if (
         DIRECTORY_EVENTS.has(name) ||
         (name === 'session.projection' &&
@@ -191,6 +197,17 @@ export function createSessionNavigation(
         invalidate()
     },
   }
+}
+
+/** A `session.title` payload carries exactly the session id and its new title. */
+function sessionTitlePayload(
+  payload: unknown,
+): { readonly sessionId: string; readonly title: string } | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined
+  const record = payload as { readonly sessionId?: unknown; readonly title?: unknown }
+  return typeof record.sessionId === 'string' && typeof record.title === 'string'
+    ? { sessionId: record.sessionId, title: record.title }
+    : undefined
 }
 
 const DIRECTORY_EVENTS = new Set([

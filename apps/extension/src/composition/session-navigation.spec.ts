@@ -18,6 +18,7 @@ interface Fixture {
   readonly request: Mock<Parameters<typeof createSessionNavigation>[2]>
   readonly open: Mock<Parameters<typeof createSessionNavigation>[3]>
   readonly ready: Mock<() => Promise<boolean>>
+  readonly retitleEditorTab: Mock<(sessionId: string, title: string) => void>
   readonly signal: AbortSignal
 }
 
@@ -70,8 +71,10 @@ function fixture(): Fixture {
   const request = vi.fn<Parameters<typeof createSessionNavigation>[2]>().mockResolvedValue(undefined)
   const open = vi.fn<Parameters<typeof createSessionNavigation>[3]>().mockResolvedValue(undefined)
   const ready = vi.fn().mockResolvedValue(true)
-  const navigation = createSessionNavigation(deps, { waitUntilReady: ready }, request, open)
-  return { deps, request, open, ready, navigation, signal: new AbortController().signal }
+  const retitleEditorTab = vi.fn<(sessionId: string, title: string) => void>()
+  const depsWithRetitle = { ...deps, retitleEditorTab } satisfies Deps
+  const navigation = createSessionNavigation(depsWithRetitle, { waitUntilReady: ready }, request, open)
+  return { deps, request, open, ready, retitleEditorTab, navigation, signal: new AbortController().signal }
 }
 
 describe('shared Host session navigation', () => {
@@ -149,6 +152,18 @@ describe('shared Host session navigation', () => {
     deps.requireCurrentWorkspaceSession.mockRejectedValue(new Error('foreign session'))
     await expect(navigation.open('foreign', false, signal)).rejects.toThrow('foreign')
     expect(deps.postEventTo).toHaveBeenCalledOnce()
+  })
+
+  it('retitles an open editor tab when a session title event arrives', () => {
+    const { navigation, retitleEditorTab } = fixture()
+    navigation.acceptEvent('session.title', { sessionId: 's1', title: 'Renamed by DSH' })
+    expect(retitleEditorTab).toHaveBeenCalledExactlyOnceWith('s1', 'Renamed by DSH')
+    retitleEditorTab.mockClear()
+    // A malformed or title-less payload never reaches the tab-label route.
+    navigation.acceptEvent('session.title', { sessionId: 's1' })
+    navigation.acceptEvent('session.title', 'not an object')
+    navigation.acceptEvent('session.title')
+    expect(retitleEditorTab).not.toHaveBeenCalled()
   })
 
   it('uses validated existing mutation routes and refreshes archives without clearing editor context', async () => {

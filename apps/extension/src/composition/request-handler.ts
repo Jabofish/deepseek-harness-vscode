@@ -872,7 +872,13 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     editorSurfaceManager.open(sessionId, editorTabTitle(session.title), column)
   }
   const sessionNavigation = createSessionNavigation(
-    deps,
+    {
+      ...deps,
+      retitleEditorTab: (sessionId, title) => {
+        const accepted = editorTabTitle(title)
+        if (accepted !== undefined) editorSurfaceManager.retitle(sessionId, accepted)
+      },
+    },
     provider,
     (request, signal) => handleRequest(request, signal, undefined),
     openDroppedSession,
