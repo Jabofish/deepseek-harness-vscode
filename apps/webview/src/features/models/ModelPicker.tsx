@@ -218,12 +218,16 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
     // The menu can always state where the directory stands, so a requested
     // open is spent as soon as the control is usable at all.
     if (props.disabled === true) return
-    const openPicker = window.setTimeout(() => {
+    let retired = false
+    queueMicrotask(() => {
+      if (retired) return
       consumedRequestRef.current = request
       openMenu()
       triggerRef.current?.focus()
-    }, 0)
-    return () => window.clearTimeout(openPicker)
+    })
+    return () => {
+      retired = true
+    }
   }, [openMenu, props.disabled, props.openRequest])
 
   const moveFocus = (offset: number): void => {

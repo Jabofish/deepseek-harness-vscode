@@ -89,8 +89,6 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   }
   const post = (message: HostMessage | FeatureHostMessage): Thenable<boolean> => {
     const envelope = hostEnvelope(message)
-    if (envelope !== undefined && message.type === 'event')
-      nativeNavigation.current?.acceptEvent(message.name, message.payload)
     return envelope === undefined ? Promise.resolve(false) : surfaces.post(envelope)
   }
   const postTo = (surfaceId: string, message: HostMessage | FeatureHostMessage): Thenable<boolean> => {
@@ -232,6 +230,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     transcript,
     post,
     postTo,
+    onEvent: (name, payload) => nativeNavigation.current?.acceptEvent(name, payload),
     backendService,
     diagnostics,
     editorContextUseCases,

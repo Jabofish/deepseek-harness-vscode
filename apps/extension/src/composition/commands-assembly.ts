@@ -143,8 +143,12 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
     }
   }
   const stateSubscription = coordinator.subscribe(publishState)
+  const outputSubscription = diagnostics.subscribeConnectionOutput((output) => {
+    void postEvent('connection.output', output)
+  })
   const subscriptions: vscode.Disposable[] = [
     stateSubscriptionDisposable(stateSubscription),
+    stateSubscriptionDisposable(outputSubscription),
     provider,
     diagnostics,
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
@@ -289,13 +293,23 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
           stateKind !== 'connecting' &&
           stateKind !== 'discovering' &&
           stateKind !== 'locating-runtime' &&
-          stateKind !== 'starting'
+          stateKind !== 'starting' &&
+          stateKind !== 'failed' &&
+          stateKind !== 'runtime-missing' &&
+          stateKind !== 'port-conflict'
         )
           return
         // Disconnect invalidates the coordinator generation and aborts an
         // in-flight attach. The shared reconnect operation coalesces this
         // automatic path with an explicit connection.configure reconnect.
-        void reconnectOnTransportChange().catch(() => {
+        void reconnectOnTransportChange().catch((error: unknown) => {
+          if (
+            (error instanceof AppError && error.code === 'REQUEST_CANCELLED') ||
+            (error instanceof Error && error.name === 'AbortError')
+          )
+            return
+          const current = coordinator.getState()
+          if (current.kind === 'connected' || current.kind === 'failed') return
           publishState({ kind: 'failed', message: 'DSH configuration reload failed.', retryable: true })
         })
       }),

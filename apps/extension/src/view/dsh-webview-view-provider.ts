@@ -11,6 +11,8 @@ export interface DshWebviewDependencies {
   readonly onMessageError?: (error: unknown) => void
   /** The validated ready handshake arrived; surface-directed events may be posted. */
   readonly onBecameReady?: () => void
+  /** The user opened a visible view; begin connection while its assets load. */
+  readonly onViewOpened?: () => void
   /**
    * A resolved Webview went away: re-resolved, hidden by the user, or the whole
    * provider disposed. Cancel this surface's in-flight work — but the surface
@@ -92,9 +94,11 @@ export class DshWebviewViewProvider implements vscode.WebviewViewProvider, Webvi
       webviewView.onDidChangeVisibility(() => {
         if (this.view !== webviewView) return
         this.isVisible = webviewView.visible
+        if (this.isVisible) this.dependencies.onViewOpened?.()
         this.dependencies.onVisibilityChanged?.(this.isVisible && this.isReady)
       }),
     )
+    if (this.isVisible) this.dependencies.onViewOpened?.()
   }
 
   public postMessage(message: unknown): Thenable<boolean> {

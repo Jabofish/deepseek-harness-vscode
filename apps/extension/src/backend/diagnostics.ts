@@ -1,5 +1,7 @@
 import type * as vscode from 'vscode'
 import { redactText } from '@dsh-vscode/dsh-adapter'
+import type { ConnectionLogEntry, ConnectionProgress } from '@dsh-vscode/domain'
+import { connectionLogEntrySchema } from '@dsh-vscode/webview-protocol'
 
 export type DiagnosticLevel = 'error' | 'warn' | 'info' | 'debug'
 
@@ -14,6 +16,11 @@ export function diagnosticLevel(value: unknown): DiagnosticLevel {
 
 export class RedactedDiagnostics implements vscode.Disposable {
   private readonly recentLines: string[] = []
+  private connectionLines: readonly ConnectionLogEntry[] = []
+  private readonly connectionListeners = new Set<(entries: readonly ConnectionLogEntry[]) => void>()
+  private connectionSequence = 0
+  private connectionStartedAt = Date.now()
+  private disposed = false
 
   public constructor(
     private readonly channel: Pick<vscode.OutputChannel, 'appendLine' | 'show' | 'dispose'>,
@@ -22,6 +29,7 @@ export class RedactedDiagnostics implements vscode.Disposable {
   ) {}
 
   public log(level: DiagnosticLevel, event: string, fields: Readonly<Record<string, unknown>> = {}): void {
+    if (this.disposed) return
     if (LEVEL_RANK[level] > LEVEL_RANK[this.level()]) return
     const safe = redact(fields)
     const entry = {
@@ -55,7 +63,47 @@ export class RedactedDiagnostics implements vscode.Disposable {
     this.channel.show(true)
   }
 
+  public connectionProgress(progress: ConnectionProgress): void {
+    if (this.disposed) return
+    const parsed = connectionLogEntrySchema.safeParse({
+      ...progress,
+      id: ++this.connectionSequence,
+      time: new Date().toISOString(),
+      elapsedMs: Math.max(0, Date.now() - this.connectionStartedAt),
+    })
+    if (!parsed.success) return
+    if (progress.phase === 'connect' && progress.status === 'started') {
+      this.connectionStartedAt = Date.now()
+      this.connectionLines = []
+    }
+    const entry = {
+      ...parsed.data,
+      elapsedMs:
+        progress.phase === 'connect' && progress.status === 'started'
+          ? 0
+          : Math.max(0, Date.now() - this.connectionStartedAt),
+    }
+    this.connectionLines = [...this.connectionLines.slice(-63), entry]
+    this.channel.appendLine(JSON.stringify({ event: 'connection-progress', ...entry }))
+    for (const listener of this.connectionListeners) listener(this.connectionLines)
+  }
+
+  public connectionOutput(): readonly ConnectionLogEntry[] {
+    return this.connectionLines
+  }
+
+  public subscribeConnectionOutput(listener: (entries: readonly ConnectionLogEntry[]) => void): () => void {
+    if (this.disposed) return () => undefined
+    this.connectionListeners.add(listener)
+    listener(this.connectionLines)
+    return () => this.connectionListeners.delete(listener)
+  }
+
   public dispose(): void {
+    if (this.disposed) return
+    this.disposed = true
+    this.connectionListeners.clear()
+    this.connectionLines = []
     this.channel.dispose()
   }
 }

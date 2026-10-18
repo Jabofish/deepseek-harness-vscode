@@ -39,7 +39,10 @@ function deferred<T>(): {
   return { promise, resolve }
 }
 
-function fixture(failFirstOpen = false): {
+function fixture(
+  failFirstOpen = false,
+  beforeList?: () => Promise<void>,
+): {
   store: ReturnType<typeof createAppStore>
   requests: WebviewRequest[]
 } {
@@ -66,7 +69,10 @@ function fixture(failFirstOpen = false): {
           ],
           archivedSessionIds: [],
         }
-      if (request.type === 'session.list') return { items: created ? [session('created')] : [] }
+      if (request.type === 'session.list') {
+        await beforeList?.()
+        return { items: created ? [session('created')] : [] }
+      }
       if (request.type === 'session.create') {
         created = true
         return { id: 'created' }
@@ -76,7 +82,7 @@ function fixture(failFirstOpen = false): {
           openFailures -= 1
           throw new Error('Open failed')
         }
-        return session('created')
+        return session(request.payload.sessionId)
       }
       if (request.type === 'subagent.list') return { entries: [], parentAvailable: true }
       if (request.type === 'models.session.list') return { models: [], failures: [], routable: true }
@@ -139,16 +145,50 @@ describe('New Session draft', () => {
     }
   })
 
-  it.each(['create', 'refresh', 'open'] as const)(
+  it.each(['first-message', 'create-session'] as const)(
+    'completes %s before a slow directory refresh and keeps subsequent navigation',
+    async (action) => {
+      const directory = deferred<void>()
+      let slow = false
+      const { store, requests } = fixture(false, () => (slow ? directory.promise : Promise.resolve()))
+      let operation: Promise<void> | undefined
+      try {
+        await store.refreshSessions()
+        if (action === 'first-message') await store.stageSession('w1')
+        slow = true
+        let completed = false
+        operation = (
+          action === 'first-message'
+            ? store.sendPendingPrompt('Hello', [], 'queue')
+            : store.createSession('w1')
+        ).then(() => {
+          completed = true
+        })
+        await vi.waitFor(() => expect(completed).toBe(true))
+        expect(store.activeSessionId).toBe('created')
+        expect(store.sessions.some((row) => row.id === 'created')).toBe(true)
+        if (action === 'first-message')
+          expect(requests.filter((request) => request.type === 'session.sendPrompt')).toHaveLength(1)
+        await store.openSession('other')
+        directory.resolve()
+        await vi.waitFor(() => expect(store.workspaces[0]?.sessionCount).toBe(1))
+        expect(store.activeSessionId).toBe('other')
+      } finally {
+        directory.resolve()
+        await operation
+        store.dispose()
+      }
+    },
+  )
+
+  it.each(['create', 'open'] as const)(
     'rejects a pending send superseded during %s as cancelled instead of resolving as delivered',
     async (phase) => {
       const gates = {
         create: deferred<unknown>(),
-        refresh: deferred<unknown>(),
         open: deferred<unknown>(),
       }
-      const armed = { create: false, refresh: false, open: false }
-      let sessionListCalls = 0
+      const armed = { create: false, open: false }
       const requests: WebviewRequest[] = []
       let created = false
       const client = {
@@ -171,16 +211,7 @@ describe('New Session draft', () => {
               ],
               archivedSessionIds: [],
             }
-          if (request.type === 'session.list') {
-            // The first list is the test's own startup refresh; the second is
-            // the send flow's catalog refresh.
-            sessionListCalls += 1
-            if (sessionListCalls >= 2 && phase === 'refresh') {
-              armed.refresh = true
-              await gates.refresh.promise
-            }
-            return { items: created ? [session('created')] : [] }
-          }
+          if (request.type === 'session.list') return { items: created ? [session('created')] : [] }
           if (request.type === 'session.create') {
             if (phase === 'create') {
               armed.create = true
@@ -208,7 +239,7 @@ describe('New Session draft', () => {
         const send = store.sendPendingPrompt('Hello', [], 'queue')
         await vi.waitFor(() => expect(armed[phase]).toBe(true))
 
-        if (phase === 'create' || phase === 'refresh') {
+        if (phase === 'create') {
           // A newer pending draft replaces this composition while the send is
           // still working toward delivery.
           await store.stageSession('w1')

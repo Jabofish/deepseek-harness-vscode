@@ -8,7 +8,7 @@
 | -------------------------------------------- | ------------------------------------------------------------------------------------------ |
 | [architecture.md](architecture.md)           | 分层、连接与进程所有权、Extension Host/Webview 协议、安全边界及其决策理由                  |
 | [dsh-contract.md](dsh-contract.md)           | DSH 版本身份、上游来源、wire 差异、启动参数与兼容策略；开发文档中唯一列出 DSH 版本号的文件 |
-| [capability-matrix.md](capability-matrix.md) | 按功能分组列出当前范围、已有证据、验收缺口和状态                                           |
+| [capability-matrix.md](capability-matrix.md) | 按功能分组列出具体能力、可用范围、限制和完成状态                                           |
 | [ui.md](ui.md)                               | Webview 的颜色、排版、布局、动效及可访问性规则                                             |
 | [quality.md](quality.md)                     | 开发环境、垂直切片、测试、联调、PR 和发布门禁                                              |
 
@@ -21,11 +21,11 @@
 | 上游 DSH 契约或适配器            | `dsh-contract.md`                            |
 | 跨层、进程、文件、凭据或消息边界 | `architecture.md`                            |
 | UI 布局与可访问性                | `ui.md`                                      |
-| 能力范围、完成度与验证缺口       | `capability-matrix.md`                       |
+| 能力范围、限制与完成度           | `capability-matrix.md`                       |
 | 工作流、测试或发布要求           | `quality.md`；实现代理操作规则见 `AGENTS.md` |
 | 用户操作、安装或支持信息         | 英文、中文 README 与 Marketplace 扩展说明    |
 
-能力矩阵中的 `DONE` 表示代码、适用的自动测试以及该能力要求的真实 DSH/VS Code 验证均有证据。`PARTIAL` 表示仍缺矩阵列出的验收条件；构建成功只证明构建结果。
+能力矩阵只记录具体能力、可用范围、限制和完成状态，不列源码和测试文件链接，也不保存验证流水；必要的文档引用可以保留。完成状态仍须满足质量流程中的验证要求；构建成功不等于能力完整可用。
 
 ## 防退化门禁
 

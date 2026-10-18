@@ -2,6 +2,20 @@ import { describe, expect, it } from 'vitest'
 import { normalizeServerUrl, VsCodeConfigurationSource } from './configuration-source.js'
 
 describe('DSH connection configuration', () => {
+  it.each(['globalValue', 'workspaceValue', 'workspaceFolderValue'] as const)(
+    'distinguishes explicit ports in %s from the built-in default',
+    (scope) => {
+      const source = (inspection: unknown): ReturnType<VsCodeConfigurationSource['read']>['connection'] =>
+        new VsCodeConfigurationSource({
+          getConfiguration: () => ({
+            get: (_key: string, fallback: unknown) => fallback,
+            inspect: () => inspection,
+          }),
+        } as never).read().connection
+      expect(source({ defaultValue: [3080] }).attachPortsConfigured).toBeUndefined()
+      expect(source({ defaultValue: [3080], [scope]: [3080] }).attachPortsConfigured).toBe(true)
+    },
+  )
   it('reads custom mode and normalizes a server endpoint', () => {
     const source = new VsCodeConfigurationSource({
       getConfiguration: () => ({

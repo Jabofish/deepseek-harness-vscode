@@ -20,6 +20,8 @@ import type {
   CheckpointConflictPolicy,
   CheckpointPreview,
   CheckpointSummary,
+  ConnectionPhase,
+  ConnectionLogEntry,
   CustomProviderCreateResult,
   CustomProviderDraft,
   DshSettingsSchema,
@@ -115,8 +117,8 @@ export interface IngestedFile {
 export type WebviewBackendState =
   | { readonly kind: 'idle' }
   | { readonly kind: 'locating-runtime' }
-  | { readonly kind: 'discovering' }
-  | { readonly kind: 'connecting' }
+  | { readonly kind: 'discovering'; readonly phase?: ConnectionPhase }
+  | { readonly kind: 'connecting'; readonly phase?: ConnectionPhase }
   | { readonly kind: 'connected' }
   | { readonly kind: 'starting' }
   | { readonly kind: 'runtime-missing'; readonly searchedLocations: readonly string[] }
@@ -143,6 +145,7 @@ export interface SurfaceAssignment {
 
 export interface AppState extends SessionModelDirectoryState {
   readonly backend: WebviewBackendState
+  readonly connectionOutput?: readonly ConnectionLogEntry[]
   /** Monotonic opaque counter for a newly observed connected backend epoch. */
   readonly connectionEpoch?: number
   /** Safe connected-host version copied from the Extension Host snapshot. */

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { ModelDescriptor, ModelProvider } from '@dsh-vscode/domain'
+import { CONNECTION_PHASES, type ModelDescriptor, type ModelProvider } from '@dsh-vscode/domain'
 import type { HostMessage } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
 import {
@@ -158,6 +158,74 @@ function startupResponse(request: WebviewRequest): unknown {
 }
 
 describe('AppStore startup session restoration', () => {
+  it('replays safe connection output from snapshots and accepts live replacement without changing backend state', () => {
+    const client = new StartupClient(startupResponse, false)
+    const store = createAppStore(client as unknown as ProtocolClient)
+    const entry = {
+      id: 1,
+      time: '2026-10-18T05:00:00.000Z',
+      elapsedMs: 0,
+      phase: 'connect',
+      status: 'started',
+      mode: 'auto',
+    }
+    try {
+      client.emit({
+        type: 'event',
+        name: 'connection.snapshot',
+        sequence: 1,
+        payload: { kind: 'connecting', phase: 'verification', output: [entry] },
+      })
+      expect(store.getState().connectionOutput).toEqual([entry])
+      const backend = store.getState().backend
+      const result = { ...entry, id: 2, phase: 'discovery', status: 'succeeded', count: 2 }
+      client.emit({ type: 'event', name: 'connection.output', sequence: 2, payload: [entry, result] })
+      expect(store.getState().connectionOutput).toEqual([entry, result])
+      expect(store.getState().backend).toBe(backend)
+      client.emit({
+        type: 'event',
+        name: 'connection.output',
+        sequence: 3,
+        payload: [{ ...result, token: 'private' }],
+      })
+      expect(store.getState().connectionOutput).toEqual([entry, result])
+      client.emit({ type: 'event', name: 'connection.output', sequence: 4, payload: [] })
+      expect(store.getState().connectionOutput).toEqual([])
+    } finally {
+      store.dispose()
+    }
+  })
+  it('accepts safe Host connection phases and clears stale or unrecognized phases', () => {
+    const client = new StartupClient(startupResponse, false)
+    const store = createAppStore(client as unknown as ProtocolClient)
+    let sequence = 1
+    try {
+      const snapshots = [
+        ...CONNECTION_PHASES.map((phase) => ({
+          kind: phase === 'discovery' ? 'discovering' : 'connecting',
+          phase,
+        })),
+        { kind: 'connecting', phase: 'future-private-operation' },
+        { kind: 'discovering', phase: { endpoint: 'private' } },
+        { kind: 'starting', phase: 'verification' },
+        { kind: 'connecting' },
+        { kind: 'connected', phase: 'initialization' },
+      ]
+      for (const payload of snapshots) {
+        client.emit({ type: 'event', name: 'connection.snapshot', sequence: sequence++, payload })
+        const phase = CONNECTION_PHASES.find((value) => value === payload.phase)
+        expect(store.getState().backend).toEqual({
+          kind: payload.kind,
+          ...((payload.kind === 'discovering' || payload.kind === 'connecting') && phase !== undefined
+            ? { phase }
+            : {}),
+        })
+      }
+    } finally {
+      store.dispose()
+    }
+  })
+
   it('waits for the connected snapshot before restoring and opens once across duplicate snapshots', async () => {
     const client = new StartupClient(startupResponse, false)
     const store = createAppStore(client as unknown as ProtocolClient)

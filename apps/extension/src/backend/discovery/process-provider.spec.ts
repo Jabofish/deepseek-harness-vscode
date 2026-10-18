@@ -1,9 +1,74 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { parseDshProcessCandidates, resolveDshProcessRuntimeVersions } from './process-provider.js'
-import { runWindowsProcessListing } from './windows-process-provider.js'
+import {
+  parseDshProcessCandidates,
+  resolveDshProcessRuntimeVersions,
+  resolveEndpointProcesses,
+} from './process-provider.js'
+import { runWindowsProcessListing, WindowsProcessDiscoveryProvider } from './windows-process-provider.js'
 
 describe('OS process discovery parsing', () => {
+  it('checks a hinted PID and its listener concurrently, then rejects a recycled non-DSH process', async () => {
+    let releaseListener: ((value: string) => void) | undefined
+    const listener = new Promise<string>((resolve) => {
+      releaseListener = resolve
+    })
+    const run = vi.fn((executable: string) =>
+      executable === 'netstat.exe' ? listener : Promise.resolve('25140 node other-service.js'),
+    )
+    const provider = new WindowsProcessDiscoveryProvider(run, 'win32')
+    const operation = provider.discoverEndpoints(
+      [{ host: '127.0.0.1', port: 4310, baseUrl: 'http://127.0.0.1:4310' }],
+      undefined,
+      [25140],
+    )
+    expect(run.mock.calls.map(([executable]) => executable)).toEqual(['wmic.exe', 'netstat.exe'])
+    releaseListener?.('TCP 127.0.0.1:4310 0.0.0.0:0 LISTENING 25140')
+    await expect(operation).resolves.toEqual([])
+  })
+  it('queries only listener PIDs for preferred endpoints and rejects unrelated services', async () => {
+    const endpoint = { host: '127.0.0.1', port: 4310, baseUrl: 'http://127.0.0.1:4310' }
+    const read = vi.fn(() =>
+      Promise.resolve('25140 node /opt/node_modules/@deepseek-ai/dsh/lib/bin.js web\n25141 node other.js'),
+    )
+    const listeners =
+      'TCP 127.0.0.1:4310 0.0.0.0:0 LISTENING 25140\nTCP 127.0.0.1:4311 0.0.0.0:0 LISTENING 25141'
+    await expect(resolveEndpointProcesses([endpoint], listeners, read)).resolves.toMatchObject([
+      { pid: 25140, source: 'process-scan', endpoint: { port: 4310 } },
+    ])
+    expect(read).toHaveBeenCalledWith([25140])
+    await expect(
+      resolveEndpointProcesses(
+        [{ ...endpoint, port: 4312, baseUrl: 'http://127.0.0.1:4312' }],
+        listeners,
+        read,
+      ),
+    ).resolves.toEqual([])
+    expect(read).toHaveBeenCalledOnce()
+    await expect(
+      resolveEndpointProcesses([endpoint], listeners, read, AbortSignal.abort()),
+    ).rejects.toBeDefined()
+    expect(read).toHaveBeenCalledOnce()
+  })
+
+  it('bounds targeted Windows WMI queries to validated listener PIDs', async () => {
+    const run = vi.fn().mockResolvedValue('"CommandLine","ProcessId"')
+    await runWindowsProcessListing(run, undefined, [25140, 25141])
+    expect(run).toHaveBeenCalledWith(
+      'wmic.exe',
+      [
+        'process',
+        'where',
+        'ProcessId = 25140 OR ProcessId = 25141',
+        'get',
+        'CommandLine,ProcessId',
+        '/format:csv',
+      ],
+      undefined,
+    )
+    await runWindowsProcessListing(run, undefined, [NaN, -1, 0])
+    expect(run).toHaveBeenCalledOnce()
+  })
   it('returns only loopback listeners owned by a web-profile DSH process', () => {
     const candidates = parseDshProcessCandidates(
       '25140 node /opt/node_modules/@deepseek-ai/dsh/lib/bin.js --profile web --port 0\n25141 node other.js --profile web',
@@ -167,7 +232,7 @@ describe('OS process discovery parsing', () => {
     expect(readManifest).not.toHaveBeenCalled()
   })
 
-  it('uses escaped CIM CSV in the Windows fallback and parses quoted command lines', async () => {
+  it('uses escaped WMI CSV in the Windows fallback and parses quoted command lines', async () => {
     const cimOutput = [
       '"CommandLine","ProcessId"',
       '"""C:\\Program Files\\node.exe"" ""C:\\npm,cache\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js"" --profile web --port 0","25140"',
@@ -181,7 +246,7 @@ describe('OS process discovery parsing', () => {
     expect(runCommand).toHaveBeenNthCalledWith(
       1,
       'wmic.exe',
-      ['process', 'get', 'CommandLine,ProcessId', '/format:csv'],
+      ['process', 'where', "CommandLine like '%dsh%'", 'get', 'CommandLine,ProcessId', '/format:csv'],
       undefined,
     )
     expect(runCommand).toHaveBeenNthCalledWith(
@@ -191,6 +256,11 @@ describe('OS process discovery parsing', () => {
         '-NoProfile',
         '-NonInteractive',
         '-Command',
+        expect.stringContaining(
+          "SELECT CommandLine,ProcessId FROM Win32_Process WHERE CommandLine LIKE '%dsh%'",
+        ),
+        expect.stringContaining('$rows.Dispose()'),
+        expect.stringContaining('$query.Dispose()'),
         expect.stringContaining('ConvertTo-Csv'),
       ]),
       undefined,

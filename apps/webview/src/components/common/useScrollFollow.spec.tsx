@@ -6,6 +6,56 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useScrollFollow } from './useScrollFollow.js'
 
 describe('useScrollFollow user jump', () => {
+  it('follows appended content before any fixed timer is advanced', async () => {
+    vi.useFakeTimers()
+    function Stream({ revision }: { revision: number }): ReactElement {
+      const follow = useScrollFollow({
+        contentKey: revision,
+        itemCount: 1,
+        sessionId: 'live',
+        observeContentSize: false,
+      })
+      return (
+        <div ref={follow.scrollRef} data-testid="live-viewport" onScroll={follow.handleScroll}>
+          <div ref={follow.contentRef} />
+        </div>
+      )
+    }
+    const view = render(<Stream revision={0} />)
+    const viewport = screen.getByTestId<HTMLDivElement>('live-viewport')
+    setScrollMetrics(viewport, 600, 1_000, 400)
+    await act(async () => {
+      await Promise.resolve()
+    })
+    setScrollMetrics(viewport, 600, 1_200, 400)
+    view.rerender(<Stream revision={1} />)
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(viewport.scrollTop).toBe(800)
+  })
+
+  it('lets a captured reader gesture cancel same-turn append following', async () => {
+    vi.useFakeTimers()
+    const { viewport } = renderHarness()
+    setScrollMetrics(viewport, 600, 1_200, 400)
+    fireEvent.wheel(viewport, { deltaY: -80 })
+    setScrollMetrics(viewport, 520, 1_200, 400)
+    fireEvent.scroll(viewport)
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(viewport.scrollTop).toBe(520)
+    expect(screen.getByTestId('jump-state').getAttribute('data-visible')).toBe('true')
+    act(() => {
+      vi.runAllTimers()
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(viewport.scrollTop).toBe(520)
+  })
+
   afterEach(() => {
     cleanup()
     vi.unstubAllGlobals()

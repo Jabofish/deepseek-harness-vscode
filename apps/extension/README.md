@@ -11,7 +11,7 @@ Bring local or remote [DeepSeek Harness](https://github.com/deepseek-ai/deepseek
 - Use the compact DSH-style focused layout, or switch to the classic layout in **Settings → General → Conversation layout**.
 - Open sessions in editor tabs alongside the side bar, with independent navigation and restored sessions after a window reload.
 
-Available operations depend on the connected DSH runtime. Unsupported capabilities are shown explicitly; [exact compatibility and evidence](https://github.com/Jabofish/deepseek-harness-vscode/tree/main/docs) are documented in the repository.
+Available operations depend on the connected DSH runtime. Unsupported capabilities are shown explicitly; [exact compatibility and current limitations](https://github.com/Jabofish/deepseek-harness-vscode/tree/main/docs) are documented in the repository.
 
 ## Get started
 
@@ -21,11 +21,11 @@ Available operations depend on the connected DSH runtime. Unsupported capabiliti
 
 The Chat view is registered in VS Code's Secondary Side Bar by default (on the right in the default workbench layout). VS Code may keep a previously saved view location after an upgrade.
 
-Choose **Open in Editor Area** or run **DSH: Open Chat in Editor Area** (`/moveto:editor`); `/moveto:sidebar` returns the chat. VS Code may reject dragging session rows out of the Webview; use the explicit entry points, then drag the opened editor tab to split. The side bar remains available for other sessions. The native title bar shows its full controls when space permits; narrower views move lower-priority actions into **More**, keeping **Sessions** and **Settings** visible.
+Choose **Open in Editor Area** or run **DSH: Open Chat in Editor Area** (`/moveto:editor`); `/moveto:sidebar` returns the chat. You can drag an opened editor tab to split. The side bar remains available for other sessions. The native title bar shows its full controls when space permits; narrower views move lower-priority actions into **More**, keeping **Sessions** and **Settings** visible.
 
-In development builds, **DSH: Open Drag Sessions** opens a native **DSH Sessions** list in Explorer. It is hidden initially and keeps the chat area free; the existing switcher remains available. Native drag-to-split still needs live VS Code acceptance.
+To drag a session directly into a split, run **DSH: Open Drag Sessions** to open **DSH Sessions** in Explorer, then drag a session row to an editor edge. This native list is hidden initially and keeps the chat area free; the existing switcher remains available.
 
-The extension discovers compatible local instances before starting one. Connection modes let you attach only, start an isolated extension-owned instance, or probe one configured HTTP(S) endpoint (which may be remote). It never stops an external DSH. Runtime updates install a verified exact version and do not restart external processes.
+Without a specified target, auto validates the last successful local connection first, then discovers compatible instances before starting one. An explicit server URL or attachment port list restricts connection to those targets; failure leaves Settings and Retry available. Connection modes also let you attach only, start an isolated extension-owned instance, or probe one configured HTTP(S) endpoint (which may be remote). It never stops an external DSH. Runtime updates install a verified exact version and do not restart external processes.
 
 For an external instance, select `custom`, set `dsh.connection.serverUrl` to its HTTP(S) origin and `dsh.connection.runtimeVersion` to its exact supported version. Run **DSH: Authorize External Connection**, enter its launch token (leave blank for anonymous access), then connect. Credentials stay in SecretStorage per execution environment and full origin; **DSH: Clear External Connection Credentials** removes the current environment's grant. Connections without a grant for the current execution environment require authorization.
 

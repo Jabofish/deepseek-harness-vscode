@@ -2,10 +2,9 @@ import { useCallback, useLayoutEffect, useRef, useState, type RefObject } from '
 
 const DEFAULT_BOTTOM_THRESHOLD = 64
 const USER_SCROLL_IDLE_MS = 220
-const FOLLOW_INPUT_GRACE_MS = 48
 const SCROLL_KEYS = new Set(['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End', ' '])
 
-interface ScheduledFrame {
+interface ScheduledFollow {
   readonly cancel: () => void
 }
 
@@ -74,18 +73,16 @@ export interface ScrollFollowScheduleOptions {
  * Owns the scroll contract shared by append-only conversation surfaces.
  *
  * There is deliberately one scroll-position writer. Ordinary resize and
- * content updates coalesce into one delayed reconciliation; known layout
- * transitions are corrected synchronously before paint. Native reader intent
- * cancels a pending follow immediately, and the grace period gives wheel,
- * pointer, and keyboard gestures time to arrive before an append-only update
- * is allowed to move the viewport.
+ * content updates coalesce within the current turn; known layout transitions
+ * are corrected synchronously before paint. Captured wheel, pointer and keyboard
+ * gestures cancel a pending follow before native scrolling takes effect.
  */
 export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResult {
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const stickToBottomRef = useRef(true)
   const previousSessionRef = useRef(options.sessionId)
-  const scheduledFrameRef = useRef<ScheduledFrame | undefined>(undefined)
+  const scheduledFrameRef = useRef<ScheduledFollow | undefined>(undefined)
   const userScrollIdleTimerRef = useRef<number | undefined>(undefined)
   const userScrollActiveRef = useRef(false)
   const interactionGenerationRef = useRef(0)
@@ -261,8 +258,7 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
       if (preserveBottom && scheduleOptions?.immediate === true) {
         // A known layout transition runs from a layout effect or a
         // ResizeObserver callback. Correct synchronously so the browser never
-        // paints its transient clamped offset before the delayed streaming
-        // reconciliation can run.
+        // paints its transient clamped offset before reconciliation can run.
         cancelScheduledFollow()
         scrollToLatest()
         armLayoutProtection()
@@ -270,9 +266,8 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
       }
       const shouldFollow = stickToBottomRef.current || preserveBottomOnLayoutRef.current
       if (userScrollActiveRef.current || !shouldFollow || itemCountRef.current === 0) return
-      // Keep one coalesced reconciliation alive. Streaming updates can arrive
-      // faster than a frame; resetting the timer for every update creates a
-      // moving target and increases the chance of racing a native gesture.
+      // Reconcile the latest committed layout once per turn, without a timer
+      // or frame wait. A captured reader gesture can still cancel this write.
       if (scheduledFrameRef.current !== undefined) return
       const scheduledGeneration = interactionGenerationRef.current
 
@@ -293,8 +288,15 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
         }
       }
 
-      const id = window.setTimeout(run, FOLLOW_INPUT_GRACE_MS)
-      scheduledFrameRef.current = { cancel: () => window.clearTimeout(id) }
+      let cancelled = false
+      scheduledFrameRef.current = {
+        cancel: () => {
+          cancelled = true
+        },
+      }
+      queueMicrotask(() => {
+        if (!cancelled) run()
+      })
     },
     [armLayoutProtection, cancelScheduledFollow, restoreReaderPosition, scrollToLatest],
   )

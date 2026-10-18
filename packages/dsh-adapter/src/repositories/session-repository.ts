@@ -165,14 +165,17 @@ export class Rc6SessionRepository implements SessionRepository {
     if (query?.archived !== undefined && this.workspaceRepository === undefined)
       throw unavailable('archived session listing without workspace state')
     const read = this.sessionSummaries.beginList()
-    const value = await callRpc<unknown>(
-      this.transport,
-      'session.list',
-      {
-        ...(query?.cursor === undefined || query.cursor.trim() === '' ? {} : { cursor: query.cursor }),
-      },
-      signal,
-    )
+    const [value, workspaceSnapshot] = await Promise.all([
+      callRpc<unknown>(
+        this.transport,
+        'session.list',
+        {
+          ...(query?.cursor === undefined || query.cursor.trim() === '' ? {} : { cursor: query.cursor }),
+        },
+        signal,
+      ),
+      this.workspaceRepository?.listWithArchiveState(signal),
+    ])
     const list = requiredRecord(value, 'session list')
     if (
       !Array.isArray(list.items) ||
@@ -188,8 +191,7 @@ export class Rc6SessionRepository implements SessionRepository {
       return mapped
     })
     let archivedSessionIds: ReadonlySet<string> | undefined
-    if (this.workspaceRepository !== undefined) {
-      const workspaceSnapshot = await this.workspaceRepository.listWithArchiveState(signal)
+    if (workspaceSnapshot !== undefined) {
       const workspaces = workspaceSnapshot.items
       archivedSessionIds = workspaceSnapshot.archivedSessionIds
       const workspaceBySession = new Map<string, string>()

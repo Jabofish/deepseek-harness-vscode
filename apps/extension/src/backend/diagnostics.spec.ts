@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { RedactedDiagnostics } from './diagnostics.js'
 
 function fakeChannel(): {
@@ -19,6 +19,48 @@ function fakeChannel(): {
 }
 
 describe('RedactedDiagnostics', () => {
+  it('streams bounded connection output even at error verbosity and replays it to late subscribers', () => {
+    const { lines, channel } = fakeChannel()
+    const diagnostics = new RedactedDiagnostics(channel, () => 'error')
+    const changed = vi.fn()
+    const unsubscribe = diagnostics.subscribeConnectionOutput(changed)
+    diagnostics.connectionProgress({ phase: 'connect', status: 'started', mode: 'auto' })
+    for (let count = 0; count < 70; count++)
+      diagnostics.connectionProgress({ phase: 'discovery', status: 'succeeded', count })
+    expect(diagnostics.connectionOutput()).toHaveLength(64)
+    expect(diagnostics.connectionOutput().at(-1)?.count).toBe(69)
+    expect(lines.at(-1)).toContain('connection-progress')
+    const late = vi.fn()
+    const detach = diagnostics.subscribeConnectionOutput(late)
+    expect(late).toHaveBeenCalledWith(diagnostics.connectionOutput())
+    diagnostics.connectionProgress({ phase: 'connect', status: 'started', mode: 'custom' })
+    expect(diagnostics.connectionOutput()).toHaveLength(1)
+    expect(diagnostics.connectionOutput()[0]?.elapsedMs).toBe(0)
+    unsubscribe()
+    detach()
+    const calls = changed.mock.calls.length
+    diagnostics.dispose()
+    diagnostics.connectionProgress({ phase: 'process', status: 'started' })
+    expect(changed).toHaveBeenCalledTimes(calls)
+    expect(diagnostics.connectionOutput()).toEqual([])
+  })
+
+  it('rejects raw output, secrets, unknown fields and malformed versions at the connection log boundary', () => {
+    const { channel } = fakeChannel()
+    const diagnostics = new RedactedDiagnostics(channel)
+    const progress = { phase: 'verification' as const, status: 'started' as const }
+    diagnostics.connectionProgress({ ...progress, hostVersion: 'private-token-value' })
+    diagnostics.connectionProgress(
+      Object.assign(
+        { ...progress },
+        { endpoint: 'http://private', token: 'fixture-secret', message: 'raw output' },
+      ),
+    )
+    expect(diagnostics.connectionOutput()).toEqual([])
+    diagnostics.connectionProgress({ ...progress, hostVersion: '0.2.1-rc.2' })
+    expect(diagnostics.connectionOutput()[0]?.hostVersion).toBe('0.2.1-rc.2')
+    diagnostics.dispose()
+  })
   it('keeps allowlisted fields and redacts free-text fields', () => {
     const { lines, channel } = fakeChannel()
     const diagnostics = new RedactedDiagnostics(channel)

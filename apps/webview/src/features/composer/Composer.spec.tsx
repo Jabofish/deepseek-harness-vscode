@@ -216,7 +216,8 @@ describe('Composer', () => {
     expect(onExtrasOpenChange).toHaveBeenLastCalledWith(false)
   })
 
-  it('keeps the open-file picker collapsed after a command is inserted from the extras menu', () => {
+  it('returns focus without a frame wait and keeps the open-file picker collapsed after command insertion', async () => {
+    vi.useFakeTimers()
     const onExtrasOpenChange = vi.fn()
     function Host(): ReactElement {
       const [pickerOpen, setPickerOpen] = useState(false)
@@ -242,6 +243,10 @@ describe('Composer', () => {
 
     fireEvent.click(screen.getByRole('menuitem', { name: /\/goal/ }))
     expect(onExtrasOpenChange).toHaveBeenLastCalledWith(false)
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Prompt' }))
 
     // The host resets its picker only on that notification, so the next opening stays quiet.
     fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))

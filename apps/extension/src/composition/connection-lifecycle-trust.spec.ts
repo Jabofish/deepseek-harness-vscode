@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ConnectionRequest } from '@dsh-vscode/application'
+import type { ConnectionSettings } from '@dsh-vscode/domain'
 
 const trust = vi.hoisted(() => ({ isTrusted: true }))
 
@@ -20,12 +21,13 @@ function buildLifecycle(
   requests: ConnectionRequest[],
   folders: readonly unknown[],
   autoStart: boolean,
+  connection: Partial<ConnectionSettings> = {},
 ): { connect: () => Promise<unknown> } {
   const backend = { connection: { endpoint: { port: 4_321 } } }
   return createConnectionLifecycle({
     context: { workspaceState: { update: () => Promise.resolve() } } as never,
     configuration: {
-      read: () => ({ connection: { mode: 'auto' }, runtime: { autoStart } }) as never,
+      read: () => ({ connection: { mode: 'auto', ...connection }, runtime: { autoStart } }) as never,
     } as never,
     coordinator: {
       connect: (request: ConnectionRequest) => {
@@ -82,5 +84,15 @@ describe('connection lifecycle workspace trust gate', () => {
     expect(connected.connected).toBe(true)
     expect(requests).toHaveLength(1)
     expect(requests[0]?.mode).toBe('auto')
+  })
+
+  it('restricts explicit ports and treats an explicit URL as a single custom connection', async () => {
+    await buildLifecycle(requests, [], true, { attachPortsConfigured: true, attachPorts: [4310] }).connect()
+    expect(requests[0]?.allowedEndpoints).toEqual([
+      { host: '127.0.0.1', port: 4310, baseUrl: 'http://127.0.0.1:4310' },
+    ])
+    await buildLifecycle(requests, [], true, { serverUrl: 'https://dsh.example:443' }).connect()
+    expect(requests[1]).toMatchObject({ mode: 'custom', endpoint: { baseUrl: 'https://dsh.example:443' } })
+    expect(requests[1]).not.toHaveProperty('allowedEndpoints')
   })
 })

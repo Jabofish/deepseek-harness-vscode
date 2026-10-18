@@ -28,9 +28,13 @@ import type {
   WorkflowSummary,
 } from '@dsh-vscode/domain'
 import type { FeedbackCategory, RunningInputMode, SubagentDiagnosticView } from '@dsh-vscode/domain'
-import { PROMPT_MODES } from '@dsh-vscode/domain'
+import {
+  CONNECTION_PHASES,
+  CONNECTION_LOG_PHASES,
+  CONNECTION_LOG_STATUSES,
+  PROMPT_MODES,
+} from '@dsh-vscode/domain'
 import { CONVERSATION_FONT_SIZE_OPTIONS, THEME_PREFERENCE_OPTIONS } from './app/ui-preferences.js'
-import type { RuntimeConnectionStage } from './features/runtime/RuntimeConnectionView.js'
 import type { PresetCopyBlocker } from './features/settings/PresetManager.js'
 import type { Locale } from './i18n.js'
 import { translate } from './i18n.js'
@@ -170,13 +174,6 @@ const SCHEDULE_RESULT_CODE: Record<ScheduleMutationFailure['code'], true> = {
   frequency_too_high: true,
   subagent_session: true,
   internal_error: true,
-}
-const RUNTIME_CONNECTION_STAGE: Record<RuntimeConnectionStage, true> = {
-  discovering: true,
-  'locating-runtime': true,
-  starting: true,
-  connecting: true,
-  sessions: true,
 }
 const PRESET_COPY_BLOCKER: Record<PresetCopyBlocker, true> = {
   idRequired: true,
@@ -467,7 +464,11 @@ describe('webview translation keys', () => {
       ['schedules.filter.', Object.keys(SCHEDULE_FILTER)],
       ['schedules.weekday.', Object.keys(SCHEDULE_WEEKDAY)],
       ['schedules.error.', Object.keys(SCHEDULE_RESULT_CODE)],
-      ['runtime.connectionProgress.stage.', Object.keys(RUNTIME_CONNECTION_STAGE)],
+      ['runtime.connectionLog.phase.', CONNECTION_LOG_PHASES],
+      ['runtime.connectionLog.status.', CONNECTION_LOG_STATUSES],
+      ['runtime.connectionLog.source.', ['configured', 'known', 'default-port', 'process-scan', 'companion']],
+      ['runtime.connectionLog.ownership.', ['external', 'managed']],
+      ['runtime.connectionProgress.phase.', CONNECTION_PHASES.map((phase) => `${phase}.title`)],
       ['timeline.teamStatus.', Object.keys(TEAM_STATUS_VALUE)],
       ['timeline.teamDelivery.', Object.keys(TEAM_DELIVERY_MODE)],
       ['presets.', Object.keys(PRESET_COPY_BLOCKER)],

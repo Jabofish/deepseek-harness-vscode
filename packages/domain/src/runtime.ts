@@ -62,6 +62,8 @@ export interface BackendCandidate {
   /** Present only after the OS listener PID and adjacent DSH package manifest were verified. */
   readonly runtimeVersionEvidence?: 'process-manifest'
   readonly pid?: number
+  /** Untrusted Host-only lookup hint; never establishes identity or ownership. */
+  readonly processIdHint?: number
   readonly startedAt?: string
   readonly commandLine?: string
   readonly confidence: number
@@ -98,11 +100,15 @@ export interface ConnectedBackend {
   readonly pid?: number
 }
 
+/** Safe connection work labels; endpoint and process details stay in the Host. */
+export const CONNECTION_PHASES = ['discovery', 'verification', 'authorization', 'initialization'] as const
+export type ConnectionPhase = (typeof CONNECTION_PHASES)[number]
+
 export type BackendState =
   | { readonly kind: 'idle' }
   | { readonly kind: 'locating-runtime' }
-  | { readonly kind: 'discovering'; readonly attempt: number }
-  | { readonly kind: 'connecting'; readonly candidate: BackendCandidate }
+  | { readonly kind: 'discovering'; readonly attempt: number; readonly phase?: ConnectionPhase }
+  | { readonly kind: 'connecting'; readonly candidate: BackendCandidate; readonly phase?: ConnectionPhase }
   | { readonly kind: 'connected'; readonly backend: ConnectedBackend }
   | { readonly kind: 'starting'; readonly runtime: DshRuntime }
   | { readonly kind: 'runtime-missing'; readonly searchedLocations: readonly string[] }

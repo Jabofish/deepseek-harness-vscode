@@ -1,4 +1,5 @@
 import type { EditorContextItem, PromptTemplateScope, TaskListScope } from '@dsh-vscode/domain'
+import { AppError } from '@dsh-vscode/domain'
 import type { FeatureHostEvent } from '@dsh-vscode/webview-protocol'
 import { translate } from '../../i18n.js'
 import type { ProtocolClient } from '../protocol-client.js'
@@ -82,6 +83,7 @@ export function createFeatureActions(host: FeatureActionHost): FeatureActions {
   const sessionWorkspaceFolderId = host.sessionWorkspaceFolderId
 
   let editorContextRefreshGeneration = 0
+  let editorContextRelease: Promise<void> | undefined
   let changesRefreshGeneration = 0
   let tasksRefreshGeneration = 0
   let checkpointsRefreshGeneration = 0
@@ -92,6 +94,12 @@ export function createFeatureActions(host: FeatureActionHost): FeatureActions {
     const generation = ++editorContextRefreshGeneration
     setState((current) => ({ ...current, editorContextLoading: true }))
     try {
+      // Only the context strip waits for discarded handles to be reclaimed.
+      // The next conversation can already paint, accept input and be stopped.
+      if (editorContextRelease !== undefined) {
+        await editorContextRelease
+        if (generation !== editorContextRefreshGeneration) return
+      }
       const result = object(
         await client.featureRequest({
           type: 'editor.context.list',
@@ -299,7 +307,7 @@ export function createFeatureActions(host: FeatureActionHost): FeatureActions {
       group.push(contextRef)
       grouped.set(item.ref.workspaceFolderId, group)
     }
-    await Promise.all(
+    const results = await Promise.allSettled(
       [...grouped].map(([workspaceFolderId, contextRefs]) =>
         client.featureRequest({
           type: 'editor.context.release',
@@ -308,9 +316,12 @@ export function createFeatureActions(host: FeatureActionHost): FeatureActions {
         }),
       ),
     )
+    const failed = results.find((result) => result.status === 'rejected')
+    if (failed?.status === 'rejected') throw failed.reason
   }
   const discardEditorContextForSessionSwitch = async (nextSessionId: string): Promise<void> => {
     if (readState().activeSessionId === undefined || readState().activeSessionId === nextSessionId) return
+    editorContextRefreshGeneration += 1
     const refs = readState().editorContext.map((item) => item.ref.contextRef)
     if (refs.length === 0) return
     const items = [...readState().editorContext]
@@ -324,11 +335,15 @@ export function createFeatureActions(host: FeatureActionHost): FeatureActions {
       editorContextAvailableKinds: [],
       editorContextLoading: false,
     }))
-    try {
-      await releaseEditorContextRefs(refs, items)
-    } catch {
-      // Expired or already-released handles are harmless during a view switch.
-    }
+    // Wait for all old cleanups before another context read/capture can reuse
+    // the Host's draft handles. Expired handles do not block navigation.
+    const release = Promise.all([editorContextRelease, releaseEditorContextRefs(refs, items)]).then(
+      () => undefined,
+      () => undefined,
+    )
+    editorContextRelease = release
+    await release
+    if (editorContextRelease === release) editorContextRelease = undefined
   }
   const discardEditorContextForWorkspaceChange = async (): Promise<void> => {
     editorContextRefreshGeneration += 1
@@ -358,6 +373,19 @@ export function createFeatureActions(host: FeatureActionHost): FeatureActions {
   const methods: FeatureActionMethods = {
     captureEditorContext: async (kind, workspaceFolderId) => {
       if (typeof client.featureRequest !== 'function') throw new Error(translate('app.error.dshMode'))
+      if (editorContextRelease !== undefined) {
+        const { activeSessionId, pendingSession } = readState()
+        await editorContextRelease
+        if (
+          activeSessionId !== readState().activeSessionId ||
+          pendingSession?.revision !== readState().pendingSession?.revision
+        )
+          throw new AppError({
+            code: 'REQUEST_CANCELLED',
+            message: 'The conversation changed before the editor context could be captured.',
+            retryable: true,
+          })
+      }
       const result = object(
         await client.featureRequest<unknown>({
           type: 'editor.context.capture',

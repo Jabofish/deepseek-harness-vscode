@@ -40,6 +40,55 @@ describe('CompositeInstanceDiscovery cancellation', () => {
 })
 
 describe('CompositeInstanceDiscovery phases', () => {
+  it('completes a fast pass without rereading sources and binds fresh process identity', async () => {
+    const fast = {
+      id: 'known',
+      discover: vi.fn(() => Promise.resolve([{ ...candidate, source: 'known' as const }])),
+    }
+    const processCandidate: BackendCandidate = {
+      ...candidate,
+      source: 'process-scan',
+      runtimeVersion: '0.2.1-rc.2',
+      runtimeVersionEvidence: 'process-manifest',
+      pid: 25140,
+      commandLine: '/opt/node_modules/@deepseek-ai/dsh/lib/bin.js web',
+    }
+    const fallback = {
+      id: 'process',
+      phase: 'fallback' as const,
+      discover: vi.fn(() => Promise.resolve([processCandidate])),
+    }
+    const discovery = new CompositeInstanceDiscovery([fast, fallback])
+    const first = await discovery.discoverFast()
+    expect(first[0]).not.toHaveProperty('runtimeVersion')
+    await expect(discovery.discoverRemaining(first)).resolves.toMatchObject([
+      {
+        source: 'known',
+        runtimeVersion: '0.2.1-rc.2',
+        runtimeVersionEvidence: 'process-manifest',
+        pid: 25140,
+      },
+    ])
+    expect(fast.discover).toHaveBeenCalledOnce()
+    expect(fallback.discover).toHaveBeenCalledOnce()
+
+    fast.discover.mockResolvedValueOnce([])
+    expect(await discovery.discoverFast()).toEqual([])
+    expect(fast.discover).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not reuse fast candidates after cancellation or let them bypass the loopback allow-list', async () => {
+    const discovery = new CompositeInstanceDiscovery([])
+    const remote = {
+      ...candidate,
+      endpoint: { host: 'example.test', port: 3939, baseUrl: 'http://example.test:3939' },
+    }
+    await expect(discovery.discoverRemaining([remote])).resolves.toEqual([])
+    const controller = new AbortController()
+    controller.abort()
+    await expect(discovery.discoverRemaining([candidate], controller.signal)).rejects.toBeDefined()
+  })
+
   it('keeps slow process providers out of the fast pass', async () => {
     const fastCandidate: BackendCandidate = {
       endpoint: { host: '127.0.0.1', port: 3940, baseUrl: 'http://127.0.0.1:3940' },

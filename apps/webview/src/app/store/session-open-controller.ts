@@ -211,7 +211,7 @@ export function createSessionOpenController(host: SessionOpenHost): {
     let completed = false
     let advisoryPending = false
     try {
-      await featureActions.discardEditorContextForSessionSwitch(sessionId)
+      void featureActions.discardEditorContextForSessionSwitch(sessionId)
       if (version !== host.getOpenVersion()) return
       let result: unknown
       try {
@@ -374,7 +374,7 @@ export function createSessionOpenController(host: SessionOpenHost): {
       getState().activeSubagent?.workspaceId ??
       ''
     try {
-      await featureActions.discardEditorContextForSessionSwitch(entry.id)
+      void featureActions.discardEditorContextForSessionSwitch(entry.id)
       if (version !== host.getOpenVersion()) return
       // The child→parent routing is connection state owned by the host
       // catalog: a child transcript can only be read after its parent catalog

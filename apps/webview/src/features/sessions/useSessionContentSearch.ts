@@ -1,13 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import type { SessionSummary } from '@dsh-vscode/domain'
 
-const SEARCH_DEBOUNCE_MS = 250
 const SEARCH_RESULT_LIMIT = 20
 
 /**
- * The name filter applies instantly; the content search is the expensive host
- * round-trip, so it debounces behind the same query and drops stale responses
- * by sequence instead of by request cancellation.
+ * Dispatch content searches as soon as the query changes. Retired requests
+ * cannot replace the current results or publish errors after the drawer closes.
  */
 export function useSessionContentSearch(options: {
   open: boolean
@@ -34,35 +32,35 @@ export function useSessionContentSearch(options: {
   useEffect(() => {
     const sequence = searchSequence.current + 1
     searchSequence.current = sequence
-    // Resetting the stale outputs before the next debounce is the state machine
-    // here: the previous window's matches must not linger under a new query.
+    // The previous query's failure must not linger under a new query.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setUnavailable(false)
     if (!open || query === '' || archiveFilter === 'archived') {
       setContentSearch({ query, matches: [], searchHasMore: false })
       return
     }
-    const timer = window.setTimeout(() => {
-      void onSearch(query)
-        .then((page) => {
-          if (searchSequence.current !== sequence) return
-          setContentSearch({
-            query,
-            matches: page.items.slice(0, SEARCH_RESULT_LIMIT),
-            searchHasMore: page.searchHasMore === true,
-          })
-          setUnavailable(false)
+    let retired = false
+    void onSearch(query)
+      .then((page) => {
+        if (retired || searchSequence.current !== sequence) return
+        setContentSearch({
+          query,
+          matches: page.items.slice(0, SEARCH_RESULT_LIMIT),
+          searchHasMore: page.searchHasMore === true,
         })
-        .catch(() => {
-          if (searchSequence.current !== sequence) return
-          // A refused content search leaves the name filter as the only result
-          // source; reporting the empty list as "no matches" would claim the
-          // host searched and found nothing.
-          setContentSearch({ query, matches: [], searchHasMore: false })
-          setUnavailable(true)
-        })
-    }, SEARCH_DEBOUNCE_MS)
-    return () => window.clearTimeout(timer)
+        setUnavailable(false)
+      })
+      .catch(() => {
+        if (retired || searchSequence.current !== sequence) return
+        // A refused content search leaves the name filter as the only result
+        // source; reporting the empty list as "no matches" would claim the
+        // host searched and found nothing.
+        setContentSearch({ query, matches: [], searchHasMore: false })
+        setUnavailable(true)
+      })
+    return () => {
+      retired = true
+    }
   }, [archiveFilter, onSearch, open, query])
 
   return { contentSearch, unavailable }

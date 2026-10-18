@@ -18,8 +18,8 @@ function sameSubmission(left: Submission, right: Submission): boolean {
  * The composer's submission latches. `submit` guards the ordinary prompt path
  * (a held-down Enter must not machine-gun sends) and `steerQueuedInputs` the
  * accelerated empty-draft chord; each latch is held until the Host request
- * settles, with a short debounce for synchronous integrations. Only the same
- * draft is latched; a new instruction can be sent while an earlier one waits.
+ * settles. Synchronous handlers release in the same turn. Only the same draft
+ * is latched; a new instruction can be sent while an earlier one waits.
  */
 export function useComposerSubmit(props: {
   readonly disabled: boolean
@@ -61,13 +61,7 @@ export function useComposerSubmit(props: {
     }
     try {
       const submission = props.onSubmit(mode)
-      if (submission === undefined) {
-        // Preserve a short debounce for synchronous integrations while async
-        // Host requests hold the latch until they actually settle.
-        window.setTimeout(resetSubmitting, 250)
-      } else {
-        void submission.then(resetSubmitting, resetSubmitting)
-      }
+      void Promise.resolve(submission).then(resetSubmitting, resetSubmitting)
     } catch (reason) {
       resetSubmitting()
       throw reason
@@ -81,14 +75,7 @@ export function useComposerSubmit(props: {
     }
     try {
       const steering = props.onSteerQueue()
-      if (steering === undefined) {
-        // Keep synchronous integrations from repeating the same gesture in
-        // adjacent key events; the Host-backed path holds this latch until its
-        // request settles.
-        window.setTimeout(resetSteeringQueue, 250)
-      } else {
-        void steering.then(resetSteeringQueue, resetSteeringQueue)
-      }
+      void Promise.resolve(steering).then(resetSteeringQueue, resetSteeringQueue)
     } catch (reason) {
       resetSteeringQueue()
       throw reason

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { FeatureHostEvent, FeatureRequest, HostMessage } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
 import {
@@ -56,6 +56,10 @@ class HostClient {
   public holdSend = false
   public failSend = false
   public openFileAsContext = false
+  public releaseGate: Promise<void> | undefined
+  public contextListGate: Promise<void> | undefined
+  public readonly cancelledSessions: string[] = []
+  public readonly releasedContextRefs: (readonly string[])[] = []
   public readonly sentContextRefs: (readonly string[])[] = []
   public readonly executedCommands: string[] = []
   private captured = 1
@@ -65,6 +69,7 @@ class HostClient {
   private readonly featureListeners = new Set<(message: FeatureHostEvent) => void>()
 
   public request<T>(request: WebviewRequest): Promise<T> {
+    if (request.type === 'session.cancel') this.cancelledSessions.push(request.payload.sessionId)
     if (request.type === 'attachment.open.attach' && this.openFileAsContext) {
       const item = {
         ...contextItem(`context-${this.captured}`, this.captured),
@@ -92,12 +97,23 @@ class HostClient {
   }
 
   public featureRequest<T>(request: FeatureRequest): Promise<T> {
-    if (request.type === 'editor.context.list')
-      return Promise.resolve({
+    if (request.type === 'editor.context.release') {
+      const refs = request.payload.contextRefs
+      this.releasedContextRefs.push(refs)
+      return (this.releaseGate ?? Promise.resolve()).then(() => {
+        for (let index = this.items.length - 1; index >= 0; index--)
+          if (refs.includes(this.items[index]?.contextRef as string)) this.items.splice(index, 1)
+        return { kind: 'ok' } as T
+      })
+    }
+    if (request.type === 'editor.context.list') {
+      const result = {
         kind: 'editor.context',
         items: [...this.items],
         availableKinds: [],
-      } as T)
+      } as T
+      return (this.contextListGate ?? Promise.resolve()).then(() => result)
+    }
     if (request.type === 'editor.context.capture') {
       const item = contextItem(`context-${this.captured}`, this.captured)
       this.captured += 1
@@ -143,6 +159,20 @@ class HostClient {
       }
       case 'session.list':
         return { items: [sessionView(SESSION_ID)] }
+      case 'workspace.list':
+        return {
+          items: [
+            {
+              id: WORKSPACE_FOLDER_ID,
+              name: 'Workspace',
+              sessionCount: 1,
+              sessionIds: [SESSION_ID],
+              createdAt: '2026-09-14T00:00:00.000Z',
+              updatedAt: '2026-09-14T00:00:00.000Z',
+            },
+          ],
+          archivedSessionIds: [],
+        }
       case 'session.history':
       case 'subagent.history':
         return { events: [], hasMore: false }
@@ -168,6 +198,125 @@ function refs(store: ReturnType<typeof createAppStore>): readonly string[] {
 }
 
 describe('AppStore editor-context admission', () => {
+  it.each(['session', 'subagent', 'draft'] as const)(
+    'opens a %s without waiting for old context cleanup or restoring its handles',
+    async (target) => {
+      const { client, store } = open()
+      let release!: () => void
+      let navigation: Promise<void> | undefined
+      try {
+        await store.refreshSessions()
+        await store.openSession(SESSION_ID)
+        await store.captureEditorContext('file')
+        expect(refs(store)).toEqual(['context-1'])
+        client.releaseGate = new Promise<void>((resolve) => {
+          release = resolve
+        })
+        let completed = false
+        navigation = (
+          target === 'session'
+            ? store.openSession('other')
+            : target === 'draft'
+              ? store.stageSession(WORKSPACE_FOLDER_ID)
+              : store.openSubagent(
+                  {
+                    kind: 'child',
+                    id: 'child',
+                    label: 'Worker',
+                    activity: 'running',
+                    parentSessionId: SESSION_ID,
+                    mode: 'continuable',
+                    hasChildren: false,
+                  },
+                  true,
+                )
+        ).then(() => {
+          completed = true
+        })
+        await vi.waitFor(() => expect(completed).toBe(true))
+        expect(refs(store)).toEqual([])
+        expect(client.releasedContextRefs).toEqual([['context-1']])
+        if (target === 'session') {
+          expect(store.activeSessionId).toBe('other')
+          await store.sendPrompt('other', 'Continue', [], 'queue')
+          await store.cancelSession('other')
+          expect(client.sentContextRefs).toEqual([[]])
+          expect(client.cancelledSessions).toEqual(['other'])
+        }
+        if (target === 'subagent') expect(store.getState().activeSubagent?.entry.id).toBe('child')
+        if (target === 'draft') expect(store.getState().pendingSession).toBeDefined()
+        release()
+        await vi.waitFor(() => expect(store.getState().editorContextLoading).toBe(false))
+        expect(refs(store)).toEqual([])
+      } finally {
+        release?.()
+        await navigation
+        store.dispose()
+      }
+    },
+  )
+
+  it.each(['subagent', 'draft'] as const)(
+    'ignores the old context list after entering a %s',
+    async (target) => {
+      const { client, store } = open()
+      let release!: () => void
+      let list: Promise<void> | undefined
+      try {
+        await store.refreshSessions()
+        await store.openSession(SESSION_ID)
+        await store.captureEditorContext('file')
+        client.contextListGate = new Promise<void>((resolve) => {
+          release = resolve
+        })
+        list = store.refreshEditorContext()
+        if (target === 'draft') await store.stageSession(WORKSPACE_FOLDER_ID)
+        else
+          await store.openSubagent(
+            {
+              kind: 'child',
+              id: 'child',
+              label: 'Worker',
+              activity: 'running',
+              parentSessionId: SESSION_ID,
+              mode: 'continuable',
+              hasChildren: false,
+            },
+            true,
+          )
+        release()
+        await list
+        expect(refs(store)).toEqual([])
+      } finally {
+        release?.()
+        await list
+        store.dispose()
+      }
+    },
+  )
+
+  it('cancels a capture waiting for cleanup if the user moves to another conversation', async () => {
+    const { client, store } = open()
+    let release!: () => void
+    try {
+      await store.openSession(SESSION_ID)
+      await store.captureEditorContext('file')
+      client.releaseGate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      await store.openSession('other')
+      const capture = store.captureEditorContext('file')
+      const cancelled = expect(capture).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
+      await store.openSession('third')
+      release()
+      await cancelled
+      expect(refs(store)).toEqual([])
+    } finally {
+      release?.()
+      store.dispose()
+    }
+  })
+
   it('uses the same file context when an open-file candidate is selected', async () => {
     const { client, store } = open()
     client.openFileAsContext = true

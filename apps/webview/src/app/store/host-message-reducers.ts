@@ -4,7 +4,13 @@ import type {
   SessionConfigurationPatch,
   SessionSummary,
 } from '@dsh-vscode/domain'
-import { transcriptPatchSchema, type HostMessage, type TranscriptPatch } from '@dsh-vscode/webview-protocol'
+import { CONNECTION_PHASES } from '@dsh-vscode/domain'
+import {
+  connectionOutputSchema,
+  transcriptPatchSchema,
+  type HostMessage,
+  type TranscriptPatch,
+} from '@dsh-vscode/webview-protocol'
 import { translate } from '../../i18n.js'
 import { parseHostDomainEvent, isSurfaceEventName } from './event-parser.js'
 import { parseDshUpdateProgress } from './host-settings.js'
@@ -65,6 +71,11 @@ export function applyHostMessage(
     if (progress !== undefined) setState({ ...state, dshUpdateProgress: progress })
     return
   }
+  if (message.name === 'connection.output') {
+    const output = connectionOutputSchema.safeParse(message.payload)
+    if (output.success) setState({ ...state, connectionOutput: output.data })
+    return
+  }
   if (message.name === 'ui.sessions.toggle') {
     setState({ ...state, drawer: state.drawer === 'sessions' ? undefined : 'sessions' })
     return
@@ -79,7 +90,10 @@ export function applyHostMessage(
   if (isSurfaceEventName(message.name)) return
   if (message.name === 'connection.snapshot') {
     const snapshot = object(message.payload)
+    const output = connectionOutputSchema.safeParse(snapshot?.output)
+    if (output.success) state = { ...state, connectionOutput: output.data }
     const kind = snapshot?.kind
+    const phase = CONNECTION_PHASES.find((value) => value === snapshot?.phase)
     const nextConnectionIdentity = connectionIdentity(snapshot)
     const identityChanged =
       kind === 'connected' &&
@@ -175,7 +189,10 @@ export function applyHostMessage(
       else
         setState({
           ...base,
-          backend: { kind },
+          backend: {
+            kind,
+            ...((kind === 'discovering' || kind === 'connecting') && phase !== undefined ? { phase } : {}),
+          },
           connectionEpoch: connectionEpochChanged
             ? (state.connectionEpoch ?? 0) + 1
             : (base.connectionEpoch ?? 0),

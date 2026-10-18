@@ -90,13 +90,17 @@ export const SelectMenu = memo(function SelectMenu(props: SelectMenuProps): Reac
     // An empty option list is the one transient reason to keep waiting: the
     // request is spent only once there is something to show.
     if (props.disabled || enabledOptions.length === 0) return
-    const openPicker = window.setTimeout(() => {
+    let retired = false
+    queueMicrotask(() => {
+      if (retired) return
       consumedRequestRef.current = request
       setActiveIndex(requestedIndex)
       setOpen(true)
       triggerRef.current?.focus()
-    }, 0)
-    return () => window.clearTimeout(openPicker)
+    })
+    return () => {
+      retired = true
+    }
   }, [enabledOptions.length, props.disabled, props.openRequest, requestedIndex])
 
   useEffect(() => {

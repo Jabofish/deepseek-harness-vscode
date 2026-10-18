@@ -18,9 +18,49 @@ export class CompositeInstanceDiscovery implements BackendDiscovery {
     )
   }
 
+  public async discoverRemaining(
+    fastCandidates: readonly BackendCandidate[],
+    signal?: AbortSignal,
+  ): Promise<readonly BackendCandidate[]> {
+    return this.discoverProviders(
+      this.providers.filter((provider) => provider.phase === 'fallback'),
+      signal,
+      fastCandidates,
+    )
+  }
+
+  public async resolvePreferred(
+    candidates: readonly BackendCandidate[],
+    signal?: AbortSignal,
+  ): Promise<readonly BackendCandidate[]> {
+    const endpoints = candidates
+      .filter((candidate) => isLoopbackEndpoint(candidate.endpoint))
+      .map((candidate) => candidate.endpoint)
+    if (endpoints.length === 0) return []
+    const processIds = candidates.flatMap((candidate) =>
+      candidate.processIdHint === undefined ? [] : [candidate.processIdHint],
+    )
+    return this.discoverProviders(
+      this.providers.flatMap((provider) =>
+        provider.discoverEndpoints === undefined
+          ? []
+          : [
+              {
+                id: provider.id,
+                discover: (probeSignal?: AbortSignal) =>
+                  provider.discoverEndpoints!(endpoints, probeSignal, processIds),
+              },
+            ],
+      ),
+      signal,
+      candidates,
+    )
+  }
+
   private async discoverProviders(
     providers: readonly DiscoveryProvider[],
     signal?: AbortSignal,
+    initialCandidates: readonly BackendCandidate[] = [],
   ): Promise<readonly BackendCandidate[]> {
     if (signal?.aborted) throw discoveryCancelled(signal.reason)
     const results = await Promise.allSettled(providers.map((provider) => provider.discover(signal)))
@@ -28,9 +68,12 @@ export class CompositeInstanceDiscovery implements BackendDiscovery {
     // it must not turn a caller cancellation into a successful empty result.
     if (signal?.aborted) throw discoveryCancelled(signal.reason)
     const byEndpoint = new Map<string, BackendCandidate[]>()
-    for (const result of results) {
-      if (result.status !== 'fulfilled') continue
-      for (const candidate of result.value) {
+    const groups = [
+      initialCandidates,
+      ...results.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : [])),
+    ]
+    for (const candidates of groups) {
+      for (const candidate of candidates) {
         if (!isLoopbackEndpoint(candidate.endpoint)) continue
         const key = `${candidate.endpoint.host}:${candidate.endpoint.port}`
         const existing = byEndpoint.get(key)

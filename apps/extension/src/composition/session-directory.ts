@@ -14,15 +14,21 @@ export async function listScopedSessions(
   signal: AbortSignal,
   currentWorkspaces?: readonly WorkspaceSummary[],
 ): Promise<SessionPage> {
+  signal.throwIfAborted()
   const folders = deps.currentWorkspaceFolders()
   const workspaces = currentWorkspaces ?? (await deps.listCurrentWorkspaces(signal))
-  const archivedIds = new Set(await deps.listCurrentArchivedSessionIds(workspaces, signal))
+  signal.throwIfAborted()
   const workspaceIds = new Set(workspaces.map((workspace) => workspace.id))
   const sessionIds = new Set(workspaces.flatMap((workspace) => workspace.sessionIds ?? []))
   const workspaceId = query.workspaceId
   const archived = query.archived ?? false
   if (workspaceId !== undefined && !workspaceIds.has(workspaceId)) return { items: [] }
-  const page = await deps.sessionUseCases.list({ ...query, archived }, signal)
+  const [archive, page] = await Promise.all([
+    deps.listCurrentArchivedSessionIds(workspaces, signal),
+    deps.sessionUseCases.list({ ...query, archived }, signal),
+  ])
+  signal.throwIfAborted()
+  const archivedIds = new Set(archive)
   return {
     ...page,
     items: page.items.filter((session) => {

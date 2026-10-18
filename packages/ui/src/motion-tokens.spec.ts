@@ -49,6 +49,8 @@ describe('motion system', () => {
       'dsh-rise-in',
       'dsh-toast-in',
       'dsh-retry-shimmer',
+      'dsh-spin',
+      'dsh-progress-arc',
       'dsh-pulse-dot',
       'dsh-breathe',
       'dsh-skeleton-sweep',

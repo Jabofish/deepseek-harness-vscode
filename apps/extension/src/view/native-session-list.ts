@@ -25,6 +25,7 @@ export class NativeSessionList
   public readonly dropMimeTypes: readonly string[] = []
   private directory: SessionDirectoryView | undefined
   private loading: Promise<void> | undefined
+  private dirty = true
   private read = new AbortController()
   private readonly limits = new Map<string, number>()
   private readonly nodes = new Map<string, SessionNode>()
@@ -38,6 +39,7 @@ export class NativeSessionList
   ) {}
 
   public setVisible(visible: boolean): void {
+    if (visible === this.visible || this.disposed) return
     this.visible = visible
     if (!visible) this.invalidate()
     else this.changed.fire(undefined)
@@ -47,13 +49,29 @@ export class NativeSessionList
     this.read.abort()
     this.read = new AbortController()
     this.loading = undefined
+    this.dirty = true
     this.directory = undefined
     this.nodes.clear()
     this.workspaces.clear()
+    if (!this.disposed) this.loaded(undefined)
     if (this.visible && !this.disposed) this.changed.fire(undefined)
   }
 
+  /** Finish the current pull, then perform at most one queued refresh. */
+  public refresh(restart = false): void {
+    if (this.disposed) return
+    if (restart) {
+      this.read.abort()
+      this.read = new AbortController()
+      this.loading = undefined
+    }
+    this.dirty = true
+    if (this.visible) void this.load()
+  }
+
   public selectionChanged(): SessionNode | undefined {
+    if (this.disposed) return undefined
+    this.updateMessage()
     this.changed.fire(undefined)
     const id = this.navigation.activeSessionId
     return id === undefined ? undefined : this.nodes.get(id)
@@ -61,7 +79,9 @@ export class NativeSessionList
 
   public async getChildren(node?: SessionListNode): Promise<SessionListNode[]> {
     if (!this.visible || this.disposed) return []
-    await this.load()
+    if (this.directory === undefined) await this.load()
+    else if (this.dirty) void this.load()
+    if (!this.visible || this.disposed) return []
     if (node === undefined) {
       const workspaces = [...this.workspaces.values()]
       const only = workspaces.length === 1 ? workspaces[0] : undefined
@@ -183,31 +203,45 @@ export class NativeSessionList
     this.changed.dispose()
   }
 
+  private updateMessage(): void {
+    const visible = this.directory?.sessions.some(
+      (session) => !session.blank || session.id === this.navigation.activeSessionId,
+    )
+    if (visible !== undefined) this.loaded(visible ? undefined : label('No sessions', '暂无会话'))
+  }
+
   private load(): Promise<void> {
-    if (this.directory !== undefined) return Promise.resolve()
     if (this.loading !== undefined) return this.loading
+    if (this.directory !== undefined && !this.dirty) return Promise.resolve()
+    this.dirty = false
+    this.loaded(undefined)
     const signal = this.read.signal
     const loading = this.navigation
       .read(signal)
       .then((directory) => {
         if (signal.aborted || this.disposed) return
         this.directory = directory
+        this.nodes.clear()
+        this.workspaces.clear()
         for (const workspace of directory.workspaces)
           this.workspaces.set(workspace.id, { kind: 'workspace', workspace })
         for (const id of this.limits.keys())
           if (!directory.workspaces.some((workspace) => workspace.id === id)) this.limits.delete(id)
-        this.loaded(directory.sessions.length === 0 ? label('No sessions', '暂无会话') : undefined)
+        this.updateMessage()
+        this.changed.fire(undefined)
       })
       .catch((error: unknown) => {
         if (!signal.aborted && !this.disposed)
           this.loaded(
-            error instanceof AppError && error.code === 'BACKEND_UNREACHABLE'
+            error instanceof AppError && error.code === 'BACKEND_UNREACHABLE' && !this.navigation.connected
               ? label('Connect to DSH to see sessions', '连接 DSH 后查看会话')
               : label('Unable to load sessions. Refresh to retry.', '无法加载会话，请刷新重试。'),
           )
       })
       .finally(() => {
-        if (this.loading === loading) this.loading = undefined
+        if (this.loading !== loading) return
+        this.loading = undefined
+        if (this.dirty && this.visible && !this.disposed) void this.load()
       })
     this.loading = loading
     return loading
@@ -216,8 +250,7 @@ export class NativeSessionList
 
 export function registerNativeSessionList(navigation: SessionNavigation): vscode.Disposable {
   const provider = new NativeSessionList(navigation, (message) => {
-    if (message === undefined) delete tree.message
-    else tree.message = message
+    tree.message = message ?? ''
   })
   const tree = vscode.window.createTreeView(SESSION_LIST_VIEW_ID, {
     treeDataProvider: provider,
@@ -243,14 +276,15 @@ export function registerNativeSessionList(navigation: SessionNavigation): vscode
     provider,
     tree.onDidChangeVisibility(({ visible }) => provider.setVisible(visible)),
     navigation.onDidChange((change) => {
-      if (change === 'directory') provider.invalidate()
+      if (change === 'connection') provider.invalidate()
+      else if (change === 'directory') provider.refresh()
       else {
         const node = provider.selectionChanged()
         if (tree?.visible && node !== undefined)
           void tree.reveal(node, { select: true, focus: false }).then(undefined, () => undefined)
       }
     }),
-    vscode.commands.registerCommand('dsh.sessions.refresh', () => provider.invalidate()),
+    vscode.commands.registerCommand('dsh.sessions.refresh', () => provider.refresh(true)),
     vscode.commands.registerCommand('dsh.sessions.loadMore', (node: unknown) => provider.loadMore(node)),
     ...(['open', 'openInEditor', 'rename', 'archive'] as const).map((action) =>
       vscode.commands.registerCommand(`dsh.sessions.${action}`, (node: unknown) =>

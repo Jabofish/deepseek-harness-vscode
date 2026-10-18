@@ -9,6 +9,8 @@ import { I18nProvider } from '../../i18n.js'
 import { ModelPicker } from './ModelPicker.js'
 import { ConversationLayoutProvider } from '../../app/ConversationLayoutProvider.js'
 
+afterEach(() => vi.useRealTimers())
+
 const MODELS: readonly ModelDescriptor[] = [
   { id: 'deepseek-chat', providerId: 'deepseek', label: 'DeepSeek Chat', supportsReasoning: false },
   {
@@ -506,11 +508,15 @@ describe('ModelPicker open requests', () => {
     expect(screen.queryByRole('menu')).toBeNull()
   })
 
-  it('opens on the request while the directory read is still running', async () => {
+  it('opens on the request without a timer while the directory read is still running', async () => {
+    vi.useFakeTimers()
     const view = renderPicker({ models: [] })
     deliverRequest(view, { models: [], loading: true })
 
-    await screen.findByRole('menu')
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(screen.getByRole('menu')).toBeDefined()
     activate(screen.getByRole('menuitem', { name: /^Model/u }))
 
     // The request is spent as soon as the control is usable: the menu can

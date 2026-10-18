@@ -21,6 +21,17 @@ export class VsCodeConfigurationSource {
       config.get<unknown>('connection.attachPorts', [3080]),
       'connection.attachPorts',
     )
+    const portSetting = config.inspect?.<unknown>('connection.attachPorts')
+    const attachPortsConfigured =
+      portSetting !== undefined &&
+      [
+        portSetting.globalValue,
+        portSetting.workspaceValue,
+        portSetting.workspaceFolderValue,
+        portSetting.globalLanguageValue,
+        portSetting.workspaceLanguageValue,
+        portSetting.workspaceFolderLanguageValue,
+      ].some((value) => value !== undefined)
     const discoveryTimeoutMs = readInteger(
       config.get<unknown>('connection.discoveryTimeoutMs', 1500),
       100,
@@ -66,6 +77,7 @@ export class VsCodeConfigurationSource {
         ...(runtimeVersion === undefined ? {} : { runtimeVersion }),
         managedPort,
         attachPorts,
+        ...(attachPortsConfigured ? { attachPortsConfigured: true } : {}),
         discoveryTimeoutMs,
         requestTimeoutMs,
       },

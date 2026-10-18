@@ -107,9 +107,12 @@ const useAppControllerImpl = () => {
       previous = next
     }
     const unsubscribe = store.subscribe(publishFailure)
-    const timer = window.setTimeout(publishFailure, 0)
+    let retired = false
+    queueMicrotask(() => {
+      if (!retired) publishFailure()
+    })
     return () => {
-      window.clearTimeout(timer)
+      retired = true
       unsubscribe()
     }
   }, [store, setError])

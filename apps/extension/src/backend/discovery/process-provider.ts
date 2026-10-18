@@ -2,13 +2,30 @@ import { execFile } from 'node:child_process'
 import { open } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
-import type { BackendCandidate } from '@dsh-vscode/domain'
+import { isLoopbackEndpoint, type BackendCandidate, type BackendEndpoint } from '@dsh-vscode/domain'
 import { DSH_PACKAGE_NAME, isDshPackageVersion } from '@dsh-vscode/dsh-adapter'
 
 const execFileAsync = promisify(execFile)
 const PROCESS_TIMEOUT_MS = 1_500
 const OUTPUT_LIMIT = 128 * 1024
 const PACKAGE_MANIFEST_LIMIT = 32 * 1024
+
+export async function resolveEndpointProcesses(
+  endpoints: readonly BackendEndpoint[],
+  listeners: string,
+  readProcesses: (pids: readonly number[]) => Promise<string>,
+  signal?: AbortSignal,
+): Promise<readonly BackendCandidate[]> {
+  signal?.throwIfAborted()
+  const ports = new Set(endpoints.filter(isLoopbackEndpoint).map((endpoint) => endpoint.port))
+  const matches = parseListeners(listeners).filter((listener) => ports.has(listener.port))
+  if (matches.length === 0) return []
+  const processes = await readProcesses([...new Set(matches.map((listener) => listener.pid))])
+  signal?.throwIfAborted()
+  const candidates = await resolveDshProcessRuntimeVersions(parseDshProcessCandidates(processes, listeners))
+  signal?.throwIfAborted()
+  return candidates.filter((candidate) => ports.has(candidate.endpoint.port))
+}
 
 export async function runDiscoveryCommand(
   executable: string,

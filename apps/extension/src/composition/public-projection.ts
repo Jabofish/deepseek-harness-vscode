@@ -2,6 +2,7 @@ import type * as vscode from 'vscode'
 import path from 'node:path'
 import type {
   BackendState,
+  ConnectionLogEntry,
   DiagnosticsSnapshot,
   ExtensionSettings,
   ExtensionSettingsSummary,
@@ -13,9 +14,13 @@ export function stateSubscriptionDisposable(unsubscribe: () => void): vscode.Dis
   return { dispose: unsubscribe }
 }
 
-export function publicState(state: BackendState): unknown {
+export function publicState(state: BackendState, output?: readonly ConnectionLogEntry[]): unknown {
   return {
     kind: state.kind,
+    ...(output === undefined ? {} : { output }),
+    ...((state.kind === 'discovering' || state.kind === 'connecting') && state.phase !== undefined
+      ? { phase: state.phase }
+      : {}),
     ...(state.kind === 'connected'
       ? {
           dshVersion: state.backend.capabilities.dshVersion,

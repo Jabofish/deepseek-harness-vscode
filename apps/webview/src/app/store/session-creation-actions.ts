@@ -3,7 +3,8 @@ import { AppError, parseSlashCommand } from '@dsh-vscode/domain'
 import { translate } from '../../i18n.js'
 import type { ProtocolClient } from '../protocol-client.js'
 import { requestId } from './ids.js'
-import { clearedActiveSession } from './session-projection.js'
+import { clearedActiveSession, upsertOpenedSession } from './session-projection.js'
+import { isSessionSummary } from './session-guards.js'
 import { createDefaultConfiguration, isAgentConfiguration } from './model-catalog.js'
 import { findReusableBlankSession } from './session-registry.js'
 import type { createPromptActions } from './prompt-actions.js'
@@ -67,35 +68,53 @@ export function createSessionCreationActions(
     stopJobsBeforeSessionOpen,
   } = deps
 
+  const rememberCreatedSession = (value: unknown): void => {
+    const created = object(value)
+    if (created === undefined || !isSessionSummary(created)) return
+    // Creation already returns an authoritative summary. Keep the new row
+    // visible even if newer navigation prevents opening it; preserve any row
+    // that live events have already installed in the meantime.
+    setState((current) =>
+      current.sessions.some((session) => session.id === created.id)
+        ? current
+        : { ...current, sessions: upsertOpenedSession(current.sessions, created, created.id) },
+    )
+  }
+
   return {
-    stageSession: async (workspaceId, presetId) => {
-      const state = getState()
-      const workspace =
-        (workspaceId === undefined
-          ? undefined
-          : state.workspaces.find((entry) => entry.id === workspaceId)) ?? state.workspaces[0]
-      if (workspace === undefined) throw new Error(translate('app.workspaceLoadingDescription'))
-      const defaultConfiguration = createDefaultConfiguration(state, getComposerPreferences())
-      const configuration =
-        presetId === undefined ? defaultConfiguration : { ...defaultConfiguration, preset: presetId }
-      const revision = nextPendingSessionRevision()
-      const navigationIntent = nextOpenIntent()
-      nextOpenVersion()
-      clearStartupRestorePending()
-      stopJobsBeforeSessionOpen()
-      await discardEditorContextForSessionSwitch('')
-      if (revision !== getPendingSessionRevision() || navigationIntent !== getOpenIntent()) return
-      setState((current) => ({
-        ...current,
-        ...clearedActiveSession(current, current.activeSessionId ?? ''),
-        pendingSession: { revision, workspaceId: workspace.id, configuration },
-        editorContext: [],
-        editorContextAvailableKinds: [],
-        editorContextLoading: false,
-        drawer: undefined,
-      }))
-      persistWebviewState()
-    },
+    stageSession: (workspaceId, presetId) =>
+      new Promise<void>((resolve) => {
+        const state = getState()
+        const workspace =
+          (workspaceId === undefined
+            ? undefined
+            : state.workspaces.find((entry) => entry.id === workspaceId)) ?? state.workspaces[0]
+        if (workspace === undefined) throw new Error(translate('app.workspaceLoadingDescription'))
+        const defaultConfiguration = createDefaultConfiguration(state, getComposerPreferences())
+        const configuration =
+          presetId === undefined ? defaultConfiguration : { ...defaultConfiguration, preset: presetId }
+        const revision = nextPendingSessionRevision()
+        const navigationIntent = nextOpenIntent()
+        nextOpenVersion()
+        clearStartupRestorePending()
+        stopJobsBeforeSessionOpen()
+        void discardEditorContextForSessionSwitch('')
+        if (revision !== getPendingSessionRevision() || navigationIntent !== getOpenIntent()) {
+          resolve()
+          return
+        }
+        setState((current) => ({
+          ...current,
+          ...clearedActiveSession(current, current.activeSessionId ?? ''),
+          pendingSession: { revision, workspaceId: workspace.id, configuration },
+          editorContext: [],
+          editorContextAvailableKinds: [],
+          editorContextLoading: false,
+          drawer: undefined,
+        }))
+        persistWebviewState()
+        resolve()
+      }),
     configurePendingSession: (configuration) => {
       if (!isAgentConfiguration(configuration)) throw new Error(translate('app.error.sessionSettings'))
       setState((current) =>
@@ -157,6 +176,7 @@ export function createSessionCreationActions(
             )
             if (typeof result?.id !== 'string' || result.id.trim() === '')
               throw new Error(translate('app.error.createSession'))
+            rememberCreatedSession(result)
             sessionId = result.id
           }
           if (sessionId === undefined) throw new Error(translate('app.error.createSession'))
@@ -171,11 +191,15 @@ export function createSessionCreationActions(
           )
         }
         if (getState().pendingSession?.revision !== pending.revision) throw supersededSend()
-        await refresh()
-        if (getState().pendingSession?.revision !== pending.revision) throw supersededSend()
-        await openSession(sessionId)
-        if (getState().activeSessionId !== sessionId) throw supersededSend()
-        await sendUserTurn(sessionId, text, attachments, mode, undefined)
+        try {
+          await openSession(sessionId)
+          if (getState().activeSessionId !== sessionId) throw supersededSend()
+          await sendUserTurn(sessionId, text, attachments, mode, undefined)
+        } finally {
+          // Reconcile the directory after attempting to open/admit this session.
+          // It must not hold the first message behind unrelated catalog reads.
+          void refresh().catch(() => undefined)
+        }
       })()
       const promise = send.finally(() => {
         if (getPendingSend()?.revision === pending.revision) setPendingSend(undefined)
@@ -214,9 +238,13 @@ export function createSessionCreationActions(
         },
       })
       const created = object(result)
-      await refresh()
-      if (navigationIntent === getOpenIntent() && typeof created?.id === 'string')
-        await openSession(created.id)
+      rememberCreatedSession(created)
+      try {
+        if (navigationIntent === getOpenIntent() && typeof created?.id === 'string')
+          await openSession(created.id)
+      } finally {
+        void refresh().catch(() => undefined)
+      }
     },
   }
 }

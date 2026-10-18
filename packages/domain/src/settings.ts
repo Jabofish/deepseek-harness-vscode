@@ -14,6 +14,8 @@ export interface ConnectionSettings {
   /** Zero means ask DSH to allocate an isolated free port. */
   readonly managedPort: number
   readonly attachPorts: readonly number[]
+  /** Host-only precedence: default ports must not override the last successful endpoint. */
+  readonly attachPortsConfigured?: boolean
   readonly discoveryTimeoutMs: number
   readonly requestTimeoutMs: number
 }

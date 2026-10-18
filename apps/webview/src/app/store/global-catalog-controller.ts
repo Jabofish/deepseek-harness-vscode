@@ -39,33 +39,37 @@ export function createGlobalCatalogController({
     const generation = ++modelGeneration
     return () => !isDisposed() && generation === modelGeneration
   }
-  const readModels = (): readonly Promise<unknown>[] => [
-    client.request<unknown>({ type: 'providers.list', requestId: requestId() }),
-    client.request<unknown>({ type: 'models.list', requestId: requestId(), payload: {} }),
-  ]
-  const applyModels = (results: readonly PromiseSettledResult<unknown>[], isCurrent: () => boolean): void => {
+  const applyProviders = (value: unknown, isCurrent: () => boolean): void => {
     if (!isCurrent()) return
-    const providerResult = results[0]
-    const rawProviders = providerResult?.status === 'fulfilled' ? providerResult.value : undefined
-    const rows = Array.isArray(rawProviders) ? rawProviders : object(rawProviders)?.items
+    const rows = Array.isArray(value) ? value : object(value)?.items
     // A broken provider row must not hide the other healthy providers, but a
     // failed or malformed directory envelope must not clear the last good list.
     const providers = Array.isArray(rows) ? rows.filter(isModelProvider) : undefined
-    const modelResult = results[1]
-    const models =
-      modelResult?.status === 'fulfilled' ? strictListValues(modelResult.value, isModelDescriptor) : undefined
     setState((current) => {
       if (!isCurrent()) return current
-      const nextProviders =
-        providers === undefined || sameModelProviderList(current.providers, providers)
-          ? current.providers
-          : providers
-      const nextModels =
-        models === undefined || sameModelDescriptorList(current.models, models) ? current.models : models
-      return nextProviders === current.providers && nextModels === current.models
+      return providers === undefined || sameModelProviderList(current.providers, providers)
         ? current
-        : { ...current, providers: nextProviders, models: nextModels }
+        : { ...current, providers }
     })
+  }
+  const applyModels = (value: unknown, isCurrent: () => boolean): void => {
+    if (!isCurrent()) return
+    const models = strictListValues(value, isModelDescriptor)
+    setState((current) =>
+      !isCurrent() || models === undefined || sameModelDescriptorList(current.models, models)
+        ? current
+        : { ...current, models },
+    )
+  }
+  const readModels = async (isCurrent: () => boolean): Promise<void> => {
+    await Promise.allSettled([
+      client
+        .request<unknown>({ type: 'providers.list', requestId: requestId() })
+        .then((value) => applyProviders(value, isCurrent)),
+      client
+        .request<unknown>({ type: 'models.list', requestId: requestId(), payload: {} })
+        .then((value) => applyModels(value, isCurrent)),
+    ])
   }
   return {
     invalidate: (): void => {
@@ -80,7 +84,7 @@ export function createGlobalCatalogController({
     refreshModels: async (): Promise<void> => {
       if (isDisposed()) return
       const isCurrent = beginModels()
-      applyModels(await Promise.allSettled(readModels()), isCurrent)
+      await readModels(isCurrent)
     },
     refreshAll: async (isCurrent: () => boolean): Promise<void> => {
       if (isDisposed() || !isCurrent()) return
@@ -96,26 +100,28 @@ export function createGlobalCatalogController({
             : { ...current, newSessionPermissionPresets: next }
         })
       }
-      const results = await Promise.allSettled([
-        ...readModels(),
-        client.request<unknown>({ type: 'preset.list', requestId: requestId() }),
+      const applyRoster = (value: unknown): void => {
+        if (isDisposed() || !isCurrent() || !isPresetRosterCurrent(rosterGeneration)) return
+        const roster = parsePresetRoster(value)
+        if (roster === undefined) return
+        setState((current) => {
+          const presets = samePresetDescriptorList(current.presets, roster.presets)
+            ? current.presets
+            : roster.presets
+          return presets === current.presets && current.presetSelectionEnabled === roster.modeSelectionEnabled
+            ? current
+            : withPresetSelectionEnabled({ ...current, presets }, roster.modeSelectionEnabled)
+        })
+      }
+      // Publish each complete directory as it arrives. A slow provider's
+      // settings/credentials must not withhold usable models or preset choices.
+      await Promise.allSettled([
+        readModels(() => isCurrent() && modelsCurrent()),
+        client.request<unknown>({ type: 'preset.list', requestId: requestId() }).then(applyRoster),
         client
           .request<unknown>({ type: 'permissions.presets.list', requestId: requestId() })
           .then(applyPermissions, () => applyPermissions(undefined)),
       ])
-      applyModels(results, () => isCurrent() && modelsCurrent())
-      if (isDisposed() || !isCurrent() || !isPresetRosterCurrent(rosterGeneration)) return
-      const result = results[2]
-      const roster = result?.status === 'fulfilled' ? parsePresetRoster(result.value) : undefined
-      if (roster === undefined) return
-      setState((current) => {
-        const presets = samePresetDescriptorList(current.presets, roster.presets)
-          ? current.presets
-          : roster.presets
-        return presets === current.presets && current.presetSelectionEnabled === roster.modeSelectionEnabled
-          ? current
-          : withPresetSelectionEnabled({ ...current, presets }, roster.modeSelectionEnabled)
-      })
     },
   }
 }

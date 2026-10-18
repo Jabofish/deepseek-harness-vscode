@@ -537,148 +537,18 @@ occupancy so the overflow is visible without opening the details. */
   display: grid;
   gap: var(--dsh-space-3);
   width: 100%;
-  max-width: 28rem;
+  max-width: 32rem;
   min-width: 0;
-  padding: var(--dsh-space-5);
-  border: 1px solid color-mix(in srgb, var(--dsh-info) 28%, var(--dsh-border-color));
-  border-radius: var(--dsh-radius-lg);
-  background:
-    radial-gradient(
-      120% 100% at 50% 0%,
-      color-mix(in srgb, var(--dsh-info) 9%, transparent),
-      transparent 68%
-    ),
-    color-mix(in srgb, var(--dsh-surface-raised) 78%, transparent);
-  box-shadow: var(--dsh-shadow);
-  animation: dsh-surface-enter var(--dsh-motion-duration-standard) var(--dsh-motion-ease-enter) backwards;
-}
-
-.dsh-runtime-connection--failure {
-  border-color: color-mix(in srgb, var(--dsh-danger) 38%, var(--dsh-border-color));
-  background:
-    radial-gradient(
-      120% 100% at 50% 0%,
-      color-mix(in srgb, var(--dsh-danger) 9%, transparent),
-      transparent 68%
-    ),
-    color-mix(in srgb, var(--dsh-surface-raised) 78%, transparent);
+  padding: var(--dsh-space-3);
 }
 
 .dsh-runtime-connection__header {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--dsh-space-2);
-}
-
-.dsh-runtime-connection__signal {
-  display: grid;
-  place-items: center;
-  width: 1.75rem;
-  height: 1.75rem;
-  border: 1px solid var(--dsh-border-color);
-  border-radius: var(--dsh-radius-pill);
-  color: var(--dsh-muted);
-}
-
-.dsh-runtime-connection__signal > .dsh-icon {
-  width: var(--dsh-icon-size-sm);
-  height: var(--dsh-icon-size-sm);
-}
-
-.dsh-runtime-connection__signal--loading {
-  border-color: color-mix(in srgb, var(--dsh-info) 58%, var(--dsh-border-color));
-  color: var(--dsh-info);
-  background: color-mix(in srgb, var(--dsh-info) 12%, transparent);
-  animation: dsh-pulse-dot var(--dsh-motion-duration-loop-pulse) var(--dsh-motion-ease-standard) infinite;
-}
-
-.dsh-runtime-connection__signal--ready {
-  border-color: color-mix(in srgb, var(--dsh-success) 58%, var(--dsh-border-color));
-  color: var(--dsh-success);
-  background: color-mix(in srgb, var(--dsh-success) 12%, transparent);
-}
-
-.dsh-runtime-connection__signal--danger {
-  border-color: color-mix(in srgb, var(--dsh-danger) 46%, var(--dsh-border-color));
-  color: var(--dsh-danger);
-  background: color-mix(in srgb, var(--dsh-danger) 12%, transparent);
-}
-
-.dsh-runtime-connection__track-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--dsh-space-2);
-}
-
-.dsh-runtime-connection__track {
-  height: 0.375rem;
-  overflow: hidden;
-  border-radius: var(--dsh-radius-pill);
-  background: color-mix(in srgb, var(--dsh-muted) 24%, transparent);
-}
-
-.dsh-runtime-connection__track-fill {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, color-mix(in srgb, var(--dsh-info) 55%, transparent), var(--dsh-info));
-  transition: width var(--dsh-motion-duration-slow) var(--dsh-motion-ease-standard);
-}
-
-.dsh-runtime-connection__percent {
-  color: var(--dsh-muted);
-  font-size: var(--dsh-font-size-xs);
-  font-variant-numeric: tabular-nums;
-  line-height: var(--dsh-line-height-tight);
-}
-
-.dsh-runtime-connection__preview {
-  display: grid;
-  gap: var(--dsh-space-2);
-  padding: var(--dsh-space-3);
-  border: 1px solid var(--dsh-border-color);
-  border-radius: var(--dsh-radius-md);
-  background: color-mix(in srgb, var(--dsh-surface-raised) 84%, var(--dsh-bg));
-}
-
-.dsh-runtime-connection__preview-row {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--dsh-space-2);
-}
-
-.dsh-runtime-connection__preview-badge {
-  width: 1.125rem;
-  height: 1.125rem;
-  border-radius: var(--dsh-radius-pill);
-}
-
-.dsh-runtime-connection__preview-name,
-.dsh-runtime-connection__preview-meta {
-  height: 0.5rem;
-}
-
-.dsh-runtime-connection__preview-meta {
-  justify-self: end;
-}
-
-.dsh-runtime-connection__preview-row:nth-child(2) .dsh-skeleton {
-  animation-delay: var(--dsh-motion-duration-fast);
-}
-
-.dsh-runtime-connection__preview-row:nth-child(3) .dsh-skeleton {
-  animation-delay: calc(var(--dsh-motion-duration-fast) * 2);
-}
-
-.dsh-runtime-connection__preview-row:nth-child(4) .dsh-skeleton {
-  animation-delay: calc(var(--dsh-motion-duration-fast) * 3);
-}
-
-.dsh-runtime-connection__preview-row:nth-child(5) .dsh-skeleton {
-  animation-delay: calc(var(--dsh-motion-duration-fast) * 4);
+  justify-items: center;
+  gap: var(--dsh-space-3);
+  min-width: 0;
+  padding-block: var(--dsh-space-5);
+  text-align: center;
 }
 
 .dsh-runtime-connection h2,
@@ -687,33 +557,115 @@ occupancy so the overflow is visible without opening the details. */
 }
 
 .dsh-runtime-connection h2 {
-  min-width: 0;
   font-size: var(--dsh-font-size-lg);
   font-weight: 600;
   line-height: var(--dsh-line-height-tight);
 }
 
-.dsh-runtime-connection__hint {
-  max-width: 34ch;
-  color: var(--dsh-muted);
-  font-size: var(--dsh-font-size-sm);
+.dsh-runtime-connection__spinner,
+.dsh-runtime-connection__result {
+  width: 4rem;
+  height: 4rem;
+  color: var(--dsh-accent-line);
+}
+
+.dsh-runtime-connection__spinner {
+  animation: dsh-spin var(--dsh-motion-duration-loop-shimmer) linear infinite;
+}
+
+.dsh-runtime-connection__arc {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-dasharray: 90, 126;
+  animation: dsh-progress-arc var(--dsh-motion-duration-loop-shimmer) var(--dsh-motion-ease-standard) infinite;
+}
+
+.dsh-runtime-connection__result {
+  display: grid;
+  place-items: center;
+  color: var(--dsh-success);
+}
+.dsh-runtime-connection__result > .dsh-icon {
+  width: 3rem;
+  height: 3rem;
+}
+.dsh-runtime-connection__result[data-failure='true'] {
+  color: var(--dsh-danger);
+}
+
+.dsh-runtime-connection__output {
+  min-width: 0;
+  height: calc(4lh + 2 * var(--dsh-space-2) + 2px);
+  overflow: hidden;
+  padding: var(--dsh-space-2);
+  border: var(--dsh-border);
+  border-radius: var(--dsh-radius-sm);
+  background: var(--dsh-code-bg);
+  color: var(--dsh-text);
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  font-size: var(--dsh-font-size-md);
   line-height: var(--dsh-line-height-body);
 }
 
-.dsh-runtime-connection__message {
-  max-width: none;
-  padding: var(--dsh-space-2) var(--dsh-space-3);
-  border: 1px solid color-mix(in srgb, var(--dsh-danger) 32%, var(--dsh-border-color));
-  border-radius: var(--dsh-radius-sm);
-  color: var(--dsh-danger);
-  background: color-mix(in srgb, var(--dsh-danger) 8%, transparent);
+.dsh-runtime-connection__output[data-expanded='false'] p {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.dsh-runtime-connection__output[data-expanded='true'] {
+  height: auto;
+  max-height: min(24rem, 45dvh);
+  overflow: auto;
   overflow-wrap: anywhere;
+  scrollbar-gutter: stable;
+}
+
+.dsh-runtime-connection__line {
+  white-space: pre-wrap;
+}
+.dsh-runtime-connection__line time {
+  color: var(--dsh-muted);
+  font-variant-numeric: tabular-nums;
+}
+.dsh-runtime-connection__line[data-status='failed'],
+.dsh-runtime-connection__error {
+  color: var(--dsh-danger);
+}
+
+.dsh-runtime-connection__error {
+  max-height: 25dvh;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  font-size: var(--dsh-font-size-md);
+  line-height: var(--dsh-line-height-body);
 }
 
 .dsh-runtime-connection__actions {
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
   gap: var(--dsh-space-2);
+}
+.dsh-runtime-connection__actions [aria-expanded='true'] .dsh-icon {
+  transform: rotate(180deg);
+}
+.dsh-runtime-connection__open-output {
+  margin-inline-start: auto;
+}
+
+@media (max-height: 21rem) {
+  .dsh-runtime-connection__header {
+    padding-block: var(--dsh-space-1);
+    gap: var(--dsh-space-2);
+  }
+  .dsh-runtime-connection__spinner,
+  .dsh-runtime-connection__result {
+    width: 2.5rem;
+    height: 2.5rem;
+  }
 }
 
 .dsh-runtime-missing,

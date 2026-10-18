@@ -92,6 +92,7 @@ export function createHostBackedAppStore(
     if (
       [
         'connection.snapshot',
+        'connection.output',
         'runtime.update.progress',
         'ui.sessions.toggle',
         'ui.settings.toggle',

@@ -25,9 +25,13 @@ type NavigationDependencies = DirectoryDependencies &
 
 export interface SessionNavigation {
   readonly activeSessionId: string | undefined
+  readonly connected: boolean
   invalidate(this: void): void
   select(this: void, sessionId: string): void
-  onDidChange(this: void, listener: (change: 'selection' | 'directory') => void): vscode.Disposable
+  onDidChange(
+    this: void,
+    listener: (change: 'selection' | 'directory' | 'connection') => void,
+  ): vscode.Disposable
   read(this: void, signal: AbortSignal): Promise<SessionDirectoryView>
   open(this: void, sessionId: string, editor: boolean, signal: AbortSignal): Promise<void>
   rename(this: void, sessionId: string, title: string, signal: AbortSignal): Promise<void>
@@ -42,12 +46,21 @@ export function createSessionNavigation(
   request: (request: WebviewRequest, signal: AbortSignal) => Promise<unknown>,
   openInEditor: (id: string, column: vscode.ViewColumn | undefined, signal: AbortSignal) => Promise<void>,
 ): SessionNavigation {
-  const listeners = new Set<(change: 'selection' | 'directory') => void>()
+  const listeners = new Set<(change: 'selection' | 'directory' | 'connection') => void>()
   let activeSessionId: string | undefined
   let observedKind: unknown
   let observedBackend: DshBackend | undefined
   const invalidate = (): void => {
     for (const listener of listeners) listener('directory')
+  }
+  const connected = (): boolean => {
+    if (observedKind !== undefined && observedKind !== 'connected') return false
+    try {
+      const backend = deps.backendService.requireBackend()
+      return observedKind === undefined || (observedBackend !== undefined && observedBackend === backend)
+    } catch {
+      return false
+    }
   }
   const requireConnected = (): void => {
     if (!vscode.workspace.isTrusted)
@@ -56,10 +69,14 @@ export function createSessionNavigation(
         message: 'Trust this workspace to open sessions.',
         retryable: false,
       })
-    deps.backendService.requireBackend()
+    if (!connected())
+      throw new AppError({ code: 'BACKEND_UNREACHABLE', message: 'Connect to DSH first.', retryable: true })
   }
   return {
     invalidate,
+    get connected(): boolean {
+      return connected()
+    },
     get activeSessionId(): string | undefined {
       return activeSessionId
     },
@@ -68,7 +85,9 @@ export function createSessionNavigation(
       activeSessionId = sessionId
       for (const listener of listeners) listener('selection')
     },
-    onDidChange: (listener: (change: 'selection' | 'directory') => void): vscode.Disposable => {
+    onDidChange: (
+      listener: (change: 'selection' | 'directory' | 'connection') => void,
+    ): vscode.Disposable => {
       listeners.add(listener)
       return {
         dispose: () => {
@@ -77,6 +96,7 @@ export function createSessionNavigation(
       }
     },
     read: async (signal: AbortSignal): Promise<SessionDirectoryView> => {
+      signal.throwIfAborted()
       requireConnected()
       const workspaces = await deps.listCurrentWorkspaces(signal)
       const page = await listScopedSessions(deps, {}, signal, workspaces)
@@ -133,6 +153,12 @@ export function createSessionNavigation(
       }
     },
     acceptEvent: (name: string, payload?: unknown): void => {
+      if (name === 'connection.lost') {
+        observedKind = 'disconnected'
+        observedBackend = undefined
+        for (const listener of listeners) listener('connection')
+        return
+      }
       if (
         name === 'connection.snapshot' &&
         typeof payload === 'object' &&
@@ -150,7 +176,7 @@ export function createSessionNavigation(
         if (observedKind !== payload.kind || observedBackend !== backend) {
           observedKind = payload.kind
           observedBackend = backend
-          invalidate()
+          for (const listener of listeners) listener('connection')
         }
         return
       }
@@ -168,7 +194,6 @@ export function createSessionNavigation(
 }
 
 const DIRECTORY_EVENTS = new Set([
-  'connection.lost',
   'ui.resync',
   'session.projection.baseline',
   'workspace.changed',

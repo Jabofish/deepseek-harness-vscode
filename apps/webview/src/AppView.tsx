@@ -404,12 +404,11 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                       />
                     ) : (
                       <RuntimeConnectionView
+                        {...(state.connectionOutput === undefined ? {} : { output: state.connectionOutput })}
                         state={backend}
                         loadingSessionCatalog={backend.kind === 'connected'}
                         onRetry={retryConnection}
                         onOpenSettings={() => store.setDrawer('settings')}
-                        onReadDiagnostics={() => store.readDiagnostics()}
-                        onReconnectDiagnostics={() => store.reconnect()}
                         onShowDiagnosticsOutput={() => store.showDiagnostics()}
                       />
                     )}

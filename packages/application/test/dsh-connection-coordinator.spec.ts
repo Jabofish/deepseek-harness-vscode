@@ -6,12 +6,23 @@ import type {
   BackendEndpoint,
   BackendState,
   ConnectedBackend,
+  ConnectionProgress,
   DshBackend,
   ManagedProcessHandle,
 } from '@dsh-vscode/domain'
 import { AppError } from '@dsh-vscode/domain'
 import { DshConnectionCoordinator } from '../src/connection/dsh-connection-coordinator.js'
 import type { ConnectionCoordinatorDependencies } from '../src/connection/dsh-connection-coordinator.js'
+
+function deferred<T>() {
+  let finish: ((value: T) => void) | undefined
+  return {
+    promise: new Promise<T>((resolve) => {
+      finish = resolve
+    }),
+    resolve: (value: T) => finish?.(value),
+  }
+}
 
 function endpoint(port = 3939) {
   return { host: '127.0.0.1' as const, port, baseUrl: `http://127.0.0.1:${port}` }
@@ -74,6 +85,124 @@ function dependencies(
 }
 
 describe('DshConnectionCoordinator', () => {
+  it('treats cache misses as unavailable candidates and starts a managed instance only after discovery', async () => {
+    const candidates: readonly BackendCandidate[] = [
+      fakeCandidate(4110),
+      { ...fakeCandidate(4111), source: 'known' },
+    ]
+    const onProgress = vi.fn<(progress: ConnectionProgress) => void>()
+    const process = managedProcess(4112)
+    const deps = dependencies({
+      onProgress,
+      discovery: { discoverFast: vi.fn(async () => candidates), discover: vi.fn(async () => candidates) },
+      probe: {
+        probe: vi.fn(async (candidate: BackendCandidate) =>
+          candidate.endpoint.port === 4112 ? fakeConnectedBackend(4112) : undefined,
+        ),
+      },
+      processSupervisor: { start: vi.fn(async () => process) },
+    })
+    const coordinator = new DshConnectionCoordinator(deps)
+    const result = await coordinator.connect({ mode: 'auto', autoStart: true })
+    expect(result.state.backend.ownership).toBe('managed')
+    expect(onProgress).toHaveBeenCalledWith({ phase: 'discovery-cache', status: 'succeeded', count: 2 })
+    expect(onProgress).toHaveBeenCalledWith({ phase: 'discovery', status: 'succeeded', count: 2 })
+    expect(onProgress).toHaveBeenCalledWith({
+      phase: 'verification',
+      status: 'unavailable',
+      attempt: 1,
+      candidateSource: 'configured',
+    })
+    expect(onProgress).toHaveBeenCalledWith({
+      phase: 'verification',
+      status: 'unavailable',
+      attempt: 2,
+      candidateSource: 'known',
+    })
+    expect(onProgress.mock.calls.some(([entry]) => entry.status === 'failed')).toBe(false)
+    expect(deps.processSupervisor.start).toHaveBeenCalledOnce()
+    await coordinator.disconnect()
+  })
+
+  it('publishes the actual pending custom connection operation before waiting for it', async () => {
+    const discovery = deferred<readonly BackendCandidate[]>()
+    const authorization = deferred<void>()
+    const verification = deferred<ConnectedBackend | undefined>()
+    const initialization = deferred<DshBackend>()
+    const onProgress = vi.fn()
+    const deps = dependencies({
+      onProgress,
+      discovery: { discover: vi.fn(() => discovery.promise) },
+      endpointPreparation: { prepare: vi.fn(() => authorization.promise) },
+      probe: { probe: vi.fn(() => verification.promise) },
+      backendFactory: { connect: vi.fn(() => initialization.promise) },
+    })
+    const coordinator = new DshConnectionCoordinator(deps)
+    const states: BackendState[] = []
+    const unsubscribe = coordinator.subscribe((state) => states.push(state))
+    const connecting = coordinator.connect({ mode: 'custom', endpoint: endpoint(), autoStart: false })
+    expect(coordinator.getState()).toMatchObject({ kind: 'discovering', phase: 'discovery' })
+    expect(deps.endpointPreparation?.prepare).not.toHaveBeenCalled()
+    expect(onProgress).toHaveBeenCalledWith({ phase: 'discovery', status: 'started' })
+
+    discovery.resolve([])
+    await vi.waitFor(() =>
+      expect(coordinator.getState()).toMatchObject({ kind: 'connecting', phase: 'authorization' }),
+    )
+    expect(deps.probe.probe).not.toHaveBeenCalled()
+    expect(onProgress).toHaveBeenCalledWith({ phase: 'discovery', status: 'succeeded', count: 0 })
+    authorization.resolve(undefined)
+    await vi.waitFor(() =>
+      expect(coordinator.getState()).toMatchObject({ kind: 'connecting', phase: 'verification' }),
+    )
+    expect(deps.backendFactory.connect).not.toHaveBeenCalled()
+    verification.resolve(fakeConnectedBackend())
+    await vi.waitFor(() =>
+      expect(coordinator.getState()).toMatchObject({ kind: 'connecting', phase: 'initialization' }),
+    )
+    initialization.resolve(backend())
+    await connecting
+    expect(states.map((state) => ('phase' in state ? state.phase : state.kind))).toEqual([
+      'idle',
+      'discovery',
+      'authorization',
+      'verification',
+      'initialization',
+      'connected',
+    ])
+    unsubscribe()
+    await coordinator.disconnect()
+  })
+
+  it('does not invent an authorization operation for auto discovery or revive progress after cancellation', async () => {
+    const verification = deferred<ConnectedBackend | undefined>()
+    const deps = dependencies({
+      discovery: { discover: vi.fn(async () => [fakeCandidate()]) },
+      probe: { probe: vi.fn(() => verification.promise) },
+    })
+    const coordinator = new DshConnectionCoordinator(deps)
+    const states: BackendState[] = []
+    const unsubscribe = coordinator.subscribe((state) => states.push(state))
+    const controller = new AbortController()
+    const connecting = coordinator.connect({ mode: 'auto', autoStart: true }, controller.signal)
+    const rejected = expect(connecting).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
+    await vi.waitFor(() =>
+      expect(coordinator.getState()).toMatchObject({ kind: 'discovering', phase: 'verification' }),
+    )
+    controller.abort()
+    verification.resolve(fakeConnectedBackend())
+    await rejected
+    expect(states.map((state) => ('phase' in state ? state.phase : state.kind))).toEqual([
+      'idle',
+      'discovery',
+      'verification',
+      'idle',
+    ])
+    expect(deps.backendFactory.connect).not.toHaveBeenCalled()
+    expect(deps.processSupervisor.start).not.toHaveBeenCalled()
+    unsubscribe()
+  })
+
   it('prepares credentials before probing the selected custom endpoint', async () => {
     const calls: string[] = []
     const deps = dependencies({
@@ -96,7 +225,9 @@ describe('DshConnectionCoordinator', () => {
   })
 
   it('does not probe or start when endpoint authorization fails', async () => {
+    const onProgress = vi.fn()
     const deps = dependencies({
+      onProgress,
       endpointPreparation: {
         prepare: async () => {
           throw new AppError({
@@ -114,6 +245,7 @@ describe('DshConnectionCoordinator', () => {
     expect(deps.probe.probe).not.toHaveBeenCalled()
     expect(deps.processSupervisor.start).not.toHaveBeenCalled()
     expect(coordinator.getState()).toMatchObject({ kind: 'failed', retryable: false })
+    expect(onProgress).toHaveBeenCalledWith({ phase: 'connect', status: 'failed', code: 'PERMISSION_DENIED' })
   })
 
   it.each(['runtimeVersion', 'credentialRevision'] as const)(
@@ -397,9 +529,238 @@ describe('DshConnectionCoordinator', () => {
     releaseFull?.()
     await operation
 
-    expect(probe.probe).toHaveBeenCalledTimes(2)
-    expect(probe.probe.mock.calls.map(([candidate]) => candidate.endpoint.port)).toEqual([4105, 4106])
+    expect(probe.probe).toHaveBeenCalledTimes(3)
+    expect(probe.probe.mock.calls.map(([candidate]) => candidate.endpoint.port)).toEqual([4105, 4104, 4106])
     expect(deps.processSupervisor.start).toHaveBeenCalledTimes(1)
+  })
+
+  it('reuses fast results for full discovery and refreshes records after locating the runtime', async () => {
+    const initial = fakeCandidate(4116)
+    const announced = fakeCandidate(4117)
+    const discovery = {
+      discoverFast: vi.fn().mockResolvedValueOnce([initial]).mockResolvedValueOnce([initial, announced]),
+      discoverRemaining: vi.fn(async () => [initial]),
+      discover: vi.fn(async () => []),
+    }
+    const deps = dependencies({
+      discovery,
+      runtimeLocator: {
+        locate: vi.fn(async () => {
+          expect(discovery.discoverRemaining).toHaveBeenCalledOnce()
+          return { runtime: fakeRuntime(), searchedLocations: [] }
+        }),
+      },
+      probe: {
+        probe: vi.fn(async (candidate: BackendCandidate) =>
+          candidate.endpoint.port === 4117 ? fakeConnectedBackend(4117) : undefined,
+        ),
+      },
+    })
+    const coordinator = new DshConnectionCoordinator(deps)
+    const result = await coordinator.connect({ mode: 'auto', autoStart: true })
+    expect(result.state.backend.ownership).toBe('external')
+    expect(discovery.discover).not.toHaveBeenCalled()
+    expect(discovery.discoverRemaining).toHaveBeenCalledWith([initial], expect.any(AbortSignal))
+    expect(discovery.discoverFast).toHaveBeenCalledTimes(2)
+    expect(deps.probe.probe).toHaveBeenCalledTimes(2)
+    expect(deps.processSupervisor.start).not.toHaveBeenCalled()
+    await coordinator.disconnect()
+  })
+
+  it('reconnects to the last successful endpoint after current identity validation without full discovery', async () => {
+    const remembered = { ...fakeCandidate(4130), source: 'known' as const }
+    const verified: BackendCandidate = {
+      ...remembered,
+      runtimeVersion: '0.2.1-rc.2',
+      runtimeVersionEvidence: 'process-manifest',
+      pid: 25140,
+      commandLine: '/opt/node_modules/@deepseek-ai/dsh/lib/bin.js web',
+    }
+    const discovery = {
+      discoverFast: vi.fn(async () => [
+        remembered,
+        { ...fakeCandidate(3080), source: 'default-port' as const },
+      ]),
+      resolvePreferred: vi.fn(async () => [verified]),
+      discover: vi.fn(async () => []),
+    }
+    const deps = dependencies({ discovery, probe: { probe: vi.fn(async () => fakeConnectedBackend(4130)) } })
+    const coordinator = new DshConnectionCoordinator(deps)
+    expect((await coordinator.connect({ mode: 'auto', autoStart: true })).state.backend.endpoint.port).toBe(
+      4130,
+    )
+    expect(discovery.resolvePreferred).toHaveBeenCalledWith([remembered], expect.any(AbortSignal))
+    expect(discovery.discover).not.toHaveBeenCalled()
+    expect(deps.runtimeLocator.locate).not.toHaveBeenCalled()
+    expect(deps.processSupervisor.start).not.toHaveBeenCalled()
+    await coordinator.disconnect()
+  })
+
+  it('does not promote remembered version hints without fresh manifest evidence', async () => {
+    const remembered = { ...fakeCandidate(4130), source: 'known' as const, runtimeVersion: '0.2.1-rc.2' }
+    const discovery = {
+      discoverFast: vi.fn(async () => [remembered]),
+      resolvePreferred: vi.fn(async () => [remembered]),
+      discover: vi.fn(async () => [remembered]),
+    }
+    const probe = vi.fn(async () => {
+      expect(discovery.discover).toHaveBeenCalledOnce()
+      return fakeConnectedBackend(4130)
+    })
+    const coordinator = new DshConnectionCoordinator(dependencies({ discovery, probe: { probe } }))
+    await coordinator.connect({ mode: 'auto', autoStart: false })
+    expect(probe).toHaveBeenCalledOnce()
+    await coordinator.disconnect()
+  })
+
+  it('keeps explicit targets strict, releases failure, and allows changing the target', async () => {
+    const selected = fakeCandidate(4131),
+      other = { ...fakeCandidate(4132), source: 'known' as const }
+    const probe = vi.fn(async (candidate: BackendCandidate) =>
+      candidate.endpoint.port === 4132 ? fakeConnectedBackend(4132) : undefined,
+    )
+    const deps = dependencies({
+      discovery: { discover: vi.fn(async () => [other, selected]) },
+      probe: { probe },
+    })
+    const coordinator = new DshConnectionCoordinator(deps)
+    await expect(
+      coordinator.connect({ mode: 'auto', autoStart: true, allowedEndpoints: [selected.endpoint] }),
+    ).rejects.toMatchObject({ code: 'NO_RUNNING_INSTANCE' })
+    expect(coordinator.getState().kind).toBe('failed')
+    expect(probe.mock.calls.map(([candidate]) => candidate.endpoint.port)).toEqual([4131])
+    expect(deps.runtimeLocator.locate).not.toHaveBeenCalled()
+    expect(deps.processSupervisor.start).not.toHaveBeenCalled()
+    expect(
+      (await coordinator.connect({ mode: 'auto', autoStart: true, allowedEndpoints: [other.endpoint] })).state
+        .backend.endpoint.port,
+    ).toBe(4132)
+    await coordinator.disconnect()
+  })
+
+  it('cancels preferred identity lookup without falling through to discovery or startup', async () => {
+    const controller = new AbortController()
+    const discovery = {
+      discoverFast: vi.fn(async () => [{ ...fakeCandidate(), source: 'known' as const }]),
+      resolvePreferred: vi.fn(async () => {
+        controller.abort()
+        return []
+      }),
+      discover: vi.fn(async () => []),
+    }
+    const deps = dependencies({ discovery })
+    await expect(
+      new DshConnectionCoordinator(deps).connect({ mode: 'auto', autoStart: true }, controller.signal),
+    ).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
+    expect(discovery.discover).not.toHaveBeenCalled()
+    expect(deps.processSupervisor.start).not.toHaveBeenCalled()
+  })
+
+  it('does not repeat a slow process scan when discovery returns no candidates', async () => {
+    const discovery = {
+      discoverFast: vi.fn(async () => []),
+      discoverRemaining: vi.fn(async () => []),
+      discover: vi.fn(async () => []),
+    }
+    const deps = dependencies({ discovery, probe: { probe: vi.fn(async () => fakeConnectedBackend()) } })
+    const coordinator = new DshConnectionCoordinator(deps)
+    await coordinator.connect({ mode: 'auto', autoStart: true })
+    expect(discovery.discoverRemaining).toHaveBeenCalledOnce()
+    expect(discovery.discoverFast).toHaveBeenCalledTimes(2)
+    expect(discovery.discover).not.toHaveBeenCalled()
+    expect(deps.processSupervisor.start).toHaveBeenCalledOnce()
+    await coordinator.disconnect()
+  })
+
+  it.each(['full', 'recheck'] as const)(
+    'does not launch when cancelled during %s discovery',
+    async (phase) => {
+      const controller = new AbortController()
+      const cancel = async () => {
+        controller.abort()
+        return []
+      }
+      const discovery = {
+        discoverFast: vi.fn(async () => []).mockImplementationOnce(async () => []),
+        discoverRemaining: vi.fn(async () => []),
+        discover: vi.fn(async () => []),
+      }
+      if (phase === 'full') discovery.discoverRemaining.mockImplementationOnce(cancel)
+      else discovery.discoverFast.mockImplementationOnce(cancel)
+      const deps = dependencies({ discovery })
+      await expect(
+        new DshConnectionCoordinator(deps).connect({ mode: 'auto', autoStart: true }, controller.signal),
+      ).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
+      expect(deps.processSupervisor.start).not.toHaveBeenCalled()
+      expect(deps.backendFactory.connect).not.toHaveBeenCalled()
+    },
+  )
+
+  it('falls back to a fresh full pass when fast discovery fails', async () => {
+    const discovery = {
+      discoverFast: vi.fn(async () => {
+        throw new Error('optional source unavailable')
+      }),
+      discoverRemaining: vi.fn(async () => []),
+      discover: vi.fn(async () => [fakeCandidate()]),
+    }
+    const coordinator = new DshConnectionCoordinator(
+      dependencies({ discovery, probe: { probe: vi.fn(async () => fakeConnectedBackend()) } }),
+    )
+    await coordinator.connect({ mode: 'auto', autoStart: false })
+    expect(discovery.discover).toHaveBeenCalledOnce()
+    expect(discovery.discoverRemaining).not.toHaveBeenCalled()
+    await coordinator.disconnect()
+  })
+
+  it('prefetches at most three probes while preserving priority and cancelling unused work', async () => {
+    const first = deferred<ConnectedBackend | undefined>()
+    const signals: AbortSignal[] = []
+    const probe = vi.fn((candidate: BackendCandidate, signal?: AbortSignal) => {
+      signals.push(signal!)
+      if (candidate.endpoint.port === 4120) return first.promise
+      if (candidate.endpoint.port === 4121) return Promise.resolve(fakeConnectedBackend(4121))
+      return new Promise<undefined>((resolve) =>
+        signal!.addEventListener('abort', () => resolve(undefined), { once: true }),
+      )
+    })
+    const deps = dependencies({
+      discovery: { discover: vi.fn(async () => [4120, 4121, 4122, 4123, 4124].map(fakeCandidate)) },
+      probe: { probe },
+    })
+    const coordinator = new DshConnectionCoordinator(deps)
+    const connecting = coordinator.connect({ mode: 'auto', autoStart: false })
+    await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(3))
+    expect(deps.backendFactory.connect).not.toHaveBeenCalled()
+    first.resolve(fakeConnectedBackend(4120))
+    const result = await connecting
+    expect(result.state.backend.endpoint.port).toBe(4120)
+    expect(probe).toHaveBeenCalledTimes(3)
+    expect(signals.every((signal) => signal.aborted)).toBe(true)
+    expect(deps.backendFactory.connect).toHaveBeenCalledOnce()
+    await coordinator.disconnect()
+  })
+
+  it('does not accumulate candidate wait times before using an already verified lower-ranked endpoint', async () => {
+    const first = deferred<ConnectedBackend | undefined>()
+    const second = deferred<ConnectedBackend | undefined>()
+    const probe = vi.fn((candidate: BackendCandidate) => {
+      if (candidate.endpoint.port === 4125) return first.promise
+      if (candidate.endpoint.port === 4126) return second.promise
+      return Promise.resolve(fakeConnectedBackend(4127))
+    })
+    const coordinator = new DshConnectionCoordinator(
+      dependencies({
+        discovery: { discover: vi.fn(async () => [4125, 4126, 4127].map(fakeCandidate)) },
+        probe: { probe },
+      }),
+    )
+    const connecting = coordinator.connect({ mode: 'auto', autoStart: false })
+    await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(3))
+    second.resolve(undefined)
+    first.resolve(undefined)
+    expect((await connecting).state.backend.endpoint.port).toBe(4127)
+    await coordinator.disconnect()
   })
 
   it('probes only the user-selected custom endpoint and never starts DSH', async () => {
@@ -991,7 +1352,9 @@ describe('DshConnectionCoordinator', () => {
     })
     const coordinator = new DshConnectionCoordinator(deps)
     const kinds: string[] = []
-    coordinator.subscribe((state) => kinds.push(state.kind))
+    coordinator.subscribe((state) => {
+      if (kinds.at(-1) !== state.kind) kinds.push(state.kind)
+    })
 
     await coordinator.connect({ mode: 'auto', autoStart: true })
 

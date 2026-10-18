@@ -13,7 +13,7 @@ describe('Timeline', () => {
     vi.unstubAllGlobals()
   })
 
-  it('keeps a bottom-pinned conversation at the latest item when the sidebar narrows', () => {
+  it('keeps a bottom-pinned conversation at the latest item when the sidebar narrows', async () => {
     vi.useFakeTimers()
     let resize: ResizeObserverCallback = () => undefined
     vi.stubGlobal(
@@ -44,8 +44,8 @@ describe('Timeline', () => {
     act(() => resize([resizeEntry(canvas, 420, 420)], {} as ResizeObserver))
     scrollHeight = 1_600
     act(() => resize([resizeEntry(canvas, 420, 240)], {} as ResizeObserver))
-    act(() => {
-      vi.runAllTimers()
+    await act(async () => {
+      await vi.runAllTimersAsync()
     })
 
     expect(timeline.scrollTop).toBe(1_300)

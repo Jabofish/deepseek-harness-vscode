@@ -475,7 +475,7 @@ describe('SessionDrawer', () => {
     expect(screen.queryByTitle('Write docs')).toBeNull()
   })
 
-  it('debounces host content search and surfaces other-workspace matches', async () => {
+  it('starts host content search immediately and surfaces other-workspace matches', async () => {
     const onSearch = vi.fn().mockResolvedValue({ items: [sessions[2]] })
     renderDrawer({ onSearch })
     fireEvent.change(screen.getByLabelText('Search sessions by title or content'), {

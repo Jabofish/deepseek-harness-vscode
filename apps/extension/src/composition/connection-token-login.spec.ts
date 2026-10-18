@@ -34,7 +34,7 @@ describe('connection credential boundary', () => {
           connect: (request: ConnectionRequest) => {
             requests.push(request)
             const endpoint =
-              mode === 'custom'
+              request.mode === 'custom'
                 ? { host: 'dsh.example', port: 443, baseUrl: 'https://dsh.example:443' }
                 : { host: '127.0.0.1', port: 4321, baseUrl: 'http://127.0.0.1:4321' }
             return Promise.resolve({ backend: { connection: { endpoint } }, state: {} })
@@ -52,8 +52,10 @@ describe('connection credential boundary', () => {
       await connect()
       expect(requests).toHaveLength(1)
       expect(requests[0]).not.toHaveProperty('launchToken')
-      expect(updates).toEqual([['dsh.lastEndpoint', mode === 'custom' ? undefined : { port: 4321 }]])
-      if (mode === 'custom')
+      expect(updates).toEqual([
+        ['dsh.lastEndpoint', mode !== 'new-isolated' ? undefined : { host: '127.0.0.1', port: 4321 }],
+      ])
+      if (mode !== 'new-isolated')
         expect(requests[0]).toMatchObject({ runtimeVersion: '0.2.1-alpha.2', credentialRevision: 0 })
     },
   )

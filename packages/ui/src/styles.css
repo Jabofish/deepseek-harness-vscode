@@ -125,6 +125,27 @@
   }
 }
 
+@keyframes dsh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes dsh-progress-arc {
+  0% {
+    stroke-dasharray: 1, 126;
+    stroke-dashoffset: 0;
+  }
+  50% {
+    stroke-dasharray: 90, 126;
+    stroke-dashoffset: -35;
+  }
+  100% {
+    stroke-dasharray: 90, 126;
+    stroke-dashoffset: -125;
+  }
+}
+
 @keyframes dsh-breathe {
   0%,
   100% {

@@ -234,7 +234,7 @@ export function useComposerMenuState(
     props.onCommandQueryChange?.(slashCommandQuery(nextDraft))
     props.onReferenceQueryChange?.(undefined, false)
     actions.closeExtras()
-    window.requestAnimationFrame(actions.focusTextarea)
+    queueMicrotask(actions.focusTextarea)
   }
   const selectReference = (candidate: ReferenceCandidate): void => {
     if (referenceToken === undefined) return

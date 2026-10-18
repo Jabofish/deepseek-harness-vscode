@@ -60,6 +60,8 @@ export interface HostEventPipelineDependencies {
   readonly transcript: Pick<TranscriptWindowService, 'accept' | 'dispose'>
   readonly post: PostHostMessage
   readonly postTo: PostHostMessageTo
+  /** Host consumers must not wait for delivery to a hidden or busy renderer. */
+  readonly onEvent?: (name: string, payload: unknown) => void
   readonly backendService: BackendService
   readonly diagnostics: RedactedDiagnostics
   readonly editorContextUseCases: EditorContextUseCases
@@ -244,6 +246,7 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
     }, chars)
   }
   const postEvent = (name: string, payload: unknown): Promise<boolean> => {
+    deps.onEvent?.(name, payload)
     return enqueueEvent(() => Promise.resolve({ name, payload }), eventPayloadCharacters(payload))
   }
   const postEventTo: PostSurfaceEvent = (surfaceId, name, payload, isCurrent) =>
@@ -269,6 +272,7 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
     } catch {
       return Promise.resolve(false)
     }
+    deps.onEvent?.(event.type, event)
     if (deps.transcript.accept(event)) return Promise.resolve(true)
     return enqueueEvent(() => {
       try {
@@ -287,7 +291,7 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
     if (state.kind !== 'connected') deps.transcript?.dispose()
     void updateContextKeys(vscode.commands, state)
     diagnostics.log('info', 'connection-state', { state: state.kind })
-    const payload = publicState(state)
+    const payload = publicState(state, diagnostics.connectionOutput?.())
     void postEvent('connection.snapshot', payload)
   }
   const nextFeatureLocalSequence = (): number => {

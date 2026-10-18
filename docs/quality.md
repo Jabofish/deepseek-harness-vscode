@@ -1,6 +1,6 @@
 # 开发、验证与发布流程
 
-本文件规定每次改动如何计划、验证和交付，不保存某次运行的日志、发布勾选状态或临时路径。架构约束见 [architecture.md](architecture.md)，精确上游契约见 [dsh-contract.md](dsh-contract.md)，当前能力与证据缺口见 [capability-matrix.md](capability-matrix.md)。
+本文件规定每次改动如何计划、验证和交付，不保存某次运行的日志、发布勾选状态或临时路径。架构约束见 [architecture.md](architecture.md)，精确上游契约见 [dsh-contract.md](dsh-contract.md)，当前能力范围与限制见 [capability-matrix.md](capability-matrix.md)。
 
 ## 环境与日常开发
 
@@ -37,7 +37,7 @@ VS Code 更新可能替换该补丁；不附加调试器时可用 Ctrl+F5。该�
 3. 实现 mapper、RPC、错误映射、取消和资源释放；版本差异留在 Adapter。
 4. 实现 Application 用例、Host route 与严格协议 schema，不向上泄漏 wire 类型。
 5. 最后实现 Webview 状态、组件与可访问性；验证窄视图、键盘和故障恢复。
-6. 更新矩阵对应 ID 的当前状态及最短证据入口；用户可见变化写扩展更新日志。
+6. 更新矩阵对应 ID 的能力范围、限制和状态；矩阵允许引用规范文档，不放源码和测试文件链接。用户可见变化写扩展更新日志。
 7. 执行完整门禁，不用单文件测试替代全量验证；涉及真实 DSH 的能力还须做可复现的隔离运行验证。
 
 任务记录至少写明目标能力 ID、固定上游来源、各层改动、成功/错误/取消/释放条件、测试与完成证据。旧固定 Host API 提交只是对应家族的来源；新的目标版本必须按自己的 tag 核对，见 [dsh-contract.md](dsh-contract.md)。
@@ -51,7 +51,7 @@ VS Code 更新可能替换该补丁；不附加调试器时可用 Ctrl+F5。该�
 | 隔离真实 DSH                   | 精确运行包的握手、RPC、流、持久化、进程释放              | Webview 现场交互      |
 | VS Code/Electron 与人工验收    | View、协议、焦点、主题、宽度、交互和安装包               | 上游版本契约 fixture  |
 
-`DONE` 要求代码、适用的自动测试和该能力所需的真实 DSH/VS Code 证据都到位；缺少任何一层保持 `PARTIAL`。PR 或发布记录保存确切运行命令、目标版本、平台、结果及可复现步骤；矩阵只链接稳定证据入口，不粘贴原始输出、机器路径、PID、端口或每次门禁流水。
+`DONE` 要求代码、适用的自动测试和该能力所需的真实 DSH/VS Code 证据都到位；缺少任何一层保持 `PARTIAL`。PR 或发布记录保存确切运行命令、目标版本、平台、结果及可复现步骤；矩阵只描述具体能力、范围、限制和状态，不放源码、测试文件链接、原始输出或门禁流水。
 
 ### 必测负面路径
 

@@ -49,6 +49,14 @@ for (const file of files) {
     if (fenced) continue
     for (const match of line.matchAll(/!?\[[^\]\n]*\]\((<[^>]+>|[^)\s]+)(?:\s+"[^"]*")?\)/gu)) {
       const target = match[1].replace(/^<|>$/gu, '')
+      const linkedPath = decodeURIComponent(target.split(/[?#]/u, 1)[0])
+      if (
+        name === 'docs/capability-matrix.md' &&
+        !/\.(?:md|mdx|rst|txt|html?|pdf)$/iu.test(linkedPath) &&
+        (/\.(?:[cm]?[jt]sx?|jsonc?|css|scss|less|py|rs|go|sh|ps1)$/iu.test(linkedPath) ||
+          /(?:^|\/)(?:apps|packages|src|tests|scripts)(?:\/|$)/u.test(linkedPath))
+      )
+        errors.push(`${name}:${index + 1}: describe capabilities without source or test links`)
       if (/^(?:https?:|mailto:|codex:)/iu.test(target)) continue
       const pathname = decodeURIComponent(target.split('#', 1)[0])
       if (pathname === '') continue
@@ -106,6 +114,8 @@ if (installerVersion === undefined || documentedInstaller !== installerVersion)
   errors.push('docs/dsh-contract.md: installer default differs from code')
 
 const matrix = readFileSync(path.join(docsRoot, 'capability-matrix.md'), 'utf8')
+if (/\|\s*(?:已有证据|验收缺口|测试入口)\s*\|/u.test(matrix))
+  errors.push('docs/capability-matrix.md: keep evidence and test inventories out of capability tables')
 const rows = [...matrix.matchAll(/^\|\s*([A-Z]+-\d+)\s*\|.*\|\s*(DONE|PARTIAL|TODO)\s*\|\s*$/gmu)]
 if (rows.length < 45)
   errors.push(`docs/capability-matrix.md: expected at least 45 capability rows, found ${rows.length}`)

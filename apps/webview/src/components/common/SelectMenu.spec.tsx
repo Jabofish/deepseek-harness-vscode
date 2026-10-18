@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ReactElement } from 'react'
 import { SelectMenu, type SelectMenuOption } from './SelectMenu.js'
 
+afterEach(() => vi.useRealTimers())
+
 const MODE_OPTIONS: readonly SelectMenuOption[] = [
   { value: 'ask', label: 'Ask' },
   { value: 'plan', label: 'Plan', disabled: true },
@@ -160,11 +162,15 @@ describe('SelectMenu open requests', () => {
   afterEach(() => cleanup())
 
   it('opens when the request counter advances while the menu is on screen', async () => {
+    vi.useFakeTimers()
     const view = renderMenu({ value: 'act' })
 
     deliverRequest(view, { value: 'act' })
 
-    expect(await screen.findByRole('listbox', { name: 'Workflow mode' })).toBeDefined()
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(screen.getByRole('listbox', { name: 'Workflow mode' })).toBeDefined()
   })
 
   it('resolves a requested open only once when the selected value changes afterwards', async () => {
