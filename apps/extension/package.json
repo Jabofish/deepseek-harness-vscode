@@ -59,7 +59,7 @@
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "dev": "node esbuild.mjs --watch",
     "prepackage:vsix": "node -e \"require('node:fs').mkdirSync('../../artifacts',{recursive:true})\"",
-    "package:vsix": "vsce package --no-dependencies -o ../../artifacts/deepseek-harness-vscode.vsix",
+    "package:vsix": "vsce package --no-dependencies --no-gitHubIssueLinking -o ../../artifacts/deepseek-harness-vscode.vsix",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
