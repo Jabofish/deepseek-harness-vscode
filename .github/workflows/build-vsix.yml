@@ -103,11 +103,13 @@ jobs:
           if [ "${{ matrix.target }}" = "universal" ]; then
             pnpm --filter deepseek-harness-client exec vsce package \
               --no-dependencies \
+              --no-gitHubIssueLinking \
               --allow-missing-repository \
               --out "../../artifacts/deepseek-harness-vscode-${{ matrix.name }}.vsix"
           else
             pnpm --filter deepseek-harness-client exec vsce package \
               --no-dependencies \
+              --no-gitHubIssueLinking \
               --allow-missing-repository \
               --target "${{ matrix.target }}" \
               --out "../../artifacts/deepseek-harness-vscode-${{ matrix.name }}.vsix"
