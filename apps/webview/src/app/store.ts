@@ -9,6 +9,7 @@ import { createRetryDelays } from './store/retry-delays.js'
 import { createFeatureActions } from './store/feature-actions.js'
 import { defineStateView, type StoreWithoutStateView } from './store/state-view.js'
 import { createJobActions } from './store/job-actions.js'
+import { withAvailableList } from './store/list-availability.js'
 import { getVsCodeApi } from '../vscode-api.js'
 import { ProtocolClient } from './protocol-client.js'
 import type { AppStore, StateSetter } from './store/types.js'
@@ -217,7 +218,10 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         state.activeSessionId === sessionId &&
         goals !== undefined
       )
-        setState((current) => (sameGoalList(current.goals, goals) ? current : { ...current, goals }))
+        setState((current) => {
+          const available = withAvailableList(current, 'goals')
+          return sameGoalList(available.goals, goals) ? available : { ...available, goals }
+        })
     } catch {
       /* Durable goal state remains available; the next live edge retries. */
     }

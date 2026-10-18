@@ -56,6 +56,7 @@
   display: flex;
   flex: 0 0 auto;
   flex-direction: column;
+  justify-content: flex-end;
   min-width: 0;
   gap: var(--dsh-space-1);
   padding: var(--dsh-space-2);
@@ -69,6 +70,14 @@
 .dsh-unified-composer:focus-within {
   border-color: var(--dsh-focus-ring);
   box-shadow: none;
+}
+
+.dsh-unified-composer > * {
+  flex-shrink: 0;
+}
+
+.dsh-unified-composer.dsh-composer--resizing {
+  overflow: clip;
 }
 
 /* One quiet focus treatment for every control in the app. Feature styles may
@@ -132,6 +141,86 @@
   color: var(--dsh-input-text);
   background: transparent;
   line-height: 1.45;
+}
+
+.dsh-app .dsh-unified-composer .dsh-composer__input-shell .dsh-composer__textarea {
+  padding-inline-end: 40px;
+}
+
+.dsh-composer__quick-tools {
+  position: absolute;
+  z-index: 10;
+  inset-block-start: var(--dsh-space-1);
+  inset-inline-end: var(--dsh-space-1);
+  display: flex;
+  align-items: center;
+  max-width: calc(100% - var(--dsh-space-2));
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--dsh-radius-md);
+  background: var(--dsh-input-bg);
+  transition: background-color var(--dsh-motion-duration-fast) var(--dsh-motion-ease-standard);
+}
+
+.dsh-unified-composer .dsh-composer__quick-attach,
+.dsh-composer__quick-tools [data-context-kind]:not([data-context-kind='file']) {
+  display: none;
+}
+
+.dsh-composer__input-shell:is(:hover, :focus-within) .dsh-composer__quick-attach,
+.dsh-composer__quick-tools:is(:hover, :focus-within) [data-context-kind]:not([data-context-kind='file']) {
+  display: inline-flex;
+  animation: dsh-overlay-fade-in var(--dsh-motion-duration-fast) var(--dsh-motion-ease-enter) backwards;
+}
+
+.dsh-composer__quick-tools [data-context-kind='file'] {
+  order: 1;
+}
+
+.dsh-unified-composer .dsh-composer__quick-tools .dsh-composer__context-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.dsh-unified-composer .dsh-composer__quick-tools button {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  min-height: 24px;
+  padding: var(--dsh-space-1);
+  border: 0;
+  border-radius: var(--dsh-radius-sm);
+}
+
+.dsh-composer__quick-tools .dsh-composer__extra-action > span {
+  display: none;
+}
+
+.dsh-composer__quick-tools .dsh-composer__context-status {
+  position: absolute;
+  inset-block-start: 100%;
+  inset-inline-end: 0;
+  padding: var(--dsh-space-1);
+  border-radius: var(--dsh-radius-sm);
+  background: var(--dsh-widget-bg);
+}
+
+.dsh-composer__quick-tools[aria-busy='true']::after {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-end: 0;
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--dsh-muted);
+  border-inline-end-color: transparent;
+  border-radius: 50%;
+  content: '';
+  pointer-events: none;
+  animation: dsh-spin var(--dsh-motion-duration-loop-shimmer) linear infinite;
+}
+
+.dsh-composer__quick-tools button[aria-busy='true'] > .dsh-icon {
+  animation: dsh-spin var(--dsh-motion-duration-loop-shimmer) linear infinite;
 }
 
 .dsh-unified-composer .dsh-composer__textarea:focus-visible {
@@ -268,6 +357,20 @@
   min-height: 2.25rem;
   padding: var(--dsh-space-2);
   border-radius: var(--dsh-radius-md);
+  transition:
+    background-color var(--dsh-motion-duration-fast) var(--dsh-motion-ease-standard),
+    color var(--dsh-motion-duration-fast) var(--dsh-motion-ease-standard),
+    transform var(--dsh-motion-duration-fast) var(--dsh-motion-ease-standard);
+}
+
+.dsh-unified-composer .dsh-composer__submit > .dsh-icon {
+  width: var(--dsh-icon-size-sm);
+  height: var(--dsh-icon-size-sm);
+  transition: transform var(--dsh-motion-duration-fast) var(--dsh-motion-ease-standard);
+}
+
+.dsh-unified-composer .dsh-composer__submit:active:not(:disabled) > .dsh-icon {
+  transform: scale(0.9);
 }
 
 .dsh-unified-composer .dsh-composer__status {
@@ -287,9 +390,8 @@
   display: none;
 }
 
-/* Editor context is one compact composer rail. Capture actions and attached
- * context share the same surface, so the rail never grows into a second
- * toolbar or hides important context behind the plus menu. */
+/* Attached context stays visible; actions and transient progress belong to the
+ * extras menu so background discovery cannot add another composer row. */
 .dsh-unified-composer .dsh-composer__context-rail {
   display: flex;
   align-items: center;
@@ -320,34 +422,12 @@
 }
 
 .dsh-unified-composer .dsh-composer__context-actions {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   flex: 0 0 auto;
   min-width: 0;
   gap: var(--dsh-space-1);
-}
-
-.dsh-unified-composer .dsh-composer__context-capture {
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-start;
-  min-width: 0;
-  min-height: var(--dsh-control-height);
-  gap: var(--dsh-space-1);
-  padding: var(--dsh-space-1) var(--dsh-space-2);
-  border: 1px solid var(--dsh-border-color);
-  border-radius: var(--dsh-radius-md);
-  color: var(--dsh-muted);
-  background: var(--dsh-surface-raised);
-  font-size: var(--dsh-font-size-2xs);
-  line-height: 1.2;
-  white-space: nowrap;
-}
-
-.dsh-unified-composer .dsh-composer__context-capture:hover:not(:disabled),
-.dsh-unified-composer .dsh-composer__context-capture:focus-visible {
-  color: var(--dsh-text);
-  background: var(--dsh-surface-hover);
 }
 
 .dsh-unified-composer .dsh-composer__context-chip {
@@ -360,6 +440,7 @@
   border-radius: 999px;
   color: var(--dsh-text);
   background: var(--dsh-surface-raised);
+  animation: dsh-overlay-fade-in var(--dsh-motion-duration-fast) var(--dsh-motion-ease-enter) backwards;
 }
 
 .dsh-unified-composer .dsh-composer__attachment {
@@ -373,19 +454,13 @@
   grid-template-columns: minmax(0, 1fr);
 }
 
-/* A narrow rail prioritizes identifying each file. Keep the list bounded so
- * many attachments cannot displace the prompt and Send action. */
-@container dsh-composer (max-width: 22rem) {
-  .dsh-unified-composer .dsh-composer__attachments {
-    flex-wrap: wrap;
-    max-height: 7rem;
-    overflow: auto;
-  }
-
-  .dsh-unified-composer .dsh-composer__attachment {
-    flex: 0 0 100%;
-    max-width: 100%;
-  }
+/* One row throughout batch ingestion: page buttons, keyboard focus and wheel
+ * scrolling reveal every file without repeatedly resizing the conversation.
+ * Paging supplies the visible affordance; a native scrollbar would change the
+ * row height as it appears or disappears on different desktop platforms. */
+.dsh-unified-composer .dsh-composer__attachments {
+  flex-wrap: nowrap;
+  scrollbar-width: none;
 }
 
 .dsh-unified-composer .dsh-composer__attachment-content {

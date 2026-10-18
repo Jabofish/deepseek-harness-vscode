@@ -149,6 +149,8 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
       accountActions.applyConnectionIdentity(identity)
     }
     const parsedEvent = parseHostDomainEvent(message)
+    if (parsedEvent?.type === 'goal.updated' && parsedEvent.sessionId === getState().activeSessionId)
+      lifecycle.incrementGoalReadGeneration()
     if (parsedEvent?.type === 'turn.started' || parsedEvent?.type === 'turn.ended')
       turnWatchers.notify(parsedEvent)
     const messageSessionId =

@@ -216,6 +216,38 @@ describe('Composer', () => {
     expect(onExtrasOpenChange).toHaveBeenLastCalledWith(false)
   })
 
+  it('keeps attachment and context shortcuts outside the menu without adding a loading row', async () => {
+    const props = {
+      ...baseProps(),
+      editorContext: [],
+      editorContextAvailableKinds: ['file', 'symbol'] as const,
+      onCaptureEditorContext: vi.fn(),
+      onRemoveEditorContext: vi.fn(),
+      onPreviewEditorContext: vi.fn(),
+    }
+    const { rerender } = render(<Composer {...props} />)
+    expect(composerForm().querySelector('.dsh-composer__context-rail')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Add current file to DSH context' }).dataset.contextKind).toBe(
+      'file',
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Attach file' }))
+    expect(props.onPickAttachment).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('dialog', { name: 'Editor context' })).toBeNull()
+
+    rerender(<Composer {...props} editorContextLoading />)
+    expect(composerForm().querySelector('.dsh-composer__context-rail')).toBeNull()
+    const tools = screen.getByRole('group', { name: 'Editor context' })
+    expect(tools.getAttribute('aria-busy')).toBe('true')
+    fireEvent.click(screen.getByRole('button', { name: 'Add current file to DSH context' }))
+    await act(() => Promise.resolve())
+    expect(props.onCaptureEditorContext).toHaveBeenCalledWith('file')
+    rerender(<Composer {...props} />)
+    expect(composerForm().querySelector('.dsh-composer__context-rail')).toBeNull()
+    expect(tools.getAttribute('aria-busy')).toBe('false')
+    rerender(<Composer {...props} editorContextAvailableKinds={['symbol']} />)
+    expect(screen.queryByRole('button', { name: 'Add current file to DSH context' })).toBeNull()
+  })
+
   it('returns focus without a frame wait and keeps the open-file picker collapsed after command insertion', async () => {
     vi.useFakeTimers()
     const onExtrasOpenChange = vi.fn()

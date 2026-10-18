@@ -201,6 +201,36 @@ describe('useScrollFollow user jump', () => {
     expect(viewport.scrollTop).toBe(600)
   })
 
+  it('does not mistake a native height clamp before ResizeObserver for a reader gesture', () => {
+    vi.useFakeTimers()
+    const resize = stubViewportResize()
+    const { viewport } = renderHarness()
+    const content = screen.getByTestId('content')
+    setScrollMetrics(viewport, 600, 1_000, 400)
+    act(() => {
+      resize(viewport, 400)
+      resize(content, 1_000)
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Preserve layout' }))
+    act(() => {
+      vi.advanceTimersByTime(250)
+    })
+    // A shrinking composer expands the viewport. Chromium clamps the old tail
+    // before the resize notification, without any wheel or pointer gesture.
+    setScrollMetrics(viewport, 550, 1_000, 450)
+    fireEvent.scroll(viewport)
+    setScrollMetrics(viewport, 550, 1_100, 450)
+    act(() => resize(content, 1_100))
+    expect(viewport.scrollTop).toBe(650)
+    expect(screen.getByTestId('jump-state').getAttribute('data-visible')).toBe('false')
+    fireEvent.click(screen.getByRole('button', { name: 'Preserve layout' }))
+    fireEvent.scroll(viewport)
+    fireEvent.scroll(viewport)
+    setScrollMetrics(viewport, 650, 1_200, 450)
+    act(() => resize(content, 1_200))
+    expect(viewport.scrollTop).toBe(750)
+  })
+
   it('keeps following after nonzero measurement clamps and duplicate Chromium scroll events', () => {
     vi.useFakeTimers()
     const { viewport } = renderHarness(true)

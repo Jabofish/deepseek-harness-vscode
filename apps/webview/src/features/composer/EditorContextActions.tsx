@@ -54,7 +54,7 @@ const CONTEXT_ACTIONS: readonly EditorContextAction[] = [
 ]
 
 /**
- * Compact editor-context capture actions. The rail owns placement; this
+ * Editor-context capture shortcuts. The floating toolbar owns placement; this
  * component owns the action transaction and its local error state.
  */
 export function EditorContextActions(props: EditorContextActionsProps): ReactElement {
@@ -79,21 +79,23 @@ export function EditorContextActions(props: EditorContextActionsProps): ReactEle
         const description = t(action.descriptionKey)
         return (
           <button
-            className="dsh-button dsh-button--ghost dsh-button--compact dsh-composer__context-capture"
+            className="dsh-composer__extra-action"
             type="button"
             key={action.kind}
+            data-context-kind={action.kind}
             aria-label={description}
             title={description}
             disabled={props.disabled || capturing !== undefined}
+            aria-busy={capturing === action.kind}
             onClick={() => capture(action.kind)}
           >
-            <Icon name={action.icon} />
-            <span className="dsh-composer__context-action-label">{label}</span>
+            <Icon name={capturing === action.kind ? 'refresh' : action.icon} />
+            <span>{label}</span>
           </button>
         )
       })}
       {capturing === undefined ? null : (
-        <span className="dsh-composer__context-status" role="status">
+        <span className="dsh-sr-only" role="status">
           {t('composer.contextCapturing')}
         </span>
       )}

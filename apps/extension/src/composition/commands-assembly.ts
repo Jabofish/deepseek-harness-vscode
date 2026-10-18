@@ -18,6 +18,7 @@ import type { AttachmentStore } from '../attachments/attachment-store.js'
 import type { RuntimeInstaller } from '../vscode/install-runtime.js'
 import type { VsCodeConfigurationSource } from '../config/configuration-source.js'
 import { moveOrExplainSecondarySidebar } from '../vscode/secondary-sidebar.js'
+import { openDshWebUi } from '../vscode/open-web-ui.js'
 import { DSH_DOCUMENTATION_URL } from '../constants.js'
 import { deliverOrRevealView } from '../view/deliver-or-reveal.js'
 import type { WebviewMessageRouter } from '../view/message-router.js'
@@ -233,19 +234,7 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
               '@ext:Direwolf.deepseek-harness-client',
             )
         },
-        'dsh.openWebUi': async () => {
-          const state = coordinator.getState()
-          if (state.kind !== 'connected') {
-            void vscode.window.showInformationMessage(
-              'Connect to a local DSH instance before opening its Web UI.',
-            )
-            return
-          }
-          const target =
-            endpointLaunchUrls.get(state.backend.endpoint.baseUrl) ?? state.backend.endpoint.baseUrl
-          const opened = await vscode.env.openExternal(vscode.Uri.parse(target))
-          if (!opened) void vscode.window.showWarningMessage('Unable to open the DSH Web UI in your browser.')
-        },
+        'dsh.openWebUi': () => openDshWebUi(coordinator.getState(), endpointLaunchUrls),
         'dsh.installRuntime': () => runtimeInstaller.install(),
         'dsh.selectExecutable': () => runtimeInstaller.selectExecutable(),
         'dsh.copyInstallCommand': () => runtimeInstaller.copyInstallCommand(),

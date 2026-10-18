@@ -54,8 +54,7 @@
   white-space: nowrap;
 }
 
-/* One menu owns every secondary composer action. The menu itself is a
- * bounded surface; it cannot enlarge the composer or create page overflow. */
+/* Secondary actions use a bounded menu without enlarging the composer. */
 
 .dsh-composer__extras {
   position: relative;
@@ -431,17 +430,6 @@
  * context status the space first in a narrow composer; the hint remains
  * available through the input's accessible description/title. */
 @container dsh-composer (max-width: 36rem) {
-  .dsh-unified-composer .dsh-composer__context-capture {
-    width: var(--dsh-control-height);
-    min-width: var(--dsh-control-height);
-    justify-content: center;
-    padding-inline: var(--dsh-space-1);
-  }
-
-  .dsh-unified-composer .dsh-composer__context-action-label {
-    display: none;
-  }
-
   /* The responsive feature rule previously changed this toolbar to a
    * wrapping flex column. The composer owns its intrinsic geometry, so keep
    * the rail in one row and let only labels collapse at narrow widths. */

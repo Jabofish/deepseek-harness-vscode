@@ -15,9 +15,8 @@ export interface ComposerExtrasMenuProps {
 }
 
 /**
- * The single entry point for secondary composer actions. The prompt surface
- * stays quiet by default; attachments, editor context, and file actions live
- * in this anchored menu until the user asks for them.
+ * Secondary command, open-file and configuration actions. Direct attachment
+ * and current-editor shortcuts live in the input's floating toolbar.
  */
 export function ComposerExtrasMenu(props: ComposerExtrasMenuProps): ReactElement {
   const dialogId = useId()

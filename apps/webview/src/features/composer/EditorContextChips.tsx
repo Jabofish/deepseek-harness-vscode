@@ -62,7 +62,7 @@ export function EditorContextChips(props: EditorContextChipsProps): ReactElement
     <>
       <div ref={chipsRef} className="dsh-composer__context-chips">
         {props.loading === true ? (
-          <span className="dsh-composer__context-status" role="status">
+          <span className="dsh-sr-only" role="status">
             {t('composer.contextLoading')}
           </span>
         ) : null}

@@ -10,7 +10,6 @@
 }
 
 .dsh-app[data-conversation-layout='focused'] .dsh-conversation__topbar {
-  padding-inline: var(--dsh-space-1);
   border-bottom: var(--dsh-border);
 }
 
@@ -53,6 +52,10 @@
 
 .dsh-app[data-conversation-layout='focused'] .dsh-unified-composer:focus-within {
   border-color: var(--dsh-focus-ring);
+}
+
+.dsh-app[data-conversation-layout='focused'] .dsh-composer__quick-tools {
+  background: var(--dsh-surface-soft);
 }
 
 .dsh-app[data-conversation-layout='focused'] .dsh-composer__textarea {
@@ -129,11 +132,11 @@
 }
 
 .dsh-app[data-conversation-layout='focused'] .dsh-composer__submit {
-  width: 36px;
-  height: 36px;
-  min-width: 36px;
-  min-height: 36px;
-  padding: 8px;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 6px;
   border-radius: 50%;
 }
 

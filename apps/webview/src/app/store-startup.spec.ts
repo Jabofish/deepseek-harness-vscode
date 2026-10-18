@@ -2444,6 +2444,136 @@ it('refreshes goal activation without allowing an older read to overwrite the la
   store.dispose()
 })
 
+describe('advisory list recovery', () => {
+  const lists = [
+    { type: 'goal.list', key: 'goals', event: 'goal.updated', field: 'goals' },
+    { type: 'session.queue.list', key: 'queue', event: 'queue.updated', field: 'items' },
+    { type: 'job.list', key: 'jobs', event: 'jobs.updated', field: 'jobs' },
+  ] as const
+
+  it.each(lists)(
+    'clears a failed $key read on a valid active-session snapshot, including identical empty lists',
+    async ({ type, key, event, field }) => {
+      const client = new StartupClient((request) => {
+        if (request.type === type) throw new Error('Temporary read failure')
+        return startupResponse(request)
+      })
+      const store = createAppStore(client as unknown as ProtocolClient)
+      try {
+        await store.openSession(activeSession.id)
+        await vi.waitFor(() => expect(store.unavailableLists).toContain(key))
+        client.emit({
+          type: 'event',
+          sequence: 100,
+          name: event,
+          payload: { sessionId: 'another-session', [field]: [] },
+        })
+        expect(store.unavailableLists).toContain(key)
+        client.emit({
+          type: 'event',
+          sequence: 101,
+          name: event,
+          payload: { sessionId: activeSession.id, [field]: [] },
+        })
+        expect(store.unavailableLists).not.toContain(key)
+      } finally {
+        store.dispose()
+      }
+    },
+  )
+
+  it.each(lists)(
+    'does not reinstall a late $key read failure after a live snapshot',
+    async ({ type, key, event, field }) => {
+      let fail: (error: Error) => void = () => undefined
+      const client = new StartupClient((request) => {
+        if (request.type === type)
+          return new Promise((_resolve, reject) => {
+            fail = reject
+          })
+        return startupResponse(request)
+      })
+      const store = createAppStore(client as unknown as ProtocolClient)
+      try {
+        await store.openSession(activeSession.id)
+        client.emit({
+          type: 'event',
+          sequence: 102,
+          name: event,
+          payload: { sessionId: activeSession.id, [field]: [] },
+        })
+        fail(new Error('Outdated read failed'))
+        await new Promise<void>((resolve) => setTimeout(resolve, 0))
+        expect(store.unavailableLists).not.toContain(key)
+      } finally {
+        store.dispose()
+      }
+    },
+  )
+
+  it('clears the goal warning after a successful activation refresh even when the list is unchanged', async () => {
+    let recover = false
+    const client = new StartupClient((request) => {
+      if (request.type === 'goal.list') {
+        if (!recover) throw new Error('Temporary goal read failure')
+        return []
+      }
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+    try {
+      await store.openSession(activeSession.id)
+      await vi.waitFor(() => expect(store.unavailableLists).toContain('goals'))
+      recover = true
+      client.emit({
+        type: 'event',
+        sequence: 103,
+        name: 'remote.event',
+        payload: { name: 'goal/activation-changed', args: [{ sessionId: activeSession.id }] },
+      })
+      await vi.waitFor(() => expect(store.unavailableLists).not.toContain('goals'))
+      expect(store.goals).toEqual([])
+    } finally {
+      store.dispose()
+    }
+  })
+
+  it('keeps a newer goal snapshot when an earlier activation read resolves', async () => {
+    let pending: ((value: unknown) => void) | undefined
+    const client = new StartupClient((request) => {
+      if (request.type === 'goal.list' && pending !== undefined)
+        return new Promise((resolve) => {
+          pending = resolve
+        })
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+    try {
+      await store.openSession(activeSession.id)
+      pending = () => undefined
+      client.emit({
+        type: 'event',
+        sequence: 104,
+        name: 'remote.event',
+        payload: { name: 'goal/activation-changed', args: [{ sessionId: activeSession.id }] },
+      })
+      const goal = { id: 'g1', title: 'Current goal', status: 'in-progress', activation: 'armed' }
+      client.emit({
+        type: 'event',
+        sequence: 105,
+        name: 'goal.updated',
+        payload: { sessionId: activeSession.id, goals: [goal] },
+      })
+      pending?.([])
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+      expect(store.goals).toEqual([goal])
+      expect(store.unavailableLists).not.toContain('goals')
+    } finally {
+      store.dispose()
+    }
+  })
+})
+
 it('reports failed advisory lists instead of presenting an empty success', async () => {
   const client = new StartupClient((request) => {
     if (request.type === 'goal.list') throw new Error('Offline')

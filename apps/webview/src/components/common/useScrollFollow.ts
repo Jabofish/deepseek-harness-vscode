@@ -88,6 +88,7 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
   const interactionGenerationRef = useRef(0)
   const internalScrollTopRef = useRef<number | undefined>(undefined)
   const lastReaderScrollTopRef = useRef<number | undefined>(undefined)
+  const viewportHeightRef = useRef(0)
   const preserveBottomOnLayoutRef = useRef(false)
   const layoutProtectionTimerRef = useRef<number | undefined>(undefined)
   const smoothScrollActiveRef = useRef(false)
@@ -185,11 +186,14 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
     stickToBottomRef.current = true
     setIsPinnedToBottom(true)
     const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight)
+    // Retain ownership even if layout already clamped to this offset. Chromium
+    // can still deliver the pending scroll event after the resize callback.
+    internalScrollTopRef.current = maxScrollTop
     if (Math.abs(element.scrollTop - maxScrollTop) > 0.5) {
-      internalScrollTopRef.current = maxScrollTop
       element.scrollTop = maxScrollTop
-    } else internalScrollTopRef.current = undefined
+    }
     lastReaderScrollTopRef.current = maxScrollTop
+    viewportHeightRef.current = element.clientHeight
     setShowJumpToLatest(false)
   }, [cancelScheduledFollow, clearUserScrollLock])
 
@@ -366,10 +370,20 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
     // A measured virtual canvas can also clamp to a nonzero estimate. Limit
     // that exception to the owning consumer's guarded layout reconciliation;
     // ordinary readers and all captured physical gestures keep control.
+    const viewportResized =
+      viewportHeightRef.current > 0 && viewportHeightRef.current !== element.clientHeight
+    viewportHeightRef.current = element.clientHeight
+    const isViewportLayoutScroll = stickToBottomRef.current && viewportResized && !userScrollActiveRef.current
+    if (isViewportLayoutScroll) {
+      internalScrollTopRef.current = element.scrollTop
+      lastReaderScrollTopRef.current = element.scrollTop
+    }
     const isLayoutScroll =
-      preserveBottomOnLayoutRef.current &&
       !userScrollActiveRef.current &&
-      (element.scrollTop <= 1 || (options.layoutMeasurementsActive === true && stickToBottomRef.current))
+      (isViewportLayoutScroll ||
+        (preserveBottomOnLayoutRef.current &&
+          (element.scrollTop <= 1 ||
+            (options.layoutMeasurementsActive === true && stickToBottomRef.current))))
     if (!isInternalScroll && !isLayoutScroll) {
       // Scroll events are the final source of truth. They also cover input
       // paths that do not reliably expose wheel/pointer intent in a Webview.
@@ -410,6 +424,7 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
     const element = scrollRef.current
     if (element !== null && lastReaderScrollTopRef.current === undefined)
       lastReaderScrollTopRef.current = element.scrollTop
+    if (element !== null && viewportHeightRef.current <= 0) viewportHeightRef.current = element.clientHeight
     itemCountRef.current = options.itemCount
     scrollHandlerRef.current = handleScroll
   }, [handleScroll, options.itemCount])
@@ -521,6 +536,7 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
           const measured = viewportSizes.width > 0
           viewportSizes.width = width
           viewportSizes.height = height
+          if (viewportHeightRef.current <= 0) viewportHeightRef.current = element.clientHeight
           // Notifications and in-flow helpers resize the scroll owner without
           // changing its content. Reconcile only through the existing intent
           // guard: a free reader or an active gesture always keeps control.

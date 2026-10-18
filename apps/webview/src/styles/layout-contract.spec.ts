@@ -185,10 +185,37 @@ describe('Readable session choices', () => {
     expect(
       effective(
         compactRail,
-        '.dsh-app .dsh-unified-composer .dsh-composer__toolbar:has(.dsh-session-controls__metrics)',
+        '.dsh-app .dsh-unified-composer .dsh-composer__toolbar:has(.dsh-session-controls)',
         'grid-template-areas',
       ),
     ).toBe("'controls controls' 'start submit'")
+  })
+
+  it('keeps ordinary sidebars on one row before using the narrow choices rail', () => {
+    // The 40em/52em cutoffs forced even the reported 566px view onto two rows.
+    // Compact spacing and on-demand context details should be used first.
+    const containers = [
+      ...layoutStyles.matchAll(
+        /@container dsh-composer \(([^)]+)\)(?: or \(([^)]+)\))? \{([\s\S]*?)(?=\n@(?:container|media)|$)/gu,
+      ),
+    ]
+    const reflow = containers.filter(([, , , body]) => body?.includes("'controls controls' 'start submit'"))
+    expect(reflow.length).toBeGreaterThan(0)
+    for (const [, scaled, minimum] of reflow) {
+      expect(scaled).toMatch(/^max-width: [\d.]+em$/u)
+      expect(Number.parseFloat(scaled?.split(':')[1] ?? '')).toBeLessThanOrEqual(22)
+      // Icons keep their own minimum size even when message text is smaller.
+      expect(minimum).toMatch(/^max-width: [\d.]+rem$/u)
+      expect(Number.parseFloat(minimum?.split(':')[1] ?? '')).toBeLessThanOrEqual(20)
+    }
+  })
+
+  it('keeps the attachment rail stable while a batch arrives', () => {
+    const wrapping = declared(layoutStyles, '.dsh-unified-composer .dsh-composer__attachments', 'flex-wrap')
+    expect(wrapping.length).toBeGreaterThan(0)
+    // Narrow multi-row attachments made the transcript jump again for every
+    // asynchronously ingested file. Paging must keep all files reachable.
+    for (const value of wrapping) expect(value).toBe('nowrap')
   })
 })
 

@@ -409,6 +409,20 @@
     "configuration": {
       "title": "DeepSeek Harness",
       "properties": {
+        "dsh.webUi.browser": {
+          "type": "string",
+          "enum": [
+            "internal",
+            "external"
+          ],
+          "enumDescriptions": [
+            "VS Code integrated browser",
+            "System default browser"
+          ],
+          "default": "internal",
+          "scope": "application",
+          "description": "Where the title-bar Open Web UI action opens DSH. Changes take effect on the next click."
+        },
         "dsh.connection.mode": {
           "type": "string",
           "enum": [

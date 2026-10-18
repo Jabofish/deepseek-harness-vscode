@@ -48,28 +48,22 @@
   max-width: 100%;
 }
 
-/* A new session has two choices in this rail, so reserve more space before
- * classic's keyboard hint and the other controls squeeze their labels. */
+/* Tighten controls before adding a row. Normal sidebar widths should not pay
+ * for the wide layout's spacing, hints and selector padding. */
 @container dsh-composer (max-width: 52em) {
-  .dsh-app .dsh-unified-composer .dsh-composer__toolbar:has(.dsh-session-controls__mode) {
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas: 'controls controls' 'start submit';
-    row-gap: var(--dsh-space-1);
-  }
-}
-
-/* Budget against the composer's font size, including host font scaling. Promote
- * the whole rail before allowing its contents to wrap: wrapping only the middle
- * grid cell strands the model and context above/below permission and Send. */
-@container dsh-composer (max-width: 40em) {
-  .dsh-app .dsh-unified-composer .dsh-composer__toolbar:has(.dsh-session-controls__metrics) {
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas: 'controls controls' 'start submit';
-    row-gap: var(--dsh-space-1);
+  .dsh-app .dsh-unified-composer .dsh-composer__toolbar:has(.dsh-session-controls),
+  .dsh-app .dsh-unified-composer .dsh-composer__toolbar .dsh-composer__toolbar-start,
+  .dsh-app .dsh-unified-composer .dsh-composer__toolbar .dsh-session-controls,
+  .dsh-app
+    .dsh-unified-composer
+    .dsh-composer__toolbar
+    .dsh-session-controls
+    .dsh-session-controls__selectors {
+    gap: var(--dsh-space-1);
   }
 
-  .dsh-app .dsh-unified-composer .dsh-composer__toolbar-controls > .dsh-session-controls {
-    flex-wrap: wrap;
+  .dsh-app .dsh-unified-composer .dsh-composer__toolbar-start {
+    max-width: 45cqi;
   }
 
   .dsh-app
@@ -80,12 +74,13 @@
     flex: 0 1 auto;
   }
 
-  .dsh-app
-    .dsh-unified-composer
-    .dsh-composer__toolbar-controls
-    .dsh-session-controls
-    .dsh-session-controls__selectors {
-    flex-wrap: wrap;
+  .dsh-app .dsh-unified-composer .dsh-composer__toolbar .dsh-select-menu__trigger {
+    gap: var(--dsh-space-1);
+    padding-inline: var(--dsh-space-1);
+  }
+
+  .dsh-app .dsh-unified-composer .dsh-session-controls__metrics {
+    flex: 0 0 auto;
   }
 
   .dsh-app
@@ -131,15 +126,57 @@
   }
 }
 
-@container dsh-composer (max-width: 18rem) {
+/* The ring remains a labelled button opening the full token breakdown. At
+ * compact widths it saves the space needed to keep the model readable. */
+@container dsh-composer (max-width: 30em) {
+  .dsh-app .dsh-unified-composer .dsh-context-meter__label {
+    display: none;
+  }
+}
+
+/* Two choices need a little more room than an existing session's model. Only
+ * allow inner wrapping after the entire choices rail has its own row. */
+@container dsh-composer (max-width: 22em) or (max-width: 20rem) {
+  .dsh-app .dsh-unified-composer .dsh-composer__toolbar:has(.dsh-session-controls__mode) {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: 'controls controls' 'start submit';
+    row-gap: var(--dsh-space-1);
+  }
+
+  .dsh-app
+    .dsh-unified-composer
+    .dsh-composer__toolbar:has(.dsh-session-controls__mode)
+    .dsh-composer__toolbar-start {
+    max-width: none;
+  }
+
+  .dsh-app
+    .dsh-unified-composer
+    .dsh-composer__toolbar:has(.dsh-session-controls__mode)
+    .dsh-session-controls__selectors {
+    flex-wrap: wrap;
+  }
+}
+
+@container dsh-composer (max-width: 18em) or (max-width: 16rem) {
   .dsh-app .dsh-unified-composer .dsh-composer__toolbar:has(.dsh-session-controls) {
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas: 'controls controls' 'start submit';
     gap: var(--dsh-space-1);
   }
 
+  .dsh-app .dsh-unified-composer .dsh-composer__toolbar-controls > .dsh-session-controls,
+  .dsh-app
+    .dsh-unified-composer
+    .dsh-composer__toolbar-controls
+    .dsh-session-controls
+    .dsh-session-controls__selectors {
+    flex-wrap: wrap;
+  }
+
   .dsh-app .dsh-unified-composer .dsh-composer__toolbar .dsh-composer__toolbar-start {
     gap: var(--dsh-space-1);
+    max-width: none;
   }
 
   .dsh-unified-composer
@@ -841,10 +878,6 @@
 @media (max-width: 18rem) {
   .dsh-conversation__topbar {
     --dsh-control-height: 24px;
-  }
-
-  .dsh-app[data-conversation-layout='focused'] .dsh-conversation__topbar {
-    padding-inline: var(--dsh-space-1);
   }
 
   .dsh-conversation__views {

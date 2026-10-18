@@ -124,17 +124,17 @@ export function createSessionOpenController(host: SessionOpenHost): {
       if (!isCurrent()) return
       const superseded = key === 'goals' && reads.goalGeneration !== host.getGoalReadGeneration()
       setState((current) => {
+        if (superseded) return current
         const unavailableLists = [
           ...(current.unavailableLists ?? []).filter((entry) => entry !== key),
           ...(items === undefined ? [key] : []),
         ]
-        if (items === undefined || superseded) return { ...current, unavailableLists }
         // Only rebase this surface. Replaying unrelated transcript/projection
         // frames on each completed read would redo work and roll back peers.
         // Queue facts have already advanced the live sequence index, so this
         // local snapshot overlay must not reject their replay as duplicates.
         const replayed = applyBufferedHostState(
-          { ...current, [key]: items },
+          { ...current, ...(items === undefined ? {} : { [key]: items }), unavailableLists },
           pending.messages.filter((message) => message.type === 'event' && eventNames.includes(message.name)),
           {
             perKey: new Map(),
@@ -143,7 +143,7 @@ export function createSessionOpenController(host: SessionOpenHost): {
             connectionIdentity: projectionSequences.connectionIdentity,
           },
         )
-        return { ...current, [key]: replayed[key], unavailableLists }
+        return { ...current, [key]: replayed[key], unavailableLists: replayed.unavailableLists ?? [] }
       })
     }
     // Attach after first paint, even for child reads that finished before the

@@ -8,8 +8,11 @@
 - 修复新会话和设置页的 Agent 预设选择及 Creator 被错误禁用的问题；关闭 Developer Tools 或辅助设置读取失败不再阻断可用功能，仍保留上游能力和设置写入校验。
 - Fixes incorrectly disabled agent choices and Creator actions across new sessions and Settings. Developer Tools preferences and auxiliary settings failures no longer block available actions; upstream capabilities and settings-write checks remain authoritative.
 
-- 统一选择器样式并清理旧限宽覆盖；两种布局按字号和可用宽度整体分行，修复缩放后模型、统计和操作按钮错层，保留完整菜单。
-- Unifies selector styling and removes legacy width overrides. Both layouts reflow by font size and available width, fixing staggered model, context and action controls under scaling while preserving complete menus.
+- 统一选择器样式与响应式标题边距；输入栏优先单行，附件提供直接悬浮入口与固定单行列表，高度变化平滑过渡，加载不再反复拉动会话，并缩小发送按钮；当前文件入口常驻，附件入口悬停展开，保留完整菜单与详情。
+- Unifies selector styling and responsive header spacing. The composer favors one row, with direct floating attachment controls, a stable attachment rail, smooth height changes and a smaller send button; loading no longer bounces the transcript, the current-file action stays visible, attachments appear on hover, and full menus and details remain available.
+
+- 标题栏的 Web UI 入口默认使用 VS Code 内置浏览器，可在扩展设置中改用系统浏览器，修复登录参数编码；目标、队列和后台任务恢复后清除过期的读取失败提示。
+- The title-bar Web UI action defaults to VS Code's integrated browser, with a setting to use the system browser and correctly preserved login queries. Recovered goals, queues and jobs clear stale read-failure notices.
 
 ## 0.3.3
 

@@ -37,6 +37,7 @@ import {
 import type { AppState, StateSetter } from './types.js'
 import { object } from './unknown-record.js'
 import { currentTodos } from './todo-state.js'
+import { withAvailableList } from './list-availability.js'
 import { installTranscript, installTranscriptPatch, parseTranscript } from './transcript-state.js'
 
 export function applyHostMessage(
@@ -349,6 +350,8 @@ export function applyHostMessage(
     // follows it with a queue/jobs frame when that snapshot is non-empty.
     const queue = event.sessionId !== next.activeSessionId || next.queue.length === 0 ? next.queue : []
     const jobs = event.sessionId !== next.activeSessionId || next.jobs.length === 0 ? next.jobs : []
+    if (event.sessionId === next.activeSessionId && event.controlBaseline !== false)
+      next = withAvailableList(withAvailableList(next, 'queue'), 'jobs')
     const permissions =
       event.controlBaseline === false
         ? next.permissions
@@ -454,12 +457,16 @@ export function applyHostMessage(
     if (!isStale) {
       if (event.asOfSequence !== undefined)
         projectionSequences?.queueBySession.set(event.sessionId, event.asOfSequence)
-      if (event.sessionId === next.activeSessionId && !sameQueuedInputList(next.queue, event.items))
-        next = { ...next, queue: event.items }
+      if (event.sessionId === next.activeSessionId) {
+        next = withAvailableList(next, 'queue')
+        if (!sameQueuedInputList(next.queue, event.items)) next = { ...next, queue: event.items }
+      }
     }
   } else if (event.type === 'goal.updated' && event.sessionId === next.activeSessionId) {
+    next = withAvailableList(next, 'goals')
     if (!sameGoalList(next.goals, event.goals)) next = { ...next, goals: event.goals }
   } else if (event.type === 'jobs.updated' && event.sessionId === next.activeSessionId) {
+    next = withAvailableList(next, 'jobs')
     if (!sameJobList(next.jobs, event.jobs)) next = { ...next, jobs: event.jobs }
   } else if (event.type === 'job.follow.updated' && event.sessionId === next.activeSessionId) {
     if (next.jobFollow?.jobId === event.jobId && next.jobFollow.followId === event.followId) {

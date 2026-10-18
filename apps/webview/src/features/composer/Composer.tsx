@@ -55,6 +55,8 @@ import {
 } from './composer-input.js'
 import { REFERENCE_MENU_ID, ReferencePalette, referenceMenuOptionId } from './ReferencePalette.js'
 import { EditorContextRail } from './EditorContextRail.js'
+import { ComposerQuickTools } from './ComposerQuickTools.js'
+import { useComposerHeightMotion } from './useComposerHeightMotion.js'
 import { ComposerCommandActions } from './ComposerCommandActions.js'
 import { ComposerExtrasMenu } from './ComposerExtrasMenu.js'
 import { ComposerAttachmentActions } from './ComposerAttachmentActions.js'
@@ -163,6 +165,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
   const { t } = useI18n()
   const focused = useConversationLayout()?.layout === 'focused'
   const composerRef = useRef<HTMLFormElement>(null)
+  useComposerHeightMotion(composerRef)
   const composing = useRef(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const hintId = useId()
@@ -546,9 +549,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
       <EditorContextRail
         items={editorContext}
         disabled={props.disabled || inputBlocked || props.attachmentsDisabled === true}
-        availableKinds={editorContextAvailableKinds}
         loading={props.editorContextLoading ?? false}
-        {...(props.onCaptureEditorContext === undefined ? {} : { onCapture: props.onCaptureEditorContext })}
         {...(props.onRemoveEditorContext === undefined ? {} : { onRemove: props.onRemoveEditorContext })}
         {...(props.onPreviewEditorContext === undefined ? {} : { onPreview: props.onPreviewEditorContext })}
       />
@@ -558,6 +559,16 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
         </p>
       ) : null}
       <div className="dsh-composer__input-shell">
+        <ComposerQuickTools
+          disabled={props.disabled || inputBlocked || props.attachmentsDisabled === true}
+          loading={props.editorContextLoading === true}
+          availableKinds={editorContextAvailableKinds}
+          onPickAttachment={() => {
+            changeExtrasOpen(false)
+            props.onPickAttachment()
+          }}
+          {...(props.onCaptureEditorContext === undefined ? {} : { onCapture: props.onCaptureEditorContext })}
+        />
         <textarea
           ref={textareaRef}
           className="dsh-composer__textarea"
@@ -661,30 +672,24 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
             anchorRef={composerRef}
             onOpenChange={changeExtrasOpen}
           >
-            <div className="dsh-composer__extras-section">
-              <ComposerAttachmentActions
-                disabled={props.disabled || inputBlocked}
-                attachmentsDisabled={props.attachmentsDisabled === true}
-                openFileCandidates={openFileCandidates}
-                defaultOpenFileId={defaultOpenFileId}
-                openFilePickerOpen={props.openFilePickerOpen}
-                openFilePickerLoading={props.openFilePickerLoading}
-                attachedOpenFileIds={props.attachedOpenFileIds}
-                {...(props.attachingOpenFileId === undefined
-                  ? {}
-                  : { attachingOpenFileId: props.attachingOpenFileId })}
-                onPickAttachment={() => {
-                  changeExtrasOpen(false)
-                  props.onPickAttachment()
-                }}
-                onToggleOpenFilePicker={props.onToggleOpenFilePicker}
-                onSelectOpenFile={(candidateId) => {
-                  changeExtrasOpen(false)
-                  if (props.openFilePickerOpen) props.onToggleOpenFilePicker()
-                  props.onSelectOpenFile(candidateId)
-                }}
-              />
-            </div>
+            <ComposerAttachmentActions
+              disabled={props.disabled || inputBlocked}
+              attachmentsDisabled={props.attachmentsDisabled === true}
+              openFileCandidates={openFileCandidates}
+              defaultOpenFileId={defaultOpenFileId}
+              openFilePickerOpen={props.openFilePickerOpen}
+              openFilePickerLoading={props.openFilePickerLoading}
+              attachedOpenFileIds={props.attachedOpenFileIds}
+              {...(props.attachingOpenFileId === undefined
+                ? {}
+                : { attachingOpenFileId: props.attachingOpenFileId })}
+              onToggleOpenFilePicker={props.onToggleOpenFilePicker}
+              onSelectOpenFile={(candidateId) => {
+                changeExtrasOpen(false)
+                if (props.openFilePickerOpen) props.onToggleOpenFilePicker()
+                props.onSelectOpenFile(candidateId)
+              }}
+            />
             {props.commands === undefined || props.commands.length === 0 ? null : (
               <div className="dsh-composer__extras-section">
                 <ComposerCommandActions
