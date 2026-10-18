@@ -1142,7 +1142,6 @@
   "presets.emptyCustomCreator": "暂无自定义预设。可用创造模式创建，再到插件管理器安装。",
   "presets.creatorDraft": "让 Agent 帮我创建模式",
   "presets.creatorDraftTitle": "使用内置创造模式启动新任务。",
-  "presets.creatorDraftDisabled": "请先在“{section}”设置中启用“{setting}”。",
   "presets.broken": "已损坏",
   "presets.inUse": "使用中",
   "presets.setDefault": "设为默认",

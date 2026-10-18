@@ -1,5 +1,16 @@
 # Change Log
 
+## Unreleased
+
+- 修复编辑器区标签页标题在会话命名后不更新的问题：会话标题变化（含 DSH 自动命名）现在会同步到已打开的编辑器标签页，无需关闭再重开。
+- Fixes editor-tab titles not updating after a session is named: session title changes (including DSH auto-titling) now propagate to open editor tabs without closing and reopening them.
+
+- 修复新会话和设置页的 Agent 预设选择及 Creator 被错误禁用的问题；关闭 Developer Tools 或辅助设置读取失败不再阻断可用功能，仍保留上游能力和设置写入校验。
+- Fixes incorrectly disabled agent choices and Creator actions across new sessions and Settings. Developer Tools preferences and auxiliary settings failures no longer block available actions; upstream capabilities and settings-write checks remain authoritative.
+
+- 统一选择器的可用与禁用样式，清理旧窄栏宽度覆盖；两种布局在空间不足时分行，保留 Agent、模型和权限信息及完整菜单。
+- Unifies enabled and disabled selector styling and removes legacy narrow-width overrides. Both layouts reflow when needed, retaining agent, model and permission information and complete menus.
+
 ## 0.3.3
 
 - 改善流式增量传递，修复突发输出和重复基线造成的停顿；减少会话切换、首发与搜索等待，移除发送和滚动跟随的固定延迟。

@@ -28,8 +28,6 @@ export interface PresetManagerProps {
   /** Writes the default field selected by the version adapter. */
   readonly onMakeDefault: (presetId: string, settingsPath?: string) => Promise<void>
   readonly defaultWritable?: boolean
-  /** rc.2 Developer Tools preference gates preset selection and creation. */
-  readonly codingToolsEnabled?: boolean | undefined
 }
 
 interface RosterState {
@@ -86,10 +84,7 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
   const [pendingDelete, setPendingDelete] = useState<string | undefined>(undefined)
   const [deleting, setDeleting] = useState(false)
   const defaultWritable = props.defaultWritable !== false
-  // Unknown is not an accepted Host value. The settings adapter supplies true
-  // only after the connected Host has resolved the Developer Tools preference.
-  const codingToolsEnabled = props.codingToolsEnabled === true
-  const modeSelectionEnabled = codingToolsEnabled && roster.modeSelectionEnabled !== false
+  const modeSelectionEnabled = roster.modeSelectionEnabled !== false
   const canSetDefault = defaultWritable && modeSelectionEnabled
   const [defaultingId, setDefaultingId] = useState<string | undefined>(undefined)
   const [revealedPaths, setRevealedPaths] = useState<Readonly<Record<string, string>>>({})
@@ -353,15 +348,8 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
       <button
         className="dsh-presets__creator-card"
         type="button"
-        disabled={!codingToolsEnabled || creatorBusy}
-        title={
-          codingToolsEnabled
-            ? t('presets.creatorDraftTitle')
-            : t('presets.creatorDraftDisabled', {
-                section: t('settings.general'),
-                setting: t('settings.codingTools.label'),
-              })
-        }
+        disabled={creatorBusy}
+        title={t('presets.creatorDraftTitle')}
         onClick={() => {
           if (creatorBusy) return
           setCreatorBusy(true)

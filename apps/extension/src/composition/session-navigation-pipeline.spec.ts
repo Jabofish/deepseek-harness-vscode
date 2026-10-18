@@ -16,6 +16,7 @@ describe('native session navigation through the Host pipeline', () => {
       events: { subscribe: () => () => undefined },
     } as unknown as DshBackend
     const backendService = new BackendService()
+    const retitleEditorTab = vi.fn()
     const navigation = createSessionNavigation(
       {
         backendService,
@@ -26,6 +27,7 @@ describe('native session navigation through the Host pipeline', () => {
         requireCurrentWorkspaceSession: vi.fn(),
         postEvent: () => Promise.resolve(true),
         postEventTo: () => Promise.resolve(true),
+        retitleEditorTab,
       },
       { waitUntilReady: () => Promise.resolve(true) },
       () => Promise.resolve(undefined),
@@ -68,9 +70,16 @@ describe('native session navigation through the Host pipeline', () => {
       changed.mockClear()
       const directory = pipeline.postBackendEvent(backend, { type: 'session.added', sessionId: 's1' })
       expect(changed).toHaveBeenCalledOnce()
+      const title = pipeline.postBackendEvent(backend, {
+        type: 'session.projection',
+        sessionId: 's1',
+        key: 'title',
+        value: 'Automatically named',
+      })
+      expect(retitleEditorTab).toHaveBeenCalledExactlyOnceWith('s1', 'Automatically named')
       expect(post).toHaveBeenCalledOnce()
       release(true)
-      await Promise.all([blocked, directory])
+      await Promise.all([blocked, directory, title])
     } finally {
       release(true)
       pipeline.dispose()

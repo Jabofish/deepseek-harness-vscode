@@ -698,7 +698,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
               <div className="dsh-composer__extras-section">{renderSessionControls('secondary')}</div>
             )}
           </ComposerExtrasMenu>
-          {focused ? renderSessionControls('permission') : null}
+          {renderSessionControls('permission')}
           <span
             id={hintId}
             className={focused ? 'dsh-sr-only' : 'dsh-composer__hint'}
@@ -708,9 +708,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
           </span>
         </div>
         {configuration === undefined || onConfigurationChange === undefined ? null : (
-          <div className="dsh-composer__toolbar-controls">
-            {renderSessionControls(focused ? 'model' : 'primary')}
-          </div>
+          <div className="dsh-composer__toolbar-controls">{renderSessionControls('model')}</div>
         )}
         <span className="dsh-composer__toolbar-balance" aria-hidden="true" />
         <button

@@ -22,6 +22,8 @@ const layoutStyles = readStylesheet(new URL('./layout.css', import.meta.url))
 const appStyles = readStylesheet(new URL('./app.css', import.meta.url), [
   new URL('./compatibility.css', import.meta.url),
 ])
+const focusedStyles = readStylesheet(new URL('./focused-workbench.css', import.meta.url))
+const selectionStyles = readStylesheet(new URL('./components/02-selection.css', import.meta.url))
 
 describe('Conversation space ownership', () => {
   it('keeps notifications and trajectory details in document flow', () => {
@@ -127,6 +129,40 @@ describe('Form control base styles', () => {
         'input:focus-visible,\ntextarea:focus-visible,\nselect:focus-visible,\nbutton:focus-visible,\nsummary:focus-visible',
       ).join('\n'),
     ).toContain('outline: 1px solid var(--dsh-focus-ring);')
+  })
+})
+
+describe('Readable session choices', () => {
+  it('gives enabled and disabled selectors distinct text in both layouts', () => {
+    expect(effective(selectionStyles, '.dsh-select-menu__trigger', 'color')).toBe('var(--dsh-text)')
+    expect(effective(selectionStyles, '.dsh-select-menu__trigger:disabled', 'color')).toBe('var(--dsh-muted)')
+  })
+
+  it('removes compatibility rules that turn labelled choices into 28px icons', () => {
+    for (const selector of [
+      '.dsh-select-menu--labelled',
+      '.dsh-session-controls__mode',
+      '.dsh-model-picker',
+      '.dsh-session-controls__selectors > .dsh-select-menu',
+      '.dsh-session-controls__selectors > .dsh-session-controls__mode',
+    ]) {
+      for (const body of ruleBodies(compatibilityStyles, selector)) {
+        expect(declaration(body, 'width')).toBeUndefined()
+        expect(declaration(body, 'max-width')).toBeUndefined()
+        expect(declaration(body, 'flex')).toBeUndefined()
+      }
+    }
+  })
+
+  it('reserves a full-width choices rail before text competes with Send', () => {
+    expect(
+      effective(
+        layoutStyles,
+        '.dsh-app .dsh-unified-composer .dsh-composer__toolbar:has(.dsh-session-controls__mode)',
+        'grid-template-areas',
+      ),
+    ).toBe("'controls controls' 'start submit'")
+    expect(focusedStyles).not.toContain("'start start' 'controls submit'")
   })
 })
 

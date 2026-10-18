@@ -146,45 +146,7 @@
   }
 }
 
-@media (max-width: 559px) {
-  .dsh-session-controls__mode,
-  .dsh-model-picker {
-    flex: 0 0 28px;
-    max-width: 28px;
-  }
-}
-
-@container dsh-composer (min-width: 560px) {
-  .dsh-session-controls__mode {
-    flex: 0 1 112px;
-    max-width: 112px;
-  }
-}
-
-@container dsh-composer (min-width: 480px) and (max-width: 559px) {
-  .dsh-session-controls__selectors > .dsh-session-controls__mode {
-    width: 80px;
-    min-width: 80px;
-    max-width: 80px;
-    flex: 0 0 80px;
-  }
-
-  .dsh-session-controls__metrics > div,
-  .dsh-session-controls__context-cell,
-  .dsh-session-controls__context-cell .dsh-context-meter,
-  .dsh-context-meter__trigger {
-    max-width: 100%;
-  }
-}
-
-@container dsh-composer (min-width: 400px) and (max-width: 479px) {
-  .dsh-session-controls__selectors > .dsh-session-controls__mode {
-    width: 60px;
-    min-width: 60px;
-    max-width: 60px;
-    flex: 0 0 60px;
-  }
-
+@container dsh-composer (max-width: 559px) {
   .dsh-session-controls__metrics > div,
   .dsh-session-controls__context-cell,
   .dsh-session-controls__context-cell .dsh-context-meter,
@@ -194,16 +156,6 @@
 }
 
 @container dsh-composer (max-width: 399px) {
-  .dsh-select-menu--labelled,
-  .dsh-session-controls__mode,
-  .dsh-model-picker,
-  .dsh-session-controls__selectors > .dsh-select-menu {
-    width: 28px;
-    min-width: 28px;
-    max-width: 28px;
-    flex: 0 0 28px;
-  }
-
   .dsh-context-meter__trigger {
     gap: 2px;
     padding-inline: 2px;

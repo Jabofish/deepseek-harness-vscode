@@ -429,8 +429,8 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
           </>
         ) : null}
       </div>
-      <dl className="dsh-session-controls__metrics">
-        {showModel && contextLabel !== undefined ? (
+      {showModel && contextLabel !== undefined ? (
+        <dl className="dsh-session-controls__metrics">
           <div>
             <dt className="dsh-sr-only">{t('controls.context')}</dt>
             <dd className="dsh-session-controls__context-cell">
@@ -441,8 +441,8 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
               />
             </dd>
           </div>
-        ) : null}
-      </dl>
+        </dl>
+      ) : null}
       {riskPopover}
     </div>
   )

@@ -312,7 +312,6 @@
   padding: var(--dsh-space-1) var(--dsh-space-2);
   border: 1px solid var(--dsh-border-color);
   border-radius: var(--dsh-radius-md);
-  color: var(--dsh-muted);
   background: var(--dsh-surface-raised);
   font-size: inherit;
   line-height: inherit;

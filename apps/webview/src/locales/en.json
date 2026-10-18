@@ -1142,7 +1142,6 @@
   "presets.emptyCustomCreator": "No custom presets yet. Create one in Creator mode, then install it in the Plugin Manager.",
   "presets.creatorDraft": "Ask Agent to create a mode",
   "presets.creatorDraftTitle": "Start a new task with the built-in Creator mode.",
-  "presets.creatorDraftDisabled": "Enable {setting} in {section} settings first.",
   "presets.broken": "Broken",
   "presets.inUse": "In use",
   "presets.setDefault": "Set as default",

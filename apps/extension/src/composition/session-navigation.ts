@@ -21,6 +21,8 @@ export interface SessionDirectoryView {
 type NavigationDependencies = DirectoryDependencies &
   Pick<RequestGatewayDependencies, 'requireCurrentWorkspaceSession' | 'postEventTo' | 'postEvent'> & {
     readonly backendService: Pick<RequestGatewayDependencies['backendService'], 'requireBackend'>
+    /** Keep an open editor tab's label in step with a session title change. */
+    readonly retitleEditorTab?: (sessionId: string, title: string) => void
   }
 
 export interface SessionNavigation {
@@ -180,6 +182,7 @@ export function createSessionNavigation(
         }
         return
       }
+      syncSessionTitles(name, payload, deps.retitleEditorTab)
       if (
         DIRECTORY_EVENTS.has(name) ||
         (name === 'session.projection' &&
@@ -191,6 +194,42 @@ export function createSessionNavigation(
         invalidate()
     },
   }
+}
+
+/** Use the upstream title view directly, including reconnect and follow baselines. */
+function syncSessionTitles(
+  name: string,
+  payload: unknown,
+  retitle: NavigationDependencies['retitleEditorTab'],
+): void {
+  if (retitle === undefined) return
+  if (
+    name !== 'session.title' &&
+    name !== 'session.projection' &&
+    name !== 'session.projection.baseline' &&
+    name !== 'session.subscribed'
+  )
+    return
+  const event = objectRecord(payload)
+  if (event === undefined) return
+  const apply = (sessionId: unknown, title: unknown): void => {
+    if (typeof sessionId === 'string' && sessionId.trim() !== '' && typeof title === 'string')
+      retitle(sessionId, title)
+  }
+  if (name === 'session.title') apply(event.sessionId, event.title)
+  else if (name === 'session.projection' && event.key === 'title') apply(event.sessionId, event.value)
+  else if (name === 'session.subscribed')
+    apply(event.sessionId, objectRecord(objectRecord(event.projection)?.values)?.title)
+  else if (name === 'session.projection.baseline') {
+    for (const [sessionId, projection] of Object.entries(objectRecord(event.projections) ?? {}))
+      apply(sessionId, objectRecord(objectRecord(projection)?.values)?.title)
+  }
+}
+
+function objectRecord(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Readonly<Record<string, unknown>>)
+    : undefined
 }
 
 const DIRECTORY_EVENTS = new Set([

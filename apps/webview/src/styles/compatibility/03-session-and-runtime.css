@@ -218,10 +218,6 @@
   height: var(--dsh-icon-size-sm);
 }
 
-.dsh-session-controls__access-picker .dsh-select-menu__trigger {
-  color: var(--dsh-icon, var(--dsh-muted));
-}
-
 .dsh-composer__send-label {
   position: absolute;
   width: 1px;

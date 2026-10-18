@@ -411,13 +411,12 @@ export function useDshSettings(input: {
       : codingToolsField === undefined
         ? true
         : false
-  const newSessionPresetSelectionEnabled = !currentDshSettingsReady
-    ? false
-    : codingToolsFieldSupported
-      ? codingToolsEnabled
-      : codingToolsField === undefined
-        ? state.presetSelectionEnabled
-        : false
+  // Agent-preset selection belongs to the roster, not to the Developer Tools
+  // preference. DSH's Coding Tools switch only removes the shipped PTC and
+  // Minimal presets from the menu; it never refuses a preset switch, and a
+  // settings read that is still pending or failed says nothing about the
+  // roster. Only the host's own roster answer can withdraw the choice.
+  const newSessionPresetSelectionEnabled = state.presetSelectionEnabled
   const transcriptView = readyDshUiPreferences?.transcriptView ?? 'standard'
   const performanceUsage = readyDshUiPreferences?.performanceUsage ?? 'detailed'
   const hostConversationFontSizePx = readyDshUiPreferences?.fontSize

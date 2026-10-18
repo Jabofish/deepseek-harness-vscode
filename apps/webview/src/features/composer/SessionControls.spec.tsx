@@ -190,6 +190,7 @@ describe('SessionControls', () => {
 
     expect(screen.queryByLabelText(/Context .* tokens/u)).toBeNull()
     expect(screen.queryByLabelText(/Cache hit/u)).toBeNull()
+    expect(document.querySelector('.dsh-session-controls__metrics')).toBeNull()
   })
 
   it('does not use model metadata as a substitute for DSH context capacity', () => {
