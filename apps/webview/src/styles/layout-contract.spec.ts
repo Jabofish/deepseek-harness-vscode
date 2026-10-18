@@ -164,6 +164,32 @@ describe('Readable session choices', () => {
     ).toBe("'controls controls' 'start submit'")
     expect(focusedStyles).not.toContain("'start start' 'controls submit'")
   })
+
+  it('does not stack context under the model inside a compressed middle toolbar cell', () => {
+    // At 507 x 142 CSS px (634 x 178 at 125% scale), wrapping this cell
+    // alone put the model above the permission/Send baseline and context below.
+    const selector = '.dsh-app .dsh-unified-composer .dsh-composer__toolbar-controls > .dsh-session-controls'
+    expect(declaration(ruleBodies(layoutStyles, selector)[0] ?? '', 'flex-wrap')).toBe('nowrap')
+    expect(
+      declaration(
+        ruleBodies(
+          layoutStyles,
+          '.dsh-unified-composer .dsh-composer__toolbar-controls .dsh-session-controls__selectors',
+        )[0] ?? '',
+        'flex-wrap',
+      ),
+    ).toBe('nowrap')
+    expect(layoutStyles).toMatch(/@container dsh-composer \(max-width: [\d.]+em\)/u)
+    const compactRail = layoutStyles.slice(layoutStyles.indexOf('@container dsh-composer'))
+    expect(effective(compactRail, selector, 'flex-wrap')).toBe('wrap')
+    expect(
+      effective(
+        compactRail,
+        '.dsh-app .dsh-unified-composer .dsh-composer__toolbar:has(.dsh-session-controls__metrics)',
+        'grid-template-areas',
+      ),
+    ).toBe("'controls controls' 'start submit'")
+  })
 })
 
 describe('Configured model editor layout', () => {

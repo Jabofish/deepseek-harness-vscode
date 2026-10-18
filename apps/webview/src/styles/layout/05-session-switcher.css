@@ -3,7 +3,8 @@
 .dsh-app .dsh-unified-composer .dsh-composer__toolbar-controls > .dsh-session-controls {
   display: flex;
   flex: 1 1 auto;
-  flex-wrap: wrap;
+  align-items: center;
+  flex-wrap: nowrap;
   width: 100%;
   min-width: 0;
   max-width: 100%;
@@ -13,6 +14,8 @@
 .dsh-unified-composer .dsh-composer__toolbar-controls .dsh-session-controls__selectors {
   display: flex;
   flex: 1 1 8rem;
+  align-items: center;
+  flex-wrap: nowrap;
   min-width: 0;
   max-width: 100%;
   gap: var(--dsh-space-1);
@@ -45,13 +48,36 @@
   max-width: 100%;
 }
 
-/* Move the choices onto a full-width rail before their text becomes unusable.
- * At smaller widths the choices wrap, retaining the full accessible labels. */
-@container dsh-composer (max-width: 28rem) {
-  .dsh-app .dsh-unified-composer .dsh-composer__toolbar:has(.dsh-session-controls__mode),
+/* A new session has two choices in this rail, so reserve more space before
+ * classic's keyboard hint and the other controls squeeze their labels. */
+@container dsh-composer (max-width: 52em) {
+  .dsh-app .dsh-unified-composer .dsh-composer__toolbar:has(.dsh-session-controls__mode) {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: 'controls controls' 'start submit';
+    row-gap: var(--dsh-space-1);
+  }
+}
+
+/* Budget against the composer's font size, including host font scaling. Promote
+ * the whole rail before allowing its contents to wrap: wrapping only the middle
+ * grid cell strands the model and context above/below permission and Send. */
+@container dsh-composer (max-width: 40em) {
   .dsh-app .dsh-unified-composer .dsh-composer__toolbar:has(.dsh-session-controls__metrics) {
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas: 'controls controls' 'start submit';
+    row-gap: var(--dsh-space-1);
+  }
+
+  .dsh-app .dsh-unified-composer .dsh-composer__toolbar-controls > .dsh-session-controls {
+    flex-wrap: wrap;
+  }
+
+  .dsh-app
+    .dsh-unified-composer
+    .dsh-composer__toolbar-controls
+    .dsh-session-controls__selectors
+    > .dsh-model-picker:only-child {
+    flex: 0 1 auto;
   }
 
   .dsh-app

@@ -8,8 +8,8 @@
 - 修复新会话和设置页的 Agent 预设选择及 Creator 被错误禁用的问题；关闭 Developer Tools 或辅助设置读取失败不再阻断可用功能，仍保留上游能力和设置写入校验。
 - Fixes incorrectly disabled agent choices and Creator actions across new sessions and Settings. Developer Tools preferences and auxiliary settings failures no longer block available actions; upstream capabilities and settings-write checks remain authoritative.
 
-- 统一选择器的可用与禁用样式，清理旧窄栏宽度覆盖；两种布局在空间不足时分行，保留 Agent、模型和权限信息及完整菜单。
-- Unifies enabled and disabled selector styling and removes legacy narrow-width overrides. Both layouts reflow when needed, retaining agent, model and permission information and complete menus.
+- 统一选择器样式并清理旧限宽覆盖；两种布局按字号和可用宽度整体分行，修复缩放后模型、统计和操作按钮错层，保留完整菜单。
+- Unifies selector styling and removes legacy width overrides. Both layouts reflow by font size and available width, fixing staggered model, context and action controls under scaling while preserving complete menus.
 
 ## 0.3.3
 
