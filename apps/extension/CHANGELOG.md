@@ -1,18 +1,15 @@
 # Change Log
 
-## Unreleased
+## 0.3.4
 
-- 修复编辑器区标签页标题在会话命名后不更新的问题：会话标题变化（含 DSH 自动命名）现在会同步到已打开的编辑器标签页，无需关闭再重开。
-- Fixes editor-tab titles not updating after a session is named: session title changes (including DSH auto-titling) now propagate to open editor tabs without closing and reopening them.
+- 修复会话标题不同步、Agent 与 Creator 被错误禁用，以及目标、队列和后台任务恢复后仍提示读取失败的问题。
+- Fixes stale session titles, incorrectly disabled Agent and Creator choices, and read-failure notices that persisted after goals, queues or jobs recovered.
 
-- 修复新会话和设置页的 Agent 预设选择及 Creator 被错误禁用的问题；关闭 Developer Tools 或辅助设置读取失败不再阻断可用功能，仍保留上游能力和设置写入校验。
-- Fixes incorrectly disabled agent choices and Creator actions across new sessions and Settings. Developer Tools preferences and auxiliary settings failures no longer block available actions; upstream capabilities and settings-write checks remain authoritative.
+- 优化窄栏单行布局、标题留白和发送图标；当前文件入口常驻，附件按需展开，列表保持单行，高度平滑变化，加载不再反复拉动会话。
+- Refines compact composer layouts, header spacing and send icons. Keeps the current-file shortcut visible, reveals attachments on interaction, and smooths height changes without loading-induced transcript jumps.
 
-- 统一选择器样式与响应式标题边距；输入栏优先单行，附件提供直接悬浮入口与固定单行列表，高度变化平滑过渡，加载不再反复拉动会话，并缩小发送按钮；当前文件入口常驻，附件入口悬停展开，保留完整菜单与详情。
-- Unifies selector styling and responsive header spacing. The composer favors one row, with direct floating attachment controls, a stable attachment rail, smooth height changes and a smaller send button; loading no longer bounces the transcript, the current-file action stays visible, attachments appear on hover, and full menus and details remain available.
-
-- 标题栏的 Web UI 入口默认使用 VS Code 内置浏览器，可在扩展设置中改用系统浏览器，修复登录参数编码；目标、队列和后台任务恢复后清除过期的读取失败提示。
-- The title-bar Web UI action defaults to VS Code's integrated browser, with a setting to use the system browser and correctly preserved login queries. Recovered goals, queues and jobs clear stale read-failure notices.
+- Web UI 默认在 VS Code 内置浏览器打开，可切换系统浏览器；修复登录参数编码导致的认证失败。
+- Opens the Web UI in VS Code's integrated browser by default, with a system-browser option, and fixes login-query encoding that prevented authentication.
 
 ## 0.3.3
 

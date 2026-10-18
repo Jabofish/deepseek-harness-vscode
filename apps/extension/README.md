@@ -23,6 +23,8 @@ The Chat view is registered in VS Code's Secondary Side Bar by default (on the r
 
 Choose **Open in Editor Area** or run **DSH: Open Chat in Editor Area** (`/moveto:editor`); `/moveto:sidebar` returns the chat. You can drag an opened editor tab to split. The side bar remains available for other sessions. The native title bar shows its full controls when space permits; narrower views move lower-priority actions into **More**, keeping **Sessions** and **Settings** visible.
 
+**Open Web UI** uses VS Code's integrated browser by default. To use your system browser, set `dsh.webUi.browser` to `external` in VS Code Settings.
+
 To drag a session directly into a split, run **DSH: Open Drag Sessions** to open **DSH Sessions** in Explorer, then drag a session row to an editor edge. This native list is hidden initially and keeps the chat area free; the existing switcher remains available.
 
 Without a specified target, auto validates the last successful local connection first, then discovers compatible instances before starting one. An explicit server URL or attachment port list restricts connection to those targets; failure leaves Settings and Retry available. Connection modes also let you attach only, start an isolated extension-owned instance, or probe one configured HTTP(S) endpoint (which may be remote). It never stops an external DSH. Runtime updates install a verified exact version and do not restart external processes.

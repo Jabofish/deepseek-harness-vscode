@@ -33,6 +33,8 @@ DeepSeek Harness 的 Chat 视图默认注册在辅助侧边栏（VS Code 默认�
 
 打开编辑器聊天标签后，侧边栏仍可使用。通过视图标题栏的**会话**按钮切换或新建会话；原生标题栏在宽度足够时显示完整操作，变窄后逐步将低频操作收进“更多”，优先保留**会话**和**设置**。
 
+标题栏的 **Open Web UI** 默认使用 VS Code 内置浏览器。若要使用系统浏览器，在 VS Code 设置中将 `dsh.webUi.browser` 改为 `external`。
+
 选择 **在编辑器区打开** 或执行 **DSH: Open Chat in Editor Area**（`/moveto:editor`）打开标签，`/moveto:sidebar` 可移回侧边栏。也可拖动已打开的编辑器标签分栏。手动排序时，列表内拖动仍用于调整顺序。
 
 要直接拖拽会话分栏，可执行 **DSH: Open Drag Sessions**，在资源管理器中打开 **DSH Sessions**，将会话行拖到编辑器边缘即可分栏打开。该原生列表默认隐藏，不占用聊天区域；原浮层列表继续保留。
