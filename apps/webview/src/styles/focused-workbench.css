@@ -99,9 +99,13 @@
   max-width: min(24rem, 100%);
 }
 
+/* The agent-mode picker sits beside the model picker until the session's first
+ * turn. Both are enabled choices, so both labels read as active text; the
+ * shared trigger default is the muted "unavailable" colour. Only a genuinely
+ * disabled trigger keeps that muted label. */
 .dsh-app[data-conversation-layout='focused']
-  .dsh-model-picker
-  > .dsh-select-menu__trigger
+  .dsh-session-controls--model
+  .dsh-select-menu__trigger:not(:disabled)
   .dsh-select-menu__trigger-label {
   color: var(--dsh-text);
 }

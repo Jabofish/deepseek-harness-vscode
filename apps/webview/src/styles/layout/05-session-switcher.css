@@ -1,5 +1,6 @@
 /* At the smallest composer widths, low-frequency selectors become icon
- * buttons while the model and context status keep readable text. */
+ * buttons while the model, the agent mode and the context status keep
+ * readable text. */
 @container dsh-composer (max-width: 32rem) {
   .dsh-unified-composer .dsh-composer__send-label {
     display: none;
@@ -12,7 +13,7 @@
   .dsh-unified-composer
     .dsh-session-controls--primary
     .dsh-session-controls__selectors
-    > .dsh-select-menu:not(.dsh-model-picker) {
+    > .dsh-select-menu:not(.dsh-model-picker):not(.dsh-session-controls__mode) {
     width: 2rem;
     min-width: 2rem;
     max-width: 2rem;
@@ -22,7 +23,7 @@
   .dsh-unified-composer
     .dsh-session-controls--primary
     .dsh-session-controls__selectors
-    > .dsh-select-menu:not(.dsh-model-picker)
+    > .dsh-select-menu:not(.dsh-model-picker):not(.dsh-session-controls__mode)
     .dsh-select-menu__trigger {
     width: 2rem;
     min-width: 2rem;
@@ -34,12 +35,12 @@
   .dsh-unified-composer
     .dsh-session-controls--primary
     .dsh-session-controls__selectors
-    > .dsh-select-menu:not(.dsh-model-picker)
+    > .dsh-select-menu:not(.dsh-model-picker):not(.dsh-session-controls__mode)
     .dsh-select-menu__trigger-text,
   .dsh-unified-composer
     .dsh-composer__toolbar-controls
     .dsh-session-controls__selectors
-    > .dsh-select-menu:not(.dsh-model-picker)
+    > .dsh-select-menu:not(.dsh-model-picker):not(.dsh-session-controls__mode)
     .dsh-select-menu__trigger-label {
     display: none;
   }
@@ -68,10 +69,33 @@
     white-space: nowrap;
   }
 
+  /* The agent mode names the whole seat, so it keeps its label and chevron at
+   * this width. Its bound lets the neighbouring model picker keep room and
+   * ellipsizes a long preset name instead of overflowing the rail. */
   .dsh-unified-composer
     .dsh-session-controls--primary
     .dsh-session-controls__selectors
-    > .dsh-select-menu:not(.dsh-model-picker)
+    > .dsh-session-controls__mode {
+    flex: 0 1 auto;
+    width: auto;
+    min-width: 0;
+    max-width: min(9rem, 45%);
+  }
+
+  .dsh-unified-composer
+    .dsh-session-controls--primary
+    .dsh-session-controls__selectors
+    > .dsh-session-controls__mode
+    .dsh-select-menu__trigger {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .dsh-unified-composer
+    .dsh-session-controls--primary
+    .dsh-session-controls__selectors
+    > .dsh-select-menu:not(.dsh-model-picker):not(.dsh-session-controls__mode)
     .dsh-select-menu__chevron {
     display: none;
   }

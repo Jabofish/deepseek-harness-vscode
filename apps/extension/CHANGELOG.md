@@ -1,5 +1,13 @@
 # Change Log
 
+## Unreleased
+
+- 修复新会话的 Agent 选择被禁用的问题：Agent 预设选择只由 DSH roster 决定，不再因 Developer Tools（Coding Tools）关闭或设置读取失败而失效。
+- Fixes disabled agent selection in new sessions: agent preset selection now follows the DSH roster alone, so an off Developer Tools (Coding Tools) preference or a failed settings read no longer withdraws it.
+
+- 修复聚焦布局中新会话的 Agent 模式选择器显示为禁用：启用时与相邻模型选择器使用同样的可用文字样式，窄栏保留模式名称和箭头，不再提前折叠为无标签图标。
+- Fixes the agent-mode picker looking disabled beside the model picker in the focused layout, and keeps its name and chevron instead of collapsing to an unlabeled icon in a narrow composer.
+
 ## 0.3.3
 
 - 改善流式增量传递，修复突发输出和重复基线造成的停顿；减少会话切换、首发与搜索等待，移除发送和滚动跟随的固定延迟。

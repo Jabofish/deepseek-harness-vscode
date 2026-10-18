@@ -1119,7 +1119,10 @@ describe('App connected rendering', () => {
     expect(screen.getByTestId('timeline').getAttribute('data-coding-tools-enabled')).toBe('false')
   })
 
-  it('uses rc2 Developer Tools to disable new-session mode selection', async () => {
+  it('keeps new-session mode selection when rc2 Developer Tools is off', async () => {
+    // Coding Tools only removes the shipped PTC/Minimal presets upstream; it
+    // never refuses a preset switch. The Host's own roster answer is the only
+    // refusal that may withdraw the choice.
     const state = presetSelectionState(true, 'standard')
     const readDshSettings = vi.fn().mockResolvedValue(dshUiSettingsSnapshot(false))
     currentStore = {
@@ -1129,7 +1132,9 @@ describe('App connected rendering', () => {
     render(<App />)
 
     await waitFor(() => expect(readDshSettings).toHaveBeenCalled())
-    expect(document.querySelector('.dsh-empty-session__preset .dsh-select-menu__trigger')).toBeNull()
+    await waitFor(() =>
+      expect(document.querySelector('.dsh-empty-session__preset .dsh-select-menu__trigger')).not.toBeNull(),
+    )
   })
 
   it('exposes tabpanel relationships and arrow-key navigation for conversation views', async () => {
