@@ -13,6 +13,7 @@ export function FocusedTurn(props: {
   readonly context: TimelineNodeRenderContext
 }): ReactElement {
   const { node, context } = props
+  const processId = node.processId ?? node.id
   const bodyId = useId()
   const policy = focusedPresentationPolicy(context.transcriptView)
   const foldable = node.foldable && policy.foldCompletedTurns
@@ -45,15 +46,15 @@ export function FocusedTurn(props: {
       answer = { ...plain, turnUsage }
     }
   }
-  const revealDismissedId = `${node.id}:reveal-dismissed:${context.revealRequestId ?? context.revealSourceNodeId}`
+  const revealDismissedId = `${processId}:reveal-dismissed:${context.revealRequestId ?? context.revealSourceNodeId}`
   const revealed =
     context.revealSourceNodeId !== undefined &&
     node.sourceIds.includes(context.revealSourceNodeId) &&
     !context.expandedDetails.has(revealDismissedId)
-  const collapsedId = `${node.id}:collapsed`
+  const collapsedId = `${processId}:collapsed`
   const open =
     revealed ||
-    (!context.expandedDetails.has(collapsedId) && (!foldable || context.expandedDetails.has(node.id)))
+    (!context.expandedDetails.has(collapsedId) && (!foldable || context.expandedDetails.has(processId)))
   const process: ReactElement[] = []
   if (open)
     for (let index = 0; index < work.length; index++) {
@@ -93,12 +94,12 @@ export function FocusedTurn(props: {
     context.setExpandedDetails((current) => {
       const next = new Set(current)
       if (open) {
-        next.delete(node.id)
+        next.delete(processId)
         next.add(collapsedId)
         if (revealed) next.add(revealDismissedId)
       } else {
         next.delete(collapsedId)
-        next.add(node.id)
+        next.add(processId)
       }
       return next
     })
@@ -106,23 +107,25 @@ export function FocusedTurn(props: {
     <section className="dsh-focused-turn" data-turn={node.turn} data-process-foldable={foldable}>
       {work.length === 0 && !foldable ? null : (
         <>
-          <button
-            type="button"
-            className="dsh-focused-turn__summary"
-            disabled={work.length === 0}
-            aria-expanded={work.length === 0 ? undefined : open}
-            aria-controls={bodyId}
-            onClick={toggle}
-          >
-            <Icon name={foldable ? 'check' : 'status'} />
-            <span>{context.t(foldable ? 'timeline.focused.completed' : 'timeline.focused.process')}</span>
-            {work.length > 0 ? (
-              <span className="dsh-focused-turn__count">
-                {context.t('timeline.focused.entries', { count: work.length })}
-              </span>
-            ) : null}
-            {work.length > 0 ? <Icon name={open ? 'chevron-down' : 'chevron-right'} /> : null}
-          </button>
+          {node.continuation === true ? null : (
+            <button
+              type="button"
+              className="dsh-focused-turn__summary"
+              disabled={work.length === 0}
+              aria-expanded={work.length === 0 ? undefined : open}
+              aria-controls={bodyId}
+              onClick={toggle}
+            >
+              <Icon name={foldable ? 'check' : 'status'} />
+              <span>{context.t(foldable ? 'timeline.focused.completed' : 'timeline.focused.process')}</span>
+              {work.length > 0 ? (
+                <span className="dsh-focused-turn__count">
+                  {context.t('timeline.focused.entries', { count: node.processCount ?? work.length })}
+                </span>
+              ) : null}
+              {work.length > 0 ? <Icon name={open ? 'chevron-down' : 'chevron-right'} /> : null}
+            </button>
+          )}
           <div id={bodyId} hidden={!open} className="dsh-focused-turn__process">
             {process}
           </div>

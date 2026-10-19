@@ -36,4 +36,9 @@ export const COMMANDS = [
   'dsh.addFileContext',
   'dsh.addSymbolContext',
   'dsh.addDiagnosticContext',
+  'dsh.shareEditorState',
+  'dsh.stopSharingEditorState',
+  'dsh.manageEditorCompanion',
+  'dsh.installEditorCompanion',
+  'dsh.undoEditorEdit',
 ] as const

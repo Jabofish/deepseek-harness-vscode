@@ -27,6 +27,7 @@ import type { PostHostMessage, PostHostMessageTo, PostSurfaceEvent } from './hos
 import type { TranscriptWindowRegistry } from '../view/transcript-window-registry.js'
 
 export interface RequestGatewayDependencies {
+  readonly prepareEditorSession?: (sessionId: string, signal: AbortSignal) => Promise<void>
   readonly transcript: TranscriptWindowRegistry
   readonly resyncView?: () => Promise<void>
   readonly post: PostHostMessage

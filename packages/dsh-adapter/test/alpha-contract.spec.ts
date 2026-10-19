@@ -168,7 +168,7 @@ describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
 
     const result = await transport.request<{ readonly rpcId: string; readonly result: unknown }>(
       'session.prompt',
-      { sessionId: 's1', mode: 'queue', content: [] },
+      { sessionId: 's1', mode: 'queue', content: [], requestId: 'caller-submission' },
     )
     const body = JSON.parse(bodyText(fetch.mock.calls[0]?.[1])) as {
       readonly rpcId: string
@@ -176,6 +176,7 @@ describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
     }
 
     expect(body.payload.args.request.requestId).toBe(result.rpcId)
+    expect(result.rpcId).toBe('caller-submission')
     expect(body.rpcId).not.toBe(result.rpcId)
     await transport.close()
   })

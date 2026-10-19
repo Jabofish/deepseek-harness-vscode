@@ -1,3 +1,4 @@
+import { NegotiatedEditorBridgeRepository } from '../../repositories/editor-bridge-repository.js'
 import { workspaceChangeSource } from '../alpha162/workspace-changes.js'
 import {
   AppError,
@@ -16,6 +17,7 @@ import {
   type SessionProjectionValues,
   type ModsBandRepository,
   type InspectorDevtoolsRepository,
+  type EditorBridgeRepository,
 } from '@dsh-vscode/domain'
 
 import { DshVersionAdapterBase, type VersionAdapterIdentity } from '../../adapter-base.js'
@@ -253,6 +255,7 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
     const account = this.createAccountLifecycleRepository(transport)
     const userQuestions = this.createUserQuestionRepository(transport)
     const modsBand = this.createModsBandRepository(transport)
+    const editorBridge = this.createEditorBridgeRepository(transport)
     const inspectorDevtools = this.createInspectorRepository(backend.endpoint)
     const observe = (event: BackendEvent): void => {
       interactions.remember(event)
@@ -280,6 +283,7 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
       interactions,
       ...(userQuestions === undefined ? {} : { userQuestions }),
       ...(modsBand === undefined ? {} : { modsBand }),
+      ...(editorBridge === undefined ? {} : { editorBridge }),
       ...(inspectorDevtools === undefined ? {} : { inspectorDevtools }),
       goals,
       jobs,
@@ -318,6 +322,13 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
       },
     }
     return Promise.resolve(backendValue)
+  }
+
+  /** Optional plugin methods are probed independently of the native DSH API family. */
+  protected createEditorBridgeRepository(
+    transport: AlphaLoopbackApiClient,
+  ): EditorBridgeRepository | undefined {
+    return new NegotiatedEditorBridgeRepository(transport)
   }
 
   /** Allow a release seam to replace the old session-control-backed Job source. */

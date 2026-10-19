@@ -720,6 +720,82 @@ describe('App connected rendering', () => {
     expect(screen.getByTestId('timeline')).toBeDefined()
   })
 
+  it('keeps an idle send in the composer through RPC acceptance until its durable message appears', async () => {
+    let state = connectedState(true)
+    const listeners = new Set<() => void>()
+    const publish = (next: AppState): void => {
+      state = next
+      for (const listener of listeners) listener()
+    }
+    let acknowledge!: () => void
+    const ack = new Promise<void>((resolve) => {
+      acknowledge = resolve
+    })
+    currentStore = {
+      ...storeFor(state),
+      getState: () => state,
+      subscribe: (listener) => {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
+      sendPrompt: vi.fn(() => {
+        publish({
+          ...state,
+          directPromptRequestIds: ['direct-request'],
+          queue: [
+            {
+              id: 'direct-message',
+              rpcId: 'direct-request',
+              textOnly: true,
+              sessionId: 's1',
+              text: 'Hello',
+              attachments: [],
+              mode: 'queue',
+              createdAt: '2026-01-01T00:00:00.000Z',
+            },
+          ],
+        })
+        return ack
+      }),
+    }
+    render(<App />)
+    const input = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+    fireEvent.change(input, { target: { value: 'Hello' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(input.value).toBe('Hello')
+    expect(screen.queryByRole('region', { name: 'Queued prompts' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Cancel sending' }).getAttribute('aria-busy')).toBe('true')
+    await act(async () => {
+      acknowledge()
+      await ack
+    })
+    expect(input.value).toBe('Hello')
+    expect(screen.getByRole('button', { name: 'Cancel sending' })).toBeTruthy()
+    // Identity wins even if DSH expands a reference in the displayed text.
+    act(() => {
+      publish({
+        ...state,
+        queue: [],
+        timeline: {
+          ...state.timeline,
+          nodes: [
+            {
+              kind: 'user-message',
+              id: 'direct-message',
+              rpcId: 'direct-request',
+              markdown: 'Hello (expanded reference)',
+            },
+          ],
+        },
+      })
+    })
+    await waitFor(() => {
+      expect(input.value).toBe('')
+      expect(screen.queryByRole('button', { name: 'Cancel sending' })).toBeNull()
+    })
+    expect(screen.queryByRole('region', { name: 'Queued prompts' })).toBeNull()
+  })
+
   it('renders a local draft and routes its first message through deferred creation', async () => {
     const state = connectedState(false)
     const sendPendingPrompt = vi.fn().mockResolvedValue(undefined)
@@ -746,7 +822,9 @@ describe('App connected rendering', () => {
     expect(form).not.toBeNull()
     fireEvent.submit(form!)
 
-    await waitFor(() => expect(sendPendingPrompt).toHaveBeenCalledWith('Hello', [], 'queue'))
+    await waitFor(() =>
+      expect(sendPendingPrompt).toHaveBeenCalledWith('Hello', [], 'queue', expect.any(AbortSignal)),
+    )
     expect(createSession).not.toHaveBeenCalled()
   })
 
@@ -762,8 +840,16 @@ describe('App connected rendering', () => {
     const prompt = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
     fireEvent.change(prompt, { target: { value: 'retry this prompt' } })
     fireEvent.keyDown(prompt, { key: 'Enter' })
-    await waitFor(() => expect(sendPrompt).toHaveBeenCalledWith('s1', 'retry this prompt', [], 'queue'))
-    expect(screen.getByRole('button', { name: 'Send message' }).hasAttribute('disabled')).toBe(true)
+    await waitFor(() =>
+      expect(sendPrompt).toHaveBeenCalledWith(
+        's1',
+        'retry this prompt',
+        [],
+        'queue',
+        expect.any(AbortSignal),
+      ),
+    )
+    expect(screen.getByRole('button', { name: 'Cancel sending' }).hasAttribute('disabled')).toBe(false)
 
     await act(async () => {
       rejectSubmission(new Error('Host delivery failed: raw prompt diagnostics'))
@@ -847,7 +933,13 @@ describe('App connected rendering', () => {
     fireEvent.change(prompt, { target: { value: 'retry with the attachment' } })
     fireEvent.keyDown(prompt, { key: 'Enter' })
     await waitFor(() =>
-      expect(sendPrompt).toHaveBeenCalledWith('s1', 'retry with the attachment', [attachment], 'steer'),
+      expect(sendPrompt).toHaveBeenCalledWith(
+        's1',
+        'retry with the attachment',
+        [attachment],
+        'steer',
+        expect.any(AbortSignal),
+      ),
     )
     fireEvent.keyDown(prompt, { key: 'Enter' })
     expect(sendPrompt).toHaveBeenCalledTimes(1)
@@ -862,7 +954,13 @@ describe('App connected rendering', () => {
 
     fireEvent.keyDown(prompt, { key: 'Enter', ctrlKey: true })
     await waitFor(() =>
-      expect(sendPrompt).toHaveBeenCalledWith('s1', 'retry with the attachment', [attachment], 'queue'),
+      expect(sendPrompt).toHaveBeenCalledWith(
+        's1',
+        'retry with the attachment',
+        [attachment],
+        'queue',
+        expect.any(AbortSignal),
+      ),
     )
     expect(sendPrompt).toHaveBeenCalledTimes(2)
   })
@@ -1037,17 +1135,78 @@ describe('App connected rendering', () => {
     await waitFor(() => expect(screen.getByLabelText('Trajectory ledger')).toBeDefined())
   })
 
-  it('hides the tab bar when the Trajectory view is disabled', async () => {
+  it('keeps both conversation views available when Coding Tools is disabled', async () => {
     const readDshSettings = vi.fn().mockResolvedValue(dshUiSettingsSnapshot(false))
     currentStore = { ...storeFor(connectedState(true)), readDshSettings }
     render(<App />)
 
     await waitFor(() => expect(readDshSettings).toHaveBeenCalled())
-    expect(screen.queryByRole('tab', { name: 'Chat' })).toBeNull()
-    expect(screen.queryByRole('tab', { name: 'Trajectory' })).toBeNull()
-    expect(document.querySelector('.dsh-conversation__views')).toBeNull()
+    expect(screen.getByRole('tab', { name: 'Chat' })).toBeDefined()
+    expect(screen.getByRole('tab', { name: 'Trajectory' })).toBeDefined()
     expect(screen.getByTestId('timeline')).toBeDefined()
+    fireEvent.click(screen.getByRole('tab', { name: 'Trajectory' }))
+    await screen.findByLabelText('Trajectory ledger')
   })
+
+  it.each(['pending', 'unavailable', 'disabled'] as const)(
+    'shows usable view tabs when opening a session from the initial page with %s settings',
+    async (settings) => {
+      let state: AppState = {
+        ...connectedState(false),
+        pendingSession: {
+          revision: 1,
+          workspaceId: 'w1',
+          configuration: connectedState(true).configuration!,
+        },
+      }
+      const listeners = new Set<() => void>()
+      let resolveSettings!: (value: DshSettingsSnapshot) => void
+      const pendingSettings = new Promise<DshSettingsSnapshot>((resolve) => {
+        resolveSettings = resolve
+      })
+      const readDshSettings = vi.fn(() =>
+        settings === 'pending'
+          ? pendingSettings
+          : settings === 'unavailable'
+            ? Promise.reject(new Error('settings unavailable'))
+            : Promise.resolve(dshUiSettingsSnapshot(false)),
+      )
+      currentStore = {
+        ...storeFor(state),
+        getState: () => state,
+        subscribe: (listener) => {
+          listeners.add(listener)
+          return () => listeners.delete(listener)
+        },
+        readDshSettings,
+        openSession: vi.fn(() => {
+          state = { ...connectedState(true), pendingSession: undefined }
+          for (const listener of listeners) listener()
+          return Promise.resolve()
+        }),
+      }
+      render(<App />)
+      expect(screen.queryByRole('tab', { name: 'Trajectory' })).toBeNull()
+      await act(async () => {
+        await currentStore.openSession('s1')
+      })
+      const chat = screen.getByRole('tab', { name: 'Chat' })
+      const trajectory = screen.getByRole('tab', { name: 'Trajectory' })
+      expect(chat.getAttribute('aria-selected')).toBe('true')
+      fireEvent.keyDown(chat, { key: 'ArrowRight' })
+      await screen.findByLabelText('Trajectory ledger')
+      expect(trajectory.getAttribute('aria-selected')).toBe('true')
+      // A late settings response must not reset the reader's chosen view.
+      if (settings === 'pending')
+        await act(async () => {
+          resolveSettings(dshUiSettingsSnapshot(false))
+          await pendingSettings
+        })
+      expect(screen.getByRole('tab', { name: 'Trajectory' }).getAttribute('aria-selected')).toBe('true')
+      fireEvent.click(chat)
+      expect(screen.getByTestId('timeline')).toBeDefined()
+    },
+  )
 
   it('uses the accepted Host busy-send value after a successful write even if refresh fails', async () => {
     const active = connectedState(true)
@@ -1087,7 +1246,9 @@ describe('App connected rendering', () => {
     fireEvent.change(prompt, { target: { value: 'follow-up' } })
     fireEvent.keyDown(prompt, { key: 'Enter' })
 
-    await waitFor(() => expect(sendPrompt).toHaveBeenCalledWith('s1', 'follow-up', [], 'steer'))
+    await waitFor(() =>
+      expect(sendPrompt).toHaveBeenCalledWith('s1', 'follow-up', [], 'steer', expect.any(AbortSignal)),
+    )
     expect(updateDshSetting).toHaveBeenCalledTimes(1)
   })
 
@@ -1435,7 +1596,7 @@ describe('App connected rendering', () => {
       target: { value: 'continue' },
     })
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
-    expect(sendPrompt).toHaveBeenCalledWith('child-1', 'continue', [], 'queue')
+    expect(sendPrompt).toHaveBeenCalledWith('child-1', 'continue', [], 'queue', expect.any(AbortSignal))
   })
 
   it('opens the named subagent task even when the current catalog does not list it', async () => {
@@ -2105,6 +2266,7 @@ describe('App connected rendering', () => {
         'a prompt I do not want to retype',
         [expect.anything()],
         'queue',
+        expect.any(AbortSignal),
       ),
     )
 

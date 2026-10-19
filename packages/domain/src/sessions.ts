@@ -155,6 +155,8 @@ export interface SessionPage {
 }
 
 export interface PromptInput {
+  /** Optional caller identity for correlating admission with inbox projections. */
+  readonly requestId?: string
   readonly sessionId: string
   readonly text: string
   readonly attachments: readonly PromptAttachment[]

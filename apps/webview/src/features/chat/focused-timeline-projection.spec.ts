@@ -141,6 +141,10 @@ describe('focused Turn presentation', () => {
       rows.every((row) => row.kind === 'focused-turn' && row.nodes.length <= FOCUSED_PROCESS_SEGMENT_SIZE),
     ).toBe(true)
     expect(rows.at(-1)?.kind === 'focused-turn' && rows.at(-1)?.id).toBe('focused-turn:message-984')
+    const groups = rows.filter((row) => row.kind === 'focused-turn')
+    expect(new Set(groups.map((row) => row.processId))).toEqual(new Set(['focused-turn:message-0']))
+    expect(groups.filter((row) => !row.continuation)).toHaveLength(1)
+    expect(groups.every((row) => row.processCount === 999)).toBe(true)
   })
 
   it('keeps submitted plans outside a folded process', () => {

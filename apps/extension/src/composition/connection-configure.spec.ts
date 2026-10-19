@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import * as vscode from 'vscode'
 
 vi.mock('vscode', () => ({
   workspace: {
@@ -16,6 +17,8 @@ vi.mock('vscode', () => ({
     }),
   },
   ConfigurationTarget: { Global: 1 },
+  ExtensionMode: { Production: 1, Development: 2, Test: 3 },
+  Uri: { joinPath: () => ({ fsPath: '/fixture/resources' }) },
 }))
 
 const harness = vi.hoisted(() => {
@@ -31,9 +34,14 @@ const harness = vi.hoisted(() => {
     }>,
     transportListeners: [] as Array<(signal?: AbortSignal) => Promise<unknown>>,
     afterWrite: undefined as ((key: string) => Promise<void>) | undefined,
+    update: vi.fn().mockResolvedValue(false),
   }
   return state
 })
+vi.mock('../editor/companion-update.js', () => ({ companionNeedsUpdate: harness.update }))
+vi.mock('../editor/editor-integration-settings.js', () => ({
+  readEditorPreferences: () => ({ enabled: true, autoSetup: true, allowEdits: true }),
+}))
 
 import { createConnectionLifecycle } from './connection-assembly.js'
 
@@ -57,9 +65,15 @@ function lifecycle(
     backend: { connection: { endpoint: { port: 3080 } } },
     state: { kind: 'connected' },
   }),
+  extensionMode = vscode.ExtensionMode.Production,
+  withResources = false,
 ): ReturnType<typeof createConnectionLifecycle> {
   const result = createConnectionLifecycle({
-    context: { workspaceState: { update: () => Promise.resolve(undefined) } },
+    context: {
+      extensionMode,
+      ...(withResources ? { extensionUri: { fsPath: '/fixture' } } : {}),
+      workspaceState: { update: () => Promise.resolve(undefined) },
+    },
     configuration: { read: () => harness.configuration },
     coordinator: {
       connect: (
@@ -89,12 +103,47 @@ function lifecycle(
 }
 
 describe('connection.configure reconnect', () => {
+  afterEach(() => vi.unstubAllEnvs())
   beforeEach(() => {
     harness.connects.length = 0
     harness.transportListeners.length = 0
     harness.configuration.connection.mode = 'auto'
     harness.configuration.connection.serverUrl = ''
     harness.afterWrite = undefined
+    harness.configuration.runtime.autoStart = false
+    harness.update.mockReset().mockResolvedValue(false)
+  })
+
+  it('automatically switches a stale discovered companion to a fresh owned runtime, falling back to chat on failure', async () => {
+    harness.configuration.runtime.autoStart = true
+    harness.update.mockResolvedValue(true)
+    const result = { backend: { connection: { endpoint: { port: 3080 } } }, state: { kind: 'connected' } }
+    const connect = vi.fn().mockResolvedValue(result)
+    await lifecycle(connect, vscode.ExtensionMode.Production, true).connect()
+    expect(harness.connects.map((request) => request.mode)).toEqual(['auto', 'new-isolated'])
+    expect(harness.configuration.connection.mode).toBe('auto')
+    harness.connects.length = 0
+    connect
+      .mockReset()
+      .mockResolvedValueOnce(result)
+      .mockRejectedValueOnce(new Error('runtime unavailable'))
+      .mockResolvedValueOnce(result)
+    await lifecycle(connect, vscode.ExtensionMode.Production, true).connect()
+    expect(harness.connects.map((request) => request.mode)).toEqual(['auto', 'new-isolated', 'auto'])
+  })
+
+  it('uses a fresh owned runtime for F5 without changing or attaching to the configured external server', async () => {
+    vi.stubEnv('DSH_VSCODE_DEV_MANAGED_RUNTIME', '1')
+    harness.configuration.connection.mode = 'custom'
+    harness.configuration.connection.serverUrl = 'http://127.0.0.1:3080'
+    const development = lifecycle(undefined, vscode.ExtensionMode.Development)
+    await development.connect()
+    expect(harness.connects.at(-1)).toMatchObject({ mode: 'new-isolated', autoStart: true })
+    expect(harness.connects.at(-1)?.endpoint).toBeUndefined()
+    expect(harness.configuration.connection).toEqual({ mode: 'custom', serverUrl: 'http://127.0.0.1:3080' })
+    const production = lifecycle()
+    await production.connect()
+    expect(harness.connects.at(-1)).toMatchObject({ mode: 'custom', endpoint: { port: 3080 } })
   })
 
   it('does not adopt a reconnect that already read the old settings', async () => {

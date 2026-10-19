@@ -50,7 +50,6 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
     branching,
     busyAction,
     codingToolsEnabled,
-    trajectoryVisible,
     compatibilityWarning,
     composerOnCancel,
     composerOnCaptureEditorContext,
@@ -425,46 +424,44 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                   aria-label={active.title.trim() === '' ? t('app.conversation') : active.title}
                 >
                   <div className="dsh-conversation__topbar">
-                    {trajectoryVisible ? (
-                      <div
-                        className="dsh-conversation__views"
-                        role="tablist"
-                        aria-label={t('app.conversationView')}
+                    <div
+                      className="dsh-conversation__views"
+                      role="tablist"
+                      aria-label={t('app.conversationView')}
+                    >
+                      <button
+                        id={CONVERSATION_VIEW_IDS.chat.tab}
+                        data-conversation-view="chat"
+                        className={`dsh-conversation__view-tab${
+                          conversationView === 'chat' ? ' dsh-conversation__view-tab--active' : ''
+                        }`}
+                        type="button"
+                        role="tab"
+                        aria-selected={conversationView === 'chat'}
+                        aria-controls={CONVERSATION_VIEW_IDS.chat.panel}
+                        tabIndex={conversationView === 'chat' ? 0 : -1}
+                        onKeyDown={onConversationTabKeyDown}
+                        onClick={() => setConversationView('chat')}
                       >
-                        <button
-                          id={CONVERSATION_VIEW_IDS.chat.tab}
-                          data-conversation-view="chat"
-                          className={`dsh-conversation__view-tab${
-                            conversationView === 'chat' ? ' dsh-conversation__view-tab--active' : ''
-                          }`}
-                          type="button"
-                          role="tab"
-                          aria-selected={conversationView === 'chat'}
-                          aria-controls={CONVERSATION_VIEW_IDS.chat.panel}
-                          tabIndex={conversationView === 'chat' ? 0 : -1}
-                          onKeyDown={onConversationTabKeyDown}
-                          onClick={() => setConversationView('chat')}
-                        >
-                          {t('app.chat')}
-                        </button>
-                        <button
-                          id={CONVERSATION_VIEW_IDS.trajectory.tab}
-                          data-conversation-view="trajectory"
-                          className={`dsh-conversation__view-tab${
-                            conversationView === 'trajectory' ? ' dsh-conversation__view-tab--active' : ''
-                          }`}
-                          type="button"
-                          role="tab"
-                          aria-selected={conversationView === 'trajectory'}
-                          aria-controls={CONVERSATION_VIEW_IDS.trajectory.panel}
-                          tabIndex={conversationView === 'trajectory' ? 0 : -1}
-                          onKeyDown={onConversationTabKeyDown}
-                          onClick={() => setConversationView('trajectory')}
-                        >
-                          {t('app.trajectory')}
-                        </button>
-                      </div>
-                    ) : null}
+                        {t('app.chat')}
+                      </button>
+                      <button
+                        id={CONVERSATION_VIEW_IDS.trajectory.tab}
+                        data-conversation-view="trajectory"
+                        className={`dsh-conversation__view-tab${
+                          conversationView === 'trajectory' ? ' dsh-conversation__view-tab--active' : ''
+                        }`}
+                        type="button"
+                        role="tab"
+                        aria-selected={conversationView === 'trajectory'}
+                        aria-controls={CONVERSATION_VIEW_IDS.trajectory.panel}
+                        tabIndex={conversationView === 'trajectory' ? 0 : -1}
+                        onKeyDown={onConversationTabKeyDown}
+                        onClick={() => setConversationView('trajectory')}
+                      >
+                        {t('app.trajectory')}
+                      </button>
+                    </div>
                     <span
                       className="dsh-conversation__header-title"
                       title={active.title.trim() === '' ? t('app.conversation') : active.title}
@@ -558,7 +555,10 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                     </ConversationActionsMenu>
                   </div>
                   {state.transcript?.historical !== true ? null : (
-                    <div className="dsh-timeline__history-more">
+                    <div
+                      className="dsh-timeline__history-more"
+                      style={{ position: 'absolute', right: '1rem', bottom: '6rem', zIndex: 2 }}
+                    >
                       <button
                         type="button"
                         className="dsh-button dsh-button--secondary dsh-button--compact"
@@ -614,18 +614,14 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                       }}
                     />
                   )}
-                  {conversationView === 'chat' || !trajectoryVisible ? (
+                  {conversationView === 'chat' ? (
                     <Timeline
                       sessionId={active.id}
                       {...(inspectorReveal?.sessionKey === `${state.connectionEpoch}:${active.id}`
                         ? { revealTarget: inspectorReveal }
                         : {})}
-                      {...(trajectoryVisible
-                        ? {
-                            panelId: CONVERSATION_VIEW_IDS.chat.panel,
-                            panelLabelledBy: CONVERSATION_VIEW_IDS.chat.tab,
-                          }
-                        : {})}
+                      panelId={CONVERSATION_VIEW_IDS.chat.panel}
+                      panelLabelledBy={CONVERSATION_VIEW_IDS.chat.tab}
                       nodes={state.timeline.nodes}
                       {...(state.timeline.nodeChangeStart === undefined
                         ? {}
@@ -654,7 +650,6 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                       hasMoreHistory={state.historyHasMore}
                       loadingOlderHistory={state.historyLoading}
                       onLoadOlderHistory={timelineOnLoadOlderHistory}
-                      pagedHistory
                       onFeedback={timelineOnFeedback}
                       onFeedbackPrepare={timelineOnFeedbackPrepare}
                       onFeedbackSubmit={timelineOnFeedbackSubmit}
@@ -675,7 +670,11 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                     />
                   )}
                   <QueuePanel
+                    key={state.activeSessionId}
                     items={state.queue}
+                    directRequestIds={state.directPromptRequestIds}
+                    transcript={state.transcript}
+                    connected={backend.kind === 'connected'}
                     running={activeRunning}
                     onEdit={queueOnEdit}
                     onRemove={queueOnRemove}

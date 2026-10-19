@@ -23,6 +23,41 @@ beforeEach(() => {
 afterEach(() => listeners.clear())
 
 describe('ProtocolClient', () => {
+  it('cancels only the requested Host operation and ignores its late response', async () => {
+    const posted: ProtocolEnvelope[] = []
+    const client = new ProtocolClient({
+      postMessage: (value) => posted.push(value),
+      getState: () => undefined,
+      setState: () => undefined,
+    })
+    const controller = new AbortController()
+    const sending = client.request(
+      {
+        type: 'session.sendPrompt',
+        requestId: 'send-one',
+        payload: { sessionId: 's1', text: 'hello', attachments: [], mode: 'queue' },
+      },
+      controller.signal,
+    )
+    const rejected = expect(sending).rejects.toMatchObject({ name: 'AbortError' })
+    controller.abort()
+    await rejected
+    expect(posted[1]?.message).toMatchObject({
+      type: 'feature.request.cancel',
+      payload: { targetRequestId: 'send-one' },
+    })
+    client.handle({
+      protocolVersion: PROTOCOL_VERSION,
+      message: { type: 'response', requestId: 'send-one', ok: true, payload: {} },
+    })
+    const next = client.request({ type: 'app.ready', requestId: 'next' })
+    client.handle({
+      protocolVersion: PROTOCOL_VERSION,
+      message: { type: 'response', requestId: 'next', ok: true, payload: {} },
+    })
+    await expect(next).resolves.toEqual({})
+    client.dispose()
+  })
   it('matches the response family as well as the request id', async () => {
     const client = new ProtocolClient({
       postMessage: () => undefined,

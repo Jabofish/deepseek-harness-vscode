@@ -24,6 +24,7 @@ const EMPTY_COMMAND_MENU_ROWS: readonly CommandMenuRow[] = []
 const EMPTY_STRING_LIST: readonly string[] = []
 
 interface ComposerMenuProps {
+  readonly submissionBlocked?: boolean
   readonly draft: string
   readonly attachments: readonly PromptAttachment[]
   readonly configuration?: AgentConfiguration | undefined
@@ -32,7 +33,11 @@ interface ComposerMenuProps {
   readonly popupSelects?: PopupSelectRegistry
   readonly references?: readonly ReferenceCandidate[]
   readonly referenceLoading?: boolean
-  readonly onCommand?: (command: string, attachments?: readonly PromptAttachment[]) => Promise<void> | void
+  readonly onCommand?: (
+    command: string,
+    attachments?: readonly PromptAttachment[],
+    signal?: AbortSignal,
+  ) => Promise<void> | void
   readonly onPopupSelect?: (command: string) => void
   readonly onCommandQueryChange?: (query: string | undefined) => void
   readonly onReferenceQueryChange?: (query: string | undefined, quoted: boolean) => void
@@ -76,8 +81,12 @@ export function useComposerMenuState(
   readonly applyCommandSelection: (selection: CommandPaletteSelection, executeNoInput: boolean) => void
   readonly insertCommand: (command: DynamicCommand) => void
   readonly selectReference: (candidate: ReferenceCandidate) => void
+  readonly commandSubmitting: boolean
+  readonly cancelCommand: () => void
 } {
   const commandSubmitInFlight = useRef(false)
+  const commandController = useRef<AbortController | undefined>(undefined)
+  const [commandSubmitting, setCommandSubmitting] = useState(false)
   const configuration = props.configuration
   const onCommand = props.onCommand
   // Official input-trigger menu state: the highlight rides
@@ -203,15 +212,21 @@ export function useComposerMenuState(
     // until the Host accepts the line, so a second Enter during a slow command
     // (compaction) re-enters the same adjudication and would execute the
     // command twice.
-    if (commandSubmitInFlight.current) return
-    const result = props.attachments.length === 0 ? onCommand(command) : onCommand(command, props.attachments)
+    if (commandSubmitInFlight.current || props.submissionBlocked === true) return
+    const controller = new AbortController()
+    commandController.current = controller
+    const result = onCommand(command, props.attachments, controller.signal)
     if (result !== undefined && typeof result.then === 'function') {
       commandSubmitInFlight.current = true
+      setCommandSubmitting(true)
       void result.then(
         // The Host owns the submitted line once it is accepted; text typed
         // while the command ran is a different draft and has to survive.
         () => {
           commandSubmitInFlight.current = false
+          commandController.current = undefined
+          setCommandSubmitting(false)
+          if (controller.signal.aborted) return
           // The dispatched line may be the normalized form of what the user
           // typed (`/moveto:editor` is submitted as `/moveto editor`), so the
           // draft is compared after the same rewrite.
@@ -221,6 +236,8 @@ export function useComposerMenuState(
         },
         () => {
           commandSubmitInFlight.current = false
+          commandController.current = undefined
+          setCommandSubmitting(false)
         },
       )
     } else props.onDraftChange('')
@@ -255,6 +272,8 @@ export function useComposerMenuState(
     props.onReferenceQueryChange?.(nextToken?.query, nextToken?.quoted ?? false)
   }
   return {
+    commandSubmitting,
+    cancelCommand: () => commandController.current?.abort(),
     commandQuery,
     permissionPresets,
     commandArgumentOptions,

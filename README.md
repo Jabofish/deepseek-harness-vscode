@@ -21,6 +21,8 @@
 
 The connected DSH version determines which advanced capabilities are available. Unsupported operations show a clear unavailable state. The [compatibility contract](docs/dsh-contract.md) lists exact adapter boundaries; the [capability matrix](docs/capability-matrix.md) summarizes supported functions, limitations and completion status.
 
+The [editor integration](packages/dsh-editor-bridge/README.md) loads with extension-managed DSH and follows your selected session automatically. No separate plugin install or permission picker is required. It provides unsaved text/selection, diagnostics, language services, navigation and undoable edits. **Settings → General → Editor integration** shows status and offers off/read-only switches, retry, repair, restart and Undo. Runtime capabilities are negotiated independently; missing editor support leaves chat and manual context attachment available.
+
 ## Install and start
 
 Install [DeepSeek Harness Companion for VS Code](https://marketplace.visualstudio.com/items?itemName=Direwolf.deepseek-harness-client) from the Marketplace, or download a platform VSIX from the [latest GitHub Release](https://github.com/Jabofish/deepseek-harness-vscode/releases/latest) and use **Extensions: Install from VSIX...**.

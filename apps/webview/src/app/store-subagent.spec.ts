@@ -1156,7 +1156,7 @@ describe('AppStore sessions drawer', () => {
 })
 
 describe('AppStore history paging', () => {
-  it('replaces a window with an older authoritative page', async () => {
+  it('prepends an authoritative older page while preserving the newer window', async () => {
     const client = new FakeClient((request) => {
       switch (request.type) {
         case 'session.open':
@@ -1238,8 +1238,8 @@ describe('AppStore history paging', () => {
         payload: { sessionId: 'parent', beforeSeq: 20, maxMessages: 200 },
       }),
     )
-    expect(store.timeline.nodes.map((node) => node.id)).toEqual(['older'])
-    expect(store.timeline.lastSequence).toBe(10)
+    expect(store.timeline.nodes.map((node) => node.id)).toEqual(['older', 'newer'])
+    expect(store.timeline.lastSequence).toBe(20)
     expect(store.historyHasMore).toBe(false)
     expect(store.historyBeforeSequence).toBe(10)
     expect(store.getState().projections.parent).toBeUndefined() // An older page cannot install current facts.
@@ -1300,7 +1300,7 @@ describe('AppStore history paging', () => {
     store.dispose()
   })
 
-  it('replaces the historical window while retaining the separate live tail', async () => {
+  it('prepends history while preserving live events received during the read', async () => {
     const page = deferred<unknown>()
     let historyRequested = false
     const client = new FakeClient((request) => {
@@ -1417,9 +1417,15 @@ describe('AppStore history paging', () => {
     await paging
 
     expect(store.getState()).not.toHaveProperty('history')
-    expect(store.timeline.nodes.map((node) => node.id)).toEqual(['oldest-visible'])
+    expect(store.timeline.nodes.map((node) => node.id)).toEqual([
+      'oldest-visible',
+      'older-visible',
+      'assistant-live',
+      'tool-after-page-start',
+    ])
     await store.navigateTranscript('latest')
     expect(store.timeline.nodes.map((node) => node.id)).toEqual([
+      'oldest-visible',
       'older-visible',
       'assistant-live',
       'tool-after-page-start',
@@ -1428,7 +1434,7 @@ describe('AppStore history paging', () => {
       expect.objectContaining({ id: 'assistant-live', markdown: 'live prefix and final answer' }),
     )
     expect(store.historyLoading).toBe(false)
-    expect(store.historyBeforeSequence).toBe(20)
+    expect(store.historyBeforeSequence).toBe(10)
     store.dispose()
   })
 
@@ -1735,7 +1741,7 @@ describe('AppStore session branching', () => {
       }),
     )
     expect(client.requests.some((request) => request.type === 'session.history')).toBe(false)
-    expect(store.timeline.nodes.map((node) => node.id)).toEqual(['child-older'])
+    expect(store.timeline.nodes.map((node) => node.id)).toEqual(['child-older', 'child-newer'])
     expect(store.historyBeforeSequence).toBe(10)
     expect(store.historyHasMore).toBe(false)
     expect(store.historyLoading).toBe(false)

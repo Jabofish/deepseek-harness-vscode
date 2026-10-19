@@ -144,6 +144,21 @@
   padding: var(--dsh-space-4);
 }
 
+.dsh-editor-integration .dsh-setting-row__layout {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.dsh-editor-integration .dsh-setting-row__control {
+  justify-content: flex-end;
+}
+
+.dsh-settings__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--dsh-space-2);
+  min-width: 0;
+}
+
 .dsh-settings__toolbar,
 .dsh-settings__connection-actions,
 .dsh-settings__runtime-update-head,
@@ -402,6 +417,17 @@
 .dsh-settings__switch[aria-checked='true'] > span {
   background: var(--dsh-primary-text);
   transform: translateX(1rem);
+}
+
+@media (forced-colors: active) {
+  .dsh-settings__switch > span {
+    forced-color-adjust: none;
+    background: ButtonText;
+  }
+
+  .dsh-settings__switch:disabled > span {
+    background: GrayText;
+  }
 }
 
 .dsh-settings__number-control {

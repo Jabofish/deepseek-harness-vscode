@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { editorIntegrationStatusSchema } from './feature-editor.js'
 import {
   accountLifecycleSnapshotSchema,
   accountProfileDetailsSnapshotSchema,
@@ -37,6 +38,7 @@ import { contextKind, promptTemplateVariable } from './feature-requests.js'
 import { modsBandSnapshotSchema } from './feature-mods-band.js'
 
 export const featureResponsePayloadSchema = z.discriminatedUnion('kind', [
+  editorIntegrationStatusSchema,
   z
     .object({
       kind: z.literal('inspector.devtools'),

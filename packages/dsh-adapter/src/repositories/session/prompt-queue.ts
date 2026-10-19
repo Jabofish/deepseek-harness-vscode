@@ -98,6 +98,9 @@ export class SessionPromptQueue {
       {
         sessionId: input.sessionId,
         mode,
+        ...(this.transport.promptRequestIdentity === true && input.requestId !== undefined
+          ? { requestId: input.requestId }
+          : {}),
         content: encodePromptContent(input.text, input.attachments, limits),
         ...(this.includesClientTimeZone ? clientTimeZoneField() : {}),
       },

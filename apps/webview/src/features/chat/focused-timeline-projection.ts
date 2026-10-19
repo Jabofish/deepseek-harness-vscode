@@ -15,6 +15,10 @@ export interface FocusedTurnNode {
   readonly sourceIds: readonly string[]
   readonly foldable: boolean
   readonly answer: FocusedAnswerNode | undefined
+  /** Virtual rows share one process disclosure for the continuous source run. */
+  readonly processId?: string
+  readonly processCount?: number
+  readonly continuation?: boolean
 }
 export type PresentedTimelineNode = DisplayTimelineNode | FocusedTurnNode
 export const FOCUSED_PROCESS_SEGMENT_SIZE = 24
@@ -154,7 +158,10 @@ export function createFocusedTimelineProjector(): (
         state.healthy &&
         uninterrupted &&
         (finalReply?.turnCompleted === true || runLast.kind === 'tool')
+      const processId = `focused-turn:${nodes[runStart]!.id}`
+      const processCount = runEnd - runStart - (foldable && finalReply !== undefined ? 1 : 0)
       while (index < runEnd) {
+        const continuation = index !== runStart
         starts.push(index)
         const members = nodes
           .slice(index, Math.min(runEnd, index + FOCUSED_PROCESS_SEGMENT_SIZE))
@@ -171,6 +178,9 @@ export function createFocusedTimelineProjector(): (
           sourceIds: members.flatMap(timelineSourceNodeIds),
           foldable,
           answer,
+          processId,
+          processCount,
+          continuation,
         })
       }
     }

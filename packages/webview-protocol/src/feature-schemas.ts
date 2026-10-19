@@ -8,6 +8,7 @@ export {
   taskSummarySchema,
 } from './feature-schemas/feature-shared.js'
 export {} from './feature-schemas/feature-plugin.js'
+export { editorIntegrationStatusSchema } from './feature-schemas/feature-editor.js'
 export { scheduleRecordSchema, scheduleCatalogEntrySchema } from './feature-schemas/feature-schedule.js'
 export {
   checkpointSummarySchema,

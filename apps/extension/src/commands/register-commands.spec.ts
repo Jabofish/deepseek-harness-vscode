@@ -51,6 +51,11 @@ describe('registerCommands', () => {
       'dsh.addFileContext',
       'dsh.addSymbolContext',
       'dsh.addDiagnosticContext',
+      'dsh.shareEditorState',
+      'dsh.stopSharingEditorState',
+      'dsh.manageEditorCompanion',
+      'dsh.installEditorCompanion',
+      'dsh.undoEditorEdit',
     ])
     expect(subscriptions).toHaveLength(registrations.length)
 

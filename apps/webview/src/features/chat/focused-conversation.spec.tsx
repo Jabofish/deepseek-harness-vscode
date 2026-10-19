@@ -75,6 +75,42 @@ afterEach(() => {
 })
 
 describe('focused conversation interactions', () => {
+  it('presents one disclosure across virtual segments and toggles the entire continuous process', () => {
+    const source: TimelineNode[] = Array.from({ length: 55 }, (_, index) => ({
+      kind: 'assistant-message',
+      id: `continuous-${index}`,
+      markdown: `Progress item ${index}`,
+      streaming: false,
+      turn: 1,
+      step: index + 1,
+      turnCompleted: false,
+    }))
+    const view = render(session('standard', source))
+    expect(screen.getAllByRole('button', { name: /Work details/u })).toHaveLength(1)
+    expect(screen.getByText('Progress item 54')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /Work details/u }))
+    expect(screen.queryByText('Progress item 0')).toBeNull()
+    expect(screen.queryByText('Progress item 54')).toBeNull()
+    view.rerender(
+      session('standard', [
+        ...source,
+        {
+          kind: 'assistant-message',
+          id: 'continuous-answer',
+          markdown: 'Final continuous answer',
+          streaming: false,
+          turn: 1,
+          step: 56,
+          turnCompleted: true,
+        },
+      ]),
+    )
+    expect(screen.getAllByRole('button', { name: /Work completed/u })).toHaveLength(1)
+    expect(screen.getByText('Final continuous answer')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /Work completed/u }))
+    expect(screen.getByText('Progress item 0')).toBeTruthy()
+    expect(screen.getByText('Progress item 54')).toBeTruthy()
+  })
   it('lets a user close active work, retains that choice on updates, and reopens the same process', () => {
     const live = nodes
       .slice(0, -1)

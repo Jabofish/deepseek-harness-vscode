@@ -22,6 +22,7 @@ export interface SessionActionDependencies {
     sessionId: string,
     command: string,
     attachments?: readonly PromptAttachment[],
+    signal?: AbortSignal,
   ) => Promise<'executed' | 'unknown'>
   readonly sendUserTurn: (
     sessionId: string,
@@ -29,6 +30,7 @@ export interface SessionActionDependencies {
     attachments: readonly PromptAttachment[],
     mode: RunningInputMode,
     subagent: ActiveSubagent | undefined,
+    signal?: AbortSignal,
   ) => Promise<void>
   /**
    * Client-owned `/moveto` dispatch. Present so a line the composer did not
@@ -50,12 +52,14 @@ export interface SessionActions {
     sessionId: string,
     command: string,
     attachments?: readonly PromptAttachment[],
+    signal?: AbortSignal,
   ): Promise<boolean>
   sendPrompt(
     sessionId: string,
     text: string,
     attachments: readonly PromptAttachment[],
     mode: RunningInputMode,
+    signal?: AbortSignal,
   ): Promise<void>
   cancelSession(sessionId: string): Promise<void>
   setPromptMode(mode: PromptMode): Promise<boolean>
@@ -109,12 +113,13 @@ export function createSessionActions(dependencies: SessionActionDependencies): S
     sessionId: string,
     command: string,
     attachments: readonly PromptAttachment[] = [],
+    signal?: AbortSignal,
   ): Promise<boolean> => {
-    if ((await executeCommandRequest(sessionId, command, attachments)) === 'executed') return true
+    if ((await executeCommandRequest(sessionId, command, attachments, signal)) === 'executed') return true
     // The palette hands the picked line to the command surface; a skill row
     // has no command behind it, so the same line is submitted as the prompt
     // gesture it spells.
-    await sendUserTurn(sessionId, command, attachments, 'queue', undefined)
+    await sendUserTurn(sessionId, command, attachments, 'queue', undefined, signal)
     return true
   }
 
@@ -123,6 +128,7 @@ export function createSessionActions(dependencies: SessionActionDependencies): S
     text: string,
     attachments: readonly PromptAttachment[],
     mode: RunningInputMode,
+    signal?: AbortSignal,
   ): Promise<void> => {
     const subagent = activeSubagentFor(sessionId)
     // Client-owned commands are never spelled as a prompt, whatever route the
@@ -143,9 +149,9 @@ export function createSessionActions(dependencies: SessionActionDependencies): S
       // for the next message, exactly as they do on the Composer's own
       // command path.  A line DSH answers as unknown is not a command at all
       // and is submitted below as the prompt gesture it spells.
-      if ((await executeCommandRequest(sessionId, clientText, attachments)) === 'executed') return
+      if ((await executeCommandRequest(sessionId, clientText, attachments, signal)) === 'executed') return
     }
-    await sendUserTurn(sessionId, clientText, attachments, mode, subagent)
+    await sendUserTurn(sessionId, clientText, attachments, mode, subagent, signal)
   }
 
   const cancelSession = async (sessionId: string): Promise<void> => {

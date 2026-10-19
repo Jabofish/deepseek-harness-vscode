@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { editorIntegrationPreferencesSchema } from './feature-editor.js'
 import {
   changeSummarySchema,
   featureRangeSchema,
@@ -48,6 +49,27 @@ export const promptTemplateOwnerPayload = {
 
 /** Future request union. Do not merge it into `webviewRequestSchema` early. */
 export const featureRequestSchema = z.discriminatedUnion('type', [
+  z
+    .object({
+      type: z.literal('editor.companion.status'),
+      ...featureRequestBase,
+      payload: z.object({}).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('editor.companion.configure'),
+      ...featureRequestBase,
+      payload: editorIntegrationPreferencesSchema.partial().refine((value) => Object.keys(value).length > 0),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('editor.companion.action'),
+      ...featureRequestBase,
+      payload: z.object({ action: z.enum(['retry', 'setup', 'restart', 'undo', 'start-managed']) }).strict(),
+    })
+    .strict(),
   z
     .object({
       type: z.literal('inspector.devtools.status'),

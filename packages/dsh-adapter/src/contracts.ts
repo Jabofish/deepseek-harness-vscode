@@ -140,6 +140,7 @@ export interface DshVersionAdapter {
 }
 
 export interface DshTransport {
+  readonly promptRequestIdentity?: boolean
   /** Exact alpha/rc session-controller profile supports turn-aligned history pages. */
   readonly sessionHistoryTurnWindow?: boolean
   request<TResponse>(method: string, params: unknown, signal?: AbortSignal): Promise<TResponse>

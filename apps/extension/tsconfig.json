@@ -5,5 +5,5 @@
     "noEmit": true,
     "types": ["node", "vscode"]
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts", "../../packages/dsh-editor-bridge/src/companion-broker.ts"]
 }

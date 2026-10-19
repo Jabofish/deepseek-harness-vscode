@@ -155,33 +155,27 @@ const useAppControllerImpl = () => {
     adoptLocaleFromHost,
     setLocale,
     setThemePreferenceState,
-    setConversationView,
     setError,
     t,
   })
-  const trajectoryVisible = codingToolsEnabled
-  const onConversationTabKeyDown = useCallback(
-    (event: ReactKeyboardEvent<HTMLButtonElement>): void => {
-      const current = event.currentTarget.dataset.conversationView
-      if (current !== 'chat' && current !== 'trajectory') return
-      const views: readonly ('chat' | 'trajectory')[] = trajectoryVisible ? ['chat', 'trajectory'] : ['chat']
-      const currentIndex = views.indexOf(current)
-      let nextIndex: number | undefined
-      if (event.key === 'ArrowRight' || event.key === 'ArrowDown')
-        nextIndex = (currentIndex + 1) % views.length
-      else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp')
-        nextIndex = (currentIndex - 1 + views.length) % views.length
-      else if (event.key === 'Home') nextIndex = 0
-      else if (event.key === 'End') nextIndex = views.length - 1
-      if (nextIndex === undefined) return
-      event.preventDefault()
-      const next = views[nextIndex]
-      if (next === undefined) return
-      setConversationView(next)
-      document.getElementById(CONVERSATION_VIEW_IDS[next].tab)?.focus()
-    },
-    [trajectoryVisible],
-  )
+  const onConversationTabKeyDown = useCallback((event: ReactKeyboardEvent<HTMLButtonElement>): void => {
+    const current = event.currentTarget.dataset.conversationView
+    if (current !== 'chat' && current !== 'trajectory') return
+    const views: readonly ('chat' | 'trajectory')[] = ['chat', 'trajectory']
+    const currentIndex = views.indexOf(current)
+    let nextIndex: number | undefined
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') nextIndex = (currentIndex + 1) % views.length
+    else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp')
+      nextIndex = (currentIndex - 1 + views.length) % views.length
+    else if (event.key === 'Home') nextIndex = 0
+    else if (event.key === 'End') nextIndex = views.length - 1
+    if (nextIndex === undefined) return
+    event.preventDefault()
+    const next = views[nextIndex]
+    if (next === undefined) return
+    setConversationView(next)
+    document.getElementById(CONVERSATION_VIEW_IDS[next].tab)?.focus()
+  }, [])
 
   const setConversationFontSize = useCallback((next: ConversationFontSize): void => {
     setConversationFontSizeState(next)
@@ -552,13 +546,12 @@ const useAppControllerImpl = () => {
       throw reason
     }),
   )
-  const queueOnRemove = useStableCallback((inputId: string): void => {
-    void store
-      .removeQueue(inputId)
-      .catch((reason: unknown) =>
-        setError(reason instanceof Error ? reason.message : t('app.error.removeQueue')),
-      )
-  })
+  const queueOnRemove = useStableCallback((inputId: string): Promise<void> =>
+    store.removeQueue(inputId).catch((reason: unknown) => {
+      setError(reason instanceof Error ? reason.message : t('app.error.removeQueue'))
+      throw reason
+    }),
+  )
   const queueOnModeChange = useStableCallback((inputId: string, mode: RunningInputMode): void => {
     if (mode !== 'steer') return
     void store
@@ -639,7 +632,11 @@ const useAppControllerImpl = () => {
       )
   })
   const composerOnCommand = useStableCallback(
-    async (command: string, commandAttachments: readonly PromptAttachment[] = []): Promise<void> => {
+    async (
+      command: string,
+      commandAttachments: readonly PromptAttachment[] = [],
+      signal?: AbortSignal,
+    ): Promise<void> => {
       // Client-owned commands run before the session guard: moving the chat back
       // to the side bar must work even when no session is selected.
       if (isMovetoCommandLine(command)) {
@@ -665,14 +662,15 @@ const useAppControllerImpl = () => {
         return
       }
       try {
-        await store.executeCommand(active.id, command, commandAttachments)
+        await store.executeCommand(active.id, command, commandAttachments, signal)
         if (commandAttachments.length > 0)
           removeAttachmentDrafts(
             commandAttachments.map((attachment) => attachment.uri),
             true,
           )
       } catch (reason: unknown) {
-        setError(reason instanceof Error ? reason.message : t('app.error.dshMode'))
+        if (signal?.aborted !== true)
+          setError(reason instanceof Error ? reason.message : t('app.error.dshMode'))
         throw reason
       }
     },
@@ -887,7 +885,6 @@ const useAppControllerImpl = () => {
     branching,
     busyAction,
     codingToolsEnabled,
-    trajectoryVisible,
     compatibilityWarning,
     composerOnCancel,
     composerOnCaptureEditorContext,

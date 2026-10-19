@@ -186,7 +186,7 @@ describe('AppStore rebuild path integrity', () => {
     store.dispose()
   })
 
-  it('keeps a host-only row when an older window replaces the current one', async () => {
+  it('keeps a host-only row when older history is prepended', async () => {
     const { client, store } = open()
     client.history.set(
       PARENT,
@@ -212,12 +212,16 @@ describe('AppStore rebuild path integrity', () => {
     await store.loadOlderHistory()
     await settle()
 
-    // Historical navigation replaces resident rows while preserving Host notices.
+    // Prepending retains recent messages and the original Host notice.
     expect(nodeIds(store)).toEqual([
       `user-${PARENT}-1`,
       `user-${PARENT}-2`,
       `user-${PARENT}-3`,
       `user-${PARENT}-4`,
+      `user-${PARENT}-5`,
+      `user-${PARENT}-6`,
+      `user-${PARENT}-7`,
+      `user-${PARENT}-8`,
       'notice:-1',
     ])
     store.dispose()

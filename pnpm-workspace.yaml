@@ -2,6 +2,13 @@ packages:
   - apps/*
   - packages/*
 
+# rc.2's published registry references Protocol in declarations but lists it
+# only as a dev dependency. Keep its types separate from our legacy codecs.
+packageExtensions:
+  '@deepseek-ai/dsh-typert-registry@0.2.1-rc.2':
+    dependencies:
+      '@deepseek-ai/dsh-typert-protocol': '0.2.1-rc.2'
+
 allowBuilds:
   '@vscode/vsce-sign': false
   esbuild: true
