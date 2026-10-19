@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.3.6
+
+- 编辑器配套改为用户主动安装：在设置中选择“安装并启用配套插件”后才加载，F5 同样遵循此选择；安装后继续随扩展更新，后台不再自动安装插件包。
+- Makes the editor companion opt-in through Settings → General → Editor integration. F5 respects the same choice; enabled installations continue to follow extension updates, without background package installation.
+
+- 加载提示词模板列表不再自动创建 `.dsh-vscode/prompts`；仅明确保存工作区模板时创建目录，已有模板保持可读。
+- Stops creating `.dsh-vscode/prompts` while loading template lists. The directory is created only when explicitly saving a workspace template; existing templates remain readable.
+
 ## 0.3.5
 
 - 编辑器配套随扩展打包并自动更新；F5 加载当前构建，常规升级自动检测旧配套。Webview 设置提供读写开关、修复、重试和撤销，无需另行安装或逐会话启用。

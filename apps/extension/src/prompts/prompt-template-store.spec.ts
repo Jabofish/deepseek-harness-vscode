@@ -7,6 +7,7 @@ import { PromptTemplateStore } from './prompt-template-store.js'
 import type { PromptTemplateScopeStorage } from './prompt-template-store.js'
 
 interface MemoryStorage extends PromptTemplateScopeStorage {
+  readonly mkdir: ReturnType<typeof vi.fn<() => Promise<void>>>
   readonly files: Map<string, Uint8Array>
   failWrites: boolean
   abortOnWrite: AbortController | undefined
@@ -18,9 +19,7 @@ function memoryStorage(): MemoryStorage {
     files,
     failWrites: false,
     abortOnWrite: undefined,
-    mkdir(): Promise<void> {
-      return Promise.resolve()
-    },
+    mkdir: vi.fn(() => Promise.resolve()),
     read(name): Promise<Uint8Array | undefined> {
       const value = files.get(name)
       return Promise.resolve(value === undefined ? undefined : new Uint8Array(value))
@@ -105,6 +104,33 @@ async function createTemplate(
 
 describe('PromptTemplateStore', () => {
   afterEach(() => vi.restoreAllMocks())
+
+  it('does not create directories when loading templates, and creates storage only on explicit save', async () => {
+    const { store, global, workspaces } = createHarness()
+    const globalMkdir = vi.spyOn(global, 'mkdir')
+
+    await store.initialize()
+    expect(await store.list(owner)).toEqual([])
+    const workspace = workspaces.get(owner.workspaceFolderId)!
+    const workspaceMkdir = workspace.mkdir
+    await store.list({ ...owner, scope: 'workspace' })
+    await expect(store.read('missing', owner)).rejects.toMatchObject({ code: 'CAPABILITY_UNAVAILABLE' })
+    expect(globalMkdir).not.toHaveBeenCalled()
+    expect(workspaceMkdir).not.toHaveBeenCalled()
+    expect(global.files.size).toBe(0)
+    expect(workspace.files.size).toBe(0)
+
+    const workspaceWrite = vi.spyOn(workspace, 'write')
+    const summary = await createTemplate(store, { scope: 'workspace' })
+    expect(workspaceMkdir).toHaveBeenCalledOnce()
+    expect(workspaceMkdir.mock.invocationCallOrder[0]).toBeLessThan(
+      workspaceWrite.mock.invocationCallOrder[0]!,
+    )
+    expect((await store.read(summary.templateId, owner)).templateText).toContain('{{selection}}')
+    expect(await store.list(owner)).toEqual([summary])
+    expect(globalMkdir).not.toHaveBeenCalled()
+    expect(workspaceMkdir).toHaveBeenCalledOnce()
+  })
 
   it('creates, lists, reads and expands a global template without sending it anywhere', async () => {
     const { store } = createHarness()

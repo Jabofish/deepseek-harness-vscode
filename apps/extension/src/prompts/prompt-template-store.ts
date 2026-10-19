@@ -188,6 +188,9 @@ export class PromptTemplateStore implements PromptTemplateRepository {
     if (scopeMap === undefined) throw storageCorrupt('Template scope is not loaded.')
     scopeMap.set(record.templateId, record)
     try {
+      // Only an explicit template save creates storage; listing must stay read-only.
+      await storage.mkdir()
+      throwIfAborted(signal)
       await this.writeAtomic(storage, record.bodyRef, Buffer.from(normalized.templateText, 'utf8'), signal)
       await this.persistScope(scopeKey, storage, signal)
       this.registerRecord(record, storage, scopeKey)
@@ -357,8 +360,6 @@ export class PromptTemplateStore implements PromptTemplateRepository {
           ? undefined
           : this.options.workspace(workspaceFolderId)
     if (storage === undefined) throw resourceNotOwned()
-    await storage.mkdir()
-    throwIfAborted(signal)
     const raw = await storage.read(INDEX_NAME)
     const index = raw === undefined ? emptyIndex() : decodeIndex(raw)
     const scopeMap = new Map<string, StoredTemplateRecord>()
