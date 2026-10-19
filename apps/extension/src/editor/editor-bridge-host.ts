@@ -9,6 +9,7 @@ import {
 } from '@dsh-vscode/application'
 import {
   AppError,
+  EditorCompanionError,
   isLoopbackEndpoint,
   type DshBackend,
   type EditorCompanionCapability,
@@ -26,6 +27,7 @@ import type { Applied } from './companion-edit-proposals.js'
 import { verifyCompanionHost } from './companion-host-proof.js'
 import { EditLedger, revertEdit } from './edit-ledger.js'
 import { readEditorPreferences, saveEditorPreferences } from './editor-integration-settings.js'
+import { EditorWorkspaceAccess } from './editor-workspace-access.js'
 
 interface Dependencies {
   readonly backendService: BackendService
@@ -44,6 +46,9 @@ export class EditorBridgeHost {
   private readonly companion: EditorCompanionService
   private readonly management: EditorCompanionManagement
   private readonly ledger = new EditLedger()
+  private readonly workspaceAccess = new EditorWorkspaceAccess(
+    () => !this.disposed && !this.suppressed && readEditorPreferences().enabled,
+  )
   private provider: EditorCompanionProvider | undefined
   private capabilities: readonly EditorCompanionCapability[] = []
   private status: vscode.StatusBarItem | undefined
@@ -114,6 +119,7 @@ export class EditorBridgeHost {
         if (change === 'connection') void this.reconcile()
       }),
       vscode.workspace.onDidChangeWorkspaceFolders(() => {
+        this.workspaceAccess.reset()
         this.starting?.abort()
         void this.stop().then(() => this.reconcile())
       }),
@@ -125,6 +131,11 @@ export class EditorBridgeHost {
         }
       }),
       vscode.workspace.onDidGrantWorkspaceTrust(() => {
+        this.workspaceAccess.reset()
+        if (this.companion.active) {
+          this.reason = this.workspaceAccess.reason()
+          this.phase = this.reason === undefined ? 'ready' : 'waiting'
+        }
         void this.reconcile()
       }),
     ]
@@ -145,13 +156,9 @@ export class EditorBridgeHost {
     try {
       const backend = this.deps.backendService.requireBackend()
       const sessionId = this.deps.sessionNavigation.activeSessionId
-      if (
-        !vscode.workspace.isTrusted ||
-        (vscode.workspace.workspaceFolders?.length ?? 0) === 0 ||
-        sessionId === undefined
-      ) {
+      if (sessionId === undefined) {
         this.phase = 'waiting'
-        this.reason = sessionId === undefined ? 'session' : 'workspace'
+        this.reason = 'session'
         return false
       }
       if (!isLoopbackEndpoint(backend.connection.endpoint) || backend.editorBridge === undefined) {
@@ -161,22 +168,6 @@ export class EditorBridgeHost {
       }
       this.phase = 'connecting'
       this.reason = undefined
-      const session = await backend.sessions.get(sessionId, controller.signal)
-      controller.signal.throwIfAborted()
-      // A session may run in a subfolder of an open root, or above it: both stay shareable.
-      const primary = this.folderFor(session.cwd)
-      const folders = this.shareable()
-      if (
-        primary === undefined ||
-        folders.length === 0 ||
-        !this.currentBackend(backend) ||
-        this.deps.sessionNavigation.activeSessionId !== sessionId ||
-        !vscode.workspace.isTrusted
-      ) {
-        this.phase = 'waiting'
-        this.reason = 'workspace'
-        return false
-      }
       this.scope = { backend, sessionId }
       const current = (): boolean =>
         this.scope?.backend === backend &&
@@ -194,29 +185,49 @@ export class EditorBridgeHost {
       }
       if (companion !== undefined && description !== undefined) {
         await verifyCompanionHost(companion, controller.signal)
-        if (
-          !current() ||
-          !vscode.workspace.isTrusted ||
-          !folders.every((item) => vscode.workspace.workspaceFolders?.includes(item))
-        )
-          throw new Error('The selected DSH session must belong to the open workspace folder.')
+        if (!current()) throw new EditorCompanionError('cancelled')
         // Persisted workspace preferences control access without a per-session permission picker.
         this.version = description.packageVersion
         this.capabilities = description.capabilities.filter(
           (capability) => capability !== 'edit' || readEditorPreferences().allowEdits,
         )
-        this.provider = new EditorCompanionProvider(
-          folders,
-          this.capabilities,
-          current,
-          this.ledger,
-          (applied) => this.showEditIndicator(applied),
-        )
-        await this.companion.start(companion, sessionId, randomUUID(), this.capabilities, this.provider)
+        // Bind before workspace access is available so the first tool can ask for it.
+        // File access is still checked by the provider against this window's trusted roots.
+        const capabilities = this.capabilities
+        await this.companion.start(companion, sessionId, randomUUID(), capabilities, {
+          execute: async (request, signal) => {
+            await this.workspaceAccess.request(signal)
+            if (!current() || !readEditorPreferences().enabled || this.suppressed)
+              throw new EditorCompanionError('cancelled')
+            this.provider ??= new EditorCompanionProvider(
+              this.workspaceAccess.folders(),
+              capabilities,
+              current,
+              this.ledger,
+              (applied) => this.showEditIndicator(applied),
+            )
+            this.phase = 'ready'
+            this.reason = undefined
+            return this.provider.execute(request, signal)
+          },
+        })
       } else {
+        const blocked = this.workspaceAccess.reason()
+        if (blocked !== undefined) {
+          this.phase = 'waiting'
+          this.reason = blocked
+          this.scope = undefined
+          return false
+        }
+        const session = await backend.sessions.get(sessionId, controller.signal)
+        controller.signal.throwIfAborted()
+        const primary = this.folderFor(session.cwd)
+        const folders = this.workspaceAccess.folders()
+        if (!current()) throw new EditorCompanionError('cancelled')
         if (
           backend.connection.ownership !== 'managed' ||
           folders.length !== 1 ||
+          primary === undefined ||
           primary.uri.scheme !== 'file'
         ) {
           this.phase = 'limited'
@@ -236,8 +247,8 @@ export class EditorBridgeHost {
       this.status ??= vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 10)
       this.updateStatus()
       this.recoveryAttempts = 0
-      this.phase = this.companion.active ? 'ready' : 'limited'
-      this.reason = this.companion.active ? undefined : 'missing'
+      this.reason = this.companion.active ? this.workspaceAccess.reason() : 'missing'
+      this.phase = this.companion.active ? (this.reason === undefined ? 'ready' : 'waiting') : 'limited'
       return true
     } catch (error) {
       await Promise.all([this.service.stop(), this.companion.stop()])
@@ -384,6 +395,12 @@ export class EditorBridgeHost {
       if (this.snapshot().canRestart) await this.deps.reconnect?.()
     } else {
       this.installAttempted = undefined
+      if (action === 'retry' && this.workspaceAccess.reason() !== undefined) {
+        this.workspaceAccess.reset()
+        await this.workspaceAccess.request(AbortSignal.timeout(60_000)).catch((error: unknown) => {
+          if (!(error instanceof EditorCompanionError)) throw error
+        })
+      }
       if (action === 'setup' && this.snapshot().canInstall) {
         this.phase = 'setup'
         this.reason = undefined
@@ -531,14 +548,6 @@ export class EditorBridgeHost {
       .filter((folder) => isPathWithin(folder.uri.fsPath, cwd) || isPathWithin(cwd, folder.uri.fsPath))
       .sort((left, right) => right.uri.fsPath.length - left.uri.fsPath.length)
     return related[0]
-  }
-  /** Every root in this window that the editor host can actually read. */
-  private shareable(): readonly vscode.WorkspaceFolder[] {
-    return (vscode.workspace.workspaceFolders ?? []).filter(
-      (folder) =>
-        folder.uri.scheme === 'file' ||
-        (folder.uri.scheme === 'vscode-remote' && vscode.env.remoteName !== undefined),
-    )
   }
   private updateStatus(): void {
     if (this.status === undefined) return

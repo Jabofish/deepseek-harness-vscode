@@ -96,6 +96,7 @@ export function EditorIntegrationSettings({
   const reasons = {
     disconnected: t('editorIntegration.disconnected'),
     workspace: t('editorIntegration.workspace'),
+    untrusted: t('editorIntegration.untrusted'),
     session: t('editorIntegration.session'),
     unsupported: t('editorIntegration.unsupported'),
     missing: t('editorIntegration.missing'),
@@ -152,7 +153,13 @@ export function EditorIntegrationSettings({
           disabled={busy || request === undefined}
           onClick={() => action('retry')}
         >
-          {busy ? t('editorIntegration.working') : t('editorIntegration.retry')}
+          {busy
+            ? t('editorIntegration.working')
+            : status?.reason === 'untrusted'
+              ? t('editorIntegration.manageTrust')
+              : status?.reason === 'workspace'
+                ? t('editorIntegration.chooseFolder')
+                : t('editorIntegration.retry')}
         </button>
         {status?.canInstall && phase !== 'ready' ? (
           <button

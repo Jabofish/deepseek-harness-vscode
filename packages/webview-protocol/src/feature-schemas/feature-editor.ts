@@ -12,6 +12,7 @@ export const editorIntegrationStatusSchema = z
       .enum([
         'disconnected',
         'workspace',
+        'untrusted',
         'session',
         'unsupported',
         'missing',

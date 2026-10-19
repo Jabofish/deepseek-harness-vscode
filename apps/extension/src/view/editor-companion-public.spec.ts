@@ -1,7 +1,33 @@
 import { describe, expect, it } from 'vitest'
+import { editorCompanionFailureMessage } from '@dsh-vscode/domain'
 import { sanitizePublicValue } from './public-value.js'
 
 describe('editor companion public projections', () => {
+  it('shows known failure reasons without exposing arbitrary error bodies', () => {
+    for (const reason of ['not-bound', 'untrusted', 'no-editor', 'workspace-mismatch'] as const) {
+      const tool = {
+        id: 'fixture-tool',
+        name: 'vscode_read_selection',
+        status: 'failed',
+        error: `Tool failed: [editor:${reason}] /private/secret raw diagnostic body`,
+      }
+      const result = sanitizePublicValue(tool)
+      expect(result).toMatchObject({ outputSummary: editorCompanionFailureMessage(reason, 'selection') })
+      expect(JSON.stringify(result)).not.toMatch(/private|diagnostic body/u)
+    }
+    const old = editorCompanionFailureMessage('no-editor', 'selection')
+    expect(
+      sanitizePublicValue({ id: 'old', name: 'vscode_read_selection', status: 'failed', error: old }),
+    ).toMatchObject({ outputSummary: old })
+    expect(
+      sanitizePublicValue({
+        id: 'bad',
+        name: 'vscode_read_selection',
+        status: 'failed',
+        error: '[editor:unknown] secret',
+      }),
+    ).toMatchObject({ outputSummary: 'Editor request failed or was denied.' })
+  })
   it('removes raw diagnostic and proposal payloads from live events and restored history', () => {
     const range = { start: { line: 1, column: 1 }, end: { line: 1, column: 2 } }
     const tool = {

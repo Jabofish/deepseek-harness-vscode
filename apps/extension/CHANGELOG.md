@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 修复新会话因工作目录不同或缺少目录信息而无法绑定编辑器工具的问题；工具按当前窗口已信任的文件夹工作。首次调用缺少文件夹或信任时主动提示，设置页提供直接操作入口，工具卡保留具体失败原因。
+- Binds editor tools for new sessions independently of their working directory. Access stays within this window's trusted folders; the first tool request offers folder/trust setup when needed, with direct settings actions and safe failure details.
+
 - 修复从初始页打开会话后“会话 / 轨迹”切换入口缺失的问题；本地视图切换不再依赖 Coding Tools 开关或设置读取成功，迟到的设置回包也不会重置当前视图。
 - Keeps Chat / Trajectory tabs available after opening a session from the initial page, independently of Coding Tools and settings availability; late settings replies preserve the selected view.
 

@@ -27,7 +27,8 @@ describe('editor failure guidance', () => {
     }
   })
   it('tells the model how the user can restore access', () => {
-    expect(explainFailure('not-bound')).toContain('Retry the editor request')
+    expect(explainFailure('not-bound')).toContain('Check Settings')
+    expect(explainFailure('not-bound')).not.toContain('recovering')
     for (const reason of EDITOR_COMPANION_FAILURES)
       expect(explainFailure(reason)).not.toContain('Turn On Editor Tools')
     expect(explainFailure('denied')).toContain('Settings → General → Editor integration')

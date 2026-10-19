@@ -1,5 +1,8 @@
 import {
   EDITOR_COMPANION_TOOLS,
+  EDITOR_COMPANION_FAILURES,
+  editorCompanionFailureMessage,
+  isEditorCompanionFailure,
   isEditorCompanionValue,
   isEditorStateSnapshot,
   type EditorCompanionValue,
@@ -24,6 +27,25 @@ export function publicEditorCompanionTool(
         : source.status === 'cancelled'
           ? 'Editor request cancelled.'
           : 'Editor request in progress.'
+  if (source.status === 'failed') {
+    const operation = EDITOR_COMPANION_TOOLS[source.name as keyof typeof EDITOR_COMPANION_TOOLS]
+    for (const candidate of [source.error, source.outputSummary]) {
+      if (typeof candidate !== 'string' || candidate.length > 16_384) continue
+      const reason = /\[editor:([a-z-]+)\]/u.exec(candidate)?.[1]
+      if (isEditorCompanionFailure(reason)) {
+        output = editorCompanionFailureMessage(reason, operation)
+        break
+      }
+      // Existing runtimes may not include the reason marker. Accept only exact fixed messages.
+      const known = EDITOR_COMPANION_FAILURES.find(
+        (failure) => editorCompanionFailureMessage(failure, operation) === candidate,
+      )
+      if (known !== undefined) {
+        output = editorCompanionFailureMessage(known, operation)
+        break
+      }
+    }
+  }
   if (
     source.status === 'completed' &&
     typeof source.outputSummary === 'string' &&

@@ -1,7 +1,15 @@
 import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { BackendService } from '@dsh-vscode/application'
-import type { DshBackend, BackendState } from '@dsh-vscode/domain'
+import {
+  EditorCompanionError,
+  type DshBackend,
+  type BackendState,
+  type EditorCompanionCapability,
+  type EditorCompanionReply,
+  type EditorCompanionResult,
+} from '@dsh-vscode/domain'
+import { EditorCompanionBroker } from '../../../../packages/dsh-editor-bridge/src/companion-broker.js'
 import { EditorBridgeHost } from './editor-bridge-host.js'
 
 const ui = vi.hoisted(() => ({
@@ -14,6 +22,8 @@ const ui = vi.hoisted(() => ({
   warning: vi.fn(),
   info: vi.fn(),
   proof: vi.fn(),
+  execute: vi.fn(),
+  command: vi.fn(),
   settings: { enabled: true, autoSetup: true, allowEdits: true },
   changeConfiguration: (_event: { affectsConfiguration: (section: string) => boolean }): void => {},
 }))
@@ -45,10 +55,12 @@ vi.mock('vscode', () => ({
     createStatusBarItem: () => ({ show: ui.show, hide: ui.hide, dispose: ui.dispose }),
   },
   StatusBarAlignment: { Right: 2 },
+  commands: { executeCommand: ui.command },
 }))
 vi.mock('./companion-host-proof.js', () => ({ verifyCompanionHost: ui.proof }))
 vi.mock('./editor-companion-provider.js', () => ({
   EditorCompanionProvider: class {
+    readonly execute = ui.execute
     readonly proposals = { lastApplied: () => undefined, undo: () => Promise.resolve(false) }
     dispose(): void {}
   },
@@ -65,6 +77,7 @@ function harness(
   ownership: 'managed' | 'external' = 'managed',
   rich = false,
   cwd = path.resolve('editor-bridge-fixture'),
+  broker?: EditorCompanionBroker,
 ): {
   host: EditorBridgeHost
   attach: ReturnType<typeof vi.fn>
@@ -83,6 +96,21 @@ function harness(
   ui.warning.mockReset().mockResolvedValue('Continue')
   ui.info.mockReset().mockResolvedValue(undefined)
   ui.proof.mockReset().mockResolvedValue(undefined)
+  ui.command.mockReset().mockResolvedValue(undefined)
+  ui.execute.mockReset().mockResolvedValue({
+    kind: 'document',
+    relativePath: 'sample.ts',
+    version: 1,
+    languageId: 'typescript',
+    dirty: false,
+    text: 'selected',
+    truncated: false,
+    range: { start: { line: 1, column: 1 }, end: { line: 1, column: 9 } },
+  })
+  const value = <T>(result: EditorCompanionResult<T>): T => {
+    if (result.status === 'error') throw new EditorCompanionError(result.reason)
+    return result.value
+  }
   const attach = vi.fn().mockResolvedValue({ bindingId: 'fixture_binding_1234', protocolVersion: 1 })
   const detach = vi.fn().mockResolvedValue(undefined)
   const backend = {
@@ -100,15 +128,38 @@ function harness(
                   capabilities: ['content', 'edit'],
                   maxGrants: 16,
                 }),
-              attach: vi.fn().mockImplementation((...args: unknown[]) => {
-                attach(...args)
-                return Promise.resolve({ bindingId: 'fixture_binding_1234', protocolVersion: 2 })
-              }),
-              detach,
-              poll: (_binding: string, signal: AbortSignal) =>
-                new Promise((_resolve, reject) =>
-                  signal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true }),
+              attach: vi
+                .fn()
+                .mockImplementation(
+                  (
+                    sessionId: string,
+                    ownerId: string,
+                    capabilities: readonly EditorCompanionCapability[],
+                    signal: AbortSignal,
+                  ) => {
+                    attach(sessionId, ownerId, capabilities, signal)
+                    return Promise.resolve(
+                      broker === undefined
+                        ? { bindingId: 'fixture_binding_1234', protocolVersion: 2 }
+                        : value(broker.attach(sessionId, ownerId, 'fixture-peer', capabilities)),
+                    )
+                  },
                 ),
+              detach: (binding: string) => {
+                detach(binding)
+                if (broker !== undefined) value(broker.detach(binding, 'fixture-peer'))
+                return Promise.resolve()
+              },
+              respond: (binding: string, id: string, reply: EditorCompanionReply) => {
+                if (broker !== undefined) value(broker.respond(binding, 'fixture-peer', id, reply))
+                return Promise.resolve()
+              },
+              poll: (binding: string, signal: AbortSignal) =>
+                broker === undefined
+                  ? new Promise((_resolve, reject) =>
+                      signal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true }),
+                    )
+                  : broker.poll(binding, 'fixture-peer', signal).then(value),
             },
           }
         : {}),
@@ -159,6 +210,50 @@ function harness(
   }
 }
 describe('automatic editor sharing', () => {
+  it('executes selection tools across a new-session switch with an unrelated cwd through the real broker and service', async () => {
+    const broker = new EditorCompanionBroker()
+    const { host } = harness('managed', true, path.resolve('some-other-project'), broker)
+    try {
+      await host.enable()
+      await expect(
+        broker.read('session-a', { kind: 'selection' }, new AbortController().signal),
+      ).resolves.toMatchObject({ text: 'selected' })
+      await host.prepareSession('new-session', new AbortController().signal)
+      expect(broker.hasSession('session-a')).toBe(false)
+      await expect(
+        broker.read('new-session', { kind: 'selection' }, new AbortController().signal),
+      ).resolves.toMatchObject({ text: 'selected' })
+      expect(host.snapshot().phase).toBe('ready')
+    } finally {
+      await host.dispose()
+      broker.dispose()
+    }
+  })
+  it('prompts on the first actual tool request and resumes after trust, without silent not-bound errors', async () => {
+    const broker = new EditorCompanionBroker()
+    const { host } = harness('managed', true, path.resolve('some-other-project'), broker)
+    ui.trusted = false
+    try {
+      await host.prepareSession('new-session', new AbortController().signal)
+      expect(ui.info).not.toHaveBeenCalled()
+      await expect(
+        broker.read('new-session', { kind: 'selection' }, new AbortController().signal),
+      ).rejects.toMatchObject({ reason: 'untrusted' })
+      expect(ui.info).toHaveBeenCalledWith(
+        expect.stringContaining('Trust this VS Code workspace'),
+        'Manage Workspace Trust',
+      )
+      expect(ui.execute).not.toHaveBeenCalled()
+      ui.trusted = true
+      await expect(
+        broker.read('new-session', { kind: 'selection' }, new AbortController().signal),
+      ).resolves.toMatchObject({ text: 'selected' })
+      expect(host.snapshot()).toMatchObject({ phase: 'ready' })
+    } finally {
+      await host.dispose()
+      broker.dispose()
+    }
+  })
   it('resumes from native settings after a previous explicit stop and reapplies read-only access', async () => {
     const { host, attach } = harness('managed', true)
     expect(await host.enable()).toBe(true)
@@ -287,15 +382,31 @@ describe('automatic editor sharing', () => {
     expect(untrusted.attach).not.toHaveBeenCalled()
     await untrusted.host.dispose()
   })
-  it('shares a session that runs in a subfolder of the open root and rejects unrelated roots', async () => {
-    const inside = harness('managed', true, path.resolve('editor-bridge-fixture/packages/app'))
-    expect(await inside.host.enable()).toBe(true)
-    expect(inside.attach).toHaveBeenCalledTimes(1)
-    await inside.host.dispose()
-    const outside = harness('managed', true, path.resolve('some-other-project'))
-    expect(await outside.host.enable()).toBe(false)
-    expect(outside.attach).not.toHaveBeenCalled()
-    await outside.host.dispose()
+  it.each(['editor-bridge-fixture/packages/app', 'some-other-project', ''])(
+    'binds editor tools using this window even when the session cwd is %s',
+    async (cwd) => {
+      const { host, attach } = harness('managed', true, cwd === '' ? cwd : path.resolve(cwd))
+      await host.prepareSession('new-session', new AbortController().signal)
+      expect(attach).toHaveBeenCalledWith(
+        'new-session',
+        expect.any(String),
+        ['content', 'edit'],
+        expect.any(AbortSignal),
+      )
+      expect(host.snapshot()).toMatchObject({ phase: 'ready' })
+      expect(host.snapshot().reason).toBeUndefined()
+      expect(ui.info).not.toHaveBeenCalled()
+      await host.dispose()
+    },
+  )
+  it('binds a request channel in restricted mode without reading files or prompting during navigation', async () => {
+    const { host, attach } = harness('managed', true)
+    ui.trusted = false
+    expect(await host.enable()).toBe(true)
+    expect(attach).toHaveBeenCalledTimes(1)
+    expect(host.snapshot()).toMatchObject({ phase: 'waiting', reason: 'untrusted' })
+    expect(ui.info).not.toHaveBeenCalled()
+    await host.dispose()
   })
   it('reports when there is no applied edit to undo', async () => {
     const { host } = harness()

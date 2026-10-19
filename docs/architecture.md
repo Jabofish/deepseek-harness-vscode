@@ -29,7 +29,7 @@ DSH 版本身份及版本间契约差异位于 `packages/dsh-adapter/src/version
 
 可选 DSH 配套插件通过已有认证连接向 Extension Host 请求编辑器能力。Domain 定义独立 DTO、权限与仓储端口，版本化 Adapter 封装固定 Remote，Application 持有可撤销的会话绑定及独立请求生命周期，Host 独占 VS Code API 与原生授权入口。插件只按调用 Agent 的会话及 Remote Peer 路由请求；授权身份和通信参数不进入 Webview。协议 2 覆盖文本、诊断、语言服务、导航与编辑，以真实路径限定当前窗口的工作区根，按持久编辑器设置自动共享允许的能力。编辑按版本受检立即写入为一次可撤销编辑组，并通过 VS Code 保存整个缓冲区（包含原有未保存内容）；保存失败保留 applied 状态并明确 saved:false，用户可用 Undo 或 Ctrl+Z 撤回，也可从命令面板撤回最近一次编辑。结构化工具卡在实时事件和历史恢复中均投影为安全摘要。请求取消、连接变化与停用使旧代次失效，迟到采集不能回填到新授权。
 
-编辑器共享要求 loopback、权威会话工作目录匹配及工作区侧临时随机文件挑战通过，不能仅凭 loopback 或路径相同认定共享文件系统。外部实例在用户已选择连接的前提下同样自动共享，不再追加确认；安装、卸载、启停插件与重连仅允许扩展受管实例。安装档案在 Host 中校验包身份并缓存哈希，替换前保留恢复档案；安装确认丢失时以原请求 ID 查询结果，未知结果期间阻止重复安装。Webview 不接收插件档案路径、授权标识、源文本或诊断工具正文。
+编辑器配套共享要求 loopback 及工作区侧临时随机文件挑战通过，不能仅凭 loopback 或路径相同认定共享文件系统。协议 2 按当前窗口的持久编辑器设置共享已打开且受信的根，不以会话工作目录相同为前提；元数据协议 1 回退仍要求会话目录有关联。未打开文件夹或尚未信任时，协议 2 仅绑定请求通道，首次工具调用提供原生文件夹或信任入口；未满足条件前不采集内容，取消及旧会话请求不可继续访问。外部实例在用户已选择连接的前提下同样自动共享，不再追加确认；安装、卸载、启停插件与重连仅允许扩展受管实例。安装档案在 Host 中校验包身份并缓存哈希，替换前保留恢复档案；安装确认丢失时以原请求 ID 查询结果，未知结果期间阻止重复安装。Webview 不接收插件档案路径、授权标识、源文本或诊断工具正文。
 
 用户明确操作优先于插件的本地推断、显示模式和辅助缓存。插件传递用户选择的模型、权限选项、配置和控制命令，不因可选字段缺省、目录加载失败或旧运行状态自行拦截、替换选择或伪报成功。运行中的模型与权限调整交给真实上游契约处理；上游拒绝必须保留可公开原因，界面显示失败并允许用户重试。
 
@@ -56,7 +56,7 @@ Remote SSH、WSL 和 Dev Container 中，Extension Host 与 DSH 位于工作区�
 
 `packages/webview-protocol/src/schemas.ts` 是请求名和字段的代码事实来源。消息经过严格 discriminated union 校验，由对应类型、Host router 和 ProtocolClient 处理。禁止通用 `{ action: string, payload: any }`。Webview 请求有唯一 `requestId`，Host 最多返回一次终态；长期事件有递增 `sequence`，Store 忽略重复和旧序号。协议只传可序列化 Domain DTO，不传 Error、Map、Set、AbortSignal、VS Code 对象或上游类型。
 
-Webview 不接收 endpoint、PID、命令行、Cookie、launch token、Secret、绝对工作区路径、系统提示词或原始诊断 body。文件与变更卡片可显示相对文件标识，但不能据此推断文件夹归属。路径作用域操作只接受 Host 从会话 `cwd` 解析的 VS Code `workspaceFolderId`；它与 DSH workspace id 属于不同命名空间。没有打开 VS Code 文件夹时，相关本地能力不发起请求，也不把未读取显示成空列表。Host 对 enum、id、端口、路径、长度和权限再次验证。
+Webview 不接收 endpoint、PID、命令行、Cookie、launch token、Secret、绝对工作区路径、系统提示词或原始诊断 body。文件与变更卡片可显示相对文件标识，但不能据此推断文件夹归属。路径作用域操作只接受 Host 从会话 `cwd` 解析的 VS Code `workspaceFolderId`；它与 DSH workspace id 属于不同命名空间。编辑器配套通过独立协议访问当前窗口的受信根，不接收 Webview 指定的根。没有打开 VS Code 文件夹时，本地能力不读取文件；编辑器请求可触发文件夹选择，不把未读取显示成空列表。Host 对 enum、id、端口、路径、长度和权限再次验证。
 
 错误响应只含稳定 code、脱敏 message 和 retryable。增量消息与终态在 Host/Store 立即投递和通知，不引入定时合批或绘制帧等待；一个 backend 共享一个上游流，历史分页传输。Webview 隐藏时可暂停昂贵渲染，不得丢失审批、问题或连接状态。断线恢复按服务器序号重新订阅、补齐缺口、去重并提交 reducer，不能只按时间戳排序。
 

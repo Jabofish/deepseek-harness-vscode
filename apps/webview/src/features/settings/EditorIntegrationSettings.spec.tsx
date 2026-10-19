@@ -25,6 +25,23 @@ function mount(handle: (request: FeatureRequest) => Promise<unknown>): void {
   )
 }
 describe('editor integration in Webview settings', () => {
+  it.each([
+    ['workspace', 'Choose folder'],
+    ['untrusted', 'Manage workspace trust'],
+  ] as const)('offers a direct action when waiting for %s', async (reason, label) => {
+    const handle = vi.fn<(request: FeatureRequest) => Promise<unknown>>().mockResolvedValue({
+      ...ready,
+      phase: 'waiting',
+      reason,
+    })
+    mount(handle)
+    fireEvent.click(await screen.findByRole('button', { name: label }))
+    await waitFor(() =>
+      expect(handle).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'editor.companion.action', payload: { action: 'retry' } }),
+      ),
+    )
+  })
   it('shows live status and applies persistent read-only/off choices directly without a native dialog', async () => {
     let state = ready
     const calls: FeatureRequest[] = []

@@ -14,6 +14,7 @@ export type EditorIntegrationPhase =
 export type EditorIntegrationReason =
   | 'disconnected'
   | 'workspace'
+  | 'untrusted'
   | 'session'
   | 'unsupported'
   | 'missing'

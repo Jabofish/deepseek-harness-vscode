@@ -210,7 +210,9 @@ export function registerCompanionTools(ctx: Context, broker: EditorCompanionBrok
           value = await broker.read(exec.agent?.session.id, request, exec.signal)
         } catch (error) {
           if (error instanceof EditorCompanionError)
-            throw new Error(explainFailure(error.reason, request.kind), { cause: error })
+            throw new Error(`[editor:${error.reason}] ${explainFailure(error.reason, request.kind)}`, {
+              cause: error,
+            })
           throw error
         }
         if (!isEditorCompanionValue(value)) throw new Error('Invalid editor tool result.')
