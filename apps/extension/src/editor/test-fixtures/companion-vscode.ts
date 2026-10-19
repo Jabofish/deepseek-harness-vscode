@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { lstat, readFile } from 'node:fs/promises'
+import { lstat, readFile, writeFile } from 'node:fs/promises'
 import type * as vscode from 'vscode'
 import { vi, type Mock } from 'vitest'
 
@@ -48,6 +48,11 @@ export class FixtureRange {
   }
 }
 export class FixtureDocument {
+  public readonly save = vi.fn(async (): Promise<boolean> => {
+    await writeFile(this.uri.fsPath, this.text)
+    this.isDirty = false
+    return true
+  })
   public version = 1
   public isDirty = true
   public isClosed = false
@@ -107,6 +112,12 @@ export class FixtureEditor {
   )
   public constructor(public readonly document: FixtureDocument) {}
 }
+export class FixtureWorkspaceEdit {
+  public readonly changes: { uri: FixtureUri; range: FixtureRange; text: string }[] = []
+  public replace(uri: FixtureUri, range: FixtureRange, text: string): void {
+    this.changes.push({ uri, range, text })
+  }
+}
 export const state = {
   trusted: true,
   current: true,
@@ -134,6 +145,7 @@ interface NativeMocks {
       ) => Promise<unknown>,
     ) => Promise<unknown>
   >
+  applyEdit: Mock<(edit: FixtureWorkspaceEdit) => Promise<boolean>>
 }
 export const native: NativeMocks = {
   info: vi.fn().mockResolvedValue(undefined),
@@ -155,6 +167,28 @@ export const native: NativeMocks = {
       ) => Promise<unknown>,
     ) => task({}, { onCancellationRequested: () => ({ dispose() {} }) }),
   ),
+  applyEdit: vi.fn((edit: FixtureWorkspaceEdit) => {
+    const byDocument = new Map<string, FixtureDocument>()
+    for (const change of edit.changes) {
+      const document = state.documents.get(change.uri.toString())
+      if (document !== undefined) byDocument.set(change.uri.toString(), document)
+    }
+    for (const [key, document] of byDocument) {
+      const changes = edit.changes
+        .filter((change) => change.uri.toString() === key)
+        .map((change) => ({
+          start: document.offsetAt(change.range.start),
+          end: document.offsetAt(change.range.end),
+          text: change.text,
+        }))
+        .sort((left, right) => right.start - left.start)
+      for (const change of changes)
+        document.text = document.text.slice(0, change.start) + change.text + document.text.slice(change.end)
+      document.version += 1
+      document.isDirty = true
+    }
+    return Promise.resolve(true)
+  }),
 }
 export function createCompanionVscodeApi(): Record<string, unknown> {
   return {
@@ -162,6 +196,7 @@ export function createCompanionVscodeApi(): Record<string, unknown> {
     Range: FixtureRange,
     Selection: FixtureRange,
     Position: FixturePosition,
+    WorkspaceEdit: FixtureWorkspaceEdit,
     DiagnosticSeverity: { Error: 0, Warning: 1, Information: 2, Hint: 3 },
     FileType: { File: 1, SymbolicLink: 64 },
     TextEditorRevealType: { InCenterIfOutsideViewport: 2 },
@@ -199,6 +234,7 @@ export function createCompanionVscodeApi(): Record<string, unknown> {
         return [...state.documents.values()]
       },
       fs: { stat: native.stat },
+      applyEdit: native.applyEdit,
       openTextDocument: async (uri: FixtureUri) => {
         let document = state.documents.get(uri.toString())
         if (document === undefined) {

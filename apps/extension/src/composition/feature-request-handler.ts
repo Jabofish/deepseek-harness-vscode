@@ -1,4 +1,5 @@
 import * as vscode from 'vscode'
+import type { EditorBridgeHost } from '../editor/editor-bridge-host.js'
 import {
   AppError,
   type CheckpointSummary,
@@ -55,6 +56,7 @@ import type { TaskFocusState } from './change-checkpoint-task-assembly.js'
 import { inspectorClientUrl } from './inspector-client-url.js'
 
 export interface FeatureRequestHandlerDependencies {
+  readonly editorCompanion?: () => Pick<EditorBridgeHost, 'snapshot' | 'configure' | 'action'>
   readonly getAccountLifecycleHost: () => AccountLifecycleHost | undefined
   readonly backendService: BackendService
   readonly pluginInstallRequests: PluginInstallRequestCoordinator
@@ -110,6 +112,28 @@ export function createFeatureRequestHandler(deps: FeatureRequestHandlerDependenc
     currentWorkspaceFolders,
   } = deps
   const handleFeatureRequest = async (request: FeatureRequest, signal: AbortSignal): Promise<unknown> => {
+    if (
+      request.type === 'editor.companion.status' ||
+      request.type === 'editor.companion.configure' ||
+      request.type === 'editor.companion.action'
+    ) {
+      signal.throwIfAborted()
+      const editor = deps.editorCompanion?.()
+      if (editor === undefined)
+        throw new AppError({
+          code: 'FEATURE_DISABLED',
+          message: 'Editor integration is still starting. Try again shortly.',
+          retryable: true,
+        })
+      if (request.type === 'editor.companion.configure')
+        return editor.configure({
+          ...(request.payload.enabled === undefined ? {} : { enabled: request.payload.enabled }),
+          ...(request.payload.autoSetup === undefined ? {} : { autoSetup: request.payload.autoSetup }),
+          ...(request.payload.allowEdits === undefined ? {} : { allowEdits: request.payload.allowEdits }),
+        })
+      if (request.type === 'editor.companion.action') return editor.action(request.payload.action)
+      return editor.snapshot()
+    }
     if (
       request.type === 'inspector.devtools.status' ||
       request.type === 'inspector.devtools.open' ||

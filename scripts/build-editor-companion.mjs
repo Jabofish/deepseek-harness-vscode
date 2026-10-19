@@ -1,5 +1,7 @@
 import { spawnSync } from 'node:child_process'
-import { copyFile, mkdtemp, mkdir, readFile, rm } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { copyFile, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { build } from 'esbuild'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -26,6 +28,26 @@ try {
     path.join(staging, `dsh-vscode-editor-bridge-${manifest.version}.tgz`),
     path.join(resources, 'editor-companion.tgz'),
   )
+  // A self-contained factory resolves DSH's service from the selected runtime, not
+  // from exact-version peer packages installed beside an extension-owned bundle.
+  const options = {
+    entryPoints: [path.join(root, 'packages/dsh-editor-bridge/src/index.ts')],
+    bundle: true,
+    platform: 'node',
+    format: 'cjs',
+    target: 'node22',
+    external: ['@deepseek-ai/*'],
+    write: false,
+    legalComments: 'inline',
+  }
+  const fingerprint = await build(options)
+  const buildId = createHash('sha256').update(fingerprint.outputFiles[0].text).digest('hex')
+  const factory = await build({ ...options, define: { __DSH_EDITOR_BUILD_ID__: JSON.stringify(buildId) } })
+  await writeFile(
+    path.join(resources, 'editor-companion-runtime.mjs'),
+    `export function loadCompanion(require) {\nconst module = { exports: {} }; const exports = module.exports;\n${factory.outputFiles[0].text}\nreturn module.exports;\n}\n`,
+  )
+  await writeFile(path.join(resources, 'editor-companion-build.json'), JSON.stringify({ buildId }) + '\n')
 } finally {
   await rm(staging, { recursive: true, force: true })
 }

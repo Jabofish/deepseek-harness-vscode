@@ -6,11 +6,13 @@ import {
   editorValueMatches,
   isEditorCompanionValue,
   type EditorCompanionCapability,
+  type EditorCompanionPoll,
   type EditorCompanionPort,
   type EditorCompanionReply,
   type EditorCompanionRepository,
   type EditorCompanionRequest,
 } from '@dsh-vscode/domain'
+import { delay, POLL_ATTEMPTS, retryDelay } from './poll-retry.js'
 
 interface Work {
   readonly controller: AbortController
@@ -21,11 +23,17 @@ interface Run {
   readonly workers: Map<string, Work>
   done: Promise<void>
 }
+export type EditorCompanionStopReason = 'requested' | 'ended'
 
-/** Polling keeps leases alive while bounded independent reads run; revocation aborts all of them. */
+/**
+ * Polling keeps leases alive while bounded independent reads run; revocation aborts all of them.
+ * A short connection stall is retried, so it does not silently end the user's grant.
+ */
 export class EditorCompanionService {
   private current: Run | undefined
-  public constructor(private readonly onStopped: () => void = () => undefined) {}
+  public constructor(
+    private readonly onStopped: (reason: EditorCompanionStopReason) => void = () => undefined,
+  ) {}
   public get active(): boolean {
     return this.current !== undefined
   }
@@ -47,7 +55,7 @@ export class EditorCompanionService {
         .finally(() => {
           if (this.current === run) {
             this.current = undefined
-            this.onStopped()
+            this.onStopped('ended')
           }
         })
     })
@@ -56,7 +64,7 @@ export class EditorCompanionService {
     const run = this.current
     this.current = undefined
     run?.controller.abort()
-    this.onStopped()
+    this.onStopped('requested')
     return run?.done ?? Promise.resolve()
   }
   private async run(
@@ -74,8 +82,19 @@ export class EditorCompanionService {
       bindingId = (await repository.attach(sessionId, ownerId, capabilities, signal)).bindingId
       signal.throwIfAborted()
       ready()
+      let failures = 0
       while (!signal.aborted && this.current === run) {
-        const event = await repository.poll(bindingId, signal)
+        let event: EditorCompanionPoll
+        try {
+          event = await repository.poll(bindingId, signal)
+          failures = 0
+        } catch (error) {
+          if (signal.aborted) break
+          failures += 1
+          if (failures >= POLL_ATTEMPTS) throw error
+          await delay(retryDelay(failures), signal)
+          continue
+        }
         signal.throwIfAborted()
         if (event.kind === 'idle') continue
         if (event.kind === 'cancel') {
@@ -132,8 +151,7 @@ export class EditorCompanionService {
     } catch (error) {
       if (!(error instanceof AppError && error.code === 'STALE_INTERACTION')) throw error
     }
-    if (!reply.ok && ['untrusted', 'workspace-mismatch', 'invalid-response'].includes(reply.reason))
-      run.controller.abort()
+    if (!reply.ok && reply.reason === 'untrusted') run.controller.abort()
   }
 }
 

@@ -55,7 +55,7 @@
     "onCommand:dsh.stopSharingEditorState",
     "onCommand:dsh.manageEditorCompanion",
     "onCommand:dsh.installEditorCompanion",
-    "onCommand:dsh.reviewEditorEdits",
+    "onCommand:dsh.undoEditorEdit",
     "onView:dsh.sessionList",
     "onCommand:dsh.openSessionList"
   ],
@@ -208,12 +208,12 @@
       },
       {
         "command": "dsh.shareEditorState",
-        "title": "DSH: Share Editor State with Current Session",
+        "title": "DSH: Turn On Editor Tools",
         "icon": "$(broadcast)"
       },
       {
         "command": "dsh.stopSharingEditorState",
-        "title": "DSH: Stop Sharing Editor State",
+        "title": "DSH: Turn Off Editor Tools",
         "icon": "$(circle-slash)"
       },
       {
@@ -227,9 +227,9 @@
         "icon": "$(cloud-download)"
       },
       {
-        "command": "dsh.reviewEditorEdits",
-        "title": "DSH: Review Proposed Editor Edits",
-        "icon": "$(diff)"
+        "command": "dsh.undoEditorEdit",
+        "title": "DSH: Undo Last Editor Edit",
+        "icon": "$(discard)"
       },
       {
         "command": "dsh.authorizeExternalConnection",
@@ -283,16 +283,6 @@
           "command": "dsh.manageEditorCompanion",
           "when": "view == dsh.chatView && dsh.connected",
           "group": "editorSharing@0"
-        },
-        {
-          "command": "dsh.shareEditorState",
-          "when": "view == dsh.chatView && dsh.connected",
-          "group": "editorSharing@1"
-        },
-        {
-          "command": "dsh.stopSharingEditorState",
-          "when": "view == dsh.chatView && dsh.connected",
-          "group": "editorSharing@2"
         },
         {
           "command": "dsh.newSession",
@@ -430,6 +420,96 @@
       ],
       "commandPalette": [
         {
+          "command": "dsh.connect",
+          "when": "false"
+        },
+        {
+          "command": "dsh.reconnect",
+          "when": "false"
+        },
+        {
+          "command": "dsh.newSession"
+        },
+        {
+          "command": "dsh.openSettings"
+        },
+        {
+          "command": "dsh.openWebUi",
+          "when": "false"
+        },
+        {
+          "command": "dsh.installRuntime",
+          "when": "false"
+        },
+        {
+          "command": "dsh.selectExecutable",
+          "when": "false"
+        },
+        {
+          "command": "dsh.copyInstallCommand",
+          "when": "false"
+        },
+        {
+          "command": "dsh.openDocumentation",
+          "when": "false"
+        },
+        {
+          "command": "dsh.openInSecondarySidebar",
+          "when": "false"
+        },
+        {
+          "command": "dsh.openChatInEditor"
+        },
+        {
+          "command": "dsh.moveChatToSidebar"
+        },
+        {
+          "command": "dsh.showDiagnostics"
+        },
+        {
+          "command": "dsh.addSelectionContext",
+          "when": "false"
+        },
+        {
+          "command": "dsh.addFileContext",
+          "when": "false"
+        },
+        {
+          "command": "dsh.addSymbolContext",
+          "when": "false"
+        },
+        {
+          "command": "dsh.addDiagnosticContext",
+          "when": "false"
+        },
+        {
+          "command": "dsh.shareEditorState",
+          "when": "false"
+        },
+        {
+          "command": "dsh.stopSharingEditorState",
+          "when": "false"
+        },
+        {
+          "command": "dsh.manageEditorCompanion",
+          "when": "false"
+        },
+        {
+          "command": "dsh.installEditorCompanion",
+          "when": "false"
+        },
+        {
+          "command": "dsh.undoEditorEdit"
+        },
+        {
+          "command": "dsh.authorizeExternalConnection",
+          "when": "false"
+        },
+        {
+          "command": "dsh.clearExternalCredentials",
+          "when": "false"
+        },
+        {
           "command": "dsh.sessions.open",
           "when": "false"
         },
@@ -446,7 +526,15 @@
           "when": "false"
         },
         {
+          "command": "dsh.sessions.refresh",
+          "when": "false"
+        },
+        {
           "command": "dsh.sessions.loadMore",
+          "when": "false"
+        },
+        {
+          "command": "dsh.openSessionList",
           "when": "false"
         }
       ]
@@ -454,6 +542,24 @@
     "configuration": {
       "title": "DeepSeek Harness",
       "properties": {
+        "dsh.editor.enabled": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Automatically connect editor tools for trusted local/workspace-side DSH sessions. Turn off to stop access in this workspace."
+        },
+        "dsh.editor.autoSetup": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Load the bundled editor integration when starting an extension-managed DSH. No separate plugin installation is required."
+        },
+        "dsh.editor.allowEdits": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Allow agent edits as unsaved, undoable editor changes. Turn off to retain read, language and navigation tools without editing."
+        },
         "dsh.webUi.browser": {
           "type": "string",
           "enum": [

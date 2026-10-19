@@ -36,7 +36,8 @@ const fail = (reason: EditorCompanionFailure): EditorCompanionResult<never> => (
 /** Bounded session/Peer grants. A tool's cancellation is independent of its grant. */
 export class EditorCompanionBroker {
   private readonly grants = new Map<string, Grant>()
-  public constructor(private readonly limits = { leaseMs: 15_000, pollMs: 1_000, callMs: 10_000 }) {}
+  private readonly waiting = new Map<string, Set<(available: boolean) => void>>()
+  public constructor(private readonly limits = { leaseMs: 45_000, pollMs: 1_000, callMs: 10_000 }) {}
   public hasSession(sessionId: string): boolean {
     return this.session(sessionId) !== undefined
   }
@@ -72,6 +73,7 @@ export class EditorCompanionBroker {
     }
     grant.lease.unref()
     this.grants.set(id, grant)
+    for (const ready of this.waiting.get(sessionId) ?? []) ready(true)
     return ok({ bindingId: id, protocolVersion: 2 })
   }
   public async poll(
@@ -123,12 +125,14 @@ export class EditorCompanionBroker {
     this.release(bindingId)
     return ok(true)
   }
-  public read(
+  public async read(
     sessionId: string | undefined,
     request: EditorCompanionRequest,
     signal: AbortSignal,
   ): Promise<EditorCompanionValue> {
     if (signal.aborted) return Promise.reject(new EditorCompanionError('cancelled'))
+    if (sessionId !== undefined && !this.hasSession(sessionId)) await this.waitForSession(sessionId, signal)
+    if (signal.aborted) throw new EditorCompanionError('cancelled')
     const grant = sessionId === undefined ? undefined : this.session(sessionId)
     if (grant === undefined) return Promise.reject(new EditorCompanionError('not-bound'))
     const capability = editorCapability(request)
@@ -162,7 +166,29 @@ export class EditorCompanionBroker {
     })
   }
   public dispose(): void {
+    for (const group of this.waiting.values()) for (const ready of [...group]) ready(false)
     for (const id of this.grants.keys()) this.release(id)
+  }
+  public waitForSession(sessionId: string, signal: AbortSignal): Promise<boolean> {
+    if (this.hasSession(sessionId)) return Promise.resolve(true)
+    if (signal.aborted) return Promise.resolve(false)
+    const group = this.waiting.get(sessionId) ?? new Set<(available: boolean) => void>()
+    if (group.size >= 4 || (this.waiting.size >= 16 && !this.waiting.has(sessionId)))
+      return Promise.resolve(false)
+    this.waiting.set(sessionId, group)
+    return new Promise((resolve) => {
+      const finish = (available: boolean): void => {
+        clearTimeout(timer)
+        signal.removeEventListener('abort', abort)
+        group.delete(finish)
+        if (group.size === 0) this.waiting.delete(sessionId)
+        resolve(available)
+      }
+      const abort = (): void => finish(false)
+      const timer = setTimeout(abort, 2_500)
+      group.add(finish)
+      signal.addEventListener('abort', abort, { once: true })
+    })
   }
   private enqueue(grant: Grant, event: EditorCompanionPoll): void {
     if (grant.polling !== undefined) grant.polling(this.delivered(grant, event))

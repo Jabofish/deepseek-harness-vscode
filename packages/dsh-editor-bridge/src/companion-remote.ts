@@ -23,6 +23,8 @@ import { EditorCompanionBroker } from './companion-broker.js'
 import type { EditorBridgeBroker } from './broker.js'
 import { editorDescriptor } from './remote-registration.js'
 import { registerCompanionTools } from './companion-tools.js'
+import { editorPeerId } from './peer.js'
+import { COMPANION_BUILD_ID } from './build-identity.js'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -44,6 +46,8 @@ const respond = z.strictObject({
   reply: z.custom<EditorCompanionReply>(isEditorCompanionReply),
 })
 const isTrue = (value: unknown): value is true => value === true
+const isBuildIdentity = (value: unknown): value is string =>
+  typeof value === 'string' && /^(?:source|[a-f0-9]{64})$/u.test(value)
 const unavailable = (): EditorCompanionResult<never> => ({ status: 'error', reason: 'unavailable' })
 export class VscodeEditorCompanion extends TypertRemoteService {
   public readonly broker = new EditorCompanionBroker()
@@ -56,6 +60,7 @@ export class VscodeEditorCompanion extends TypertRemoteService {
     const namespace = 'vscodeEditorCompanion'
     this.invocations = [
       editorDescriptor(namespace, 'describe', z.strictObject({}), isEditorCompanionDescription),
+      editorDescriptor(namespace, 'buildIdentity', z.strictObject({}), isBuildIdentity),
       editorDescriptor(namespace, 'verifyHost', hostProbe, isEditorCompanionHostProof),
       editorDescriptor(namespace, 'attach', attach, isEditorCompanionBinding),
       editorDescriptor(namespace, 'poll', binding, isEditorCompanionPoll),
@@ -79,6 +84,9 @@ export class VscodeEditorCompanion extends TypertRemoteService {
         maxGrants: 16,
       },
     }
+  }
+  public buildIdentity(_request: Record<string, never>): EditorCompanionResult<string> {
+    return this.peer() === undefined ? unavailable() : { status: 'ok', value: COMPANION_BUILD_ID }
   }
   public attach(request: z.infer<typeof attach>): ReturnType<EditorCompanionBroker['attach']> {
     const peer = this.peer()
@@ -130,6 +138,6 @@ export class VscodeEditorCompanion extends TypertRemoteService {
   }
   private peer(): string | undefined {
     const peer = this.ctx.invocation?.peer
-    return peer?.principal.kind === 'owner' ? peer.id : undefined
+    return editorPeerId(peer)
   }
 }

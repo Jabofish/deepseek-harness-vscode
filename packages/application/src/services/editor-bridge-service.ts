@@ -2,11 +2,13 @@ import {
   AppError,
   EditorBridgeError,
   isEditorStateSnapshot,
+  type EditorBridgePoll,
   type EditorBridgeRepository,
   type EditorBridgeReply,
   type EditorStatePort,
   type EditorStateSnapshot,
 } from '@dsh-vscode/domain'
+import { delay, POLL_ATTEMPTS, retryDelay } from './poll-retry.js'
 
 interface Run {
   readonly controller: AbortController
@@ -16,7 +18,7 @@ interface Run {
 /** An explicit, volatile grant. A stopped generation can never publish a late snapshot. */
 export class EditorBridgeService {
   private current: Run | undefined
-  public constructor(private readonly onStopped: () => void = () => undefined) {}
+  public constructor(private readonly onStopped: (reason: 'requested' | 'ended') => void = () => undefined) {}
   public get active(): boolean {
     return this.current !== undefined
   }
@@ -38,7 +40,7 @@ export class EditorBridgeService {
         .finally(() => {
           if (this.current === run) {
             this.current = undefined
-            this.onStopped()
+            this.onStopped('ended')
           }
         })
     })
@@ -48,7 +50,7 @@ export class EditorBridgeService {
     const run = this.current
     this.current = undefined
     run?.controller.abort()
-    this.onStopped()
+    this.onStopped('requested')
     return run?.done ?? Promise.resolve()
   }
 
@@ -62,6 +64,7 @@ export class EditorBridgeService {
   ): Promise<void> {
     const signal = run.controller.signal
     let bindingId: string | undefined
+    let failures = 0
     try {
       const binding = await repository.attach(sessionId, ownerId, signal)
       bindingId = binding.bindingId
@@ -69,7 +72,17 @@ export class EditorBridgeService {
       if (this.current !== run) throw new EditorBridgeError('cancelled')
       ready()
       while (!signal.aborted && this.current === run) {
-        const request = await repository.poll(bindingId, signal)
+        let request: EditorBridgePoll
+        try {
+          request = await repository.poll(bindingId, signal)
+          failures = 0
+        } catch (error) {
+          if (signal.aborted) break
+          failures += 1
+          if (failures >= POLL_ATTEMPTS) throw error
+          await delay(retryDelay(failures), signal)
+          continue
+        }
         signal.throwIfAborted()
         if (request.kind === 'idle') continue
         let reply: EditorBridgeReply

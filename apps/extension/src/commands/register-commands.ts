@@ -40,5 +40,5 @@ export const COMMANDS = [
   'dsh.stopSharingEditorState',
   'dsh.manageEditorCompanion',
   'dsh.installEditorCompanion',
-  'dsh.reviewEditorEdits',
+  'dsh.undoEditorEdit',
 ] as const

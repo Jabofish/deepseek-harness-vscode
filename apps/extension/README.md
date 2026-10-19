@@ -13,15 +13,18 @@ Bring local or remote [DeepSeek Harness](https://github.com/deepseek-ai/deepseek
 
 Available operations depend on the connected DSH runtime. Unsupported capabilities are shown explicitly; [exact compatibility and current limitations](https://github.com/Jabofish/deepseek-harness-vscode/tree/main/docs) are documented in the repository.
 
-The optional editor bundle adds ten tools for metadata, unsaved text/selection,
-cached diagnostics, symbols/definitions/references, navigation and reviewed edit
-proposals. Run **DSH: Manage Editor Companion** to install or manage it, then
-**DSH: Share Editor State with Current Session** to choose permissions. Each
-session grant selects one workspace root; multiple sessions/windows are isolated.
-Edits require separate native diff review and confirmation, remain unsaved and
-can be undone. Installation and process control are restricted to extension-owned
-DSH; external sharing needs native trust confirmation and same-host verification.
-Model-driven, manual diff and remote-workspace acceptance remain separate checks.
+Editor integration loads with extension-managed DSH and follows the selected session
+automatically. Open **Settings → General → Editor integration** to see status,
+turn it off, keep tools read-only, retry, repair, restart or undo the last agent
+edit. No separate plugin installation or permission picker is needed. Ten tools
+cover unsaved text/selection, cached diagnostics, symbols/definitions/references,
+navigation and immediate, automatically saved, undoable edits. The last edit can be reverted
+after a session switch; unrelated typing is preserved when it can be distinguished
+from the agent's edit. Runtime capabilities are negotiated independently. An
+unsupported editor capability leaves ordinary chat and manual context attachment
+usable. External processes are never stopped; a dedicated instance can be started
+from settings when an attached instance lacks the companion. Remote and real-model
+acceptance remain separate checks.
 
 ## Get started
 

@@ -29,6 +29,7 @@
     "../apps/extension/src/backend/credential-scope.ts",
     "../apps/extension/src/editor/editor-context-provider.ts",
     "../apps/extension/src/editor/companion-host-proof.ts",
+    "../apps/extension/src/editor/managed-companion.ts",
     "../apps/extension/src/editor/editor-context-store.ts",
     "../apps/extension/src/editor/open-file-id.ts",
     "../apps/extension/src/editor/workspace-path-guard.ts",

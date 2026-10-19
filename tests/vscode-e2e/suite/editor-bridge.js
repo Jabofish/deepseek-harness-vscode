@@ -5,9 +5,9 @@ import * as vscode from 'vscode'
 export async function run() {
   const bundle = process.env.DSH_EDITOR_STATE_TEST_BUNDLE
   assert.ok(bundle, 'the runner must provide its test-owned metadata-provider bundle')
-  const { EditorStateProvider, workspaceFolderId, EditorCompanionProvider } = createRequire(import.meta.url)(
-    bundle,
-  )
+  const { EditorStateProvider, workspaceFolderId, EditorCompanionProvider, EditLedger } = createRequire(
+    import.meta.url,
+  )(bundle)
   const folder = vscode.workspace.workspaceFolders?.[0]
   assert.ok(folder)
   const uri = vscode.Uri.joinPath(folder.uri, 'sample.ts')
@@ -18,9 +18,10 @@ export async function run() {
   const diagnostics = vscode.languages.createDiagnosticCollection('editor-bridge-fixture')
   let current = true
   const companion = new EditorCompanionProvider(
-    folder,
+    [folder],
     ['content', 'diagnostics', 'language', 'navigation', 'edit'],
     () => current,
+    new EditLedger(),
   )
   const registrations = [
     vscode.languages.registerDocumentSymbolProvider(
@@ -119,18 +120,70 @@ export async function run() {
       },
       signal,
     )
-    assert.equal(proposal.status, 'pending')
-    assert.equal(document.getText(), original, 'creating a proposal must never write a buffer')
+    assert.equal(proposal.status, 'applied')
+    assert.equal(proposal.saved, true)
+    assert.equal(document.getText(), '// proposed\n' + original)
+    assert.equal(document.isDirty, false)
+    assert.equal(new TextDecoder().decode(await vscode.workspace.fs.readFile(uri)), document.getText())
     assert.equal(
       (await companion.execute({ kind: 'proposal', proposalId: proposal.proposalId }, signal)).status,
-      'pending',
+      'applied',
     )
+    // Real VS Code undo, rather than a fixture callback, must restore the edit group.
+    await vscode.commands.executeCommand('undo')
+    assert.equal(document.getText(), original)
+    const next = await companion.execute(
+      {
+        kind: 'propose',
+        path: 'sample.ts',
+        expectedVersion: document.version,
+        edits: [{ range: { start: { line: 1, column: 1 }, end: { line: 1, column: 1 } }, text: '// next\n' }],
+      },
+      signal,
+    )
+    assert.equal(next.status, 'applied')
+    assert.equal(await companion.proposals.undo(next.proposalId), true)
+    assert.equal(document.getText(), original)
+    assert.equal(
+      new TextDecoder().decode(await vscode.workspace.fs.readFile(uri)),
+      original,
+      'agent edits and independent revert must save the resulting file',
+    )
+    const pageUri = vscode.Uri.joinPath(folder.uri, 'pagination.txt')
+    const fullText =
+      Array.from({ length: 2500 }, (_, index) => `line-${index}\r\n`).join('') + 'x'.repeat(16383) + '😀tail'
+    await vscode.workspace.fs.writeFile(pageUri, new TextEncoder().encode(fullText))
+    let startLine = 1,
+      startColumn = 1,
+      restored = ''
+    for (let page = 0; page < 25; page++) {
+      const value = await companion.execute(
+        { kind: 'document', path: 'pagination.txt', startLine, startColumn },
+        signal,
+      )
+      assert.ok(value.text.length <= 16384)
+      restored += value.text
+      if (!value.truncated) break
+      assert.ok(value.text.length > 0)
+      startLine = value.range.end.line
+      startColumn = value.range.end.column
+    }
+    assert.equal(
+      restored,
+      fullText,
+      'actual VS Code positions must preserve CRLF and surrogate pairs across pages',
+    )
+    await vscode.workspace.fs.delete(pageUri)
+    await assert.rejects(companion.execute({ kind: 'document', path: 'pagination.txt' }, signal), {
+      reason: 'not-found',
+    })
+    assert.equal((await companion.execute({ kind: 'document', path: 'sample.ts' }, signal)).kind, 'document')
     current = false
     await assert.rejects(companion.execute({ kind: 'document', path: 'sample.ts' }, signal), {
       reason: 'workspace-mismatch',
     })
     console.log(
-      '[dsh-editor-vscode] real editor APIs: metadata, unsaved text/selection, cached diagnostics, registered language providers, navigation, pending-only edits, cancellation and revocation passed; no manual diff acceptance or model inference claimed',
+      '[dsh-editor-vscode] real editor APIs: metadata, unsaved text/selection, cached diagnostics, language providers, navigation, immediate edits, automatic save, native Undo, independent revert and revocation passed; no model inference claimed',
     )
   } finally {
     companion.dispose()

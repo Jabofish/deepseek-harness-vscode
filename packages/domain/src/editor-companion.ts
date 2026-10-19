@@ -36,6 +36,9 @@ export const EDITOR_COMPANION_FAILURES = [
   'denied',
   'unsupported',
   'stale-document',
+  'not-found',
+  'file-access',
+  'invalid-range',
   'limit',
 ] as const
 export type EditorCompanionFailure = (typeof EDITOR_COMPANION_FAILURES)[number]
@@ -47,6 +50,8 @@ export class EditorCompanionError extends Error {
 }
 export const EDITOR_COMPANION_LIMITS = {
   text: 65_536,
+  documentText: 16_384,
+  documentLines: 200,
   items: 200,
   edits: 64,
   grants: 16,
@@ -72,6 +77,7 @@ export type EditorCompanionRequest =
   | ({
       readonly kind: 'document'
       readonly startLine?: number
+      readonly startColumn?: number
       readonly endLine?: number
       readonly expectedVersion?: number
     } & DocumentTarget)
@@ -84,7 +90,7 @@ export type EditorCompanionRequest =
       readonly column: number
       readonly limit?: number
     } & DocumentTarget)
-  | { readonly kind: 'open'; readonly path: string; readonly line?: number; readonly column?: number }
+  | ({ readonly kind: 'open'; readonly line?: number; readonly column?: number } & DocumentTarget)
   | {
       readonly kind: 'propose'
       readonly path: string
@@ -92,7 +98,7 @@ export type EditorCompanionRequest =
       readonly edits: readonly EditorTextEdit[]
     }
   | { readonly kind: 'proposal'; readonly proposalId: string }
-export type EditorProposalStatus = 'pending' | 'applied' | 'declined' | 'stale' | 'cancelled'
+export type EditorProposalStatus = 'pending' | 'applied' | 'reverted' | 'declined' | 'stale' | 'cancelled'
 export interface EditorLocation {
   readonly relativePath: string
   readonly range: EditorRange
@@ -149,6 +155,8 @@ export type EditorCompanionValue =
       readonly relativePath: string
       readonly status: EditorProposalStatus
       readonly version: number
+      /** Save outcome at receipt creation; false still means an applied buffer edit. */
+      readonly saved?: boolean
     }
 export type EditorCompanionReply =
   | { readonly ok: true; readonly value: EditorCompanionValue }
@@ -174,6 +182,8 @@ export type EditorCompanionPoll =
   | { readonly kind: 'request'; readonly requestId: string; readonly request: EditorCompanionRequest }
   | { readonly kind: 'cancel'; readonly requestId: string }
 export interface EditorCompanionRepository {
+  /** Optional extension-bundled build identity; older companions do not advertise it. */
+  buildIdentity?(signal?: AbortSignal): Promise<string>
   describe(signal?: AbortSignal): Promise<EditorCompanionDescription>
   verifyHost(nonce: string, signal?: AbortSignal): Promise<EditorCompanionHostProof>
   attach(
@@ -277,6 +287,7 @@ export function isEditorCompanionRequest(value: unknown): value is EditorCompani
       [
         'path',
         'startLine',
+        'startColumn',
         'endLine',
         'expectedVersion',
         'limit',
@@ -295,13 +306,13 @@ export function isEditorCompanionRequest(value: unknown): value is EditorCompani
       return shape(value, ['kind'])
     case 'document':
       return (
-        shape(value, ['kind'], ['path', 'startLine', 'endLine', 'expectedVersion']) &&
+        shape(value, ['kind'], ['path', 'startLine', 'startColumn', 'endLine', 'expectedVersion']) &&
         target(value) &&
-        optional(value, 'startLine', (value) => int(value, 1)) &&
-        optional(value, 'endLine', (value) => int(value, 1)) &&
-        optional(value, 'expectedVersion', (value) => int(value, 1)) &&
-        (value.endLine === undefined ||
-          (value.startLine !== undefined && Number(value.endLine) >= Number(value.startLine)))
+        // Line ranges are clamped by the Host, so zero-based or inverted input stays usable.
+        optional(value, 'startLine', (value) => int(value, 0)) &&
+        optional(value, 'startColumn', (value) => int(value, 1)) &&
+        optional(value, 'endLine', (value) => int(value, 0)) &&
+        optional(value, 'expectedVersion', (value) => int(value, 1))
       )
     case 'diagnostics':
       return shape(value, ['kind'], ['path', 'limit']) && target(value) && limit(value)
@@ -323,8 +334,8 @@ export function isEditorCompanionRequest(value: unknown): value is EditorCompani
       )
     case 'open':
       return (
-        shape(value, ['kind', 'path'], ['line', 'column']) &&
-        relative(value.path) &&
+        shape(value, ['kind'], ['path', 'line', 'column']) &&
+        target(value) &&
         optional(value, 'line', (value) => int(value, 1)) &&
         optional(value, 'column', (value) => int(value, 1))
       )
@@ -397,6 +408,7 @@ export function isEditorCompanionValue(value: unknown): value is EditorCompanion
         'excluded',
         'proposalId',
         'status',
+        'saved',
       ],
     )
   )
@@ -447,11 +459,12 @@ export function isEditorCompanionValue(value: unknown): value is EditorCompanion
       return shape(value, ['kind', 'relativePath']) && relative(value.relativePath)
     case 'proposal':
       return (
-        shape(value, ['kind', 'proposalId', 'relativePath', 'status', 'version']) &&
+        shape(value, ['kind', 'proposalId', 'relativePath', 'status', 'version'], ['saved']) &&
         isEditorBridgeId(value.proposalId) &&
         relative(value.relativePath) &&
-        ['pending', 'applied', 'declined', 'stale', 'cancelled'].includes(String(value.status)) &&
-        int(value.version, 1)
+        ['pending', 'applied', 'reverted', 'declined', 'stale', 'cancelled'].includes(String(value.status)) &&
+        int(value.version, 1) &&
+        optional(value, 'saved', (saved) => typeof saved === 'boolean')
       )
     default:
       return false
@@ -481,7 +494,10 @@ export function editorValueMatches(request: EditorCompanionRequest, value: Edito
   if (
     request.kind === 'propose' &&
     value.kind === 'proposal' &&
-    (request.expectedVersion !== value.version || value.status !== 'pending')
+    !(
+      (value.status === 'pending' && value.version === request.expectedVersion) ||
+      (['applied', 'stale', 'cancelled'].includes(value.status) && value.version >= request.expectedVersion)
+    )
   )
     return false
   if (

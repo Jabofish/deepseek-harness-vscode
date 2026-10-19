@@ -312,6 +312,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     currentWorkspaceFolderId,
   })
   const { handleFeatureRequest } = createFeatureRequestHandler({
+    editorCompanion: () => commands.editorCompanion,
     getAccountLifecycleHost,
     backendService,
     pluginInstallRequests,
@@ -334,6 +335,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     currentWorkspaceFolders,
   })
   const gateway = createRequestGateway({
+    prepareEditorSession: (sessionId, signal) => commands.editorCompanion.prepareSession(sessionId, signal),
     transcript,
     resyncView: async () => {
       const backend = backendService.requireBackend()

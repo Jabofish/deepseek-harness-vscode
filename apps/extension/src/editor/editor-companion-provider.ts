@@ -12,20 +12,23 @@ import {
   type EditorSymbolLocation,
 } from '@dsh-vscode/domain'
 import { CompanionWorkspace, companionRange } from './companion-workspace.js'
-import { CompanionEditProposals } from './companion-edit-proposals.js'
+import { CompanionEditProposals, type Applied } from './companion-edit-proposals.js'
+import type { EditLedger } from './edit-ledger.js'
 
 export class EditorCompanionProvider implements EditorCompanionPort, vscode.Disposable {
   public readonly proposals: CompanionEditProposals
   private readonly workspace: CompanionWorkspace
+  private readonly snapshots = new Map<string, { version: number; text: string }>()
   private disposed = false
   public constructor(
-    folder: vscode.WorkspaceFolder,
+    folders: readonly vscode.WorkspaceFolder[],
     private readonly capabilities: readonly EditorCompanionCapability[],
     current: () => boolean,
-    changed: () => void = () => undefined,
+    ledger: EditLedger,
+    onApplied?: (applied: Applied) => void,
   ) {
-    this.workspace = new CompanionWorkspace(folder, () => !this.disposed && current())
-    this.proposals = new CompanionEditProposals(this.workspace, changed)
+    this.workspace = new CompanionWorkspace(folders, () => !this.disposed && current())
+    this.proposals = new CompanionEditProposals(this.workspace, ledger, onApplied)
   }
   public async execute(request: EditorCompanionRequest, signal: AbortSignal): Promise<EditorCompanionValue> {
     this.workspace.assert(signal)
@@ -37,9 +40,15 @@ export class EditorCompanionProvider implements EditorCompanionPort, vscode.Disp
     if (request.kind === 'symbols' && request.query !== undefined)
       return this.language(request, undefined, signal)
     const active = vscode.window.activeTextEditor
-    const document = await this.workspace.document('path' in request ? request.path : undefined, signal)
+    const document = await this.workspace.document(
+      'path' in request ? request.path : undefined,
+      signal,
+      undefined,
+    )
     this.workspace.assert(signal)
     const relativePath = this.workspace.relative(document.uri)
+    // Look the snapshot up before this request refreshes it: the agent may have read an older version.
+    const base = request.kind === 'propose' ? this.base(document.uri, request.expectedVersion) : undefined
     if (
       (request.kind === 'state' ||
         request.kind === 'selection' ||
@@ -78,23 +87,29 @@ export class EditorCompanionProvider implements EditorCompanionPort, vscode.Disp
         )
           throw new EditorCompanionError('stale-document')
         let range: vscode.Range
+        let pageTruncated = false
         if (request.kind === 'selection') {
-          if (active === undefined || active.document !== document || active.selection.isEmpty)
+          if (active === undefined || active.document !== document)
             throw new EditorCompanionError('no-editor')
+          // An empty selection is a normal state: return empty text instead of failing the call.
           range = active.selection
         } else {
-          const start = request.startLine ?? 1
-          const end = Math.min(request.endLine ?? document.lineCount, document.lineCount)
-          if (start > document.lineCount) throw new EditorCompanionError('stale-document')
-          range = new vscode.Range(start - 1, 0, end - 1, document.lineAt(end - 1).text.length)
+          const lastLine = document.lineCount
+          const start = Math.max(request.startLine ?? 1, 1)
+          const column = request.startColumn ?? 1
+          if (start > lastLine || column > document.lineAt(start - 1).text.length + 1)
+            throw new EditorCompanionError('invalid-range')
+          const requestedEnd = Math.min(Math.max(request.endLine ?? lastLine, start), lastLine)
+          const end = Math.min(requestedEnd, start + EDITOR_COMPANION_LIMITS.documentLines - 1)
+          pageTruncated = end < requestedEnd
+          range = new vscode.Range(start - 1, column - 1, end - 1, document.lineAt(end - 1).text.length)
         }
         const originalLength = document.offsetAt(range.end) - document.offsetAt(range.start)
-        const truncated = originalLength > EDITOR_COMPANION_LIMITS.text
+        const maxText =
+          request.kind === 'document' ? EDITOR_COMPANION_LIMITS.documentText : EDITOR_COMPANION_LIMITS.text
+        const truncated = originalLength > maxText
         if (truncated)
-          range = new vscode.Range(
-            range.start,
-            document.positionAt(document.offsetAt(range.start) + EDITOR_COMPANION_LIMITS.text),
-          )
+          range = new vscode.Range(range.start, document.positionAt(document.offsetAt(range.start) + maxText))
         let text = document.getText(range)
         if (/[\uD800-\uDBFF]$/u.test(text)) text = text.slice(0, -1)
         if (text.length < originalLength)
@@ -102,6 +117,8 @@ export class EditorCompanionProvider implements EditorCompanionPort, vscode.Disp
             range.start,
             document.positionAt(document.offsetAt(range.start) + text.length),
           )
+        // Only successful content reads snapshot text; metadata never reads the buffer.
+        this.remember(document)
         return {
           kind: 'document',
           relativePath,
@@ -110,7 +127,7 @@ export class EditorCompanionProvider implements EditorCompanionPort, vscode.Disp
           dirty: document.isDirty,
           range: companionRange(range),
           text,
-          truncated: text.length < originalLength,
+          truncated: pageTruncated || text.length < originalLength,
         }
       }
       case 'diagnostics': {
@@ -154,12 +171,41 @@ export class EditorCompanionProvider implements EditorCompanionPort, vscode.Disp
         return { kind: 'opened', relativePath }
       }
       case 'propose':
-        return this.proposals.create(document, relativePath, request.expectedVersion, request.edits, signal)
+        return this.proposals.create(
+          document,
+          relativePath,
+          request.expectedVersion,
+          request.edits,
+          signal,
+          base,
+        )
     }
   }
   public dispose(): void {
     this.disposed = true
+    this.snapshots.clear()
     this.proposals.dispose()
+  }
+  /** The text of the version the agent read, used to rebase edits when you kept typing. */
+  private remember(document: vscode.TextDocument): void {
+    const key = document.uri.toString()
+    const last = document.lineAt(document.lineCount - 1)
+    // The rebase cache is optional. Range reads must never copy an enormous buffer.
+    if (document.offsetAt(new vscode.Position(document.lineCount - 1, last.text.length)) > 262_144) {
+      this.snapshots.delete(key)
+      return
+    }
+    if (this.snapshots.get(key)?.version === document.version) return
+    this.snapshots.delete(key)
+    this.snapshots.set(key, { version: document.version, text: document.getText() })
+    if (this.snapshots.size > 8) {
+      const oldest = this.snapshots.keys().next().value
+      if (oldest !== undefined) this.snapshots.delete(oldest)
+    }
+  }
+  private base(uri: vscode.Uri, version: number): string | undefined {
+    const known = this.snapshots.get(uri.toString())
+    return known?.version === version ? known.text : undefined
   }
   private async language(
     request: Extract<EditorCompanionRequest, { kind: 'symbols' | 'definitions' | 'references' }>,
@@ -254,7 +300,10 @@ export class EditorCompanionProvider implements EditorCompanionPort, vscode.Disp
       try {
         relativePath = await this.workspace.validate(candidate.uri, signal)
       } catch (error) {
-        if (error instanceof EditorCompanionError && error.reason === 'workspace-mismatch') {
+        if (
+          error instanceof EditorCompanionError &&
+          ['workspace-mismatch', 'not-found', 'file-access'].includes(error.reason)
+        ) {
           excluded += 1
           continue
         }

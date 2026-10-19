@@ -5,6 +5,8 @@ import { z } from 'zod'
 import {
   EDITOR_BRIDGE_PROTOCOL,
   EDITOR_BRIDGE_TOOL,
+  EditorBridgeError,
+  EditorCompanionError,
   isEditorBridgeBinding,
   isEditorBridgePoll,
   isEditorBridgeReply,
@@ -17,7 +19,9 @@ import {
 } from '@dsh-vscode/domain'
 import { EditorBridgeBroker } from './broker.js'
 import { VscodeEditorCompanion } from './companion-remote.js'
+import { explainFailure } from './failures.js'
 import { registerEditorRemote } from './remote-registration.js'
+import { editorPeerId } from './peer.js'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -61,7 +65,7 @@ export class VscodeEditorBridge extends TypertRemoteService {
     ctx.tools.register({
       name: EDITOR_BRIDGE_TOOL,
       description:
-        'Read the explicitly shared VS Code editor metadata for this session: workspace-relative file, language, document version, unsaved state, one-based UTF-16 selection, and cached error/warning counts. No source text. Counts do not prove language-service or compilation completion. Unavailable until the user enables sharing in VS Code.',
+        'Read the active file path, language, version, unsaved flag, selection and cached diagnostic counts. Coordinates are 1-based UTF-16. Use read_document for text and get_diagnostics for error details. Access connects automatically.',
       parameters: { type: 'object', properties: {}, additionalProperties: false },
       output: {
         schema: snapshotSchema,
@@ -70,14 +74,26 @@ export class VscodeEditorBridge extends TypertRemoteService {
       execute: async (args, exec) => {
         if (!z.strictObject({}).safeParse(args).success) throw new Error('Editor state takes no arguments.')
         const sessionId = exec.agent?.session.id
-        const value =
-          sessionId !== undefined && this.companion.broker.hasSession(sessionId)
-            ? await this.companion.broker.read(sessionId, { kind: 'state' }, exec.signal)
-            : undefined
-        const snapshot =
-          value?.kind === 'state' ? value.state : await this.broker.read(sessionId, exec.signal)
-        if (!isEditorStateSnapshot(snapshot)) throw new Error('Invalid editor snapshot.')
-        return snapshot
+        try {
+          if (
+            sessionId !== undefined &&
+            !this.broker.hasSession(sessionId) &&
+            !this.companion.broker.hasSession(sessionId)
+          )
+            await this.companion.broker.waitForSession(sessionId, exec.signal)
+          const value =
+            sessionId !== undefined && this.companion.broker.hasSession(sessionId)
+              ? await this.companion.broker.read(sessionId, { kind: 'state' }, exec.signal)
+              : undefined
+          const snapshot =
+            value?.kind === 'state' ? value.state : await this.broker.read(sessionId, exec.signal)
+          if (!isEditorStateSnapshot(snapshot)) throw new Error('Invalid editor snapshot.')
+          return snapshot
+        } catch (error) {
+          if (error instanceof EditorCompanionError || error instanceof EditorBridgeError)
+            throw new Error(explainFailure(error.reason), { cause: error })
+          throw error
+        }
       },
     })
   }
@@ -111,7 +127,7 @@ export class VscodeEditorBridge extends TypertRemoteService {
   }
   private peer(): string | undefined {
     const peer = this.ctx.invocation?.peer
-    return peer?.principal.kind === 'owner' ? peer.id : undefined
+    return editorPeerId(peer)
   }
 }
 

@@ -1,87 +1,116 @@
 # VS Code editor companion for DSH
 
-An optional DSH bundle giving an agent explicitly scoped access to the actual
-VS Code editor, including unsaved buffers. It uses the authenticated Remote
-connection and adds no listening port. The exact runtime is pinned in the
-[compatibility contract](../../docs/dsh-contract.md#编辑器配套插件).
+The editor integration is bundled with the VS Code extension. It uses DSH's
+existing authenticated Remote connection and adds no listening port. Editor
+access starts automatically in trusted workspaces and follows the selected
+session; agent edits save automatically and remain undoable. Saving includes any
+earlier unsaved content in the same buffer.
 
-## Install and manage
+## Start and configure
 
-Build with `pnpm build` (bundle only: `pnpm build:companion`). The extension
-includes the private local bundle; these commands do not publish it to npm.
+1. Connect DSH and select or create a session in your open workspace.
+2. Use the editor tools. No separate download, CLI install or permission picker.
 
-1. Connect an extension-managed DSH in a trusted workspace.
-2. Run **DSH: Install Editor Companion**, or **DSH: Manage Editor Companion**
-   from the Command Palette or the DSH view's More Actions menu.
-3. Confirm installation; reconnect if DSH requires it.
-4. Select a session whose working directory matches an open workspace root.
-5. Run **DSH: Share Editor State with Current Session** and select permissions.
-   No capabilities selected means metadata access only.
+**Settings → General → Editor integration** provides live status, a persistent
+workspace on/off switch, automatic setup, read-only mode, retry, repair, managed
+restart and Undo. These controls also work before a DSH connection exists. An
+external instance with no companion offers **Use a dedicated DSH**, starting an
+extension-owned instance while leaving the external process running.
 
-The manager displays installed/active versions and protocol, and offers enable,
-disable, uninstall, local archive installation, cached restore, access revocation
-and edit review. Replacements require a recovery archive of the installed version.
-Confirmed failed/cancelled replacements attempt to restore it. Unknown outcomes
-are recovered using the original installation ID, blocking duplicate installs.
-Archives are identity-checked and kept in a bounded, hash-verified cache. Install
-only trusted archives: package validation is not a code signature.
+Managed startup uses an extension-owned overlay and a self-contained runtime
+factory. It loads services from the selected DSH installation instead of pulling
+exact-version peer dependencies into a profile. It neither installs a package nor
+changes the DSH profile, so routine startup does not require pnpm or network access.
+Updating the extension supplies the next startup's integration, including when an
+older companion was already installed. In default automatic connection mode, the
+extension compares the running companion's build fingerprint with the shipped
+build. A stale same-host companion triggers a switch to a fresh extension-owned
+instance; the external process is left running. If startup fails, chat falls back
+to the original connection. Explicit custom/attach-only connections stay selected.
+Turning automatic setup off applies to the
+next startup; turning editor tools off immediately revokes access.
 
-DSH's own plugin manager must have a working pnpm invocation in its execution
-environment. A broken/missing package-manager command can make mutations fail
-even when status queries and editor tools work. A profile started without the
-required hot-reload support may require offline CLI maintenance; the manager
-reports that upstream refusal rather than bypassing the profile lock.
+The repository's **F5** launch runs `pnpm build` before starting the Extension
+Development Host. This rebuilds the companion from current source even without a
+version bump. The debug launch requests a fresh owned DSH on a free port, ignoring
+discovery of old processes without changing saved connection settings. Each build
+has its own immutable runtime module path, so ESM caching cannot reuse old code.
+Stop and start debugging with F5 after editing companion source; reloading a running
+window alone does not run the pre-launch build task. The editor access switch still
+applies during debugging.
 
-External loopback runtimes may share editor access after native trust confirmation
-and proof of access to the Extension Host filesystem. Installation, removal and
-process control remain exclusive to extension-managed instances. For an external
-runtime, install the bundle into its selected home/profile yourself, for example:
+The fixed CLI/tool contracts include the default `0.2.0-rc.2` and the `0.2.1`
+alpha.1–alpha.5/rc.1–rc.2 family. Actual isolated runtime evidence currently covers
+`0.2.0-rc.2`, `0.2.1-rc.1` and `0.2.1-rc.2`. Other versions first advertise `--patch`
+through a bounded read-only help probe. Failure to prepare/load the optional
+integration does not stop DSH startup. The client negotiates its own tool protocol
+separately from DSH's version and falls back to metadata when only protocol 1 is
+available. Unsupported tools leave chat, attachment and manual editor context usable.
 
-```powershell
-pnpm --filter @dsh-vscode/editor-bridge pack --pack-destination artifacts
-dsh plugin --profile web add "<absolute path to artifacts/dsh-vscode-editor-bridge-0.2.0.tgz>"
-```
+**Repair setup** remains available for compatible extension-managed profiles.
+The optional standalone archive is built by `pnpm build:companion`; explicit
+archive/profile mutations still require the DSH package manager to work. Unknown
+installation outcomes recover by original request ID instead of replaying mutations.
+Existing versions are preserved for rollback when available. Filesystem/profile
+maintenance is an advanced recovery path, not a normal installation requirement.
 
-## Tools and permissions
+## Tools
 
-File paths are relative to the selected session root; coordinates are one-based
+File paths are relative to an open workspace root; coordinates are one-based
 UTF-16. Tool registration is automatic and supports DSH tool discovery. Each
-request rechecks its capability, trust, document and workspace boundaries.
+request rechecks trust, document and workspace boundaries.
 
-| Tool                      | Required permission | Behavior                                                                                |
-| ------------------------- | ------------------- | --------------------------------------------------------------------------------------- |
-| `vscode_get_editor_state` | Metadata grant      | Active file, language, version, dirty flag, selection and diagnostic counts.            |
-| `vscode_read_document`    | Content             | Current buffer, optional line range/expected version; at most 65,536 UTF-16 code units. |
-| `vscode_read_selection`   | Content             | Actual selected text, version and truncation status.                                    |
-| `vscode_get_diagnostics`  | Diagnostics         | Bounded cached messages/ranges/severity; does not wait for compilation.                 |
-| `vscode_find_symbols`     | Language services   | Document symbols or a workspace symbol query confined to the selected root.             |
-| `vscode_find_definitions` | Language services   | Definition locations with out-of-root results excluded.                                 |
-| `vscode_find_references`  | Language services   | Reference locations with the same containment rules.                                    |
-| `vscode_open_file`        | Navigation          | Validated file and position, preserving keyboard focus.                                 |
-| `vscode_propose_edit`     | Edit proposals      | Versioned, non-overlapping edits to one document; returns pending and never writes.     |
-| `vscode_get_edit_result`  | Edit proposals      | Pending/applied/declined/stale/cancelled receipt for this grant.                        |
+| Tool                      | Behavior                                                                                                                             |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `vscode_get_editor_state` | Active file, language, version, dirty flag, selection and diagnostic counts.                                                         |
+| `vscode_read_document`    | Current buffer; at most 200 lines and 16,384 UTF-16 code units. Continue at returned end line/column with `startLine`/`startColumn`. |
+| `vscode_read_selection`   | Actual selected text, version and truncation status.                                                                                 |
+| `vscode_get_diagnostics`  | Bounded cached messages/ranges/severity; does not wait for compilation.                                                              |
+| `vscode_find_symbols`     | Document symbols or a workspace symbol query confined to the open roots.                                                             |
+| `vscode_find_definitions` | Definition locations with out-of-root results excluded.                                                                              |
+| `vscode_find_references`  | Reference locations with the same containment rules.                                                                                 |
+| `vscode_open_file`        | Validated file and position, preserving keyboard focus.                                                                              |
+| `vscode_propose_edit`     | Versioned, non-overlapping edits to one document, applied immediately.                                                               |
+| `vscode_get_edit_result`  | Applied/reverted/stale/cancelled receipt retained in the bounded edit ledger.                                                        |
 
-An edit requires a separate user action: **DSH: Review Proposed Editor Edits** or the native
-Review notification, followed by native diff inspection and explicit Apply. The
-Host rechecks permission, trust, root, version and original text before applying
-one undoable edit group. It never saves the file. Dismissing confirmation leaves
-the proposal pending. At most eight proposals are kept per grant, expiring after
-ten minutes; before/after documents are limited to 262,144 UTF-16 code units each.
+An edit is written as one undoable editor group the moment the agent asks for it; the
+user is not asked to review a diff, no notification pops up and no editor tab is opened
+or focused. The touched lines get a two-second highlight when the file is already on
+screen. The Host rechecks trust, root, version and original
+text first, then saves the whole buffer through VS Code. The receipt carries `saved: true` on success or `saved: false` if the edit applied but saving failed; do not resend that edit. Saving includes pre-existing unsaved content and honors VS Code save participants. A transient status bar entry offers **Undo**, and
+**DSH: Undo Last Editor Edit** reverts the most recent applied edit while the buffer
+still matches what the agent produced. The undo record lives in the extension rather than
+in the grant, so it survives a reconnect, a session switch and a stopped grant; reverting
+compares text instead of a document version, so it also works after the file was saved, and
+it reverts only the agent's own span when you edited elsewhere in the file.
+
+Typing while the agent thinks no longer discards the edit: the Host keeps the text the
+agent read, and an edit whose ranges sit entirely outside the span you changed is rebased
+onto the new buffer. Only an edit that overlaps your change is refused.
 
 ## Scope and lifecycle
 
 Up to sixteen different sessions/windows can hold independent grants in one DSH.
-A session cannot be claimed by a second window. Each grant selects one multi-root
-workspace folder and allows four concurrent requests. Per-request cancellation
-does not revoke other requests. Session/root changes, disconnect, shutdown,
-explicit stop and lease expiry revoke access. Reconnection never restores access.
-Missing editors, unavailable language providers, stale versions and denied
-permissions return explicit errors.
+A session cannot be claimed by a second window. Each grant covers every workspace
+root in the window and allows four concurrent requests; with several roots a path is
+addressed as `<root name>/<relative path>`. Per-request cancellation
+does not revoke other requests. Session/root changes, disconnect, shutdown and
+explicit stop revoke access; a reconnect or a new session selection shares again
+automatically. An explicit stop is remembered and suppresses automatic sharing
+until editor tools are turned back on in **Settings → General → Editor integration**. Missing editors,
+unavailable language providers and stale versions return explicit errors.
 
-Files must be regular files inside the selected real root; symlink escapes,
-files over 2 MiB and arbitrary URI schemes are rejected. Open buffers may contain
-unsaved changes; untitled documents outside a root are unavailable. Language
-queries depend on installed VS Code providers and are not an indexing service.
+Files must be regular files inside one of the real roots; symlink escapes,
+files over 64 MiB and arbitrary URI schemes are rejected. An unsaved draft is readable through the active editor and receives an opaque
+relative handle, never an absolute `untitled:` URI. Drafts cannot be written. Reads return at most 200 lines and 16,384 UTF-16 units; selections retain the separate 65,536-unit cap. Continue at the exact returned end line/column using `startLine` and `startColumn` to preserve line endings. A start beyond EOF fails instead of substituting another line. End lines are clamped to EOF; an empty
+selection returns empty text. Open buffers may contain unsaved changes; file-backed
+documents outside the open roots remain unavailable. Language queries depend on installed VS Code
+providers and are not an indexing service.
+
+A short connection failure retries with backoff; released grants also get bounded
+reconnection attempts. The settings panel shows remaining failures with Retry. Every tool failure reaches the agent
+with the user action that fixes it, so a stale document or missing language provider
+is reported as such rather than as a generic error.
 
 In SSH, WSL or containers, both extension and DSH must execute on the workspace
 Extension Host. Matching paths or a forwarded loopback address are insufficient:
@@ -100,12 +129,12 @@ Package 0.2.0 negotiates protocol 2 via `vscodeEditorCompanion/describe`,
 `verifyHost`, `attach`, `poll`, `respond` and `detach`, retaining legacy metadata
 protocol 1. Inputs, outputs and limits are strictly validated. Grants bind to
 both the Agent session and Remote Peer. Slow operations do not stop lease renewal;
-stale replies cannot satisfy later requests. No privileged Webview route is added.
+stale replies cannot satisfy later requests. Three bounded Host routes provide status, preference changes and named recovery actions; no arbitrary command or filesystem route is exposed.
 
 `pnpm check` covers contracts, containment, permissions, cancellation, edit
 conflicts, rollback and projections. `tests/live-dsh/editor-bridge.spec.ts`
 exercises an isolated real DSH Agent/tool pipeline without model inference.
 `tests/vscode-e2e/editor-bridge.ts` separately exercises real VS Code APIs with
-registered language-provider fixtures. Manual diff acceptance, a model-driven
-editor scenario and SSH/container acceptance are not implied by these tests.
+registered language-provider fixtures. Native VS Code Undo and independent editor reversion are also exercised. A
+model-driven editor scenario and SSH/container acceptance are not implied by these tests.
 See the [completion record](../../reviews/dsh-editor-companion-completion.md).

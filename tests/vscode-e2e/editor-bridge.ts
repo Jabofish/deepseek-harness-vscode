@@ -16,7 +16,7 @@ export async function run(): Promise<void> {
     await mkdir(workspace)
     await build({
       stdin: {
-        contents: `export { EditorStateProvider } from './apps/extension/src/editor/editor-state-provider.ts'; export { workspaceFolderId } from './apps/extension/src/editor/workspace-path-guard.ts'; export { EditorCompanionProvider } from './apps/extension/src/editor/editor-companion-provider.ts';`,
+        contents: `export { EditorStateProvider } from './apps/extension/src/editor/editor-state-provider.ts'; export { workspaceFolderId } from './apps/extension/src/editor/workspace-path-guard.ts'; export { EditorCompanionProvider } from './apps/extension/src/editor/editor-companion-provider.ts'; export { EditLedger } from './apps/extension/src/editor/edit-ledger.ts';`,
         resolveDir: process.cwd(),
       },
       bundle: true,

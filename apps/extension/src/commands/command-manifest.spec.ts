@@ -19,6 +19,27 @@ const manifest = JSON.parse(readFileSync(new URL('../../package.json', import.me
 const declaredCommands = new Set((manifest.contributes?.commands ?? []).map((entry) => entry.command))
 
 describe('command manifest contributions', () => {
+  it('keeps internal compatibility commands out of the user command palette', () => {
+    const palette = manifest.contributes?.menus?.commandPalette ?? []
+    expect(palette.map((item) => item.command).sort()).toEqual([...declaredCommands].sort())
+    expect(palette.filter((item) => item.when !== 'false').map((item) => item.command)).toEqual(
+      [
+        'dsh.newSession',
+        'dsh.openSettings',
+        'dsh.openChatInEditor',
+        'dsh.moveChatToSidebar',
+        'dsh.undoEditorEdit',
+        'dsh.showDiagnostics',
+      ].sort((a, b) => [...declaredCommands].indexOf(a) - [...declaredCommands].indexOf(b)),
+    )
+    for (const command of [
+      'dsh.shareEditorState',
+      'dsh.stopSharingEditorState',
+      'dsh.installEditorCompanion',
+      'dsh.manageEditorCompanion',
+    ])
+      expect(palette.find((item) => item.command === command)?.when).toBe('false')
+  })
   it('declares every registered command in the extension manifest', () => {
     const missing = COMMANDS.filter((command) => !declaredCommands.has(command))
     expect(missing).toEqual([])

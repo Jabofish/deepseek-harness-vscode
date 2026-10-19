@@ -1,11 +1,14 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import {
+  EditorCompanionError,
   isEditorCompanionRequest,
   isEditorCompanionValue,
   type EditorCompanionRequest,
+  type EditorCompanionValue,
 } from '@dsh-vscode/domain'
 import type { EditorCompanionBroker } from './companion-broker.js'
+import { explainFailure } from './failures.js'
 
 type Schema = ToolDefinition['output']['schema']
 const string = { type: 'string' } as const
@@ -32,22 +35,33 @@ const documentOutput = object({
   relativePath: string,
   languageId: string,
   version: integer,
-  dirty: boolean,
+  dirty: { ...boolean, description: 'VS Code unsaved-buffer flag; not a comparison with disk.' },
   range,
   text: { type: 'string' },
   truncated: boolean,
 })
-const proposalOutput = object({
-  kind: { type: 'string', const: 'proposal' },
-  proposalId: string,
-  relativePath: string,
-  status: { type: 'string', enum: ['pending', 'applied', 'declined', 'stale', 'cancelled'] },
-  version: integer,
-})
+const proposalOutput = object(
+  {
+    kind: { type: 'string', const: 'proposal' },
+    proposalId: string,
+    relativePath: string,
+    status: {
+      type: 'string',
+      enum: ['pending', 'applied', 'reverted', 'declined', 'stale', 'cancelled'],
+    },
+    version: integer,
+    saved: {
+      type: 'boolean',
+      description:
+        'For applied/reverted: true = saved; false = buffer changed, save incomplete. Do not repeat an applied edit.',
+    },
+  },
+  ['kind', 'proposalId', 'relativePath', 'status', 'version'],
+)
 const path = {
   type: 'string',
   description:
-    'Canonical path relative to the explicitly shared workspace root. Omit to use the active editor.',
+    'Workspace-relative path; prefix the root name in multi-root workspaces. Omit for the active editor. Use paths returned by editor tools.',
 } as const
 const limit = { type: 'integer' } as const
 interface Tool {
@@ -62,15 +76,24 @@ const tools: readonly Tool[] = [
     name: 'vscode_read_document',
     kind: 'document',
     description:
-      'Read the current VS Code text buffer, including unsaved edits. Paths are relative to the shared root. Use line ranges to avoid truncation. The result carries a document version; it does not save the document.',
-    parameters: object({ path, startLine: integer, endLine: integer, expectedVersion: integer }, []),
+      'Read buffer text, including unsaved changes. Returns up to 200 lines / 16,384 UTF-16 units. Coordinates are 1-based; range.end is exclusive. If truncated, continue with startLine=range.end.line, startColumn=range.end.column and expectedVersion=version. A start past EOF fails.',
+    parameters: object(
+      {
+        path,
+        startLine: { ...integer, description: 'First line, 1-based.' },
+        startColumn: { ...integer, description: 'First UTF-16 column, 1-based.' },
+        endLine: { ...integer, description: 'Last line, inclusive; still bounded by the per-call limit.' },
+        expectedVersion: integer,
+      },
+      [],
+    ),
     output: documentOutput,
   },
   {
     name: 'vscode_read_selection',
     kind: 'selection',
     description:
-      'Read the active editor selection from its current unsaved buffer. Coordinates are one-based UTF-16. Requires explicit content sharing.',
+      'Read the active editor selection, including unsaved changes. An empty selection returns empty text. Coordinates are 1-based UTF-16; range.end is exclusive.',
     parameters: object({}),
     output: documentOutput,
   },
@@ -78,7 +101,7 @@ const tools: readonly Tool[] = [
     name: 'vscode_get_diagnostics',
     kind: 'diagnostics',
     description:
-      'Read bounded, cached VS Code diagnostics for a shared file: message, severity, source, code and range. The timestamp and current document version do not prove language-service or compilation completion.',
+      'Read cached VS Code diagnostics: severity, message, source, code and range. Results may lag edits; this is not a build check.',
     parameters: object({ path, limit }, []),
     output: object({
       kind: { type: 'string', const: 'diagnostics' },
@@ -103,7 +126,7 @@ const tools: readonly Tool[] = [
     name: 'vscode_find_symbols',
     kind: 'symbols',
     description:
-      'Query document symbols, or workspace symbols when query is supplied, through installed VS Code language providers. Only locations inside the explicitly shared root are returned.',
+      'Find document symbols. Set query to search workspace symbols instead. Requires a language provider; excludes locations outside the workspace.',
     parameters: object({ path, query: string, limit }, []),
     output: listOutput(
       'symbols',
@@ -114,7 +137,7 @@ const tools: readonly Tool[] = [
     name: 'vscode_find_definitions',
     kind: 'definitions',
     description:
-      'Find definitions through installed VS Code language providers at one-based UTF-16 line/column. Locations outside the shared root are excluded.',
+      'Find definitions at 1-based UTF-16 line/column. Requires a language provider; excludes locations outside the workspace.',
     parameters: object({ path, line: integer, column: integer, limit }, ['line', 'column']),
     output: listOutput('locations', object(location)),
   },
@@ -122,7 +145,7 @@ const tools: readonly Tool[] = [
     name: 'vscode_find_references',
     kind: 'references',
     description:
-      'Find references through installed VS Code language providers at one-based UTF-16 line/column. Results are bounded and confined to the shared root.',
+      'Find references at 1-based UTF-16 line/column. Requires a language provider; excludes locations outside the workspace.',
     parameters: object({ path, line: integer, column: integer, limit }, ['line', 'column']),
     output: listOutput('locations', object(location)),
   },
@@ -130,18 +153,21 @@ const tools: readonly Tool[] = [
     name: 'vscode_open_file',
     kind: 'open',
     description:
-      'Open a validated shared file at an optional one-based position without taking keyboard focus. Requires navigation permission. Cannot run arbitrary VS Code commands.',
-    parameters: object({ path, line: integer, column: integer }, ['path']),
+      'Open a workspace file at optional 1-based line/column without taking keyboard focus. Omit path for the active editor.',
+    parameters: object({ path, line: integer, column: integer }, []),
     output: object({ kind: { type: 'string', const: 'opened' }, relativePath: string }),
   },
   {
     name: 'vscode_propose_edit',
     kind: 'propose',
     description:
-      'Propose bounded edits against an exact current document version. This does not modify or save any file. The user reviews a native diff and explicitly applies or declines it in VS Code. Query the receipt with vscode_get_edit_result.',
+      'Apply edits and save the whole buffer, including earlier unsaved changes. First read the file; use its relativePath and version as path and expectedVersion. Ranges are 1-based UTF-16, end exclusive. Edits remain undoable. applied means changed; saved=false means save incomplete, not edit failure. For uncertain outcomes, read the file before retrying.',
     parameters: object(
       {
-        path,
+        path: {
+          ...path,
+          description: 'Required: relativePath from read_document. Untitled buffers cannot be edited.',
+        },
         expectedVersion: integer,
         edits: { type: 'array', items: object({ range, text: { type: 'string' } }) },
       },
@@ -153,7 +179,7 @@ const tools: readonly Tool[] = [
     name: 'vscode_get_edit_result',
     kind: 'proposal',
     description:
-      'Read the status of an edit proposal belonging to this sharing grant. States distinguish pending, applied, declined, stale and cancelled. A pending proposal is not a completed edit.',
+      'Look up an edit using its returned proposalId. Old receipts may expire. An unknown ID does not indicate a disconnected editor.',
     parameters: object({ proposalId: string }),
     output: proposalOutput,
   },
@@ -171,9 +197,22 @@ export function registerCompanionTools(ctx: Context, broker: EditorCompanionBrok
       execute: async (args, exec) => {
         if (typeof args !== 'object' || args === null || Array.isArray(args) || Object.hasOwn(args, 'kind'))
           throw new Error('Invalid editor tool arguments.')
+        const target = (args as { path?: unknown }).path
+        // A label the model may have seen in a read result: say why it cannot be used.
+        if (typeof target === 'string' && target.startsWith('untitled:'))
+          throw new Error(
+            'Untitled buffers have no path. Omit path to read the active editor; they cannot be edited.',
+          )
         const request: unknown = { ...args, kind: tool.kind }
         if (!isEditorCompanionRequest(request)) throw new Error('Invalid editor tool arguments.')
-        const value = await broker.read(exec.agent?.session.id, request, exec.signal)
+        let value: EditorCompanionValue
+        try {
+          value = await broker.read(exec.agent?.session.id, request, exec.signal)
+        } catch (error) {
+          if (error instanceof EditorCompanionError)
+            throw new Error(explainFailure(error.reason, request.kind), { cause: error })
+          throw error
+        }
         if (!isEditorCompanionValue(value)) throw new Error('Invalid editor tool result.')
         return value
       },

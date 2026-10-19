@@ -30,6 +30,7 @@ type SessionDependencies = Pick<
   | 'requireCurrentWorkspaceId'
   | 'requireOwnedQueuedInput'
   | 'resyncView'
+  | 'prepareEditorSession'
 > & {
   readonly transcript: TranscriptWindowService
   readonly publicValue: (value: unknown) => unknown
@@ -224,6 +225,9 @@ export function createSessionRequestHandler(
 
     if (request.type === 'session.sendPrompt') {
       const session = await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      // A restored/editor-tab session may send before an open/selection event.
+      // Prepare optional editor access before the model can issue its first tool.
+      await deps.prepareEditorSession?.(session.id, signal)
       const attachments = attachmentTokens.resolve(request.payload.attachments)
       const contextRefs = request.payload.contextRefs ?? []
       const contextOwner = contextOwnerForSession(
@@ -244,6 +248,7 @@ export function createSessionRequestHandler(
             )
       const result = await sessionUseCases.sendPrompt(
         {
+          requestId: request.requestId,
           sessionId: request.payload.sessionId,
           text: request.payload.text,
           attachments: [...attachments, ...resolvedContext.map((entry) => entry.attachment)],

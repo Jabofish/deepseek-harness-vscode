@@ -13,6 +13,22 @@ function request(result: EditorCompanionResult<EditorCompanionPoll>): string {
 }
 afterEach(() => vi.useRealTimers())
 describe('multi-session editor tool grants', () => {
+  it('waits for automatic setup on the first request and cancels/releases pending handshakes', async () => {
+    const broker = new EditorCompanionBroker()
+    const call = broker.read('restored-session', { kind: 'document' }, signal())
+    const binding = value(broker.attach('restored-session', 'owner', 'peer', ['content']))
+    await Promise.resolve()
+    const id = request(await broker.poll(binding.bindingId, 'peer', signal()))
+    broker.respond(binding.bindingId, 'peer', id, { ok: false, reason: 'no-editor' })
+    await expect(call).rejects.toMatchObject({ reason: 'no-editor' })
+    const controller = new AbortController()
+    const waiting = broker.waitForSession('other-session', controller.signal)
+    controller.abort()
+    expect(await waiting).toBe(false)
+    const last = broker.waitForSession('last-session', signal())
+    broker.dispose()
+    expect(await last).toBe(false)
+  })
   it('isolates windows/Peers and checks capabilities before dispatch', async () => {
     const broker = new EditorCompanionBroker()
     const a: EditorCompanionBinding = value(broker.attach('session-a', 'owner-a', 'peer-a', ['content']))

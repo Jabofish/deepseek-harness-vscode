@@ -1,3 +1,4 @@
+import { NegotiatedEditorBridgeRepository } from '../../repositories/editor-bridge-repository.js'
 import { workspaceChangeSource } from '../alpha162/workspace-changes.js'
 import {
   AppError,
@@ -323,11 +324,11 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
     return Promise.resolve(backendValue)
   }
 
-  /** Optional companion access is enabled only by an exact version seam. */
+  /** Optional plugin methods are probed independently of the native DSH API family. */
   protected createEditorBridgeRepository(
-    _transport: AlphaLoopbackApiClient,
+    transport: AlphaLoopbackApiClient,
   ): EditorBridgeRepository | undefined {
-    return undefined
+    return new NegotiatedEditorBridgeRepository(transport)
   }
 
   /** Allow a release seam to replace the old session-control-backed Job source. */

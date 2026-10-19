@@ -12,6 +12,7 @@ export default tseslint.config(
       'artifacts/**',
       '**/.vscode-test/**',
       'apps/extension/media/**',
+      'apps/extension/resources/editor-companion-runtime.mjs',
       'tests/vscode-e2e/suite/**',
       'DSH_VSCODE_IMPLEMENTATION_PLAN.md',
     ],

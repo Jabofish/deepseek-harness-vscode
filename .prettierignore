@@ -5,6 +5,7 @@ coverage
 .codegraph
 .workbuddy-ai
 apps/extension/media
+apps/extension/resources/editor-companion-runtime.mjs
 apps/extension/.vscodeignore
 pnpm-lock.yaml
 DSH_VSCODE_IMPLEMENTATION_PLAN.md

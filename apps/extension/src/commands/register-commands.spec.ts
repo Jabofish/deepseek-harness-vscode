@@ -55,7 +55,7 @@ describe('registerCommands', () => {
       'dsh.stopSharingEditorState',
       'dsh.manageEditorCompanion',
       'dsh.installEditorCompanion',
-      'dsh.reviewEditorEdits',
+      'dsh.undoEditorEdit',
     ])
     expect(subscriptions).toHaveLength(registrations.length)
 

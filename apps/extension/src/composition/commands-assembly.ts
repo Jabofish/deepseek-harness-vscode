@@ -86,6 +86,7 @@ export interface CommandsAssemblyDependencies {
 }
 
 export interface CommandsAssembly {
+  readonly editorCompanion: EditorBridgeHost
   readonly start: () => Promise<void>
   readonly dispose: () => Promise<void>
 }
@@ -269,10 +270,10 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
         'dsh.addSymbolContext': () => captureEditorContextFromCommand('symbol'),
         'dsh.addDiagnosticContext': () => captureEditorContextFromCommand('diagnostic'),
         'dsh.shareEditorState': () => editorBridge.enable(),
-        'dsh.stopSharingEditorState': () => editorBridge.stop(),
+        'dsh.stopSharingEditorState': () => editorBridge.stopByUser(),
         'dsh.manageEditorCompanion': () => editorBridge.manage(),
         'dsh.installEditorCompanion': () => editorBridge.install(),
-        'dsh.reviewEditorEdits': () => editorBridge.reviewEdits(),
+        'dsh.undoEditorEdit': () => editorBridge.undoLastEdit(),
       },
     })
     void postEditorContextAvailabilityEvent()
@@ -340,5 +341,5 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
         cause: errors[0],
       })
   }
-  return { start, dispose }
+  return { start, dispose, editorCompanion: editorBridge }
 }

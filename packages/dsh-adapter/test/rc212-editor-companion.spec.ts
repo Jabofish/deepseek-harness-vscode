@@ -14,6 +14,15 @@ describe('rc212 negotiated editor tool protocol', () => {
     const repository = new Rc212EditorCompanionRepository({ remoteRequest })
     expect(await repository.describe()).toEqual(description)
     expect(remoteRequest).toHaveBeenCalledWith('vscodeEditorCompanion/describe', { request: {} }, undefined)
+    remoteRequest.mockResolvedValue({ ok: true, value: { status: 'ok', value: 'a'.repeat(64) } })
+    expect(await repository.buildIdentity()).toBe('a'.repeat(64))
+    expect(remoteRequest).toHaveBeenLastCalledWith(
+      'vscodeEditorCompanion/buildIdentity',
+      { request: {} },
+      undefined,
+    )
+    remoteRequest.mockResolvedValue({ ok: true, value: { status: 'ok', value: 'invalid build text' } })
+    await expect(repository.buildIdentity()).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
     remoteRequest.mockResolvedValue({
       ok: true,
       value: { status: 'ok', value: { ...description, protocolVersion: 9 } },

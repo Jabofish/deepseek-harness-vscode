@@ -162,6 +162,7 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
   }
   const sessionRequestFor = (surfaceId: string | undefined): ReturnType<typeof createSessionRequestHandler> =>
     createSessionRequestHandler({
+      ...(deps.prepareEditorSession === undefined ? {} : { prepareEditorSession: deps.prepareEditorSession }),
       transcript: deps.transcript.forSurface(surfaceId ?? SIDEBAR_SURFACE_ID),
       ...(deps.resyncView === undefined ? {} : { resyncView: deps.resyncView }),
       backendService,

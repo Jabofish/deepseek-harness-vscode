@@ -23,7 +23,8 @@ interface Dependencies {
   readonly active: () => boolean
   readonly enable: () => Promise<boolean>
   readonly stop: () => Promise<void>
-  readonly review: () => Promise<void>
+  readonly halt: () => Promise<void>
+  readonly undo: () => Promise<void>
 }
 interface RecoveryArchive extends CompanionArchive {
   readonly enabled: boolean
@@ -79,7 +80,7 @@ export class EditorCompanionManagement {
               : 'Share editor tools with current session',
             action: 'sharing',
           },
-          { label: 'Review pending edit proposals', action: 'review' },
+          { label: 'Undo the last applied edit', action: 'undo' },
           ...(backend.connection.ownership === 'managed'
             ? [
                 { label: 'Install the bundled companion', action: 'install' },
@@ -102,7 +103,7 @@ export class EditorCompanionManagement {
           title: `DSH Editor Companion — ${status}`,
           placeHolder: this.deps.active()
             ? 'Sharing is active for the selected session; changing session or disconnecting revokes it.'
-            : 'Access is disabled until you explicitly share it with a session.',
+            : 'Sharing turns on automatically for the selected session. Use Stop to switch it off.',
         },
       )
       if (choice === undefined || !this.deps.current(backend)) return
@@ -111,8 +112,8 @@ export class EditorCompanionManagement {
           if (this.deps.active()) await this.deps.stop()
           else await this.deps.enable()
           return
-        case 'review':
-          await this.deps.review()
+        case 'undo':
+          await this.deps.undo()
           return
         case 'install':
           await this.installBundled()
@@ -166,15 +167,17 @@ export class EditorCompanionManagement {
       )
     }
   }
-  public async installBundled(): Promise<void> {
+  public async installBundled(options: { silent?: boolean } = {}): Promise<boolean> {
     if (this.deps.extensionUri === undefined) {
-      void vscode.window.showErrorMessage(
-        'Build the extension package before installing its companion bundle.',
-      )
-      return
+      if (!options.silent)
+        void vscode.window.showErrorMessage(
+          'Build the extension package before installing its companion bundle.',
+        )
+      return false
     }
-    await this.install(
+    return this.install(
       vscode.Uri.joinPath(this.deps.extensionUri, 'resources', 'editor-companion.tgz').fsPath,
+      options,
     )
   }
   public cancel(): void {
@@ -192,22 +195,24 @@ export class EditorCompanionManagement {
     this.cancel()
     await this.operation
   }
-  private async install(file: string): Promise<void> {
+  private async install(file: string, options: { silent?: boolean } = {}): Promise<boolean> {
     if (this.busy) {
-      void vscode.window.showInformationMessage(
-        'An editor companion change is in progress or awaiting a confirmed outcome. Refresh companion status before starting another change.',
-      )
-      return
+      if (!options.silent)
+        void vscode.window.showInformationMessage(
+          'An editor companion change is in progress or awaiting a confirmed outcome. Refresh companion status before starting another change.',
+        )
+      return false
     }
-    const operation = this.runInstall(file)
-    this.operation = operation
+    const operation = this.runInstall(file, options.silent === true)
+    const tracked = operation.then(() => undefined)
+    this.operation = tracked
     try {
-      await operation
+      return await operation
     } finally {
-      if (this.operation === operation) this.operation = undefined
+      if (this.operation === tracked) this.operation = undefined
     }
   }
-  private async runInstall(file: string): Promise<void> {
+  private async runInstall(file: string, silent: boolean): Promise<boolean> {
     const controller = new AbortController()
     this.controller = controller
     try {
@@ -229,6 +234,8 @@ export class EditorCompanionManagement {
         const cached = candidates.length === 1 ? candidates[0] : undefined
         if (cached !== undefined) backup = { ...cached, enabled: installed.enabled }
         if (backup === undefined) {
+          // A silent install never opens a file dialog; skip instead.
+          if (silent) return false
           const selection = await vscode.window.showOpenDialog({
             title: `Select the installed v${installed.version ?? 'unknown'} companion bundle as a recovery backup`,
             canSelectMany: false,
@@ -237,7 +244,7 @@ export class EditorCompanionManagement {
             filters: { 'Companion bundle': ['tgz'] },
           })
           const previous = selection?.[0]
-          if (previous === undefined) return
+          if (previous === undefined) return false
           backup = {
             ...(await cacheCompanionArchive(previous.fsPath, storage.fsPath)),
             enabled: installed.enabled,
@@ -246,84 +253,87 @@ export class EditorCompanionManagement {
             throw new Error('The recovery archive version does not match')
         }
       }
-      if (!this.deps.current(backend)) return
-      const consent = await vscode.window.showWarningMessage(
-        `Install editor companion v${archive.version}?`,
-        {
-          modal: true,
-          detail:
-            'This installs code into the connected extension-managed DSH profile. Install only a trusted bundle. Existing editor access will be revoked. Replacing a version keeps a recovery archive and restores it after a confirmed installation failure or cancellation. Sharing must be enabled again.',
-        },
-        'Install',
-      )
-      if (consent !== 'Install') return
+      if (!this.deps.current(backend)) return false
+      if (!silent) {
+        const consent = await vscode.window.showWarningMessage(
+          `Install editor companion v${archive.version}?`,
+          {
+            modal: true,
+            detail:
+              'This installs code into the connected extension-managed DSH profile. Install only a trusted bundle. Existing editor access will be revoked. Replacing a version keeps a recovery archive and restores it after a confirmed installation failure or cancellation. Sharing must be enabled again.',
+          },
+          'Install',
+        )
+        if (consent !== 'Install') return false
+      }
       controller.signal.throwIfAborted()
       this.available(backend)
-      await this.deps.stop()
-      await vscode.window.withProgress(
+      await this.deps.halt()
+      const install = async (cancellation: { dispose(): void }): Promise<boolean> => {
+        const requestId = randomUUID()
+        this.installation = { repository, requestId }
+        try {
+          this.available(backend)
+          if (installed !== undefined) {
+            const removed = await repository.removeBundle(EDITOR_COMPANION_PACKAGE, controller.signal)
+            if (removed.application !== 'applied' && removed.application !== 'restart-required') {
+              await this.result(backend, removed, silent)
+              return false
+            }
+          }
+          let result: PluginBundleChangeResult | null
+          this.uncertain = { backend, repository, requestId, ...(backup === undefined ? {} : { backup }) }
+          try {
+            result = await repository.installBundle(
+              archive.file,
+              { requestId, saveExact: true, approvedBuilds: [] },
+              controller.signal,
+            )
+          } catch (error) {
+            if (error instanceof AppError && error.code === 'PLUGIN_INSTALL_NOT_STARTED') {
+              this.uncertain = undefined
+              if (backup !== undefined) await this.restore(backend, repository, backup)
+              throw error
+            }
+            if (controller.signal.aborted)
+              await repository.cancelInstall(requestId, AbortSignal.timeout(5_000)).catch(() => undefined)
+            result = await repository.waitForInstall(requestId, AbortSignal.timeout(20_000))
+          }
+          if (!this.deps.current(backend)) return false
+          if (result === null) {
+            if (!silent)
+              void vscode.window.showWarningMessage(
+                'The installation outcome is not yet known. Refresh the companion status before trying another installation.',
+              )
+            return false
+          }
+          this.uncertain = undefined
+          if (backup !== undefined && (result.application === 'failed' || result.application === 'cancelled'))
+            await this.restore(backend, repository, backup)
+          await this.result(backend, result, silent)
+          return result.application === 'applied' || result.application === 'restart-required'
+        } finally {
+          cancellation.dispose()
+          this.installation = undefined
+        }
+      }
+      if (silent) return await install({ dispose() {} })
+      return await vscode.window.withProgress(
         {
           location: vscode.ProgressLocation.Notification,
           title: `Installing DSH editor companion v${archive.version}`,
           cancellable: true,
         },
-        async (_progress, token) => {
-          const cancellation = token.onCancellationRequested(() => this.cancel())
-          const requestId = randomUUID()
-          this.installation = { repository, requestId }
-          try {
-            this.available(backend)
-            if (installed !== undefined) {
-              const removed = await repository.removeBundle(EDITOR_COMPANION_PACKAGE, controller.signal)
-              if (removed.application !== 'applied' && removed.application !== 'restart-required') {
-                await this.result(backend, removed)
-                return
-              }
-            }
-            let result: PluginBundleChangeResult | null
-            this.uncertain = { backend, repository, requestId, ...(backup === undefined ? {} : { backup }) }
-            try {
-              result = await repository.installBundle(
-                archive.file,
-                { requestId, saveExact: true, approvedBuilds: [] },
-                controller.signal,
-              )
-            } catch (error) {
-              if (error instanceof AppError && error.code === 'PLUGIN_INSTALL_NOT_STARTED') {
-                this.uncertain = undefined
-                if (backup !== undefined) await this.restore(backend, repository, backup)
-                throw error
-              }
-              if (controller.signal.aborted)
-                await repository.cancelInstall(requestId, AbortSignal.timeout(5_000)).catch(() => undefined)
-              result = await repository.waitForInstall(requestId, AbortSignal.timeout(20_000))
-            }
-            if (!this.deps.current(backend)) return
-            if (result === null) {
-              void vscode.window.showWarningMessage(
-                'The installation outcome is not yet known. Refresh the companion status before trying another installation.',
-              )
-              return
-            }
-            this.uncertain = undefined
-            if (
-              backup !== undefined &&
-              (result.application === 'failed' || result.application === 'cancelled')
-            )
-              await this.restore(backend, repository, backup)
-            await this.result(backend, result)
-          } finally {
-            cancellation.dispose()
-            this.installation = undefined
-          }
-        },
+        async (_progress, token) => install(token.onCancellationRequested(() => this.cancel())),
       )
     } catch {
-      if (!controller.signal.aborted)
+      if (!controller.signal.aborted && !silent)
         void vscode.window.showErrorMessage(
           this.uncertain !== undefined
             ? 'The installation outcome is unknown. Refresh companion status to recover the original installation before starting another change.'
             : 'The companion bundle could not be installed. Check its package identity, compatibility and dependency availability, then refresh the companion status.',
         )
+      return false
     } finally {
       if (this.controller === controller) this.controller = undefined
     }
@@ -423,7 +433,7 @@ export class EditorCompanionManagement {
       return
     }
     const operation = (async (): Promise<void> => {
-      await this.deps.stop()
+      await this.deps.halt()
       this.available(backend)
       await this.result(backend, await change())
     })()
@@ -434,15 +444,22 @@ export class EditorCompanionManagement {
       if (this.operation === operation) this.operation = undefined
     }
   }
-  private async result(backend: DshBackend, result: PluginBundleChangeResult): Promise<void> {
+  private async result(backend: DshBackend, result: PluginBundleChangeResult, silent = false): Promise<void> {
     if (!this.deps.current(backend)) return
     if (result.application === 'restart-required') {
+      if (silent) {
+        await this.deps.reconnect?.()
+        return
+      }
       const choice = await vscode.window.showInformationMessage(
         'The editor companion change requires reconnecting the extension-managed DSH.',
         'Reconnect',
       )
       if (choice === 'Reconnect' && this.deps.current(backend)) await this.deps.reconnect?.()
-    } else if (
+      return
+    }
+    if (silent) return
+    if (
       result.application === 'failed' &&
       (result.errorCode === 'stop-profile' || result.errorCode === 'bundle-in-use')
     )
@@ -461,7 +478,7 @@ export class EditorCompanionManagement {
       )
     else
       void vscode.window.showInformationMessage(
-        'Editor companion change applied. Use Share Editor State with Current Session to grant access.',
+        'Editor companion change applied. Editor tools will turn on with the next session.',
       )
   }
   private available(expected?: DshBackend, mutation = true): DshBackend {

@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
@@ -8,14 +8,18 @@ import { createRequire } from 'node:module'
 import { describe, expect, it, vi } from 'vitest'
 import { EditorCompanionService } from '../../packages/application/src/services/editor-companion-service.js'
 import { verifyCompanionHost } from '../../apps/extension/src/editor/companion-host-proof.js'
+import { managedCompanionArguments } from '../../apps/extension/src/editor/managed-companion.js'
 import {
   EDITOR_COMPANION_TOOLS,
+  EditorCompanionError,
   type EditorCompanionValue,
 } from '../../packages/domain/src/editor-companion.js'
 import { LIVE_TIMEOUT_MS, startManagedRuntime, spawnManagedChild } from './harness.js'
 import { AlphaLoopbackApiClient } from '../../packages/dsh-adapter/src/versions/alpha/transport.js'
 
-const enabled = process.env.DSH_LIVE_SMOKE === '1' && process.env.DSH_LIVE_RUNTIME_VERSION === '0.2.1-rc.2'
+const enabled =
+  process.env.DSH_LIVE_SMOKE === '1' &&
+  /^(?:0\.2\.0-rc\.2|0\.2\.1-(?:alpha\.[1-5]|rc\.[12]))$/u.test(process.env.DSH_LIVE_RUNTIME_VERSION ?? '')
 describe.skipIf(!enabled)('DSH rc.2 editor companion (isolated real runtime)', () => {
   it(
     'loads the independently built plugin and enforces binding ownership through actual Remote',
@@ -64,7 +68,26 @@ export function apply(ctx) {
 }
 `,
         )
-        const bundle = process.env.DSH_EDITOR_BRIDGE_BUNDLE
+        const managed = process.env.DSH_EDITOR_COMPANION_MANAGED === '1'
+        const bundle = managed ? undefined : process.env.DSH_EDITOR_BRIDGE_BUNDLE
+        let managedPatch = ''
+        if (managed) {
+          const args = await managedCompanionArguments(
+            {
+              executable: runtimeCommand,
+              version: process.env.DSH_LIVE_RUNTIME_VERSION ?? '',
+              supported: true,
+              source: 'path',
+              compatibility: 'known',
+            },
+            path.resolve('apps/extension/resources'),
+            home,
+            new AbortController().signal,
+          )
+          expect(args[0]).toBe('--patch')
+          if (args[1] === undefined) throw new Error('Managed integration did not prepare its overlay.')
+          managedPatch = await readFile(args[1], 'utf8')
+        }
         if (bundle !== undefined) {
           let installer = runtimeCommand
           const pnpmEntry = process.env.DSH_EDITOR_BRIDGE_PNPM
@@ -111,12 +134,12 @@ export function apply(ctx) {
           }
         }
         const bridgeEntry =
-          bundle === undefined
+          bundle === undefined && !managed
             ? `    - id: live-editor-bridge\n      name: ${JSON.stringify(entry.replaceAll('\\', '/'))}\n`
             : ''
         await writeFile(
           patchFile,
-          `- insert:\n${bridgeEntry}    - id: live-editor-probe\n      name: ${JSON.stringify(probeFile.replaceAll('\\', '/'))}\n`,
+          `${managedPatch}- insert:\n${bridgeEntry}    - id: live-editor-probe\n      name: ${JSON.stringify(probeFile.replaceAll('\\', '/'))}\n`,
         )
         runtime = await startManagedRuntime({ dshHome: home, patchFile, requestedRuntime: launchCommand })
         const { backend } = runtime
@@ -189,6 +212,12 @@ export function apply(ctx) {
             packageVersion: '0.2.0',
             maxGrants: 16,
           })
+          if (managed) {
+            const manifest = JSON.parse(
+              await readFile(path.resolve('apps/extension/resources/editor-companion-build.json'), 'utf8'),
+            ) as { buildId: string }
+            expect(await companion.buildIdentity?.()).toBe(manifest.buildId)
+          }
           await verifyCompanionHost(companion, new AbortController().signal)
           await expect(companion.verifyHost(randomUUID())).rejects.toMatchObject({
             code: 'CAPABILITY_UNAVAILABLE',
@@ -206,17 +235,19 @@ export function apply(ctx) {
             text: 'const',
             truncated: false,
           }
+          const editFile = path.join(home, 'edit-roundtrip.ts')
+          await writeFile(editFile, 'const')
+          const proposalId = randomUUID()
+          let writes = 0
+          const applied: EditorCompanionValue = {
+            kind: 'proposal',
+            proposalId,
+            relativePath: 'sample.ts',
+            version: 4,
+            status: 'applied',
+            saved: true,
+          }
           try {
-            await service.start(companion, session.id, randomUUID(), ['content'], {
-              execute: (request, signal) => {
-                calls += 1
-                if (request.kind === 'document' && request.path === 'slow.ts') {
-                  slowSignal = signal
-                  return new Promise<EditorCompanionValue>(() => undefined)
-                }
-                return Promise.resolve(document)
-              },
-            })
             const invoke = (
               name: string,
               args: Readonly<Record<string, unknown>>,
@@ -227,7 +258,29 @@ export function apply(ctx) {
                 { request: { sessionId: session.id, name, arguments: args } },
                 signal,
               )
-            expect(await invoke('vscode_read_document', { path: 'sample.ts' })).toMatchObject({
+            const automaticFirstCall = invoke('vscode_read_document', { path: 'sample.ts' })
+            await new Promise((resolve) => setTimeout(resolve, 100))
+            await service.start(companion, session.id, randomUUID(), ['content', 'edit', 'navigation'], {
+              execute: async (request, signal) => {
+                calls += 1
+                if (request.kind === 'propose') {
+                  writes += 1
+                  await writeFile(editFile, 'const changed')
+                  return applied
+                }
+                if (request.kind === 'proposal') {
+                  if (request.proposalId !== proposalId) throw new EditorCompanionError('not-found')
+                  return applied
+                }
+                if (request.kind === 'open') return { kind: 'opened', relativePath: 'sample.ts' }
+                if (request.kind === 'document' && request.path === 'slow.ts') {
+                  slowSignal = signal
+                  return new Promise<EditorCompanionValue>(() => undefined)
+                }
+                return Promise.resolve(document)
+              },
+            })
+            expect(await automaticFirstCall).toMatchObject({
               ok: true,
               value: { ok: true, snapshot: document },
             })
@@ -247,6 +300,27 @@ export function apply(ctx) {
             expect(await invoke('vscode_read_document', { path: 'sample.ts' })).toMatchObject({
               ok: true,
               value: { ok: true, snapshot: document },
+            })
+            expect(service.active).toBe(true)
+            expect(
+              await invoke('vscode_propose_edit', {
+                path: 'sample.ts',
+                expectedVersion: 3,
+                edits: [
+                  { range: { start: { line: 1, column: 6 }, end: { line: 1, column: 6 } }, text: ' changed' },
+                ],
+              }),
+            ).toMatchObject({ value: { ok: true, snapshot: applied } })
+            expect(await readFile(editFile, 'utf8')).toBe('const changed')
+            expect(writes).toBe(1)
+            expect(await invoke('vscode_get_edit_result', { proposalId })).toMatchObject({
+              value: { ok: true, snapshot: applied },
+            })
+            expect(await invoke('vscode_get_edit_result', { proposalId: randomUUID() })).toMatchObject({
+              value: { ok: false },
+            })
+            expect(await invoke('vscode_open_file', {})).toMatchObject({
+              value: { ok: true, snapshot: { kind: 'opened', relativePath: 'sample.ts' } },
             })
             expect(service.active).toBe(true)
             const second = await backend.sessions.create({

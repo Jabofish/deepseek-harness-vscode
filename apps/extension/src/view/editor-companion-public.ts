@@ -77,6 +77,6 @@ function summary(value: EditorCompanionValue): string {
     case 'opened':
       return `Opened ${value.relativePath}`
     case 'proposal':
-      return `${value.relativePath} · edit proposal ${value.status} · version ${value.version}`
+      return `${value.relativePath} · edit proposal ${value.status} · version ${value.version}${value.saved === true ? ' · saved' : value.saved === false ? ' · save incomplete' : ''}`
   }
 }

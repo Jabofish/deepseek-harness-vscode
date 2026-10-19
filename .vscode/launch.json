@@ -11,6 +11,9 @@
         "--disable-extensions"
       ],
       "outFiles": ["${workspaceFolder}/apps/extension/dist/**/*.cjs"],
+      "env": {
+        "DSH_VSCODE_DEV_MANAGED_RUNTIME": "1"
+      },
       "preLaunchTask": "build"
     }
   ]

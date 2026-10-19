@@ -81,7 +81,8 @@ function fixture(ownership: 'managed' | 'external' = 'managed'): Fixture {
     active: () => false,
     enable,
     stop,
-    review: vi.fn().mockResolvedValue(undefined),
+    halt: stop,
+    undo: vi.fn().mockResolvedValue(undefined),
   })
   return {
     manager,
@@ -105,6 +106,12 @@ describe('native editor companion installation and recovery', () => {
     await manager.installBundled()
     expect(setBundleEnabled).toHaveBeenCalledWith('@dsh-vscode/editor-bridge', false, expect.any(AbortSignal))
     expect(manager.busy).toBe(false)
+  })
+  it('installs silently without a modal when the host asks for it', async () => {
+    const { manager, installBundle } = fixture()
+    expect(await manager.installBundled({ silent: true })).toBe(true)
+    expect(native.warning).not.toHaveBeenCalled()
+    expect(installBundle).toHaveBeenCalledTimes(1)
   })
   it('refuses external runtimes before reading artifacts or mutating a profile', async () => {
     const { manager, installBundle, stop } = fixture('external')
