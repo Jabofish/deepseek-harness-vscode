@@ -3,7 +3,7 @@ import { requestId } from './ids.js'
 import { installTranscript, parseTranscript } from './transcript-state.js'
 import type { AppState, StateSetter } from './types.js'
 
-/** Navigation replaces the window; the renderer never reads or merges DSH history. */
+/** The Host prepends older rows; the renderer installs its authoritative window. */
 export function createHistoryActions(deps: {
   readonly client: ProtocolClient
   readonly getState: () => AppState

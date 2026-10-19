@@ -325,7 +325,7 @@ describe('Host transcript windows', () => {
       view.revision,
       new AbortController().signal,
     )
-    expect(historical.nodes).toContainEqual(expect.objectContaining({ kind: 'todo', todos: old }))
+    expect(historical.nodes).toContainEqual(expect.objectContaining({ kind: 'todo', todos: current }))
     expect(historical.currentTodos).toEqual(current)
     f.service.accept({ type: 'session.projection', sessionId, key: 'todoList', value: null, sequence: 20 })
     expect(f.service.accept({ type: 'todo.updated', sessionId, todos: current, sequence: 21 })).toBe(true)
@@ -634,8 +634,11 @@ describe('Host transcript windows', () => {
     client.service.dispose()
   })
 
-  it('replaces older windows, retains the live tail, and restores latest after arbitrary paging', async () => {
-    const older = Array.from({ length: 100 }, (_, index) => message(index + 1))
+  it('prepends older history without replacing recent messages and keeps the expanded view live', async () => {
+    const older = [
+      ...Array.from({ length: 100 }, (_, index) => message(index + 1)),
+      message(200, 'Outdated overlap'),
+    ]
     const client = fixture(vi.fn().mockResolvedValue({ events: older, hasMore: false, beforeSequence: 0 }))
     const initial = client.open([message(200)])
     const historical = await client.service.navigate(
@@ -644,8 +647,10 @@ describe('Host transcript windows', () => {
       initial.revision,
       new AbortController().signal,
     )
-    expect(historical.historical).toBe(true)
-    expect(historical.nodes).not.toContainEqual(expect.objectContaining({ id: 'm-200' }))
+    expect(historical.historical).toBe(false)
+    expect(historical.nodes).toContainEqual(expect.objectContaining({ id: 'm-200' }))
+    expect(historical.nodes).toHaveLength(101)
+    expect(historical.nodes.at(-1)).toMatchObject({ id: 'm-200', markdown: 'Answer 200' })
     client.service.accept(message(201, 'Live final reply').event)
     const latest = await client.service.navigate(
       sessionId,
@@ -655,6 +660,7 @@ describe('Host transcript windows', () => {
     )
     expect(latest.historical).toBe(false)
     expect(latest.nodes.at(-1)).toMatchObject({ markdown: 'Live final reply', streaming: false })
+    expect(latest.nodes[0]?.id).toBe('m-1')
     client.service.dispose()
   })
 

@@ -197,7 +197,7 @@ describe('pagination ownership across a failed navigation', () => {
 
       await store.loadOlderHistory()
       expect(historyRequests).toBe(2)
-      expect(store.timeline.nodes.map((node) => node.id)).toEqual(['message-10'])
+      expect(store.timeline.nodes.map((node) => node.id)).toEqual(['message-10', 'message-20'])
       expect(store.historyBeforeSequence).toBe(10)
       expect(store.historyHasMore).toBe(false)
       expect(store.getState().historyLoading).toBe(false)

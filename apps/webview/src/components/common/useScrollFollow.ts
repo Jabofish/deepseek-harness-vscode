@@ -32,6 +32,8 @@ export interface ScrollAnchor {
   readonly contentHeight: number
   readonly scrollTop: number
   readonly interactionGeneration: number
+  readonly nodeId?: string
+  readonly nodeOffset?: number
 }
 
 export interface ScrollFollowResult {
@@ -310,7 +312,14 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
     if (element === null) return undefined
     cancelScheduledFollow()
     lastReaderScrollTopRef.current = element.scrollTop
+    const top = element.getBoundingClientRect().top
+    const row = [...element.querySelectorAll<HTMLElement>('[data-node-id]')].find(
+      (node) => node.getBoundingClientRect().bottom > top,
+    )
     return {
+      ...(row?.dataset.nodeId === undefined
+        ? {}
+        : { nodeId: row.dataset.nodeId, nodeOffset: row.getBoundingClientRect().top - top }),
       contentHeight: element.scrollHeight,
       scrollTop: element.scrollTop,
       interactionGeneration: interactionGenerationRef.current,
@@ -326,7 +335,16 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
     // older history request completed.
     if (Math.abs(element.scrollTop - anchor.scrollTop) > 1) return false
 
-    const heightDelta = element.scrollHeight - anchor.contentHeight
+    const row =
+      anchor.nodeId === undefined
+        ? undefined
+        : [...element.querySelectorAll<HTMLElement>('[data-node-id]')].find(
+            (node) => node.dataset.nodeId === anchor.nodeId,
+          )
+    const heightDelta =
+      row !== undefined && anchor.nodeOffset !== undefined
+        ? row.getBoundingClientRect().top - element.getBoundingClientRect().top - anchor.nodeOffset
+        : element.scrollHeight - anchor.contentHeight
     const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight)
     const nextScrollTop = Math.min(maxScrollTop, Math.max(0, anchor.scrollTop + heightDelta))
     if (Math.abs(element.scrollTop - nextScrollTop) > 0.5) {

@@ -48,6 +48,7 @@ interface PendingOpen {
   cwdKnown?: boolean
 }
 interface Resident {
+  expanded?: boolean
   readonly sessionId: string
   readonly child: boolean
   readonly baselineSequence: number
@@ -262,7 +263,7 @@ export class TranscriptWindowService {
     const pending = this.pending
     if (pending !== undefined && pending.sessionId === sessionId && !pending.overflow) {
       const chars = JSON.stringify(event).length
-      if (pending.events.length >= TRANSCRIPT_MAX_NODES || pending.chars + chars > TRANSCRIPT_MAX_CHARS) {
+      if (pending.events.length >= 256 || pending.chars + chars > 512 * 1024) {
         pending.events = []
         pending.chars = 0
         pending.overflow = true
@@ -344,10 +345,41 @@ export class TranscriptWindowService {
         page.beforeSequence >= previous.before
       )
         throw stale()
-      this.forward.push(previous.upper)
-      if (this.forward.length > 64) this.forward.shift()
-    } else this.forward.pop()
-    this.displayed = this.project(sessionId, page, previous.child, before, previous.cwd)
+      const older = this.project(sessionId, page, previous.child, before, previous.cwd)
+      const currentIds = new Set(previous.timeline.nodes.map((node) => node.id))
+      const merged: Resident = {
+        ...previous,
+        expanded: true,
+        timeline: {
+          ...previous.timeline,
+          nodes: [
+            ...older.timeline.nodes.filter((node) => !currentIds.has(node.id)),
+            ...previous.timeline.nodes,
+          ],
+          nodeChangeStart: 0,
+        },
+        hasMore: older.hasMore,
+        sources: new Map([...older.sources, ...previous.sources]),
+        omitted: new Set([...older.omitted, ...previous.omitted]),
+        facts: [
+          ...new Map([...older.facts, ...previous.facts].map((fact) => [fact.id, fact])).values(),
+        ].slice(-256),
+      }
+      if (older.before === undefined) delete merged.before
+      else merged.before = older.before
+      this.bound(merged, true)
+      // Keep receiving live changes in the expanded conversation. Only an
+      // actual budget eviction needs the separate live-tail fallback.
+      if (
+        previous === this.tail &&
+        previous.timeline.nodes.every((node) => merged.timeline.nodes.some((kept) => kept.id === node.id))
+      )
+        this.tail = merged
+      this.displayed = merged
+    } else {
+      this.forward.pop()
+      this.displayed = this.project(sessionId, page, previous.child, before, previous.cwd)
+    }
     this.revision++
     this.published = undefined
     return this.snapshot()
@@ -654,14 +686,16 @@ export class TranscriptWindowService {
       representedSequences,
       ...coords,
     })
-    if (resident.facts.length > TRANSCRIPT_MAX_NODES) resident.facts.shift()
+    if (resident.facts.length > 256) resident.facts.shift()
   }
 
-  private bound(resident: Resident): void {
-    let remaining = TRANSCRIPT_MAX_CHARS - 128 * 1024
+  private bound(resident: Resident, preferOlder = false): void {
+    let remaining = (resident.expanded === true ? TRANSCRIPT_MAX_CHARS : 512 * 1024) - 128 * 1024
+    const nodeBudget = resident.expanded === true ? TRANSCRIPT_MAX_NODES : 256
     const nodes: TimelineNode[] = []
     const source = resident.timeline.nodes
     const candidates = source.filter((node) => !resident.contextIds.has(node.id))
+    if (preferOlder) candidates.reverse()
     const projectNode = (original: TimelineNode): { value: TimelineNode; omitted: boolean; size: number } => {
       let clipped = this.previews.get(original)
       if (clipped === undefined) {
@@ -673,7 +707,7 @@ export class TranscriptWindowService {
       }
       return clipped
     }
-    for (let index = candidates.length - 1; index >= 0 && nodes.length < TRANSCRIPT_MAX_NODES - 32; index--) {
+    for (let index = candidates.length - 1; index >= 0 && nodes.length < nodeBudget - 32; index--) {
       const original = candidates[index]!
       const clipped = projectNode(original)
       const node = clipped.value
@@ -734,7 +768,7 @@ export class TranscriptWindowService {
       turnUsageTracking: Object.fromEntries(tracking),
       commandModes: Object.fromEntries(Object.entries(resident.timeline.commandModes ?? {}).slice(-64)),
     }
-    if (evicted) {
+    if (evicted && !preferOlder) {
       resident.hasMore = true
       // Evicted rows stay in DSH. Their raw boundary, not a display index, enables rereading.
       const positions = [...resident.sources]
@@ -904,7 +938,7 @@ export class TranscriptWindowService {
         }) as TranscriptPatch
       }
       const chars = JSON.stringify(patch ?? window).length
-      if (this.pendingAcks.size > 0 && this.pendingChars + chars > TRANSCRIPT_MAX_CHARS) {
+      if (this.pendingAcks.size > 0 && this.pendingChars + chars > 512 * 1024) {
         this.dirty = true
         this.budgetBlocked = true
         return

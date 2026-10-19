@@ -5,8 +5,8 @@ import type { TokenUsage } from '@dsh-vscode/domain'
 import { id, boundedUnknown } from './request-common.js'
 
 // Resident budgets, independent of DSH's message-count page size.
-export const TRANSCRIPT_MAX_NODES = 256
-export const TRANSCRIPT_MAX_CHARS = 512 * 1024
+export const TRANSCRIPT_MAX_NODES = 2048
+export const TRANSCRIPT_MAX_CHARS = 4 * 1024 * 1024
 export const TRANSCRIPT_NODE_CHARS = 16 * 1024
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 const text = z.string()

@@ -2,9 +2,30 @@
 
 ## Unreleased
 
-- 新增可选 DSH 编辑器配套插件 MVP：用户可为当前会话开启/撤销编辑器元数据共享，Agent 工具读取相对文件名、语言、版本、未保存标记、选区及缓存诊断计数。首版限单根受信本地工作区和扩展持有的 DSH，不读取代码或诊断正文。
-- Expands the optional DSH editor companion with ten tools: editor metadata, unsaved document/selection reads, cached diagnostics, symbols/definitions/references, navigation, versioned edit proposals and edit receipts. Grants select capabilities and one workspace root per session; edits require native diff review and explicit confirmation, remain unsaved and support undo.
-- Adds native companion installation, version/status controls, enable/disable/uninstall, cached archive restore and recovery by the original installation ID. Supports independent session grants and same-host verification; external runtimes remain outside installation and process management. Model-driven, manual diff and remote-workspace acceptance remain separate validation work.
+- 修复加载较早历史时整页替换、较新消息消失的问题：Host 按消息 ID 向上合并，保留实时更新；恢复触顶加载并按可见消息锚定视口。
+- Prepends older history without replacing newer messages, preserves live updates, restores loading at the top and anchors scrolling to the visible message.
+
+- 空闲发送留在输入框，直到正式消息出现，不再闪入排队面板；发送中的按钮显示可取消的加载圈，支持取消首发和命令请求。精简编辑工具说明，明确分页坐标、自动保存与重试规则。
+- Keeps idle sends in the composer until their durable message appears, with a cancellable loading indicator instead of a transient queue row. Adds request cancellation and concise editor-tool instructions for paging, coordinates, saving and retries.
+
+- 修复编辑已生效却被旧 pending/版本校验拒绝的问题；返回可查询的回执并自动保存文件，saved:false 明确表示已修改但保存失败，不建议重发。区分未知回执、缺失文件、越界和文件访问错误；打开文件支持省略路径，文档读取默认分页并保留准确的 UTF-16 游标。
+- Fixes applied edits being rejected by obsolete pending-only validation. Returns queryable receipts and automatically saves files, reporting applied/saved:false when saving fails. Distinguishes missing receipts/files, invalid ranges and file access errors; supports the active editor for navigation and bounded reads with exact continuation positions.
+
+- 排队正文改为多行编辑，Enter 换行，Ctrl/Cmd+Enter 或失焦保存。条目离队后保留只读正文与附件，直到正式消息进入时间线，避免显示空档；按消息 ID 衔接，不重复发送或生成虚假消息。
+- Adds multiline queued-prompt editing and retains read-only text and attachments during the handoff to the authoritative transcript. Enter inserts a newline; Ctrl/Cmd+Enter or blur saves. Handoff uses message IDs without resending input or inventing transcript rows.
+
+- 修复排队消息因会话状态短暂变化而消失、多条正文默认被折叠的问题；同一连续工作过程共享一个标题和展开状态，不再把每个虚拟列表分片显示成独立过程。
+- Keeps pending queue text visible across transient session status changes and expands queued messages by default. Continuous work shares one disclosure across virtual rows instead of repeating a process header per segment.
+
+- 正常自动连接会校验配套构建指纹，扩展升级后自动切换旧配套；F5 每次构建并启动加载当前配套的专用实例，无需手动安装或修改版本号。显式外部连接保持用户选择，切换失败时保留聊天。
+- Compares companion build fingerprints during automatic connection so extension updates replace stale integration. F5 rebuilds and loads current source in a fresh owned runtime without a package version bump. Explicit external targets remain selected; failed replacement retains chat.
+
+- 编辑器配套随扩展打包，受信工作区默认自动连接；在 Webview「设置 → 常规 → 编辑器集成」中调整读写、自动配置并重试连接，无需另装插件或逐会话运行启用命令。首条工具调用会等待自动绑定，连接完成后恢复共享。
+- Bundles the editor companion for automatic setup in trusted workspaces. Settings → General → Editor integration controls access, automatic setup and recovery; no separate package installation or per-session enable command is required. First tool calls wait for session binding and sharing resumes after connection attachment.
+- 支持多根工作区、未保存文档与选区、诊断、符号、定义、引用、导航和直接编辑。编辑后自动保存整个文件，可使用 VS Code 撤销或撤回 Agent 改动；读写范围与错误恢复均保持有界。命令面板收敛为六个日常入口，其余操作移入界面或上下文菜单。
+- Supports multiple workspace folders, unsaved document and selection reads, diagnostics, language navigation and direct edits. Edits save automatically and support native Undo and independent revert. Keeps six everyday Command Palette entries; management and contextual actions are available from their relevant UI.
+- 按配套协议协商可用能力；旧版、缺少配套或不兼容的 DSH 保留普通聊天和可用能力，设置中提供恢复入口。外部 DSH 不会被自动重启或安装接管。
+- Negotiates optional editor capabilities independently of the DSH version. Missing or incompatible support leaves ordinary chat available with recovery actions in Settings. External DSH processes remain outside automatic installation and restart management.
 
 ## 0.3.4
 
