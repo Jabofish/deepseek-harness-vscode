@@ -101,4 +101,4 @@ Checkpoint 与 Prompt Template 属于 Host 本地能力，不伪造 DSH RPC。�
 - **版本化 Adapter**：上游变化在版本边界内消化，Domain、Application 和 Webview 不依赖上游类或版本判断。
 - **Secret 留在 Host**：普通 Webview 输入框不处理 Provider Secret，诊断和协议测试必须验证无泄漏。
 
-编辑器集成是可失败的增强层：受管启动通过扩展自有 overlay 加载随包 runtime factory，不经包管理器修改 profile；依赖从目标运行时解析，未来 CLI 先只读确认 overlay 入口。Host 独立协商配套协议，失败降级不改变正常会话。Webview 的有限状态与命名恢复操作经严格协议进入 Host，不携带档案路径或进程权限。工作区开关/自动配置/允许编辑持久化，快速会话切换串行释放与重建，显式关闭不被后台恢复覆盖。
+编辑器集成是可失败的增强层：仅在用户从设置选择安装并启用后，受管启动才通过扩展自有 overlay 加载随包 runtime factory，不经包管理器修改 profile；依赖从目标运行时解析，未来 CLI 先只读确认 overlay 入口。Host 独立协商配套协议，失败降级不改变正常会话。Webview 的有限状态与命名恢复操作经严格协议进入 Host，不携带档案路径或进程权限。首次安装默认关闭，F5 不绕过用户选择；安装同意及工作区开关/允许编辑持久化，快速会话切换串行释放与重建，显式关闭不被后台恢复覆盖。

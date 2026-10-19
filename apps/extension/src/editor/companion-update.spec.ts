@@ -12,26 +12,43 @@ afterEach(async () => {
   vi.resetAllMocks()
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true })
 })
-async function fixture(): Promise<{ root: string; backend: DshBackend; identity: ReturnType<typeof vi.fn> }> {
+async function fixture(): Promise<{
+  root: string
+  backend: DshBackend
+  identity: ReturnType<typeof vi.fn>
+  describeCompanion: ReturnType<typeof vi.fn>
+}> {
   const root = await mkdtemp(path.join(os.tmpdir(), 'editor-update-test-'))
   roots.push(root)
   await writeFile(path.join(root, 'editor-companion-build.json'), JSON.stringify({ buildId: 'a'.repeat(64) }))
   const identity = vi.fn().mockResolvedValue('a'.repeat(64))
+  const describeCompanion = vi.fn().mockResolvedValue({ protocolVersion: 2 })
   return {
     root,
     identity,
+    describeCompanion,
     backend: {
       connection: {
         endpoint: { host: '127.0.0.1', port: 3080, baseUrl: 'http://127.0.0.1:3080' },
         ownership: 'external',
       },
       editorBridge: {
-        companion: { describe: vi.fn().mockResolvedValue({ protocolVersion: 2 }), buildIdentity: identity },
+        companion: { describe: describeCompanion, buildIdentity: identity },
       },
     } as unknown as DshBackend,
   }
 }
 describe('automatic companion update detection', () => {
+  it('loads a missing companion after consent only for an owned runtime, never an external target', async () => {
+    const { root, backend, describeCompanion } = await fixture()
+    describeCompanion.mockRejectedValue(
+      new AppError({ code: 'CAPABILITY_UNAVAILABLE', message: 'Missing companion', retryable: false }),
+    )
+    expect(await companionNeedsUpdate(backend, root)).toBe(false)
+    const managed = { ...backend, connection: { ...backend.connection, ownership: 'managed' as const } }
+    expect(await companionNeedsUpdate(managed, root)).toBe(true)
+    expect(proof).not.toHaveBeenCalled()
+  })
   it('compares build content rather than package version and verifies the same host before switching', async () => {
     const { root, backend, identity } = await fixture()
     expect(await companionNeedsUpdate(backend, root)).toBe(false)

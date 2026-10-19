@@ -6,7 +6,7 @@ export interface EditorIntegrationPreferences {
 }
 export const DEFAULT_EDITOR_INTEGRATION: EditorIntegrationPreferences = {
   enabled: true,
-  autoSetup: true,
+  autoSetup: false,
   allowEdits: true,
 }
 export type EditorIntegrationPhase =

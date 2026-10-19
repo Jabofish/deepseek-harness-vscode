@@ -36,8 +36,16 @@ export async function companionNeedsUpdate(
     if (installed === manifest.buildId) return false
     await verifyCompanionHost(companion, probe)
     return true
-  } catch {
+  } catch (error) {
     signal?.throwIfAborted()
+    // Called only after explicit bundled-companion consent. An owned runtime
+    // without the service needs a fresh start to load the user's selection.
+    if (
+      backend.connection.ownership === 'managed' &&
+      error instanceof AppError &&
+      error.code === 'CAPABILITY_UNAVAILABLE'
+    )
+      return true
     // Optional update detection cannot prevent a working chat connection.
     return false
   }

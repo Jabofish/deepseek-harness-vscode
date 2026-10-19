@@ -58,7 +58,6 @@ export class EditorBridgeHost {
   private readonly flashTimers = new Set<ReturnType<typeof setTimeout>>()
   private recovery: ReturnType<typeof setTimeout> | undefined
   private recoveryAttempts = 0
-  private installAttempted: DshBackend | undefined
   private phase: EditorIntegrationStatus['phase'] = 'waiting'
   private reason: EditorIntegrationStatus['reason'] = 'disconnected'
   private version: string | undefined
@@ -287,7 +286,7 @@ export class EditorBridgeHost {
     return Promise.resolve(vscode.commands.executeCommand('dsh.openSettings')).then(() => undefined)
   }
   public install(): Promise<void> {
-    return this.management.installBundled().then(() => undefined)
+    return this.action('setup').then(() => undefined)
   }
   public async undoLastEdit(): Promise<void> {
     const entry = this.ledger.lastApplied()
@@ -367,7 +366,12 @@ export class EditorBridgeHost {
       ...(this.reason === undefined ? {} : { reason: this.reason }),
       ...(this.version === undefined ? {} : { version: this.version }),
       capabilities: this.capabilities,
-      canInstall: managed && backend?.pluginBundles !== undefined && !this.management.busy,
+      canInstall:
+        managed &&
+        vscode.workspace.isTrusted &&
+        this.deps.context !== undefined &&
+        this.deps.reconnect !== undefined &&
+        !this.management.busy,
       canRestart: managed,
       canUndo: this.ledger.lastApplied() !== undefined,
     }
@@ -375,7 +379,6 @@ export class EditorBridgeHost {
   public async configure(change: Partial<EditorIntegrationPreferences>): Promise<EditorIntegrationStatus> {
     await saveEditorPreferences(change)
     this.suppressed = !readEditorPreferences().enabled
-    this.installAttempted = undefined
     await this.stop()
     await this.reconcile()
     return this.snapshot()
@@ -394,7 +397,6 @@ export class EditorBridgeHost {
     } else if (action === 'restart') {
       if (this.snapshot().canRestart) await this.deps.reconnect?.()
     } else {
-      this.installAttempted = undefined
       if (action === 'retry' && this.workspaceAccess.reason() !== undefined) {
         this.workspaceAccess.reset()
         await this.workspaceAccess.request(AbortSignal.timeout(60_000)).catch((error: unknown) => {
@@ -404,10 +406,16 @@ export class EditorBridgeHost {
       if (action === 'setup' && this.snapshot().canInstall) {
         this.phase = 'setup'
         this.reason = undefined
-        const installed = await this.management.installBundled({ silent: true })
-        if (!installed) {
+        try {
+          // This explicit user action is the consent for bundled loading and later updates.
+          await saveEditorPreferences({ autoSetup: true, enabled: true })
+          this.suppressed = false
+          await this.stop()
+          await this.deps.reconnect?.()
+        } catch {
           this.phase = 'limited'
           this.reason = 'setup-failed'
+          return this.snapshot()
         }
       }
       await this.reconcile()
@@ -449,9 +457,8 @@ export class EditorBridgeHost {
     }
     if (this.starting !== undefined || this.management.busy || this.service.active || this.companion.active)
       return
-    let backend: DshBackend
     try {
-      backend = this.deps.backendService.requireBackend()
+      this.deps.backendService.requireBackend()
     } catch {
       this.phase = 'waiting'
       this.reason = 'disconnected'
@@ -463,25 +470,6 @@ export class EditorBridgeHost {
       return
     }
     await this.enable({ silent: true })
-    // The repository is a client port, not evidence of an installed server plugin.
-    if (
-      this.reason !== 'missing' ||
-      !preferences.autoSetup ||
-      this.installAttempted === backend ||
-      this.deps.context === undefined ||
-      backend.connection.ownership !== 'managed' ||
-      backend.pluginBundles === undefined
-    )
-      return
-    this.installAttempted = backend
-    this.phase = 'setup'
-    await this.stop()
-    if (await this.management.installBundled({ silent: true })) {
-      if (!this.disposed) this.syncRequested = true
-    } else {
-      this.phase = 'limited'
-      this.reason = 'setup-failed'
-    }
   }
   /** A status entry replaces the per-edit notification: visible when wanted, never modal. */
   private showEditIndicator(applied: Applied): void {

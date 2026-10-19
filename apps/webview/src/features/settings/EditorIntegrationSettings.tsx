@@ -136,11 +136,6 @@ export function EditorIntegrationSettings({
         control={toggle('enabled', t('editorIntegration.enabled'))}
       />
       <SettingRow
-        title={t('editorIntegration.autoSetup')}
-        description={t('editorIntegration.autoSetupDescription')}
-        control={toggle('autoSetup', t('editorIntegration.autoSetup'))}
-      />
-      <SettingRow
         title={t('editorIntegration.allowEdits')}
         description={t('editorIntegration.allowEditsDescription')}
         control={toggle('allowEdits', t('editorIntegration.allowEdits'))}
@@ -168,7 +163,7 @@ export function EditorIntegrationSettings({
             disabled={busy}
             onClick={() => action('setup')}
           >
-            {t('editorIntegration.repair')}
+            {status.preferences.autoSetup ? t('editorIntegration.repair') : t('editorIntegration.install')}
           </button>
         ) : null}
         {status?.canRestart && phase !== 'ready' ? (

@@ -25,6 +25,23 @@ function mount(handle: (request: FeatureRequest) => Promise<unknown>): void {
   )
 }
 describe('editor integration in Webview settings', () => {
+  it('requests installation only after the user clicks Install and enable companion', async () => {
+    const handle = vi.fn<(request: FeatureRequest) => Promise<unknown>>().mockResolvedValue({
+      ...ready,
+      preferences: { ...ready.preferences, autoSetup: false },
+      phase: 'limited',
+      reason: 'missing',
+    })
+    mount(handle)
+    const install = await screen.findByRole('button', { name: 'Install and enable companion' })
+    expect(handle.mock.calls.every(([request]) => request.type === 'editor.companion.status')).toBe(true)
+    fireEvent.click(install)
+    await waitFor(() =>
+      expect(handle).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'editor.companion.action', payload: { action: 'setup' } }),
+      ),
+    )
+  })
   it.each([
     ['workspace', 'Choose folder'],
     ['untrusted', 'Manage workspace trust'],

@@ -5,12 +5,27 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import type { DshRuntime } from '@dsh-vscode/domain'
+import type { DshRuntime, EditorIntegrationPreferences } from '@dsh-vscode/domain'
 import { resolveWindowsShim } from '../backend/windows-shim.js'
 
 /** Verified CLI overlay family; unknown runtimes still start normally without this optional overlay. */
 export function supportsCompanionOverlay(version: string): boolean {
   return /^(?:dsh-v|v)?(?:0\.2\.0-rc\.2|0\.2\.1-(?:alpha\.[1-5]|rc\.[12]))$/u.test(version)
+}
+
+/** The same consent gate applies to production and development launches. */
+export function configuredCompanionArguments(
+  runtime: DshRuntime,
+  resources: string,
+  storage: string,
+  signal: AbortSignal,
+  preferences: EditorIntegrationPreferences,
+  trusted: boolean,
+): Promise<readonly string[]> {
+  signal.throwIfAborted()
+  return preferences.autoSetup && preferences.enabled && trusted
+    ? managedCompanionArguments(runtime, resources, storage, signal)
+    : Promise.resolve([])
 }
 
 /** No profile mutation, package manager, network install or workspace source dependency. */

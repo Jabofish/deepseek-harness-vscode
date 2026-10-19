@@ -1,5 +1,5 @@
 import * as vscode from 'vscode'
-import { managedCompanionArguments } from '../editor/managed-companion.js'
+import { configuredCompanionArguments } from '../editor/managed-companion.js'
 import { readEditorPreferences } from '../editor/editor-integration-settings.js'
 import { companionNeedsUpdate } from '../editor/companion-update.js'
 import { execFile } from 'node:child_process'
@@ -240,16 +240,14 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
   const factory = new VersionedBackendFactory(adapters)
   const supervisor = new DshProcessSupervisor({
     additionalArguments: (runtime, signal) =>
-      (usesDevelopmentRuntime(context) || readEditorPreferences().autoSetup) &&
-      readEditorPreferences().enabled &&
-      vscode.workspace.isTrusted
-        ? managedCompanionArguments(
-            runtime,
-            vscode.Uri.joinPath(context.extensionUri, 'resources').fsPath,
-            context.globalStorageUri.fsPath,
-            signal,
-          )
-        : Promise.resolve([]),
+      configuredCompanionArguments(
+        runtime,
+        vscode.Uri.joinPath(context.extensionUri, 'resources').fsPath,
+        context.globalStorageUri.fsPath,
+        signal,
+        readEditorPreferences(),
+        vscode.workspace.isTrusted,
+      ),
     managedPort: () => (usesDevelopmentRuntime(context) ? 0 : configuration.read().connection.managedPort),
     workingDirectory: () => currentWorkspaceFolder()?.uri.fsPath ?? process.cwd(),
     toolMode: () => configuration.read().defaultAgent.toolMode,

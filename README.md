@@ -21,7 +21,7 @@
 
 The connected DSH version determines which advanced capabilities are available. Unsupported operations show a clear unavailable state. The [compatibility contract](docs/dsh-contract.md) lists exact adapter boundaries; the [capability matrix](docs/capability-matrix.md) summarizes supported functions, limitations and completion status.
 
-The [editor integration](packages/dsh-editor-bridge/README.md) loads with extension-managed DSH and follows your selected session automatically. No separate plugin install or permission picker is required. It provides unsaved text/selection, diagnostics, language services, navigation and undoable edits. **Settings → General → Editor integration** shows status and offers off/read-only switches, retry, repair, restart and Undo. Runtime capabilities are negotiated independently; missing editor support leaves chat and manual context attachment available.
+The optional [editor integration](packages/dsh-editor-bridge/README.md) is installed only when you choose **Settings → General → Editor integration → Install and enable companion**. Once enabled, it follows your selected session and extension updates, including F5 builds. It provides unsaved text/selection, diagnostics, language services, navigation and undoable edits. Settings offers off/read-only switches, retry, repair, restart and Undo. Runtime capabilities are negotiated independently; chat and manual context attachment remain available without the companion.
 
 ## Install and start
 

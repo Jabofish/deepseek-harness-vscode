@@ -1,10 +1,14 @@
-import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, readFile, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { DshRuntime } from '@dsh-vscode/domain'
-import { managedCompanionArguments, supportsCompanionOverlay } from './managed-companion.js'
+import { DEFAULT_EDITOR_INTEGRATION, type DshRuntime } from '@dsh-vscode/domain'
+import {
+  configuredCompanionArguments,
+  managedCompanionArguments,
+  supportsCompanionOverlay,
+} from './managed-companion.js'
 const roots: string[] = []
 afterEach(async () => {
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true })
@@ -37,6 +41,34 @@ async function fixture(help = '--patch <file>'): Promise<{ runtime: DshRuntime; 
   }
 }
 describe('managed companion without profile installation', () => {
+  it('does not prepare or load a companion before consent, including development launches', async () => {
+    const { root, runtime } = await fixture()
+    const storage = path.join(root, 'storage')
+    const signal = new AbortController().signal
+    for (const [preferences, trusted] of [
+      [DEFAULT_EDITOR_INTEGRATION, true],
+      [{ ...DEFAULT_EDITOR_INTEGRATION, autoSetup: true, enabled: false }, true],
+      [{ ...DEFAULT_EDITOR_INTEGRATION, autoSetup: true }, false],
+    ] as const) {
+      expect(
+        await configuredCompanionArguments(runtime, root, storage, signal, preferences, trusted),
+      ).toEqual([])
+      await expect(stat(storage)).rejects.toMatchObject({ code: 'ENOENT' })
+    }
+    expect(
+      (
+        await configuredCompanionArguments(
+          runtime,
+          root,
+          storage,
+          signal,
+          { ...DEFAULT_EDITOR_INTEGRATION, autoSetup: true },
+          true,
+        )
+      )[0],
+    ).toBe('--patch')
+    expect((await stat(storage)).isDirectory()).toBe(true)
+  })
   it('loads updated source without a version bump or ESM cache reuse and preserves the previous build', async () => {
     const { root, runtime } = await fixture()
     const bundle = path.join(root, 'editor-companion-runtime.mjs')

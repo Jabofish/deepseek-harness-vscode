@@ -2,17 +2,19 @@
 
 The editor integration is bundled with the VS Code extension. It uses DSH's
 existing authenticated Remote connection and adds no listening port. Editor
-access starts automatically in trusted workspaces and follows the selected
-session; agent edits save automatically and remain undoable. Saving includes any
+access follows the selected session after the user chooses to install the companion
+in Settings. It is not automatically installed, including during F5 launches. The
+agent edits save automatically and remain undoable. Saving includes any
 earlier unsaved content in the same buffer.
 
 ## Start and configure
 
 1. Connect DSH and select or create a session in your open workspace.
-2. Use the editor tools. No separate download, CLI install or permission picker.
+2. Choose **Settings → General → Editor integration → Install and enable companion**.
+3. Use the editor tools. No separate download, CLI install or permission picker.
 
 **Settings → General → Editor integration** provides live status, a persistent
-workspace on/off switch, automatic setup, read-only mode, retry, repair, managed
+workspace on/off switch, explicit installation, read-only mode, retry, repair, managed
 restart and Undo. These controls also work before a DSH connection exists. An
 external instance with no companion offers **Use a dedicated DSH**, starting an
 extension-owned instance while leaving the external process running.
@@ -21,7 +23,7 @@ Managed startup uses an extension-owned overlay and a self-contained runtime
 factory. It loads services from the selected DSH installation instead of pulling
 exact-version peer dependencies into a profile. It neither installs a package nor
 changes the DSH profile, so routine startup does not require pnpm or network access.
-Updating the extension supplies the next startup's integration, including when an
+After installation consent, updating the extension supplies the next startup's integration, including when an
 older companion was already installed. In default automatic connection mode, the
 extension compares the running companion's build fingerprint with the shipped
 build. A stale same-host companion triggers a switch to a fresh extension-owned
@@ -36,8 +38,8 @@ version bump. The debug launch requests a fresh owned DSH on a free port, ignori
 discovery of old processes without changing saved connection settings. Each build
 has its own immutable runtime module path, so ESM caching cannot reuse old code.
 Stop and start debugging with F5 after editing companion source; reloading a running
-window alone does not run the pre-launch build task. The editor access switch still
-applies during debugging.
+window alone does not run the pre-launch build task. Installation consent and the
+editor access switch both apply during debugging.
 
 The fixed CLI/tool contracts include the default `0.2.0-rc.2` and the `0.2.1`
 alpha.1–alpha.5/rc.1–rc.2 family. Actual isolated runtime evidence currently covers

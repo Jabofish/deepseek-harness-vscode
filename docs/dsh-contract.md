@@ -101,15 +101,15 @@ rc.2 与 rc.1 的 Connection / Gateway、全部 API Remote、Session V4、Accoun
 
 编辑器协议独立于 DSH 版本：包 `@dsh-vscode/editor-bridge` 提供元数据协议 1 和工具协议 2。客户端在已连接的 Remote 家族中探测自身固定方法，不因 DSH 标签不同就隐藏仓储；缺失方法只使该能力不可用，不阻断聊天。原始 `rc212` 入口保留兼容导出，公共仓储不依赖该版本身份。
 
-默认受管启动直接加载随扩展构建的 runtime factory 和专用 overlay，不调用包管理器、不修改 DSH profile，不要求用户先安装 tgz。factory 将 Typert Service 解析到选中的 DSH 安装，纯规则与 Zod 随包携带，避免精确 peer 版本阻止加载。overlay 复用自有 bundle 行 ID，更新扩展即可在下次启动采用新版，避免旧安装重复注册工具。未知版本只在自身 `--help` 声明 `--patch` 后尝试 overlay；准备或加载失败保留正常启动及聊天。
+配套默认不自动安装；用户在设置中选择安装并启用后，受管启动加载随扩展构建的 runtime factory 和专用 overlay，不调用包管理器、不修改 DSH profile，不要求用户先安装 tgz。factory 将 Typert Service 解析到选中的 DSH 安装，纯规则与 Zod 随包携带，避免精确 peer 版本阻止加载。overlay 复用自有 bundle 行 ID，更新扩展即可在下次启动采用新版，避免旧安装重复注册工具。未知版本只在自身 `--help` 声明 `--patch` 后尝试 overlay；准备或加载失败保留正常启动及聊天。
 
 固定源码已核对 `dsh-v0.2.0-rc.2` / `639ed015397290b3745d163aafe02ffee4aa3f84`，以及 `dsh-v0.2.1-alpha.1` 至 `alpha.5`、`rc.1` 至 `rc.2` 的 CLI overlay、Typert Service/Registry 和工具契约；关键来源为 `apps/cli/src/bin.ts`、`packages/typert/protocol/src/index.ts`、`packages/typert/registry/src/service.ts`、`packages/core/tools`。`rc.1` 为 `1600d8a1e140dcde43a1a0941940a0480712c011`，`rc.2` 为 `687f282e8625c6b8d11ff58211a90524be2e4317`。已完成隔离真实运行验证的版本为 `0.2.0-rc.2`、`0.2.1-rc.1`、`0.2.1-rc.2`；其余与未来版本只声明尽力探测。引入 Principal 前的 Gateway 仅提供认证 Peer ID，新 Gateway 则另要求 owner principal；真实 Peer 仍用于绑定归属。
 
-协议 2 的 `vscodeEditorCompanion/describe`、`verifyHost`、`attach`、`poll`、`respond`、`detach` 均以 `request` 为命名参数；结果为严格 `status: ok/error` 联合。可选 `buildIdentity` 方法返回构建指纹，旧配套缺少它不改变原有 `describe` 形状。默认 auto 在发现完成后比较随包指纹，同侧旧配套触发切换到加载当前版本的自有实例，失败则恢复聊天连接；显式 custom/attach-only 不自动替换。F5 构建后以调试专用标记启动新实例、采用空闲端口，每个构建使用不可变模块路径，不改持久连接设置。协议 1 的 `vscodeEditorBridge` 方法保留，仅能力缺失时回退元数据。无法协商的能力不会被猜成成功，普通附件和手动编辑器上下文仍可使用。共享要求 loopback 及同侧随机文件挑战；内容访问限于当前 VS Code 窗口已打开且受信的根，按已有编辑器设置授权，不要求协议 2 会话目录与根相同。协议 1 回退保留目录关联校验。协议 2 可先绑定请求通道，缺少文件夹或信任时在首次工具调用提供原生入口，满足条件前不读取内容。远程环境按 Extension Host 执行侧处理，不把端口转发当成共享文件系统证明。
+协议 2 的 `vscodeEditorCompanion/describe`、`verifyHost`、`attach`、`poll`、`respond`、`detach` 均以 `request` 为命名参数；结果为严格 `status: ok/error` 联合。可选 `buildIdentity` 方法返回构建指纹，旧配套缺少它不改变原有 `describe` 形状。用户已选择安装且启用后，默认 auto 在发现完成后比较随包指纹，同侧旧配套触发切换到加载当前版本的自有实例，失败则恢复聊天连接；显式 custom/attach-only 不自动替换。F5 遵循相同安装选择，未同意时不加载配套；构建后以调试专用标记启动新实例、采用空闲端口，每个构建使用不可变模块路径，不改持久连接设置。协议 1 的 `vscodeEditorBridge` 方法保留，仅能力缺失时回退元数据。无法协商的能力不会被猜成成功，普通附件和手动编辑器上下文仍可使用。共享要求 loopback 及同侧随机文件挑战；内容访问限于当前 VS Code 窗口已打开且受信的根，按已有编辑器设置授权，不要求协议 2 会话目录与根相同。协议 1 回退保留目录关联校验。协议 2 可先绑定请求通道，缺少文件夹或信任时在首次工具调用提供原生入口，满足条件前不读取内容。远程环境按 Extension Host 执行侧处理，不把端口转发当成共享文件系统证明。
 
 新协议最多十六个独立会话绑定，每个最多四个请求；poll 最长一秒、lease 四十五秒、请求时限十秒。同一会话不允许第二个窗口重复绑定，新旧协议不重复授权。请求取消只释放对应请求；慢采集不阻塞续期，迟到回复不满足新请求。短暂传输失败退避恢复，连接/会话切换串行释放并重建授权；显式关闭持久化到工作区，重连不擅自打开。单个路径请求越界或不存在不撤销其余工具能力。
 
-设置页通过 Host 的 `editor.companion.status/configure/action` 查看安全状态、修改启用/自动配置/允许编辑，及执行重试、修复、重启、撤销或创建独立实例。输入采用严格 schema，状态不携带端点、绝对路径、授权标识或原始错误。安装及停止/重启仍仅操作扩展自有实例；独立实例恢复路径不停止原外部进程。
+设置页通过 Host 的 `editor.companion.status/configure/action` 查看安全状态、修改启用/允许编辑，及主动安装、重试、修复、重启、撤销或创建独立实例。输入采用严格 schema，状态不携带端点、绝对路径、授权标识或原始错误。安装及停止/重启仍仅操作扩展自有实例；独立实例恢复路径不停止原外部进程。
 
 工具读取未保存缓冲区、选区、诊断、语言服务与导航，或直接执行可撤销编辑。空选区返回空文本；文档读取每次最多 200 行、16,384 个 UTF-16 单元，选区保留 65,536 单元上限。分页以返回 range.end 的行和列作为下一次 startLine/startColumn，越过 EOF 的起点返回 invalid-range，结束行截到 EOF，不把末行冒充请求行；条目最多 200。草稿仅返回可验证的相对句柄，不返回原始 untitled URI。多根名称清理并去重，嵌套根按最长路径归属；真实路径允许根内符号链接，拒绝根外目标。重基只在已知旧版本且修改范围可明确区分时执行，有界快照不复制巨大文件；不确定冲突返回 stale，不能宣称写入成功。编辑按当前设置授权，不再逐次弹确认，原生 Undo 和独立撤回保留；编辑及独立撤回通过 VS Code 保存整个缓冲区（包含原有未保存内容），回执 saved 布尔值说明该次保存是否成功。propose 接受 applied/stale/cancelled 的不早于期望版本回执，旧 pending 仍须版本相等；未知回执 ID 返回 not-found，文件不存在与权限/IO 故障不再冒充越界，读版本错误不使用写操作文案。结果不明的编辑不得自动重发，需先读取核对。正文仅返回已授权 DSH；结构化实时/历史工具卡投影安全摘要。
 

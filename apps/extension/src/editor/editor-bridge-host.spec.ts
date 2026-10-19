@@ -11,6 +11,7 @@ import {
 } from '@dsh-vscode/domain'
 import { EditorCompanionBroker } from '../../../../packages/dsh-editor-bridge/src/companion-broker.js'
 import { EditorBridgeHost } from './editor-bridge-host.js'
+import { EditorCompanionManagement } from './editor-companion-management.js'
 
 const ui = vi.hoisted(() => ({
   errors: vi.fn(),
@@ -78,6 +79,7 @@ function harness(
   rich = false,
   cwd = path.resolve('editor-bridge-fixture'),
   broker?: EditorCompanionBroker,
+  withSetup = false,
 ): {
   host: EditorBridgeHost
   attach: ReturnType<typeof vi.fn>
@@ -86,6 +88,7 @@ function harness(
   changeSelection: () => void
   disconnect: () => void
   connectionReady: () => void
+  reconnect: ReturnType<typeof vi.fn>
 } {
   ui.errors.mockClear()
   ui.show.mockClear()
@@ -116,6 +119,7 @@ function harness(
   const backend = {
     connection: { ownership, endpoint: { baseUrl: 'http://127.0.0.1:3000', host: '127.0.0.1', port: 3000 } },
     sessions: { get: () => Promise.resolve({ id: 'session-a', cwd }) },
+    pluginBundles: {},
     events: { subscribe: () => () => undefined },
     editorBridge: {
       ...(rich
@@ -188,7 +192,9 @@ function harness(
       return { dispose() {} }
     },
   }
+  const reconnect = vi.fn().mockResolvedValue(undefined)
   const dependencies = {
+    ...(withSetup ? { context: {}, reconnect } : {}),
     backendService,
     coordinator: {
       getState: () => ({ kind: 'connected', backend: backend.connection }),
@@ -201,6 +207,7 @@ function harness(
   } as unknown as ConstructorParameters<typeof EditorBridgeHost>[0]
   return {
     host: new EditorBridgeHost(dependencies),
+    reconnect,
     attach,
     detach,
     navigation,
@@ -210,6 +217,45 @@ function harness(
   }
 }
 describe('automatic editor sharing', () => {
+  it('does not install a missing plugin package in the background even with automatic updates enabled', async () => {
+    const install = vi.spyOn(EditorCompanionManagement.prototype, 'installBundled').mockResolvedValue(false)
+    const { host } = harness('managed', false, undefined, undefined, true)
+    try {
+      await host.prepareSession('session-a', new AbortController().signal)
+      expect(host.snapshot().reason).toBe('missing')
+      expect(install).not.toHaveBeenCalled()
+    } finally {
+      await host.dispose()
+      install.mockRestore()
+    }
+  })
+  it('remembers installation consent and reconnects only after an explicit setup action', async () => {
+    const { host, reconnect } = harness('managed', true, undefined, undefined, true)
+    ui.settings.autoSetup = false
+    try {
+      await host.prepareSession('session-a', new AbortController().signal)
+      expect(ui.settings.autoSetup).toBe(false)
+      expect(reconnect).not.toHaveBeenCalled()
+      expect(host.snapshot().canInstall).toBe(true)
+      await host.action('setup')
+      expect(ui.settings).toMatchObject({ autoSetup: true, enabled: true })
+      expect(reconnect).toHaveBeenCalledOnce()
+      reconnect.mockRejectedValue(new Error('Start failed'))
+      expect(await host.action('setup')).toMatchObject({ phase: 'limited', reason: 'setup-failed' })
+    } finally {
+      await host.dispose()
+    }
+    const external = harness('external', true, undefined, undefined, true)
+    try {
+      ui.settings.autoSetup = false
+      expect(external.host.snapshot().canInstall).toBe(false)
+      await external.host.action('setup')
+      expect(external.reconnect).not.toHaveBeenCalled()
+      expect(ui.settings.autoSetup).toBe(false)
+    } finally {
+      await external.host.dispose()
+    }
+  })
   it('executes selection tools across a new-session switch with an unrelated cwd through the real broker and service', async () => {
     const broker = new EditorCompanionBroker()
     const { host } = harness('managed', true, path.resolve('some-other-project'), broker)

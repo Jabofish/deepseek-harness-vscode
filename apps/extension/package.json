@@ -2,7 +2,7 @@
   "name": "deepseek-harness-client",
   "displayName": "DeepSeek Harness Companion for VS Code",
   "description": "Run DSH sessions, tools, and coding tasks in VS Code.",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "publisher": "Direwolf",
   "icon": "resources/dsh.png",
   "license": "MIT",
@@ -550,9 +550,9 @@
         },
         "dsh.editor.autoSetup": {
           "type": "boolean",
-          "default": true,
+          "default": false,
           "scope": "resource",
-          "description": "Load the bundled editor integration when starting an extension-managed DSH. No separate plugin installation is required."
+          "description": "Use the bundled companion only after you choose to install and enable it. Disabled by default, including F5. Once enabled, the companion follows extension updates."
         },
         "dsh.editor.allowEdits": {
           "type": "boolean",
