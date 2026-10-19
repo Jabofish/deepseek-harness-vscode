@@ -5,7 +5,9 @@ export default defineConfig({
     environment: 'node',
     // Leave capacity for the concurrent typecheck/lint/build checks. Unbounded
     // workers can starve esbuild and turn cold integration imports into timeouts.
-    maxWorkers: 8,
+    // GitHub runners share a small CPU budget with lint and typecheck. Eight
+    // workers can starve the real WebSocket drain deadline in the full gate.
+    maxWorkers: process.env.CI === 'true' ? 2 : 8,
     include: ['packages/**/*.spec.ts', 'tests/**/*.spec.ts', 'apps/**/*.spec.ts?(x)'],
     // The live smoke boots real DSH processes through the managed launch
     // contract, which allows one boot at a time and spends most of a spec's
