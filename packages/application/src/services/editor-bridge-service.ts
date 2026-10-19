@@ -1,4 +1,5 @@
 import {
+  AppError,
   EditorBridgeError,
   isEditorStateSnapshot,
   type EditorBridgeRepository,
@@ -81,7 +82,12 @@ export class EditorBridgeService {
           reply = { ok: false, reason: error instanceof EditorBridgeError ? error.reason : 'unavailable' }
         }
         if (signal.aborted || this.current !== run) break
-        await repository.respond(bindingId, request.requestId, reply, signal)
+        try {
+          await repository.respond(bindingId, request.requestId, reply, signal)
+        } catch (error) {
+          // Tool cancellation or expiry invalidates this reply, not the user's sharing grant.
+          if (!(error instanceof AppError && error.code === 'STALE_INTERACTION')) throw error
+        }
         if (!reply.ok && ['untrusted', 'workspace-mismatch', 'invalid-response'].includes(reply.reason)) break
       }
     } finally {

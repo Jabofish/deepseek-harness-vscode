@@ -34,6 +34,11 @@ credentials were used.
   fields, unavailable capability, cross-session/Peer ownership, concurrent
   requests, timeouts, cancellation, lease expiry, duplicate/late replies,
   metadata allowlists, links escaping the workspace and native Host revocation.
+- Review regression: a delayed capture answering a cancelled/expired tool request
+  no longer revokes the sharing grant when the Adapter reports `STALE_INTERACTION`.
+  A subsequent request succeeds on the same binding. Protocol failures and unsafe
+  captures still terminate the grant, including an unsafe capture with a stale reply.
+  The delayed-capture regression failed before the Application fix and passed after it.
 - `tests/live-dsh/editor-bridge.spec.ts` installed the packed tarball through
   the real CLI into its test-owned `web` profile, booted that profile and used
   an actual Agent, verified its tool catalogue and used the public tool execution
@@ -51,7 +56,7 @@ credentials were used.
 - The packed archive contains the bundle patch, built module, manifest, README
   and MIT license, with no workspace source dependency in the runtime module.
 - `pnpm install --frozen-lockfile`, `pnpm check`, `pnpm build` and
-  `git diff --check` passed. The full check passed 4,184 tests across 386 files;
+  `git diff --check` passed. The full check passed 4,187 tests across 386 files;
   the 31 tests skipped by that command include the separately run live
   probe above. The existing Webview chunk-size warning remains in the build.
 
