@@ -60,6 +60,7 @@ function fixture(): {
 const services: EditorCompanionService[] = []
 afterEach(async () => {
   for (const service of services.splice(0)) await service.stop()
+  vi.useRealTimers()
 })
 describe('editor companion request lifetimes', () => {
   it('continues polling while a read is pending, cancels only that read and answers the next request', async () => {
@@ -113,6 +114,7 @@ describe('editor companion request lifetimes', () => {
     expect(detach).not.toHaveBeenCalled()
   })
   it('retries a transient poll failure instead of ending the share', async () => {
+    vi.useFakeTimers()
     const { repository, respond, push } = fixture()
     const inner = repository.poll.bind(repository)
     let remaining = 1
@@ -123,20 +125,26 @@ describe('editor companion request lifetimes', () => {
     services.push(service)
     const read = vi.fn().mockResolvedValue({ kind: 'opened', relativePath: 'a.ts' })
     await service.start(repository, 'session-a', 'fixture_owner_1234', ['navigation'], { execute: read })
-    await new Promise((resolve) => setTimeout(resolve, 400))
+    await vi.advanceTimersByTimeAsync(400)
     expect(service.active).toBe(true)
     expect(ended).not.toHaveBeenCalled()
     push({ kind: 'request', requestId: 'fixture_request_1234', request: { kind: 'open', path: 'a.ts' } })
     await vi.waitFor(() => expect(respond).toHaveBeenCalledTimes(1))
   })
   it('ends with an explicit reason when polling keeps failing', async () => {
-    const { repository } = fixture()
-    repository.poll = () => Promise.reject(new Error('connection down'))
-    const ended = vi.fn()
-    const service = new EditorCompanionService(ended)
-    services.push(service)
-    await service.start(repository, 'session-a', 'fixture_owner_1234', [], { execute: vi.fn() })
-    await vi.waitFor(() => expect(ended).toHaveBeenCalledWith('ended'), { timeout: 15_000 })
-    expect(service.active).toBe(false)
-  }, 20_000)
+    vi.useFakeTimers()
+    try {
+      const { repository } = fixture()
+      repository.poll = () => Promise.reject(new Error('connection down'))
+      const ended = vi.fn()
+      const service = new EditorCompanionService(ended)
+      services.push(service)
+      await service.start(repository, 'session-a', 'fixture_owner_1234', [], { execute: vi.fn() })
+      await vi.advanceTimersByTimeAsync(8_000)
+      expect(ended).toHaveBeenCalledWith('ended')
+      expect(service.active).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

@@ -8,17 +8,7 @@ import { DEFAULT_UNMEASURED_ROW_WINDOW } from '../../components/common/index.js'
 import { Timeline } from './Timeline.js'
 import type * as TimelineRowModule from './TimelineRow.js'
 
-/**
- * Regression guard for the frame the timeline renders before the virtualizer
- * owns a measured viewport.
- *
- * `useVirtualizedCollection` reports `ready: false` in that frame, so the
- * caller falls back to a plain list. That list has to stay bounded: it runs
- * before any measurement exists, so an unbounded collection compares and
- * renders every node once, and the cost lands exactly when a long conversation
- * is opened. jsdom cannot observe paint, so these tests count `TimelineRow`
- * renders and inspect the fallback indexes rather than measure scroll speed.
- */
+// Counts DOM work under a simulated viewport; run with pnpm test:stress.
 const counters = vi.hoisted(() => ({ rowRenders: 0 }))
 
 vi.mock('./TimelineRow.js', async (importOriginal) => {
@@ -86,7 +76,7 @@ function withViewport(body: () => void): void {
   }
 }
 
-describe('Timeline unmeasured window', () => {
+describe('Timeline unmeasured window', { tags: ['stress'] }, () => {
   afterEach(() => {
     document.body.innerHTML = ''
   })

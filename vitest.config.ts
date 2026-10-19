@@ -1,21 +1,43 @@
-import { defineConfig } from 'vitest/config'
+import { configDefaults, defineConfig } from 'vitest/config'
+import { availableParallelism } from 'node:os'
+
+const live = process.env.DSH_LIVE_SMOKE === '1'
+const exclude = [...configDefaults.exclude, '**/*.stress.spec.ts?(x)']
+const nativeBuildTest = 'apps/webview/src/styles/deferred-assets.spec.ts'
 
 export default defineConfig({
   test: {
     environment: 'node',
-    // Leave capacity for the concurrent typecheck/lint/build checks. Unbounded
-    // workers can starve esbuild and turn cold integration imports into timeouts.
-    // GitHub runners share a small CPU budget with lint and typecheck. Eight
-    // workers can starve the real WebSocket drain deadline in the full gate.
-    maxWorkers: process.env.CI === 'true' ? 2 : 8,
-    include: ['packages/**/*.spec.ts', 'tests/**/*.spec.ts', 'apps/**/*.spec.ts?(x)'],
-    // The live smoke boots real DSH processes through the managed launch
-    // contract, which allows one boot at a time and spends most of a spec's
-    // 90s budget on host reads. Running those files concurrently made a spec
-    // wait on the cross-process lock past its own timeout, so the whole
-    // directory run reported a bare timeout with no evidence printed. Unit
-    // runs, where the live specs are skipped, keep the default parallelism.
-    ...(process.env.DSH_LIVE_SMOKE === '1' ? { fileParallelism: false } : {}),
+    pool: live ? 'forks' : 'threads',
+    maxWorkers: Math.min(8, availableParallelism()),
+    ...(live ? { fileParallelism: false } : {}),
+    exclude,
+    tags: [{ name: 'stress', skip: true }],
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'node',
+          include: [
+            'packages/**/*.spec.ts',
+            'tests/**/*.spec.ts',
+            'apps/extension/**/*.spec.ts?(x)',
+            nativeBuildTest,
+          ],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'webview',
+          pool: 'vmThreads',
+          vmMemoryLimit: '512MB',
+          include: ['apps/webview/**/*.spec.ts?(x)'],
+          exclude: [...exclude, nativeBuildTest],
+        },
+      },
+    ],
+    experimental: { fsModuleCache: true, fsModuleCachePath: 'node_modules/.cache/vitest' },
     coverage: {
       reporter: ['text', 'html', 'lcov'],
       reportsDirectory: 'coverage',

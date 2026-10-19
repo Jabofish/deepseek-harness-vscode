@@ -68,7 +68,9 @@ Fixture 只留结构必需字段，路径、Prompt、名称、模型输出和 ke
 
 新增用例必须对应新的行为分支；同一个断言不在 Domain/Adapter、Application/Host、Webview 三层重复铺设，错误分支在离实现最近的一层覆盖一次，另一层只保留跨层组合的代表性场景。版本契约文件只写该版本相对前序版本的增量，版本选择门与共享 fixture 使用 `packages/dsh-adapter/test/support/` 的 harness，按身份表登记，不复制样板。对一个行为的多次断言可以合并在同一用例内，但不能为此合并不同被测单元，也不能删除必测负面路径。
 
-分层执行：日常开发用 `pnpm test:changed` 运行受未提交改动影响的用例（Vitest 按依赖图判定），并执行 `pnpm test:contracts` 中登记的文件契约；CI 的 PR 使用同一契约清单补齐依赖图之外的规格，包括样式、UI motion、i18n、Host 路由及构建装配；`main` 推送运行分片全量测试，发布 workflow 才执行字面意义的完整 `pnpm check`。格式、文档、i18n、lint 与类型检查在 PR 和 `main` 推送都随 CI 运行，覆盖范围与本地 `pnpm check` 一致，不需要等到发布才暴露漂移。依赖图判定不到的改动（CSS、按路径直读的 fixture）由始终执行的契约规格与 `main` 全量兜底；新增这类规格时必须登记到 `test:contracts` 的范围。
+分层执行：日常开发用 `pnpm test:changed` 合并受未提交改动影响的用例（Vitest 按依赖图判定）与固定文件契约，一次去重运行；`pnpm test:contracts` 只运行固定契约；CI 的 PR 使用 `pnpm test:changed <基准分支>`，同一契约清单补齐依赖图之外的规格，包括样式、UI motion、i18n、Host 路由及构建装配；`main` 推送运行分片全量测试，发布 workflow 才执行字面意义的完整 `pnpm check`。格式、文档、i18n、lint 与类型检查在 PR 和 `main` 推送都随 CI 运行，覆盖范围与本地 `pnpm check` 一致，不需要等到发布才暴露漂移。依赖图判定不到的改动（CSS、按路径直读的 fixture）由始终执行的契约规格与 `main` 全量兜底；新增这类规格时必须登记到 `test:contracts` 的范围。
+
+高负载压力测试与全量语言语法验证不进入默认 CI 或发布门禁。独立用例使用 `.stress.spec.ts(x)`，混合文件的重型用例标记 `stress`；默认配置同时按文件和标签排除，只收集一次测试。`pnpm test:stress` 使用独立配置串行运行专项测试，仅在本地按需执行。普通门禁保留小规模功能回归、真实协议和错误分支；退避与防抖使用虚拟时间，不用真实等待模拟负载。
 
 ### 隔离真实 DSH
 
@@ -102,7 +104,7 @@ node --experimental-transform-types tests/vscode-e2e/run.ts
 
 ### 性能与打包
 
-激活未连接时不启动 DSH、不读取大目录；一个连接只保留一个上游流。增量及时投递并保留有界背压，历史使用虚拟列表，导出和附件流式处理；断开后释放循环、timer、socket、listener 和 child handle。至少用 10,000 个 Timeline 节点检验首屏和交互，不能依赖全量 DOM。其他性能阈值由真实基线与测试固定。
+激活未连接时不启动 DSH、不读取大目录；一个连接只保留一个上游流。增量及时投递并保留有界背压，历史使用虚拟列表，导出和附件流式处理；断开后释放循环、timer、socket、listener 和 child handle。至少用 10,000 个 Timeline 节点检验首屏和交互，不能依赖全量 DOM；该检验属于压力套件，默认 CI 不执行，改动渲染窗口时用 `pnpm test:stress` 运行并记录结果。其他性能阈值由真实基线与测试固定。
 
 Webview 入口保持可恢复；动态加载只用于可失败的非首屏资源，新增 Shiki 语言只更新有界 loader，不引入全量语法包或 wasm 引擎。VSIX 的 `.vscodeignore` 是包含清单；打包后用 `vsce ls --no-dependencies` 核对实际内容、sourcemap、许可证、隐私文案及无凭据/临时文件。Webview media sourcemap 不随包发布，Extension Host sourcemap 若发布须检查相对 source 路径。
 

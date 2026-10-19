@@ -568,52 +568,62 @@ describe('Host transcript windows', () => {
     expect(refreshed.nodes[1]).toMatchObject({ markdown: 'Recovered' })
     service.dispose()
   })
-  it('bounds 10,000 loaded nodes and ongoing turns, without exposing reducer bookkeeping', () => {
-    const client = fixture()
-    const events = Array.from({ length: 10_000 }, (_, index) => message(index + 1))
-    const window = client.open(events)
-    expect(window.nodes.length).toBeLessThanOrEqual(TRANSCRIPT_MAX_NODES)
-    expect(JSON.stringify(window).length).toBeLessThanOrEqual(TRANSCRIPT_MAX_CHARS)
-    expect(window.nodes.at(-1)).toMatchObject({ markdown: 'Answer 10000' })
-    expect(window).not.toHaveProperty('closedTurns')
-    expect(window).not.toHaveProperty('history')
-    expect(window.hasMore).toBe(true)
-    expect(window.beforeSequence).toBeGreaterThan(1)
-    client.service.dispose()
-  }, 15_000)
-
-  it('previews giant tool results explicitly and rereads full authorized content by its durable position', async () => {
-    const text = 'Result content '.repeat(100_000)
-    const event: BackendEvent = {
-      type: 'tool.updated',
-      sessionId,
-      sequence: 9,
-      tool: {
-        id: 'call',
-        name: 'read',
-        category: 'read',
-        title: 'Read',
-        status: 'completed',
-        outputSummary: text,
-        metadata: { apiKey: 'fixture-secret' },
+  for (const count of [TRANSCRIPT_MAX_NODES + 1, 10_000])
+    it(
+      `bounds ${count} loaded nodes without exposing reducer bookkeeping`,
+      { tags: count > TRANSCRIPT_MAX_NODES + 1 ? ['stress'] : [], timeout: 15_000 },
+      () => {
+        const client = fixture()
+        const events = Array.from({ length: count }, (_, index) => message(index + 1))
+        const window = client.open(events)
+        expect(window.nodes.length).toBeLessThanOrEqual(TRANSCRIPT_MAX_NODES)
+        expect(JSON.stringify(window).length).toBeLessThanOrEqual(TRANSCRIPT_MAX_CHARS)
+        expect(window.nodes.at(-1)).toMatchObject({ markdown: `Answer ${count}` })
+        expect(window).not.toHaveProperty('closedTurns')
+        expect(window).not.toHaveProperty('history')
+        expect(window.hasMore).toBe(true)
+        expect(window.beforeSequence).toBeGreaterThan(1)
+        client.service.dispose()
       },
-    }
-    const client = fixture(vi.fn().mockResolvedValue({ events: [row(9, event)], hasMore: false }))
-    const window = client.open([row(9, event)])
-    expect(window.omittedNodeIds).toEqual(['call'])
-    expect(JSON.stringify(window)).not.toContain('fixture-secret')
-    expect(JSON.stringify(window).length).toBeLessThan(20_000)
-    const full = await client.service.content(
-      sessionId,
-      'call',
-      window.revision,
-      new AbortController().signal,
     )
-    expect(full).toContain(text)
-    expect(full).not.toContain('fixture-secret')
-    expect(client.read).toHaveBeenCalledWith(sessionId, 10, expect.any(AbortSignal), false)
-    client.service.dispose()
-  })
+
+  for (const repeats of [1_200, 100_000])
+    it(
+      `previews oversized tool results (${repeats} repeats) and rereads authorized content`,
+      { tags: repeats > 1_200 ? ['stress'] : [] },
+      async () => {
+        const text = 'Result content '.repeat(repeats)
+        const event: BackendEvent = {
+          type: 'tool.updated',
+          sessionId,
+          sequence: 9,
+          tool: {
+            id: 'call',
+            name: 'read',
+            category: 'read',
+            title: 'Read',
+            status: 'completed',
+            outputSummary: text,
+            metadata: { apiKey: 'fixture-secret' },
+          },
+        }
+        const client = fixture(vi.fn().mockResolvedValue({ events: [row(9, event)], hasMore: false }))
+        const window = client.open([row(9, event)])
+        expect(window.omittedNodeIds).toEqual(['call'])
+        expect(JSON.stringify(window)).not.toContain('fixture-secret')
+        expect(JSON.stringify(window).length).toBeLessThan(20_000)
+        const full = await client.service.content(
+          sessionId,
+          'call',
+          window.revision,
+          new AbortController().signal,
+        )
+        expect(full).toContain(text)
+        expect(full).not.toContain('fixture-secret')
+        expect(client.read).toHaveBeenCalledWith(sessionId, 10, expect.any(AbortSignal), false)
+        client.service.dispose()
+      },
+    )
 
   it('keeps distinct same-sequence mappings and ignores exact baseline replays', async () => {
     vi.useFakeTimers()

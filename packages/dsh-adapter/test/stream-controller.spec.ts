@@ -1,9 +1,12 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppError } from '@dsh-vscode/domain'
 import type { BackendEvent } from '@dsh-vscode/domain'
 import type { DshTransport } from '../src/contracts.js'
 import { historyGapRecovery, Rc6SessionRepository } from '../src/repositories/session-repository.js'
 import { DshStreamController } from '../src/stream-controller.js'
+
+beforeEach(() => vi.useFakeTimers())
+afterEach(() => vi.useRealTimers())
 
 describe('DshStreamController', () => {
   const controllers: DshStreamController[] = []
@@ -583,7 +586,7 @@ describe('DshStreamController', () => {
     controller.subscribe((event) => received.push(event.type))
 
     await waitFor(() => received.includes('connection.lost'))
-    await new Promise((resolve) => setTimeout(resolve, 80))
+    await vi.advanceTimersByTimeAsync(80)
     // The reconnect backoff is at least 250ms, so a failing stream must not
     // burn generations (and connection.lost notices) in a microtask loop.
     expect(received.filter((type) => type === 'connection.lost')).toHaveLength(1)
@@ -900,7 +903,7 @@ describe('DshStreamController', () => {
     second.push(subscribeFrame('s1', 5))
     await recoveryReady
     second.push(canonicalFrame('s1', 6, 'turn/start', { turn: 6 }))
-    await new Promise((resolve) => setTimeout(resolve, 10))
+    await vi.advanceTimersByTimeAsync(10)
     expect(received.some((event) => event.sequence === 4)).toBe(false)
     expect(received.some((event) => event.sequence === 6)).toBe(false)
 
@@ -1612,7 +1615,7 @@ describe('DshStreamController ordered gap recovery', () => {
 
     // Projection state is allowed to arrive while history is loading, but no
     // durable conversation record may jump over the recovery barrier.
-    await new Promise((resolve) => setTimeout(resolve, 10))
+    await vi.advanceTimersByTimeAsync(10)
     expect(received.some((event) => event.sequence === 10 && event.type === 'tool.updated')).toBe(false)
     expect(received.filter((event) => event.type === 'session.projection').map((event) => event.key)).toEqual(
       ['tokenUsage', 'contextPressure'],
@@ -2137,11 +2140,11 @@ describe('DshStreamController ordered gap recovery', () => {
     controller.subscribe(() => undefined)
 
     stream.push(subscribeFrame('s1', 0))
-    await new Promise((resolve) => setTimeout(resolve, 10))
+    await vi.advanceTimersByTimeAsync(10)
     stream.push(liveTurnFrame('s1', 10))
-    await new Promise((resolve) => setTimeout(resolve, 10))
+    await vi.advanceTimersByTimeAsync(10)
     stream.push(liveTurnFrame('s1', 20))
-    await new Promise((resolve) => setTimeout(resolve, 10))
+    await vi.advanceTimersByTimeAsync(10)
     // Both holes queued for one session; only the first recovery is running.
     expect(recoverSignals).toHaveLength(1)
     releaseFirst.resolve()
@@ -2203,14 +2206,11 @@ function controlledGenerationSource(
 }
 
 async function waitFor(predicate: () => boolean): Promise<void> {
-  for (let attempt = 0; attempt < 50 && !predicate(); attempt += 1)
-    await new Promise((resolve) => setTimeout(resolve, 0))
+  for (let attempt = 0; attempt < 50 && !predicate(); attempt += 1) await vi.advanceTimersByTimeAsync(0)
   expect(predicate()).toBe(true)
 }
 
 /** Waits long enough for a reconnect backoff to elapse before asserting. */
 async function waitForAtMost(predicate: () => boolean, timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline && !predicate()) await new Promise((resolve) => setTimeout(resolve, 25))
-  expect(predicate()).toBe(true)
+  await vi.waitFor(() => expect(predicate()).toBe(true), { timeout: timeoutMs, interval: 25 })
 }

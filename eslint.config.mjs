@@ -22,26 +22,7 @@ export default tseslint.config(
   {
     languageOptions: {
       parserOptions: {
-        projectService: {
-          allowDefaultProject: [
-            'eslint.config.mjs',
-            'vitest.config.ts',
-            'apps/extension/esbuild.mjs',
-            'apps/extension/esbuild-import-meta-url.mjs',
-            'apps/extension/esbuild-import-meta-url.d.mts',
-            'scripts/publish-marketplace.cjs',
-            'scripts/patch-js-debug-ipv6-probe.cjs',
-            'scripts/check-docs.mjs',
-            'scripts/build-editor-companion.mjs',
-            'scripts/i18n.mjs',
-            'scripts/release-notes.mjs',
-            'scripts/read-stylesheet.mjs',
-            'scripts/read-stylesheet.d.mts',
-          ],
-          // The build/config scripts above are intentionally outside every
-          // tsconfig; thirteen files exceed the default match limit.
-          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 13,
-        },
+        projectService: true,
         tsconfigRootDir: import.meta.dirname,
       },
     },
@@ -69,6 +50,23 @@ export default tseslint.config(
           message: 'Use SelectMenu so options, keyboard interaction and themes stay inside the Webview.',
         },
       ],
+    },
+  },
+  {
+    files: ['*.config.{mjs,ts}', 'scripts/**/*.{cjs,mjs,mts}', 'apps/extension/esbuild*.{mjs,mts}'],
+    languageOptions: {
+      parserOptions: { projectService: false, project: './tsconfig.tools.json' },
+    },
+  },
+  {
+    files: ['scripts/read-stylesheet.mjs', 'apps/extension/esbuild-import-meta-url.mjs'],
+    languageOptions: {
+      parserOptions: {
+        project: false,
+        projectService: {
+          allowDefaultProject: ['scripts/read-stylesheet.mjs', 'apps/extension/esbuild-import-meta-url.mjs'],
+        },
+      },
     },
   },
   {

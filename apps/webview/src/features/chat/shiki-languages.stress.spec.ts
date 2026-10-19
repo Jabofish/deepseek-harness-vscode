@@ -53,7 +53,7 @@ const SAMPLES: Readonly<Record<string, string>> = {
   zig: 'pub fn main() void { const answer = 42; }',
 }
 
-describe('bundled language coverage', () => {
+describe('bundled language coverage', { tags: ['stress'] }, () => {
   it('verifies every bundled grammar and highlights it on the wasm-free engine', async () => {
     const highlighter = await getWebviewHighlighter()
 

@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": false,
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": [
+    "eslint.config.mjs",
+    "vitest*.ts",
+    "scripts/**/*.mjs",
+    "scripts/**/*.cjs",
+    "scripts/**/*.d.mts",
+    "apps/extension/esbuild*.mjs",
+    "apps/extension/esbuild*.d.mts"
+  ]
+}

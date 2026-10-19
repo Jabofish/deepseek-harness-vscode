@@ -114,7 +114,7 @@ const TOOL_TITLES = [
   'Read',
 ] as const
 
-describe('Desensitized long-session replay', () => {
+describe('Desensitized long-session replay', { tags: ['stress'] }, () => {
   afterEach(() => cleanup())
 
   // The replay walks ~200 fixture frames with a settle between each one to model

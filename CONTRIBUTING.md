@@ -4,7 +4,7 @@
 
 [质量流程](docs/quality.md)规定实现顺序、fixture、负面路径、真实 DSH 与 VS Code 证据、PR 内容和发布门禁。[DSH 契约](docs/dsh-contract.md)是唯一列出精确上游版本的开发文档；不要在本指南或 PR 模板复制版本清单。
 
-提交评审前运行 `pnpm check`、`pnpm build` 和 `git diff --check`。写清已经收集的证据与尚未验证的部分。用户可见变化写入[扩展更新日志](apps/extension/CHANGELOG.md)；规范变化直接修改所属文档，不追加实施日记。
+提交评审前运行 `pnpm check`、`pnpm build` 和 `git diff --check`。`pnpm check` 不包含高负载压力用例；改动长会话、虚拟列表、背压、语言语法或附件边界时另行运行 `pnpm test:stress`，并在 PR 中记录结果。写清已经收集的证据与尚未验证的部分。用户可见变化写入[扩展更新日志](apps/extension/CHANGELOG.md)；规范变化直接修改所属文档，不追加实施日记。
 
 Webview 界面文案（中英文）存放在 `apps/webview/src/locales/en.json` 与 `zh.json`，不写在组件代码里。用 `pnpm i18n` 快速编辑：`add <key> "<en>" "<zh>"`、`set <key> <en|zh> "<text>"`、`remove <key>`、`find <regex>`；`check` 子命令（已并入 `pnpm check`）校验两份字典键对齐、占位符一致以及源码中每个字面量键都能解析。
 

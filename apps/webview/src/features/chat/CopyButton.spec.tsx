@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { CopyButton } from './CopyButton.js'
 
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
   vi.unstubAllGlobals()
 })
 
@@ -22,6 +23,7 @@ describe('CopyButton', () => {
   })
 
   it('states a refused copy instead of staying silent', async () => {
+    vi.useFakeTimers()
     vi.stubGlobal('navigator', {
       clipboard: { writeText: vi.fn().mockRejectedValue(new Error('NotAllowedError')) },
     })
@@ -33,12 +35,12 @@ describe('CopyButton', () => {
 
     // The DOM fallback refused too, so the write did not happen: the button
     // must say so rather than keep its idle label.
-    await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Copy failed'))
+    await act(() => vi.advanceTimersByTimeAsync(0))
+    expect(screen.getByRole('status').textContent).toBe('Copy failed')
     expect(screen.getByRole('button', { name: 'Copy failed' })).toBeDefined()
 
     // The state is transient; a retry is possible afterwards.
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Copy' })).toBeDefined(), {
-      timeout: 2_000,
-    })
+    await act(() => vi.advanceTimersByTimeAsync(1_000))
+    expect(screen.getByRole('button', { name: 'Copy' })).toBeDefined()
   })
 })

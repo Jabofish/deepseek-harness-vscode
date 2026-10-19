@@ -22,6 +22,7 @@ concurrency:
 env:
   NODE_VERSION: 22.19.0
   PNPM_VERSION: 11.19.0
+  NODE_COMPILE_CACHE: ${{ github.workspace }}/node_modules/.cache/node-compile
 
 jobs:
   quality:
@@ -49,6 +50,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - uses: actions/cache@v4
+        with:
+          path: |
+            node_modules/.cache/vitest
+            node_modules/.cache/node-compile
+          key: tests-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'vitest*.ts') }}-${{ github.sha }}
+          restore-keys: tests-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'vitest*.ts') }}-
       - name: Run checks
         run: pnpm check
 

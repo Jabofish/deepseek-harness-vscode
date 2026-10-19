@@ -21,49 +21,54 @@ const node: TimelineNode = {
   step: 2,
 }
 
-it('bounds large histories, filters types and joins authoritative sequences without displaying bodies', async () => {
-  const eventFacts: TranscriptEventFact[] = Array.from({ length: 10000 }, (_, sequence) => ({
-    id: `event:${sequence}`,
-    sequence,
-    type: 'unknown',
-    representedSequences: 1,
-  }))
-  const loadOlder = vi.fn(() => Promise.resolve())
-  render(
-    <SessionInspector
-      eventFacts={eventFacts}
-      nodes={[node]}
-      hasMore
-      loading={false}
-      loadOlder={loadOlder}
-      featureRequest={unavailable}
-    />,
+for (const count of [300, 10_000])
+  it(
+    `paginates ${count} facts and joins authoritative sequences without displaying bodies`,
+    { tags: count > 300 ? ['stress'] : [], timeout: 15_000 },
+    async () => {
+      const eventFacts: TranscriptEventFact[] = Array.from({ length: count }, (_, sequence) => ({
+        id: `event:${sequence}`,
+        sequence,
+        type: 'unknown',
+        representedSequences: 1,
+      }))
+      const loadOlder = vi.fn(() => Promise.resolve())
+      render(
+        <SessionInspector
+          eventFacts={eventFacts}
+          nodes={[node]}
+          hasMore
+          loading={false}
+          loadOlder={loadOlder}
+          featureRequest={unavailable}
+        />,
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Session Inspector' }))
+      const dialog = screen.getByRole('dialog', { name: 'Session Inspector' })
+      const toolbar = within(dialog.querySelector<HTMLElement>('.dsh-session-inspector__toolbar')!)
+      const filters = within(dialog.querySelector<HTMLElement>('.dsh-session-inspector__filters')!)
+      const rows = within(dialog.querySelector<HTMLElement>('.dsh-session-inspector__rows')!)
+      expect(rows.getAllByRole('listitem')).toHaveLength(100)
+      fireEvent.click(toolbar.getByRole('button', { name: 'Earlier rows' }))
+      expect(screen.getByText(`${count} rows; showing ${count - 199}–${count - 100}`)).toBeDefined()
+      fireEvent.click(filters.getByRole('button', { name: 'Source: Session events' }))
+      fireEvent.click(screen.getByRole('option', { name: 'Chat nodes' }))
+      fireEvent.click(rows.getByRole('button', { name: '#4 assistant-message' }))
+      expect(screen.getByText('textCharacters')).toBeDefined()
+      fireEvent.click(screen.getByRole('button', { name: 'Inspect matching unknown' }))
+      expect(filters.getByRole('button', { name: 'Source: Session events' })).toBeDefined()
+      expect(screen.getByText(`${count} rows; showing 1–100`)).toBeDefined()
+      const selectedRow = rows.getByRole('button', { name: '#4 unknown' })
+      expect(selectedRow.getAttribute('aria-pressed')).toBe('true')
+      expect(selectedRow.closest('li')?.querySelector('.dsh-session-inspector__detail')).not.toBeNull()
+      expect(document.body.textContent).not.toMatch(/PRIVATE_/)
+      const loadOlderButton = toolbar.getByRole('button', { name: 'Load older history' })
+      fireEvent.click(loadOlderButton)
+      fireEvent.click(loadOlderButton)
+      await waitFor(() => expect(loadOlder).toHaveBeenCalledTimes(1))
+      expect(JSON.stringify(inspectChatNode(node, 0))).not.toContain('PRIVATE_PROMPT')
+    },
   )
-  fireEvent.click(screen.getByRole('button', { name: 'Session Inspector' }))
-  const dialog = screen.getByRole('dialog', { name: 'Session Inspector' })
-  const toolbar = within(dialog.querySelector<HTMLElement>('.dsh-session-inspector__toolbar')!)
-  const filters = within(dialog.querySelector<HTMLElement>('.dsh-session-inspector__filters')!)
-  const rows = within(dialog.querySelector<HTMLElement>('.dsh-session-inspector__rows')!)
-  expect(rows.getAllByRole('listitem')).toHaveLength(100)
-  fireEvent.click(toolbar.getByRole('button', { name: 'Earlier rows' }))
-  expect(screen.getByText('10000 rows; showing 9801–9900')).toBeDefined()
-  fireEvent.click(filters.getByRole('button', { name: 'Source: Session events' }))
-  fireEvent.click(screen.getByRole('option', { name: 'Chat nodes' }))
-  fireEvent.click(rows.getByRole('button', { name: '#4 assistant-message' }))
-  expect(screen.getByText('textCharacters')).toBeDefined()
-  fireEvent.click(screen.getByRole('button', { name: 'Inspect matching unknown' }))
-  expect(filters.getByRole('button', { name: 'Source: Session events' })).toBeDefined()
-  expect(screen.getByText('10000 rows; showing 1–100')).toBeDefined()
-  const selectedRow = rows.getByRole('button', { name: '#4 unknown' })
-  expect(selectedRow.getAttribute('aria-pressed')).toBe('true')
-  expect(selectedRow.closest('li')?.querySelector('.dsh-session-inspector__detail')).not.toBeNull()
-  expect(document.body.textContent).not.toMatch(/PRIVATE_/)
-  const loadOlderButton = toolbar.getByRole('button', { name: 'Load older history' })
-  fireEvent.click(loadOlderButton)
-  fireEvent.click(loadOlderButton)
-  await waitFor(() => expect(loadOlder).toHaveBeenCalledTimes(1))
-  expect(JSON.stringify(inspectChatNode(node, 0))).not.toContain('PRIVATE_PROMPT')
-}, 15000)
 
 it('keeps focus on inspected rows and lets Escape dismiss a filter before the drawer', () => {
   render(

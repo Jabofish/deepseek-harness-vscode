@@ -5,15 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { TimelineNode } from '@dsh-vscode/timeline'
 import { Timeline } from './Timeline.js'
 
-/**
- * Scale guard for the long-session render path.
- *
- * `docs/quality.md` requires the timeline to stay usable with at least 10,000
- * nodes and forbids relying on a full DOM. jsdom is not a browser: these tests
- * measure DOM node counts and wall-clock work under a simulated viewport, not
- * real paint or scroll performance. They exist to catch a regression where the
- * render path stops windowing and materialises the whole conversation.
- */
+// Counts DOM work under a simulated viewport; run with pnpm test:stress.
 const VIEWPORT_HEIGHT = 200
 const ROW_ESTIMATED_HEIGHT = 96
 const LARGE_SESSION_TURNS = 5_000
@@ -73,7 +65,7 @@ function withViewport(body: () => void): void {
   }
 }
 
-describe('Long-session timeline scale', () => {
+describe('Long-session timeline stress', { tags: ['stress'] }, () => {
   it('reveals an offscreen Inspector target without materializing history or following later appends', () => {
     withViewport(() => {
       const nodes = largeSessionNodes()

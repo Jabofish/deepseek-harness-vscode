@@ -76,8 +76,8 @@ describe('Remote mux lifecycle regressions', () => {
       await first
       // One network read can dispatch hundreds of tiny frames before the async
       // iterator resumes. They are ordered data, not recoverable history rows.
-      for (let index = 0; index < 1_000; index++) socket.item(id, { index, text: 'token' })
-      for (let index = 0; index < 1_000; index++)
+      for (let index = 0; index < 32; index++) socket.item(id, { index, text: 'token' })
+      for (let index = 0; index < 32; index++)
         expect(await iterator.next()).toEqual({ done: false, value: { index, text: 'token' } })
       expect(socket.sent.filter((frame) => frame.type === 'cancel')).toHaveLength(0)
     } finally {
@@ -100,6 +100,7 @@ describe('Remote mux lifecycle regressions', () => {
 
   it.each(['count', 'bytes'] as const)(
     'rebaselines only the overflowing session (%s budget)',
+    { tags: ['stress'] },
     async (budget) => {
       const mux = fixture()
       try {

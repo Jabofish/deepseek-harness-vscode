@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { HostMessage } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
 import {
@@ -33,11 +33,13 @@ function event(sequence: number, name: string, payload: unknown): HostMessage {
   return { type: 'event', name, sequence, payload }
 }
 
-function settle(): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, 24))
+async function settle(): Promise<void> {
+  await vi.advanceTimersByTimeAsync(24)
 }
 
 describe('Webview projection control baselines', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
   it('replaces omitted keys on reconnect, applies empty baselines, and keeps deltas single-key', async () => {
     const client = new ProjectionClient()
     const store = createAppStore(client as unknown as ProtocolClient)

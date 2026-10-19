@@ -16,7 +16,11 @@ import type { BackendEvent } from '../packages/domain/src/index.js'
 // rc.2 / 687f282e8625c6b8d11ff58211a90524be2e4317:
 // api/session-controller follow + assistant-stream, and client/session's stream fold.
 // Network and product Adapter/Host/schema are real; the producer and renderer ACK are fixtures.
-describe('streaming data delivery over loopback WebSocket', () => {
+//
+// The `.stress.spec` suffix keeps this real loopback burst (1,000 frames plus a
+// follow repair) out of the default gate, where worker contention used to make
+// the drain deadline flaky. Run it with `pnpm test:stress`.
+describe('streaming data delivery over loopback WebSocket', { tags: ['stress'] }, () => {
   it('delivers bursts before settlement and retains the prefix through a follow repair', async () => {
     const mux = await streamingMux()
     const sessionId = 'streaming-chain'

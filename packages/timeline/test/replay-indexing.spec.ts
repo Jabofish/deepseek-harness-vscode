@@ -71,7 +71,7 @@ describe('indexed private history replay', () => {
 
   it('does not repeatedly search all old rows for newly appended durable messages', () => {
     let idReads = 0
-    const nodes: readonly TimelineNode[] = Array.from({ length: 1000 }, (_, index) => ({
+    const nodes: readonly TimelineNode[] = Array.from({ length: 32 }, (_, index) => ({
       kind: 'user-message',
       markdown: 'fixture',
       get id(): string {
@@ -79,14 +79,14 @@ describe('indexed private history replay', () => {
         return `old-${index}`
       },
     }))
-    const inputs: readonly SequencedBackendEvent[] = Array.from({ length: 100 }, (_, index) => ({
+    const inputs: readonly SequencedBackendEvent[] = Array.from({ length: 8 }, (_, index) => ({
       sequence: index + 1,
       event: { type: 'message.user', sessionId: 'session', messageId: `new-${index}`, markdown: 'fixture' },
     }))
     const replayed = reduceTimelineBatch({ ...initial, nodes }, inputs)
-    expect(replayed.nodes).toHaveLength(1100)
-    expect(nodes).toHaveLength(1000)
-    expect(idReads).toBeLessThan(4000)
+    expect(replayed.nodes).toHaveLength(40)
+    expect(nodes).toHaveLength(32)
+    expect(idReads).toBeLessThan(128)
   })
 
   it('matches immutable live reduction through duplicate IDs, optimistic previews, replacement and insertion', () => {

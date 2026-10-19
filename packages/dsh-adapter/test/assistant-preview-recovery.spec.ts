@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { BackendEvent } from '@dsh-vscode/domain'
 
@@ -76,24 +76,16 @@ class FakeMuxSocket implements AlphaWebSocket {
 }
 
 const tick = async (): Promise<void> => {
-  for (let attempt = 0; attempt < 25; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 0))
+  await vi.advanceTimersByTimeAsync(0)
 }
 
 async function waitForSocket(): Promise<FakeMuxSocket> {
-  for (let attempt = 0; attempt < 200; attempt += 1) {
-    const socket = FakeMuxSocket.instances[0]
-    if (socket !== undefined) return socket
-    await new Promise((resolve) => setTimeout(resolve, 0))
-  }
-  throw new Error('the mux socket was never created')
+  await vi.waitFor(() => expect(FakeMuxSocket.instances[0]).toBeDefined())
+  return FakeMuxSocket.instances[0]!
 }
 
 async function waitForOpens(socket: FakeMuxSocket, count: number): Promise<void> {
-  for (let attempt = 0; attempt < 400; attempt += 1) {
-    if (socket.opens().length >= count) return
-    await new Promise((resolve) => setTimeout(resolve, 0))
-  }
-  throw new Error(`expected ${String(count)} follow subscription(s), saw ${String(socket.opens().length)}`)
+  await vi.waitFor(() => expect(socket.opens()).toHaveLength(count), { timeout: 3_000, interval: 10 })
 }
 
 function snapshot(assistantStream: Record<string, unknown> = { revision: 0 }): Record<string, unknown> {
@@ -152,6 +144,11 @@ function settlementFrame(seq: number, text: string): Record<string, unknown> {
 }
 
 describe('assistant preview recovery', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.useRealTimers()
+  })
   it('re-opens the follow stream when a chunk revision skips and keeps streaming', async () => {
     FakeMuxSocket.instances.length = 0
     const previews: AssistantPreviewState[] = []

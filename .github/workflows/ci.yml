@@ -9,6 +9,9 @@ on:
 permissions:
   contents: read
 
+env:
+  NODE_COMPILE_CACHE: ${{ github.workspace }}/node_modules/.cache/node-compile
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -74,12 +77,15 @@ jobs:
           node-version: 22.19.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Run tests affected by the pull request
-        run: pnpm exec vitest run --changed origin/${{ github.base_ref }} --passWithNoTests
-      - name: Run filesystem contracts
-        # Source/CSS reads bypass the import graph used by `--changed`. The
-        # shared list also covers UI motion, i18n and Host/build route wiring.
-        run: pnpm test:contracts
+      - uses: actions/cache@v4
+        with:
+          path: |
+            node_modules/.cache/vitest
+            node_modules/.cache/node-compile
+          key: tests-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'vitest*.ts') }}-${{ github.sha }}
+          restore-keys: tests-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'vitest*.ts') }}-
+      - name: Run affected tests and filesystem contracts once
+        run: pnpm test:changed origin/${{ github.base_ref }}
 
   test-full:
     name: Tests (full suite, shard ${{ matrix.shard }}/3)
@@ -99,6 +105,13 @@ jobs:
           node-version: 22.19.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - uses: actions/cache@v4
+        with:
+          path: |
+            node_modules/.cache/vitest
+            node_modules/.cache/node-compile
+          key: tests-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'vitest*.ts') }}-${{ github.sha }}
+          restore-keys: tests-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'vitest*.ts') }}-
       - run: pnpm exec vitest run --passWithNoTests --shard=${{ matrix.shard }}/3
 
   build:

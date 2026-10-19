@@ -10,24 +10,29 @@ const message = (revision: number): HostMessage => ({
 })
 
 describe('bounded opening state', () => {
-  it('keeps one latest snapshot in arrival order, ignores stale and raw frames, and releases failed opens', () => {
-    const buffer = createPendingOpenBuffer(vi.fn())
-    const pending = buffer.create('s', 1)
-    for (let i = 1; i <= 10_000; i++) buffer.capture('s', message(i))
-    buffer.capture('s', message(2))
-    buffer.capture('s', {
-      type: 'event',
-      name: 'message.delta',
-      sequence: 20_000,
-      payload: { sessionId: 's', delta: 'raw' },
-    })
-    expect(pending.messages).toEqual([message(10_000)])
-    expect(pending.overflow).toBe(false)
-    buffer.settle(pending, false)
-    const next = buffer.create('s', 2)
-    expect(next.messages).toEqual([])
-    expect(pending.messages).toEqual([])
-  })
+  for (const count of [3, 10_000])
+    it(
+      `keeps only the latest of ${count} snapshots, ignores stale/raw frames and releases failed opens`,
+      { tags: count > 3 ? ['stress'] : [] },
+      () => {
+        const buffer = createPendingOpenBuffer(vi.fn())
+        const pending = buffer.create('s', 1)
+        for (let i = 1; i <= count; i++) buffer.capture('s', message(i))
+        buffer.capture('s', message(2))
+        buffer.capture('s', {
+          type: 'event',
+          name: 'message.delta',
+          sequence: 20_000,
+          payload: { sessionId: 's', delta: 'raw' },
+        })
+        expect(pending.messages).toEqual([message(count)])
+        expect(pending.overflow).toBe(false)
+        buffer.settle(pending, false)
+        const next = buffer.create('s', 2)
+        expect(next.messages).toEqual([])
+        expect(pending.messages).toEqual([])
+      },
+    )
 
   it('invalidates overflowing control state and requests authority once after settlement', () => {
     const recover = vi.fn()
