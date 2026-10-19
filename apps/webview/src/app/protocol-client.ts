@@ -111,12 +111,23 @@ export class ProtocolClient {
     window.addEventListener('message', this.windowListener)
   }
 
-  public request<T>(request: WebviewRequest): Promise<T> {
+  public request<T>(request: WebviewRequest, signal?: AbortSignal): Promise<T> {
     if (this.disposed) return Promise.reject(new Error(translate('app.error.disposed')))
-    return this.sendRequest(
+    if (signal?.aborted === true) return Promise.reject(new DOMException('Cancelled', 'AbortError'))
+    const result = this.sendRequest<T>(
       { protocolVersion: PROTOCOL_VERSION, message: webviewRequestSchema.parse(request) },
       'response',
     )
+    if (signal === undefined) return result
+    const abort = (): void => {
+      const pending = this.takePending(request.requestId, 'response')
+      if (pending === undefined) return
+      this.cancelTimedOutRequest(request.requestId)
+      pending.reject(new DOMException('Cancelled', 'AbortError'))
+    }
+    signal.addEventListener('abort', abort, { once: true })
+    if (signal.aborted) abort()
+    return result.finally(() => signal.removeEventListener('abort', abort))
   }
 
   /** Request the staged, strict feature surface without widening legacy schemas. */

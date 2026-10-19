@@ -552,13 +552,12 @@ const useAppControllerImpl = () => {
       throw reason
     }),
   )
-  const queueOnRemove = useStableCallback((inputId: string): void => {
-    void store
-      .removeQueue(inputId)
-      .catch((reason: unknown) =>
-        setError(reason instanceof Error ? reason.message : t('app.error.removeQueue')),
-      )
-  })
+  const queueOnRemove = useStableCallback((inputId: string): Promise<void> =>
+    store.removeQueue(inputId).catch((reason: unknown) => {
+      setError(reason instanceof Error ? reason.message : t('app.error.removeQueue'))
+      throw reason
+    }),
+  )
   const queueOnModeChange = useStableCallback((inputId: string, mode: RunningInputMode): void => {
     if (mode !== 'steer') return
     void store
@@ -639,7 +638,11 @@ const useAppControllerImpl = () => {
       )
   })
   const composerOnCommand = useStableCallback(
-    async (command: string, commandAttachments: readonly PromptAttachment[] = []): Promise<void> => {
+    async (
+      command: string,
+      commandAttachments: readonly PromptAttachment[] = [],
+      signal?: AbortSignal,
+    ): Promise<void> => {
       // Client-owned commands run before the session guard: moving the chat back
       // to the side bar must work even when no session is selected.
       if (isMovetoCommandLine(command)) {
@@ -665,14 +668,15 @@ const useAppControllerImpl = () => {
         return
       }
       try {
-        await store.executeCommand(active.id, command, commandAttachments)
+        await store.executeCommand(active.id, command, commandAttachments, signal)
         if (commandAttachments.length > 0)
           removeAttachmentDrafts(
             commandAttachments.map((attachment) => attachment.uri),
             true,
           )
       } catch (reason: unknown) {
-        setError(reason instanceof Error ? reason.message : t('app.error.dshMode'))
+        if (signal?.aborted !== true)
+          setError(reason instanceof Error ? reason.message : t('app.error.dshMode'))
         throw reason
       }
     },

@@ -20,6 +20,7 @@ export function createPromptActions(deps: PromptActionDependencies): {
     sessionId: string,
     command: string,
     attachments?: readonly PromptAttachment[],
+    signal?: AbortSignal,
   ) => Promise<'executed' | 'unknown'>
   readonly sendUserTurn: (
     sessionId: string,
@@ -27,6 +28,7 @@ export function createPromptActions(deps: PromptActionDependencies): {
     attachments: readonly PromptAttachment[],
     mode: RunningInputMode,
     subagent: ActiveSubagent | undefined,
+    signal?: AbortSignal,
   ) => Promise<void>
 } {
   const { client, getState, rememberPromptMode, setState } = deps
@@ -34,13 +36,17 @@ export function createPromptActions(deps: PromptActionDependencies): {
     sessionId: string,
     command: string,
     attachments: readonly PromptAttachment[] = [],
+    signal?: AbortSignal,
   ): Promise<'executed' | 'unknown'> => {
     const result = object(
-      await client.request<unknown>({
-        type: 'command.execute',
-        requestId: requestId(),
-        payload: { sessionId, command, attachments: [...attachments] },
-      }),
+      await client.request<unknown>(
+        {
+          type: 'command.execute',
+          requestId: requestId(),
+          payload: { sessionId, command, attachments: [...attachments] },
+        },
+        signal,
+      ),
     )
     if (result?.kind === 'error')
       throw new Error(typeof result.text === 'string' ? result.text : translate('app.error.dshMode'))
@@ -72,10 +78,21 @@ export function createPromptActions(deps: PromptActionDependencies): {
     attachments: readonly PromptAttachment[],
     mode: RunningInputMode,
     subagent: ActiveSubagent | undefined,
+    signal?: AbortSignal,
   ): Promise<void> => {
     const rpcRequestId = requestId()
     const optimisticId = `optimistic:user:${rpcRequestId}`
     const state = getState()
+    signal?.throwIfAborted()
+    const direct =
+      subagent === undefined &&
+      state.sessions.find((session) => session.id === sessionId)?.status !== 'running' &&
+      state.queue.length === 0
+    if (direct)
+      setState((current) => ({
+        ...current,
+        directPromptRequestIds: [...(current.directPromptRequestIds ?? []), rpcRequestId].slice(-64),
+      }))
     const contextRefs = state.editorContext.map((item) => item.ref.contextRef)
     const contextWorkspaceIds = new Set(
       state.editorContext
@@ -89,7 +106,7 @@ export function createPromptActions(deps: PromptActionDependencies): {
     // and in the queue dock. Subagent sends bypass the session queue, and
     // steer is already admitted to the running turn, so those retain the
     // optimistic preview.
-    const showOptimisticPreview = subagent !== undefined || mode === 'steer'
+    const showOptimisticPreview = subagent !== undefined || (mode === 'steer' && !direct)
     if (subagent !== undefined) {
       if (subagent.entry.mode !== 'continuable') throw new Error(translate('app.error.subagentReadOnly'))
       if (!subagent.parentAvailable) throw new Error(translate('app.error.subagentParentUnavailable'))
@@ -101,7 +118,8 @@ export function createPromptActions(deps: PromptActionDependencies): {
       name: attachment.name,
       ...(attachment.mimeType === undefined ? {} : { mimeType: attachment.mimeType }),
     }))
-    if (showOptimisticPreview && (text !== '' || messageAttachments.length > 0))
+    const showPreview = (): void => {
+      if (text === '' && messageAttachments.length === 0) return
       setState((current) => {
         if (current.activeSessionId !== sessionId) return current
         return {
@@ -122,31 +140,39 @@ export function createPromptActions(deps: PromptActionDependencies): {
           },
         }
       })
+    }
+    if (showOptimisticPreview) showPreview()
     try {
       if (subagent === undefined)
-        await client.request<unknown>({
-          type: 'session.sendPrompt',
-          requestId: rpcRequestId,
-          payload: {
-            sessionId,
-            text,
-            attachments: [...attachments],
-            ...(contextRefs.length === 0 ? {} : { contextRefs }),
-            ...(contextWorkspaceFolderId === undefined ? {} : { contextWorkspaceFolderId }),
-            mode,
+        await client.request<unknown>(
+          {
+            type: 'session.sendPrompt',
+            requestId: rpcRequestId,
+            payload: {
+              sessionId,
+              text,
+              attachments: [...attachments],
+              ...(contextRefs.length === 0 ? {} : { contextRefs }),
+              ...(contextWorkspaceFolderId === undefined ? {} : { contextWorkspaceFolderId }),
+              mode,
+            },
           },
-        })
+          signal,
+        )
       else
-        await client.request<unknown>({
-          type: 'subagent.send',
-          requestId: rpcRequestId,
-          payload: {
-            sessionId,
-            message: text,
-            mode,
-            ...(attachments.length === 0 ? {} : { attachments: [...attachments] }),
+        await client.request<unknown>(
+          {
+            type: 'subagent.send',
+            requestId: rpcRequestId,
+            payload: {
+              sessionId,
+              message: text,
+              mode,
+              ...(attachments.length === 0 ? {} : { attachments: [...attachments] }),
+            },
           },
-        })
+          signal,
+        )
       // The Extension Host released exactly the handles this snapshot named.
       // A chip captured while the request was in flight is a different handle
       // that is still live on the host, so only the admitted refs drop out —
@@ -159,6 +185,17 @@ export function createPromptActions(deps: PromptActionDependencies): {
         }))
       }
     } catch (reason) {
+      if (Boolean(signal?.aborted) && !direct && subagent === undefined) {
+        const queued = getState().queue.find((item) => item.rpcId === rpcRequestId)
+        if (queued !== undefined)
+          void client
+            .request({
+              type: 'session.queue.remove',
+              requestId: requestId(),
+              payload: { inputId: queued.id },
+            })
+            .catch(() => undefined)
+      }
       if (showOptimisticPreview)
         setState((current) => ({
           ...current,

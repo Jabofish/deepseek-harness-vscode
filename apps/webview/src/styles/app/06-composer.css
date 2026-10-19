@@ -739,3 +739,16 @@ occupancy so the overflow is visible without opening the details. */
   padding: var(--dsh-panel-gutter);
   background: color-mix(in srgb, var(--dsh-bg) 76%, transparent);
 }
+
+.dsh-composer__sending {
+  width: 1.25rem;
+  height: 1.25rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+}
+.dsh-composer__sending circle {
+  stroke-dasharray: 42 15;
+  transform-origin: center;
+  animation: dsh-spin var(--dsh-motion-duration-loop-shimmer) linear infinite;
+}

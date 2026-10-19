@@ -127,7 +127,7 @@ export function createSessionCreationActions(
       )
       rememberComposerConfiguration(configuration)
     },
-    sendPendingPrompt: (text, attachments, mode) => {
+    sendPendingPrompt: (text, attachments, mode, signal) => {
       const pending = getState().pendingSession
       if (pending === undefined) return Promise.reject(new Error(translate('app.error.createSession')))
       const existingSend = getPendingSend()
@@ -162,17 +162,20 @@ export function createSessionCreationActions(
             const rc11ReusableBlank =
               state.connectedDshVersion === DSH_RC11_VERSION ? reusableBlank : undefined
             const result = object(
-              await client.request<unknown>({
-                type: 'session.create',
-                requestId: requestId(),
-                payload: {
-                  workspaceId: pending.workspaceId,
-                  ...(rc11ReusableBlank === undefined
-                    ? {}
-                    : { sessionId: rc11ReusableBlank.id, reuseWorkspaceBlank: true as const }),
-                  configuration: pending.configuration,
+              await client.request<unknown>(
+                {
+                  type: 'session.create',
+                  requestId: requestId(),
+                  payload: {
+                    workspaceId: pending.workspaceId,
+                    ...(rc11ReusableBlank === undefined
+                      ? {}
+                      : { sessionId: rc11ReusableBlank.id, reuseWorkspaceBlank: true as const }),
+                    configuration: pending.configuration,
+                  },
                 },
-              }),
+                signal,
+              ),
             )
             if (typeof result?.id !== 'string' || result.id.trim() === '')
               throw new Error(translate('app.error.createSession'))
@@ -190,11 +193,12 @@ export function createSessionCreationActions(
               : current,
           )
         }
+        if (signal?.aborted === true) throw new DOMException('Cancelled', 'AbortError')
         if (getState().pendingSession?.revision !== pending.revision) throw supersededSend()
         try {
           await openSession(sessionId)
           if (getState().activeSessionId !== sessionId) throw supersededSend()
-          await sendUserTurn(sessionId, text, attachments, mode, undefined)
+          await sendUserTurn(sessionId, text, attachments, mode, undefined, signal)
         } finally {
           // Reconcile the directory after attempting to open/admit this session.
           // It must not hold the first message behind unrelated catalog reads.

@@ -69,7 +69,7 @@ describe('Composer', () => {
     expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([5, 9])
     expect(textarea.getAttribute('aria-describedby')).toBeTruthy()
     fireEvent.click(send)
-    expect(onSubmit).toHaveBeenCalledWith('queue')
+    expect(onSubmit).toHaveBeenCalledWith('queue', expect.any(AbortSignal))
   })
   afterEach(() => {
     cleanup()
@@ -496,7 +496,7 @@ describe('Composer', () => {
     render(<Composer {...baseProps()} draft="hello" onSubmit={onSubmit} />)
     fireEvent.keyDown(screen.getByRole('textbox', { name: 'Prompt' }), { key: 'Enter' })
     expect(onSubmit).toHaveBeenCalledTimes(1)
-    expect(onSubmit).toHaveBeenCalledWith('queue')
+    expect(onSubmit).toHaveBeenCalledWith('queue', expect.any(AbortSignal))
   })
 
   it('keeps async submissions locked until settlement while leaving Stop available', async () => {
@@ -505,7 +505,7 @@ describe('Composer', () => {
       rejectFirstSubmission = reject
     })
     let attempts = 0
-    const onSubmit = vi.fn(() => {
+    const onSubmit = vi.fn((_mode: string, _signal?: AbortSignal) => {
       attempts += 1
       return attempts === 1 ? firstSubmission : Promise.resolve()
     })
@@ -516,7 +516,7 @@ describe('Composer', () => {
 
     fireEvent.keyDown(textarea, { key: 'Enter' })
     expect(onSubmit).toHaveBeenCalledTimes(1)
-    expect(screen.getByRole('button', { name: 'Send message' }).hasAttribute('disabled')).toBe(true)
+    expect(screen.getByRole('button', { name: 'Cancel sending' }).hasAttribute('disabled')).toBe(false)
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(500)
@@ -525,9 +525,12 @@ describe('Composer', () => {
     expect(onSubmit).toHaveBeenCalledTimes(1)
 
     view.rerender(<Composer {...baseProps()} draft="hello" running onSubmit={onSubmit} onCancel={onCancel} />)
-    const stop = screen.getByRole('button', { name: 'Stop response' })
+    const stop = screen.getByRole('button', { name: 'Cancel sending' })
     expect(stop.hasAttribute('disabled')).toBe(false)
+    expect(stop.getAttribute('aria-busy')).toBe('true')
+    expect((textarea as HTMLTextAreaElement).value).toBe('hello')
     fireEvent.click(stop)
+    expect(onSubmit.mock.calls[0]?.[1]?.aborted).toBe(true)
     expect(onCancel).toHaveBeenCalledOnce()
 
     await act(async () => {
@@ -539,6 +542,42 @@ describe('Composer', () => {
 
     fireEvent.keyDown(screen.getByRole('textbox', { name: 'Prompt' }), { key: 'Enter' })
     expect(onSubmit).toHaveBeenCalledTimes(2)
+  })
+
+  it('shows a cancellable spinner for a command and preserves its draft after a late success', async () => {
+    let resolve!: () => void
+    const response = new Promise<void>((done) => {
+      resolve = done
+    })
+    const onCommand = vi.fn((_command: string, _attachments: unknown, _signal?: AbortSignal) => response)
+    function CommandDraft(): ReactElement {
+      const [draft, onDraftChange] = useState('/clear')
+      return (
+        <Composer
+          {...baseProps()}
+          draft={draft}
+          onDraftChange={onDraftChange}
+          onCommand={onCommand}
+          commands={[{ name: 'clear', description: 'Clear conversation' }]}
+        />
+      )
+    }
+    render(<CommandDraft />)
+    const input = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    const cancel = screen.getByRole('button', { name: 'Cancel sending' })
+    expect(cancel.getAttribute('aria-busy')).toBe('true')
+    expect(input.value).toBe('/clear')
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onCommand).toHaveBeenCalledOnce()
+    fireEvent.click(cancel)
+    expect(onCommand.mock.calls[0]?.[2]?.aborted).toBe(true)
+    await act(async () => {
+      resolve()
+      await response
+    })
+    expect(input.value).toBe('/clear')
+    expect(screen.queryByRole('button', { name: 'Cancel sending' })).toBeNull()
   })
 
   it('settles a rejected Host submission safely after Composer unmounts', async () => {
@@ -594,7 +633,7 @@ describe('Composer', () => {
     const textarea = screen.getByRole('textbox', { name: 'Prompt' })
     expect(textarea.getAttribute('disabled')).toBeNull()
     fireEvent.keyDown(textarea, { key: 'Enter' })
-    expect(onSubmit).toHaveBeenCalledWith('queue')
+    expect(onSubmit).toHaveBeenCalledWith('queue', expect.any(AbortSignal))
     expect(onCancel).not.toHaveBeenCalled()
   })
 
@@ -605,7 +644,7 @@ describe('Composer', () => {
       key: 'Enter',
       ctrlKey: true,
     })
-    expect(onSubmit).toHaveBeenCalledWith('steer')
+    expect(onSubmit).toHaveBeenCalledWith('steer', expect.any(AbortSignal))
   })
 
   // Split from the accelerated-chord case so both chords are exercised on fresh mounts.
@@ -614,7 +653,7 @@ describe('Composer', () => {
     render(<Composer {...baseProps()} draft="follow-up" running busyEnter="steer" onSubmit={onSubmit} />)
     fireEvent.keyDown(screen.getByRole('textbox', { name: 'Prompt' }), { key: 'Enter' })
     expect(onSubmit).toHaveBeenCalledTimes(1)
-    expect(onSubmit).toHaveBeenCalledWith('steer')
+    expect(onSubmit).toHaveBeenCalledWith('steer', expect.any(AbortSignal))
   })
 
   it('uses the opposite of the busy-Enter preference for the accelerated chord', () => {
@@ -625,7 +664,7 @@ describe('Composer', () => {
       metaKey: true,
     })
     expect(onSubmit).toHaveBeenCalledTimes(1)
-    expect(onSubmit).toHaveBeenCalledWith('queue')
+    expect(onSubmit).toHaveBeenCalledWith('queue', expect.any(AbortSignal))
   })
 
   it('steers every still-queued pending input on empty accelerated Enter while running', () => {
@@ -938,7 +977,7 @@ describe('Composer', () => {
     fireEvent.keyDown(textarea, { key: 'ArrowDown' })
     fireEvent.keyDown(textarea, { key: 'Enter' })
     expect(onCommand).toHaveBeenCalledTimes(1)
-    expect(onCommand).toHaveBeenCalledWith('/clear')
+    expect(onCommand).toHaveBeenCalledWith('/clear', [], expect.any(AbortSignal))
     expect(onDraftChange).toHaveBeenCalledWith('')
   })
 
@@ -960,7 +999,7 @@ describe('Composer', () => {
     // Official enter transaction: the args-tolerant command claims the whole
     // line and executes it verbatim through commands/execute.
     expect(onCommand).toHaveBeenCalledTimes(1)
-    expect(onCommand).toHaveBeenCalledWith('/goal fix the parser')
+    expect(onCommand).toHaveBeenCalledWith('/goal fix the parser', [], expect.any(AbortSignal))
     expect(onDraftChange).toHaveBeenCalledWith('')
     expect(onSubmit).not.toHaveBeenCalled()
   })
@@ -985,7 +1024,7 @@ describe('Composer', () => {
     fireEvent.keyDown(screen.getByRole('textbox', { name: 'Prompt' }), { key: 'Enter' })
     // The shared command grammar has no `:`, so the documented short form is
     // rewritten into the one shape every parser accepts before dispatch.
-    expect(onCommand).toHaveBeenCalledWith('/moveto editor')
+    expect(onCommand).toHaveBeenCalledWith('/moveto editor', [], expect.any(AbortSignal))
     expect(onSubmit).not.toHaveBeenCalled()
     // The dispatched line is the rewritten form, so an exact-string comparison
     // would leave the short form sitting in the draft after it ran.
@@ -1016,7 +1055,7 @@ describe('Composer', () => {
     const textarea = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
 
     fireEvent.keyDown(textarea, { key: 'Enter' })
-    expect(onCommand).toHaveBeenCalledWith('/goal fix the parser')
+    expect(onCommand).toHaveBeenCalledWith('/goal fix the parser', [], expect.any(AbortSignal))
 
     fireEvent.change(textarea, { target: { value: '/goal fix the parser and the lexer' } })
     await act(async () => {
@@ -1062,7 +1101,7 @@ describe('Composer', () => {
     })
 
     expect(onCommand).toHaveBeenCalledTimes(1)
-    expect(onCommand).toHaveBeenCalledWith('/clear')
+    expect(onCommand).toHaveBeenCalledWith('/clear', [], expect.any(AbortSignal))
     expect(textarea.value).toBe('')
   })
 
@@ -1112,7 +1151,7 @@ describe('Composer', () => {
     )
     fireEvent.keyDown(screen.getByRole('textbox', { name: 'Prompt' }), { key: 'Enter' })
     expect(onCommand).toHaveBeenCalledTimes(1)
-    expect(onCommand).toHaveBeenCalledWith('/clear')
+    expect(onCommand).toHaveBeenCalledWith('/clear', [], expect.any(AbortSignal))
     expect(onSubmit).not.toHaveBeenCalled()
   })
 
@@ -1133,7 +1172,7 @@ describe('Composer', () => {
     // command may claim free-form args, so Enter runs the default sink.
     expect(onCommand).not.toHaveBeenCalled()
     expect(onSubmit).toHaveBeenCalledTimes(1)
-    expect(onSubmit).toHaveBeenCalledWith('queue')
+    expect(onSubmit).toHaveBeenCalledWith('queue', expect.any(AbortSignal))
   })
 
   it('completes the top command match on Tab', () => {

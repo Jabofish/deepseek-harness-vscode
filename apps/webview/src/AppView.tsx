@@ -558,7 +558,10 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                     </ConversationActionsMenu>
                   </div>
                   {state.transcript?.historical !== true ? null : (
-                    <div className="dsh-timeline__history-more">
+                    <div
+                      className="dsh-timeline__history-more"
+                      style={{ position: 'absolute', right: '1rem', bottom: '6rem', zIndex: 2 }}
+                    >
                       <button
                         type="button"
                         className="dsh-button dsh-button--secondary dsh-button--compact"
@@ -654,7 +657,6 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                       hasMoreHistory={state.historyHasMore}
                       loadingOlderHistory={state.historyLoading}
                       onLoadOlderHistory={timelineOnLoadOlderHistory}
-                      pagedHistory
                       onFeedback={timelineOnFeedback}
                       onFeedbackPrepare={timelineOnFeedbackPrepare}
                       onFeedbackSubmit={timelineOnFeedbackSubmit}
@@ -675,7 +677,11 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                     />
                   )}
                   <QueuePanel
+                    key={state.activeSessionId}
                     items={state.queue}
+                    directRequestIds={state.directPromptRequestIds}
+                    transcript={state.transcript}
+                    connected={backend.kind === 'connected'}
                     running={activeRunning}
                     onEdit={queueOnEdit}
                     onRemove={queueOnRemove}

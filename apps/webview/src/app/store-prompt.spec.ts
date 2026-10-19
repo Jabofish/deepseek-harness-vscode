@@ -90,6 +90,26 @@ function response(request: WebviewRequest): unknown {
 }
 
 describe('AppStore prompt admission', () => {
+  it('records direct-send identity before the RPC and leaves the draft as its only local preview', async () => {
+    const requestDone = deferred<void>()
+    const client = new FakeClient((request) =>
+      request.type === 'session.sendPrompt'
+        ? requestDone.promise
+        : request.type === 'session.open'
+          ? { ...(response(request) as object), status: 'idle' }
+          : response(request),
+    )
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.openSession(session.id)
+    const sending = store.sendPrompt(session.id, 'direct prompt', [], 'queue')
+    const request = client.requests.find((entry) => entry.type === 'session.sendPrompt')
+    expect(store.getState().directPromptRequestIds).toEqual([request?.requestId])
+    expect(store.timeline.nodes).toEqual([])
+    requestDone.resolve()
+    await sending
+    expect(store.timeline.nodes).toEqual([])
+    store.dispose()
+  })
   it('preserves the host session-reference workspace relation and ignores malformed rows', async () => {
     const client = new FakeClient((request) =>
       request.type === 'reference.list'

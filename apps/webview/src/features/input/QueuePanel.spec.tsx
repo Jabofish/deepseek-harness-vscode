@@ -3,9 +3,45 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { QueuedInput } from '@dsh-vscode/domain'
+import type { TranscriptWindow } from '@dsh-vscode/webview-protocol'
 
 import { I18nProvider } from '../../i18n.js'
 import { QueuePanel } from './QueuePanel.js'
+import { Timeline } from '../chat/Timeline.js'
+
+function handoffView(
+  items: readonly QueuedInput[],
+  nodes: TranscriptWindow['nodes'] = [],
+  onRemove: (id: string) => void | Promise<void> = vi.fn(),
+  connected = true,
+  sessionId = 'session-1',
+): React.ReactElement {
+  const transcript: TranscriptWindow = {
+    sessionId,
+    revision: 1,
+    nodes,
+    eventFacts: [],
+    lastSequence: 1,
+    hasMore: false,
+    historical: false,
+    omittedNodeIds: [],
+  }
+  return (
+    <I18nProvider>
+      <Timeline sessionId={sessionId} nodes={nodes} streaming={false} />
+      <QueuePanel
+        key={sessionId}
+        items={items}
+        transcript={transcript}
+        connected={connected}
+        running={true}
+        onEdit={vi.fn()}
+        onRemove={onRemove}
+        onModeChange={vi.fn()}
+      />
+    </I18nProvider>
+  )
+}
 
 function queuedInput(id: string, text = id): QueuedInput {
   return {
@@ -41,9 +77,159 @@ function renderQueue(
 describe('QueuePanel', () => {
   afterEach(() => cleanup())
 
-  it('does not present a lone queued prompt while the session is idle', () => {
+  it('hides only the correlated direct send, preserving an identical queued message and its handoff', () => {
+    const direct = { ...queuedInput('direct-message', 'same text'), rpcId: 'direct-request' }
+    const queued = { ...queuedInput('queued-message', 'same text'), rpcId: 'other-request' }
+    const props = {
+      running: false,
+      directRequestIds: ['direct-request'],
+      transcript: {
+        sessionId: 'session-1',
+        revision: 1,
+        nodes: [],
+        eventFacts: [],
+        lastSequence: 1,
+        hasMore: false,
+        historical: false,
+        omittedNodeIds: [],
+      },
+      onEdit: vi.fn(),
+      onRemove: vi.fn(),
+      onModeChange: vi.fn(),
+    }
+    const view = render(
+      <I18nProvider>
+        <QueuePanel {...props} items={[direct]} />
+      </I18nProvider>,
+    )
+    expect(screen.queryByRole('region', { name: 'Queued prompts' })).toBeNull()
+    view.rerender(
+      <I18nProvider>
+        <QueuePanel {...props} items={[direct, queued]} />
+      </I18nProvider>,
+    )
+    expect(screen.getAllByRole('textbox')).toHaveLength(1)
+    view.rerender(
+      <I18nProvider>
+        <QueuePanel {...props} items={[]} />
+      </I18nProvider>,
+    )
+    expect(screen.getAllByText('same text')).toHaveLength(1)
+  })
+
+  it('keeps removed queue text visible until the matching durable message renders, without duplication or resending', () => {
+    const item = queuedInput('queued-message', 'First line\nSecond line')
+    const remove = vi.fn()
+    const view = render(handoffView([item], [], remove))
+    expect(screen.getByRole('textbox').tagName).toBe('TEXTAREA')
+    expect(screen.getByRole<HTMLTextAreaElement>('textbox').value).toBe(item.text)
+    view.rerender(handoffView([], [], remove))
+    expect(screen.getByText('Syncing with conversation…')).toBeTruthy()
+    expect(screen.getByText('First line Second line')).toBeTruthy()
+    expect(screen.queryByRole('textbox')).toBeNull()
+    expect(screen.queryByRole('button', { name: /Mode for queued/u })).toBeNull()
+    view.rerender(handoffView([], [{ kind: 'user-message', id: item.id, markdown: item.text }], remove))
+    expect(screen.queryByRole('region', { name: 'Queued prompts' })).toBeNull()
+    expect(screen.getAllByText('First line', { exact: false })).toHaveLength(1)
+    view.rerender(handoffView([], [], remove))
+    expect(screen.queryByText('Syncing with conversation…')).toBeNull()
+    expect(remove).not.toHaveBeenCalled()
+  })
+
+  it('uses message IDs rather than matching repeated text, and handles transcript-first delivery', () => {
+    const item = queuedInput('next-message', 'Repeated instruction')
+    const older: TranscriptWindow['nodes'] = [
+      { kind: 'user-message', id: 'previous-message', markdown: item.text },
+    ]
+    const view = render(handoffView([item], older))
+    view.rerender(handoffView([], older))
+    expect(screen.getByText('Syncing with conversation…')).toBeTruthy()
+    view.rerender(handoffView([item], [...older, { kind: 'user-message', id: item.id, markdown: item.text }]))
+    expect(screen.queryByRole('region', { name: 'Queued prompts' })).toBeNull()
+    view.rerender(handoffView([], [...older, { kind: 'user-message', id: item.id, markdown: item.text }]))
+    expect(screen.queryByRole('region', { name: 'Queued prompts' })).toBeNull()
+  })
+
+  it('does not retain explicitly removed messages, permits dismissing a receipt, and clears it on disconnect/session change', async () => {
+    const item = queuedInput('pending', 'Awaiting its transcript')
+    const remove = vi.fn().mockResolvedValue(undefined)
+    const view = render(handoffView([item], [], remove))
+    fireEvent.click(screen.getByRole('button', { name: 'Remove queued prompt 1' }))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    view.rerender(handoffView([], [], remove))
+    expect(screen.queryByText('Syncing with conversation…')).toBeNull()
+    view.rerender(handoffView([item], [], remove))
+    view.rerender(handoffView([], [], remove))
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss syncing prompt 1' }))
+    expect(remove).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText('Syncing with conversation…')).toBeNull()
+    view.rerender(handoffView([item]))
+    view.rerender(handoffView([]))
+    expect(screen.getByText('Syncing with conversation…')).toBeTruthy()
+    view.rerender(handoffView([], [], remove, false))
+    expect(screen.queryByText('Syncing with conversation…')).toBeNull()
+    view.rerender(handoffView([item]))
+    view.rerender(handoffView([], [], remove, true, 'another-session'))
+    expect(screen.queryByText('Syncing with conversation…')).toBeNull()
+  })
+
+  it('keeps a rejected removal eligible for normal transcript handoff', async () => {
+    const item = queuedInput('pending', 'Keep after failed removal')
+    const remove = vi.fn().mockRejectedValue(new Error('Removal failed'))
+    const view = render(handoffView([item], [], remove))
+    fireEvent.click(screen.getByRole('button', { name: 'Remove queued prompt 1' }))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(screen.getByDisplayValue(item.text)).toBeTruthy()
+    view.rerender(handoffView([], [], remove))
+    expect(screen.getByText(item.text)).toBeTruthy()
+    expect(screen.getByText('Syncing with conversation…')).toBeTruthy()
+  })
+
+  it('preserves multiline edits, treats Enter as a new line, and commits the exact text on Ctrl+Enter', () => {
+    const edit = vi.fn()
+    renderQueue([queuedInput('multiline', 'Original\nmessage')], true, vi.fn(), edit)
+    const editor = screen.getByRole('textbox')
+    fireEvent.change(editor, { target: { value: 'First line\nSecond line\nThird line' } })
+    expect(fireEvent.keyDown(editor, { key: 'Enter' })).toBe(true)
+    expect(edit).not.toHaveBeenCalled()
+    fireEvent.keyDown(editor, { key: 'Enter', ctrlKey: true })
+    expect(edit).toHaveBeenCalledWith('multiline', 'First line\nSecond line\nThird line')
+    fireEvent.blur(editor)
+    expect(edit).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps a pending prompt visible while the session is idle', () => {
     renderQueue([queuedInput('q1', 'first')])
 
+    expect(screen.getByRole('region', { name: 'Queued prompts' })).toBeTruthy()
+    expect(screen.getByDisplayValue('first')).toBeTruthy()
+  })
+
+  it('keeps the same queued text visible across running/idle transitions until its authoritative removal', () => {
+    const renderPanel = (running: boolean, items: readonly QueuedInput[]): React.ReactElement => (
+      <I18nProvider>
+        <QueuePanel
+          items={items}
+          running={running}
+          onEdit={vi.fn()}
+          onRemove={vi.fn()}
+          onModeChange={vi.fn()}
+        />
+      </I18nProvider>
+    )
+    const items = [queuedInput('q1', 'keep this instruction')]
+    const view = render(renderPanel(true, items))
+    const row = screen.getByDisplayValue('keep this instruction')
+    view.rerender(renderPanel(false, items))
+    expect(screen.getByDisplayValue('keep this instruction')).toBe(row)
+    view.rerender(renderPanel(true, [...items, queuedInput('q2', 'next instruction')]))
+    expect(screen.getByDisplayValue('keep this instruction')).toBe(row)
+    expect(screen.getByDisplayValue('next instruction')).toBeTruthy()
+    view.rerender(renderPanel(false, []))
     expect(screen.queryByRole('region', { name: 'Queued prompts' })).toBeNull()
   })
 
@@ -135,7 +321,6 @@ describe('QueuePanel', () => {
 
   it('does not offer Steer when the session is idle', () => {
     renderQueue([queuedInput('q1', 'first'), queuedInput('q2', 'second')])
-    fireEvent.click(screen.getByRole('button', { name: /Queued prompts/u }))
 
     const trigger = screen.getByRole('button', { name: /Mode for queued prompt 1/u })
     expect(trigger.hasAttribute('disabled')).toBe(true)
@@ -154,26 +339,30 @@ describe('QueuePanel', () => {
     expect(onModeChange).not.toHaveBeenCalled()
   })
 
-  it('collapses a multi-prompt backlog until the user opens it', () => {
+  it('shows a multi-prompt backlog by default and collapses only on a user action', () => {
     renderQueue([queuedInput('q1', 'first'), queuedInput('q2', 'second')])
 
     const toggle = screen.getByRole('button', { name: /Queued prompts/u })
-    expect(toggle.getAttribute('aria-expanded')).toBe('false')
-    expect(screen.queryByRole('textbox', { name: 'Edit queued prompt 1' })).toBeNull()
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByDisplayValue('first')).toBeTruthy()
+    expect(screen.getByDisplayValue('second')).toBeTruthy()
 
     fireEvent.click(toggle)
 
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('textbox', { name: 'Edit queued prompt 1' })).toBeNull()
+    fireEvent.click(toggle)
     expect(toggle.getAttribute('aria-expanded')).toBe('true')
     expect(screen.getByRole('textbox', { name: 'Edit queued prompt 1' })).toBeTruthy()
     expect(screen.getByRole('textbox', { name: 'Edit queued prompt 2' })).toBeTruthy()
   })
-  it('commits an edited queued prompt on Enter and does not resend it on blur', () => {
+  it('commits an edited queued prompt on Ctrl+Enter and does not resend it on blur', () => {
     const onEdit = vi.fn()
     renderQueue([queuedInput('q1', 'first')], true, vi.fn(), onEdit)
 
     const editor = screen.getByRole('textbox', { name: 'Edit queued prompt 1' })
     fireEvent.change(editor, { target: { value: 'second' } })
-    fireEvent.keyDown(editor, { key: 'Enter' })
+    fireEvent.keyDown(editor, { key: 'Enter', ctrlKey: true })
 
     expect(onEdit).toHaveBeenCalledTimes(1)
     expect(onEdit).toHaveBeenCalledWith('q1', 'second')
@@ -248,7 +437,7 @@ describe('QueuePanel', () => {
 
     const editor = screen.getByRole('textbox', { name: 'Edit queued prompt 1' })
     fireEvent.change(editor, { target: { value: 'submitted' } })
-    fireEvent.keyDown(editor, { key: 'Enter' })
+    fireEvent.keyDown(editor, { key: 'Enter', ctrlKey: true })
     fireEvent.change(editor, { target: { value: 'new draft' } })
     await act(async () => {
       rejectFirst?.(new Error('edit rejected'))
@@ -273,9 +462,9 @@ describe('QueuePanel', () => {
 
     const editor = screen.getByRole('textbox', { name: 'Edit queued prompt 1' })
     fireEvent.change(editor, { target: { value: 'first edit' } })
-    fireEvent.keyDown(editor, { key: 'Enter' })
+    fireEvent.keyDown(editor, { key: 'Enter', ctrlKey: true })
     fireEvent.change(editor, { target: { value: 'second edit' } })
-    fireEvent.keyDown(editor, { key: 'Enter' })
+    fireEvent.keyDown(editor, { key: 'Enter', ctrlKey: true })
     await act(async () => {
       rejectEdits[0]?.(new Error('older edit rejected'))
       await Promise.resolve()

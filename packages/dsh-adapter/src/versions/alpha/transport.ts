@@ -86,6 +86,7 @@ export type {
  * compatibility projection consumed by the existing repositories.
  */
 export class AlphaLoopbackApiClient implements DshTransport {
+  public readonly promptRequestIdentity = true
   private readonly cordisBoundary = new CordisClientBoundary()
   private readonly closed = new AbortController()
   private readonly remoteMux: AlphaRemoteMux

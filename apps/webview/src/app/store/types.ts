@@ -144,6 +144,8 @@ export interface SurfaceAssignment {
 }
 
 export interface AppState extends SessionModelDirectoryState {
+  /** Recent direct sends, correlated with DSH inbox rows by request identity. */
+  readonly directPromptRequestIds?: readonly string[]
   readonly backend: WebviewBackendState
   readonly connectionOutput?: readonly ConnectionLogEntry[]
   /** Monotonic opaque counter for a newly observed connected backend epoch. */
@@ -296,6 +298,7 @@ export interface AppActions {
     text: string,
     attachments: readonly PromptAttachment[],
     mode: RunningInputMode,
+    signal?: AbortSignal,
   ): Promise<void>
   removeSession(sessionId: string): Promise<void>
   /** Archived rows the host still holds, fetched with `session.list(archived: true)`. */
@@ -308,12 +311,14 @@ export interface AppActions {
     sessionId: string,
     command: string,
     attachments?: readonly PromptAttachment[],
+    signal?: AbortSignal,
   ): Promise<boolean>
   sendPrompt(
     sessionId: string,
     text: string,
     attachments: readonly PromptAttachment[],
     mode: RunningInputMode,
+    signal?: AbortSignal,
   ): Promise<void>
   cancelSession(sessionId: string): Promise<void>
   followJob(jobId: string): Promise<void>

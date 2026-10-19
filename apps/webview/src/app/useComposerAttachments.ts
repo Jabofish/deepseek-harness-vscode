@@ -67,7 +67,7 @@ export interface ComposerAttachments {
   readonly composerOnExtrasOpenChange: (open: boolean) => void
   readonly composerOnSelectOpenFile: (candidateId: string) => void
   readonly composerOnRemoveAttachment: (uri: string) => void
-  readonly composerOnSubmit: (mode: 'queue' | 'steer') => Promise<void>
+  readonly composerOnSubmit: (mode: 'queue' | 'steer', signal?: AbortSignal) => Promise<void>
 }
 
 function contextOpenFileIds(items: readonly EditorContextItem[]): string[] {
@@ -106,6 +106,14 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
   const openFileRequestRef = useRef(0)
   const openFilePickerRequestRef = useRef(0)
   const attachmentGenerationRef = useRef(0)
+  const admissionWaitsRef = useRef(new Set<() => void>())
+
+  useEffect(() => {
+    const waits = admissionWaitsRef.current
+    return () => {
+      for (const cancel of waits) cancel()
+    }
+  }, [])
 
   useEffect(() => {
     const missing = attachments.filter(
@@ -341,22 +349,73 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
         })
     }
   }
-  const submitPrompt = (mode: 'queue' | 'steer'): Promise<void> => {
+  const submitPrompt = (mode: 'queue' | 'steer', signal?: AbortSignal): Promise<void> => {
     if (active === undefined && !hasPendingSession) return Promise.resolve()
     const text = deps.readDraft()
     const attachmentSnapshot = attachments
+    const before = store.getState()
+    const beforeIds = new Set(before.timeline.nodes.map((node) => node.id))
+    const beforeRequests = new Set(before.directPromptRequestIds)
+    let awaitingVisibility = false
     let submission: Promise<void>
     try {
       submission =
         active === undefined
-          ? store.sendPendingPrompt(text, attachmentSnapshot, mode)
-          : store.sendPrompt(active.id, text, attachmentSnapshot, mode)
+          ? store.sendPendingPrompt(text, attachmentSnapshot, mode, signal)
+          : store.sendPrompt(active.id, text, attachmentSnapshot, mode, signal)
     } catch (reason) {
       submission = Promise.reject(reason instanceof Error ? reason : new Error(t('app.error.prompt')))
     }
     return submission
-      .then(() => {
-        if (!mountedRef.current) return
+      .then(async () => {
+        if (!mountedRef.current || Boolean(signal?.aborted)) return
+        const admitted = store.getState()
+        if (active !== undefined && admitted.activeSessionId !== active.id) return
+        const directRequests = admitted.directPromptRequestIds?.filter((id) => !beforeRequests.has(id)) ?? []
+        if (directRequests.length > 0 && !signal?.aborted) {
+          awaitingVisibility = true
+          // An RPC receipt can precede the durable user message. Keep the
+          // original draft visible until that message reaches the timeline.
+          const sessionId = admitted.activeSessionId
+          await new Promise<void>((resolve, reject) => {
+            let unsubscribe = (): void => undefined
+            let settled = false
+            const finish = (error?: Error): void => {
+              if (settled) return
+              settled = true
+              clearTimeout(timer)
+              unsubscribe()
+              admissionWaitsRef.current.delete(cancelled)
+              signal?.removeEventListener('abort', cancelled)
+              if (error === undefined) resolve()
+              else reject(error)
+            }
+            const cancelled = (): void => finish(new DOMException('Cancelled', 'AbortError'))
+            const check = (): void => {
+              const current = store.getState()
+              if (current.activeSessionId !== sessionId || current.backend.kind !== 'connected') {
+                cancelled()
+                return
+              }
+              if (
+                current.timeline.nodes.some(
+                  (node) =>
+                    node.kind === 'user-message' &&
+                    ((node.rpcId !== undefined && directRequests.includes(node.rpcId)) ||
+                      (!beforeIds.has(node.id) && node.markdown === text)),
+                )
+              )
+                finish()
+            }
+            const timer = setTimeout(() => finish(new Error(t('app.error.promptTimeout'))), 30_000)
+            unsubscribe = store.subscribe(check)
+            admissionWaitsRef.current.add(cancelled)
+            signal?.addEventListener('abort', cancelled, { once: true })
+            if (signal?.aborted) cancelled()
+            else check()
+          })
+        }
+        if (!mountedRef.current || Boolean(signal?.aborted)) return
         setDraft((current) => (current === text ? '' : current))
         // The Extension Host consumes only the handles admitted by this send;
         // keep any draft attachments the user added while it was in flight.
@@ -367,7 +426,14 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
         setOpenFilePickerOpen(false)
       })
       .catch((reason: unknown) => {
-        if (mountedRef.current) setError(publicProtocolErrorMessage(reason) ?? t('app.error.prompt'))
+        if (Boolean(signal?.aborted) || (reason instanceof DOMException && reason.name === 'AbortError'))
+          return
+        if (mountedRef.current)
+          setError(
+            awaitingVisibility
+              ? t('app.error.promptTimeout')
+              : (publicProtocolErrorMessage(reason) ?? t('app.error.prompt')),
+          )
       })
   }
   /**
@@ -478,7 +544,9 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
   const composerOnRemoveAttachment = useStableCallback((uri: string): void => {
     removeAttachmentDrafts([uri], true)
   })
-  const composerOnSubmit = useStableCallback((mode: 'queue' | 'steer'): Promise<void> => submitPrompt(mode))
+  const composerOnSubmit = useStableCallback((mode: 'queue' | 'steer', signal?: AbortSignal): Promise<void> =>
+    submitPrompt(mode, signal),
+  )
 
   return {
     attachments,
