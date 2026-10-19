@@ -150,20 +150,20 @@ function chooseTiming(timing: string): void {
 describe('SchedulePanel', () => {
   afterEach(() => cleanup())
 
-  it('serializes each RC2 selector exactly and waits for catalog confirmation after turn end', async () => {
-    const cases = [
-      { timing: 'after', selector: 'after_seconds', value: 300 },
-      { timing: 'at', selector: 'at', value: { date: '2099-10-20', time: '09:30:00', time_zone: 'UTC' } },
-      { timing: 'every', selector: 'every_seconds', value: 60 },
-      { timing: 'daily', selector: 'daily', value: { time: '10:15:00', time_zone: 'UTC' } },
-      {
-        timing: 'weekly',
-        selector: 'weekly',
-        value: { time: '10:15:00', time_zone: 'UTC', weekdays: [1, 2] },
-      },
-      { timing: 'cron', selector: 'cron', value: { expression: '0 9 * * 1', time_zone: 'UTC' } },
-    ] as const
-    for (const item of cases) {
+  it.each([
+    { timing: 'after', selector: 'after_seconds', value: 300 },
+    { timing: 'at', selector: 'at', value: { date: '2099-10-20', time: '09:30:00', time_zone: 'UTC' } },
+    { timing: 'every', selector: 'every_seconds', value: 60 },
+    { timing: 'daily', selector: 'daily', value: { time: '10:15:00', time_zone: 'UTC' } },
+    {
+      timing: 'weekly',
+      selector: 'weekly',
+      value: { time: '10:15:00', time_zone: 'UTC', weekdays: [1, 2] },
+    },
+    { timing: 'cron', selector: 'cron', value: { expression: '0 9 * * 1', time_zone: 'UTC' } },
+  ] as const)(
+    'serializes the $timing RC2 selector exactly and waits for catalog confirmation after turn end',
+    async (item) => {
       const startSession = vi.fn((_prompt: string) => Promise.resolve('session-new'))
       const panel = mountPanel({ onStartScheduleSession: startSession })
       await screen.findByRole('button', { name: /Water the plants/u })
@@ -215,8 +215,8 @@ describe('SchedulePanel', () => {
       expect(document.querySelector('.dsh-schedule-panel__create-state--confirmed')).toBeNull()
       expect(document.querySelector<HTMLButtonElement>('.dsh-schedule-panel__new')?.disabled).toBe(true)
       panel.view.unmount()
-    }
-  })
+    },
+  )
 
   it('confirms only after invalidation refresh returns a matching new catalog record', async () => {
     let items: readonly ScheduleCatalogEntry[] = [active]
