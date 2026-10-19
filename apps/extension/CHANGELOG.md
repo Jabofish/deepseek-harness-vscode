@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.3.5
+
+- 编辑器配套随扩展打包并自动更新；F5 加载当前构建，常规升级自动检测旧配套。Webview 设置提供读写开关、修复、重试和撤销，无需另行安装或逐会话启用。
+- Bundles and automatically updates the editor companion, including every F5 build. Webview settings provide access controls, repair, retry and undo without separate installation or per-session enable commands.
+
 - 修复新会话因工作目录不同或缺少目录信息而无法绑定编辑器工具的问题；工具按当前窗口已信任的文件夹工作。首次调用缺少文件夹或信任时主动提示，设置页提供直接操作入口，工具卡保留具体失败原因。
 - Binds editor tools for new sessions independently of their working directory. Access stays within this window's trusted folders; the first tool request offers folder/trust setup when needed, with direct settings actions and safe failure details.
 
