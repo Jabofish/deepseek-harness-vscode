@@ -48,20 +48,10 @@ export function useDshSettings(input: {
   readonly adoptLocaleFromHost: (value: unknown, hasExplicitPreference: boolean) => void
   readonly setLocale: (locale: Locale) => void
   readonly setThemePreferenceState: (theme: ThemePreference) => void
-  readonly setConversationView: (view: 'chat' | 'trajectory') => void
   readonly setError: (message: string | undefined) => void
   readonly t: Translate
 }): DshSettingsUi {
-  const {
-    store,
-    state,
-    adoptLocaleFromHost,
-    setLocale,
-    setThemePreferenceState,
-    setConversationView,
-    setError,
-    t,
-  } = input
+  const { store, state, adoptLocaleFromHost, setLocale, setThemePreferenceState, setError, t } = input
   const [dshSettingsSnapshot, setDshSettingsSnapshot] = useState<DshSettingsSnapshot | undefined>()
   const [dshSettingsSnapshotVersion, setDshSettingsSnapshotVersion] = useState<string | undefined>()
   const [dshSettingsSnapshotConnectionEpoch, setDshSettingsSnapshotConnectionEpoch] = useState<
@@ -106,15 +96,8 @@ export function useDshSettings(input: {
         setThemePreferenceState(hostTheme)
         rememberThemePreference(hostTheme)
       }
-      if (preferences.codingToolsEnabled === false) setConversationView('chat')
     },
-    [
-      adoptLocaleFromHost,
-      setConversationView,
-      setThemePreferenceState,
-      state.connectedDshVersion,
-      state.connectionEpoch,
-    ],
+    [adoptLocaleFromHost, setThemePreferenceState, state.connectedDshVersion, state.connectionEpoch],
   )
 
   const readDshSettingsForUi = useStableCallback(async (): Promise<DshSettingsSnapshot | undefined> => {

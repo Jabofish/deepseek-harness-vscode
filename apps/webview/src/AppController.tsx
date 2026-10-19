@@ -155,33 +155,27 @@ const useAppControllerImpl = () => {
     adoptLocaleFromHost,
     setLocale,
     setThemePreferenceState,
-    setConversationView,
     setError,
     t,
   })
-  const trajectoryVisible = codingToolsEnabled
-  const onConversationTabKeyDown = useCallback(
-    (event: ReactKeyboardEvent<HTMLButtonElement>): void => {
-      const current = event.currentTarget.dataset.conversationView
-      if (current !== 'chat' && current !== 'trajectory') return
-      const views: readonly ('chat' | 'trajectory')[] = trajectoryVisible ? ['chat', 'trajectory'] : ['chat']
-      const currentIndex = views.indexOf(current)
-      let nextIndex: number | undefined
-      if (event.key === 'ArrowRight' || event.key === 'ArrowDown')
-        nextIndex = (currentIndex + 1) % views.length
-      else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp')
-        nextIndex = (currentIndex - 1 + views.length) % views.length
-      else if (event.key === 'Home') nextIndex = 0
-      else if (event.key === 'End') nextIndex = views.length - 1
-      if (nextIndex === undefined) return
-      event.preventDefault()
-      const next = views[nextIndex]
-      if (next === undefined) return
-      setConversationView(next)
-      document.getElementById(CONVERSATION_VIEW_IDS[next].tab)?.focus()
-    },
-    [trajectoryVisible],
-  )
+  const onConversationTabKeyDown = useCallback((event: ReactKeyboardEvent<HTMLButtonElement>): void => {
+    const current = event.currentTarget.dataset.conversationView
+    if (current !== 'chat' && current !== 'trajectory') return
+    const views: readonly ('chat' | 'trajectory')[] = ['chat', 'trajectory']
+    const currentIndex = views.indexOf(current)
+    let nextIndex: number | undefined
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') nextIndex = (currentIndex + 1) % views.length
+    else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp')
+      nextIndex = (currentIndex - 1 + views.length) % views.length
+    else if (event.key === 'Home') nextIndex = 0
+    else if (event.key === 'End') nextIndex = views.length - 1
+    if (nextIndex === undefined) return
+    event.preventDefault()
+    const next = views[nextIndex]
+    if (next === undefined) return
+    setConversationView(next)
+    document.getElementById(CONVERSATION_VIEW_IDS[next].tab)?.focus()
+  }, [])
 
   const setConversationFontSize = useCallback((next: ConversationFontSize): void => {
     setConversationFontSizeState(next)
@@ -891,7 +885,6 @@ const useAppControllerImpl = () => {
     branching,
     busyAction,
     codingToolsEnabled,
-    trajectoryVisible,
     compatibilityWarning,
     composerOnCancel,
     composerOnCaptureEditorContext,

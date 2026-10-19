@@ -106,7 +106,6 @@ function setupSettings(
   const adoptLocaleFromHost = vi.fn()
   const setLocale = vi.fn()
   const setThemePreferenceState = vi.fn()
-  const setConversationView = vi.fn()
   const setError = vi.fn()
   const t = vi.fn((key: string): string => key)
   const store = { getState: () => state, readDshSettings, updateDshSetting } as unknown as AppStore
@@ -118,7 +117,6 @@ function setupSettings(
         adoptLocaleFromHost,
         setLocale,
         setThemePreferenceState,
-        setConversationView,
         setError,
         t,
       }),

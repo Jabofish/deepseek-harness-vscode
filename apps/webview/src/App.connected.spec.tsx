@@ -1135,17 +1135,78 @@ describe('App connected rendering', () => {
     await waitFor(() => expect(screen.getByLabelText('Trajectory ledger')).toBeDefined())
   })
 
-  it('hides the tab bar when the Trajectory view is disabled', async () => {
+  it('keeps both conversation views available when Coding Tools is disabled', async () => {
     const readDshSettings = vi.fn().mockResolvedValue(dshUiSettingsSnapshot(false))
     currentStore = { ...storeFor(connectedState(true)), readDshSettings }
     render(<App />)
 
     await waitFor(() => expect(readDshSettings).toHaveBeenCalled())
-    expect(screen.queryByRole('tab', { name: 'Chat' })).toBeNull()
-    expect(screen.queryByRole('tab', { name: 'Trajectory' })).toBeNull()
-    expect(document.querySelector('.dsh-conversation__views')).toBeNull()
+    expect(screen.getByRole('tab', { name: 'Chat' })).toBeDefined()
+    expect(screen.getByRole('tab', { name: 'Trajectory' })).toBeDefined()
     expect(screen.getByTestId('timeline')).toBeDefined()
+    fireEvent.click(screen.getByRole('tab', { name: 'Trajectory' }))
+    await screen.findByLabelText('Trajectory ledger')
   })
+
+  it.each(['pending', 'unavailable', 'disabled'] as const)(
+    'shows usable view tabs when opening a session from the initial page with %s settings',
+    async (settings) => {
+      let state: AppState = {
+        ...connectedState(false),
+        pendingSession: {
+          revision: 1,
+          workspaceId: 'w1',
+          configuration: connectedState(true).configuration!,
+        },
+      }
+      const listeners = new Set<() => void>()
+      let resolveSettings!: (value: DshSettingsSnapshot) => void
+      const pendingSettings = new Promise<DshSettingsSnapshot>((resolve) => {
+        resolveSettings = resolve
+      })
+      const readDshSettings = vi.fn(() =>
+        settings === 'pending'
+          ? pendingSettings
+          : settings === 'unavailable'
+            ? Promise.reject(new Error('settings unavailable'))
+            : Promise.resolve(dshUiSettingsSnapshot(false)),
+      )
+      currentStore = {
+        ...storeFor(state),
+        getState: () => state,
+        subscribe: (listener) => {
+          listeners.add(listener)
+          return () => listeners.delete(listener)
+        },
+        readDshSettings,
+        openSession: vi.fn(() => {
+          state = { ...connectedState(true), pendingSession: undefined }
+          for (const listener of listeners) listener()
+          return Promise.resolve()
+        }),
+      }
+      render(<App />)
+      expect(screen.queryByRole('tab', { name: 'Trajectory' })).toBeNull()
+      await act(async () => {
+        await currentStore.openSession('s1')
+      })
+      const chat = screen.getByRole('tab', { name: 'Chat' })
+      const trajectory = screen.getByRole('tab', { name: 'Trajectory' })
+      expect(chat.getAttribute('aria-selected')).toBe('true')
+      fireEvent.keyDown(chat, { key: 'ArrowRight' })
+      await screen.findByLabelText('Trajectory ledger')
+      expect(trajectory.getAttribute('aria-selected')).toBe('true')
+      // A late settings response must not reset the reader's chosen view.
+      if (settings === 'pending')
+        await act(async () => {
+          resolveSettings(dshUiSettingsSnapshot(false))
+          await pendingSettings
+        })
+      expect(screen.getByRole('tab', { name: 'Trajectory' }).getAttribute('aria-selected')).toBe('true')
+      fireEvent.click(chat)
+      expect(screen.getByTestId('timeline')).toBeDefined()
+    },
+  )
 
   it('uses the accepted Host busy-send value after a successful write even if refresh fails', async () => {
     const active = connectedState(true)

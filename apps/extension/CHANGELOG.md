@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 修复从初始页打开会话后“会话 / 轨迹”切换入口缺失的问题；本地视图切换不再依赖 Coding Tools 开关或设置读取成功，迟到的设置回包也不会重置当前视图。
+- Keeps Chat / Trajectory tabs available after opening a session from the initial page, independently of Coding Tools and settings availability; late settings replies preserve the selected view.
+
 - 修复加载较早历史时整页替换、较新消息消失的问题：Host 按消息 ID 向上合并，保留实时更新；恢复触顶加载并按可见消息锚定视口。
 - Prepends older history without replacing newer messages, preserves live updates, restores loading at the top and anchors scrolling to the visible message.
 
