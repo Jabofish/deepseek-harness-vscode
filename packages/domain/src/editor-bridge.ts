@@ -1,4 +1,5 @@
 import { isCanonicalWorkspaceRelativePath } from './feature-contracts.js'
+import type { EditorCompanionRepository } from './editor-companion.js'
 
 /** Version of our optional companion protocol, independent of DSH's wire version. */
 export const EDITOR_BRIDGE_PROTOCOL = 1
@@ -64,6 +65,7 @@ export function isEditorBridgeResult<T>(
 }
 
 export interface EditorBridgeRepository {
+  readonly companion?: EditorCompanionRepository
   attach(sessionId: string, ownerId: string, signal?: AbortSignal): Promise<EditorBridgeBinding>
   poll(bindingId: string, signal?: AbortSignal): Promise<EditorBridgePoll>
   respond(bindingId: string, requestId: string, reply: EditorBridgeReply, signal?: AbortSignal): Promise<void>

@@ -3,7 +3,8 @@
 ## Unreleased
 
 - 新增可选 DSH 编辑器配套插件 MVP：用户可为当前会话开启/撤销编辑器元数据共享，Agent 工具读取相对文件名、语言、版本、未保存标记、选区及缓存诊断计数。首版限单根受信本地工作区和扩展持有的 DSH，不读取代码或诊断正文。
-- Adds an optional DSH editor companion MVP. Explicit session sharing exposes editor metadata, unsaved state, selection and cached diagnostic counts through a model-callable tool; a native status indicator revokes access. Initial scope is one trusted local folder and an extension-managed DSH, without source or diagnostic bodies.
+- Expands the optional DSH editor companion with ten tools: editor metadata, unsaved document/selection reads, cached diagnostics, symbols/definitions/references, navigation, versioned edit proposals and edit receipts. Grants select capabilities and one workspace root per session; edits require native diff review and explicit confirmation, remain unsaved and support undo.
+- Adds native companion installation, version/status controls, enable/disable/uninstall, cached archive restore and recovery by the original installation ID. Supports independent session grants and same-host verification; external runtimes remain outside installation and process management. Model-driven, manual diff and remote-workspace acceptance remain separate validation work.
 
 ## 0.3.4
 

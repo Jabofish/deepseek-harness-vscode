@@ -21,7 +21,7 @@
 
 高级能力取决于连接的 DSH 版本；不支持的操作会明确显示不可用。[兼容契约](docs/dsh-contract.md)列出精确 Adapter 边界；[能力矩阵](docs/capability-matrix.md)概述具体功能、限制和完成状态。
 
-可选的[编辑器配套插件](packages/dsh-editor-bridge/README.md)让 DSH Agent 查询主动共享的编辑器状态，包括未保存标记和缓存诊断数量。通过 **DSH: Share Editor State with Current Session** 为当前会话启用，状态栏可随时停用。首版限单个受信本地文件夹与扩展持有的 DSH。
+可选的[编辑器配套插件](packages/dsh-editor-bridge/README.md)让 DSH Agent 在明确授权后读取未保存文本、选区、缓存诊断、符号/定义/引用，打开文件并提出编辑建议。通过 **DSH: Manage Editor Companion** 安装和管理，再用 **DSH: Share Editor State with Current Session** 选择权限。写入必须经过原生 diff 审阅与单独确认；状态栏管理访问和待审提案。支持多根工作区及独立会话授权；运行时、远程环境与验收限制见配套包说明。
 
 ## 安装与开始使用
 

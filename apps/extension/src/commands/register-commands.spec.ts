@@ -53,6 +53,9 @@ describe('registerCommands', () => {
       'dsh.addDiagnosticContext',
       'dsh.shareEditorState',
       'dsh.stopSharingEditorState',
+      'dsh.manageEditorCompanion',
+      'dsh.installEditorCompanion',
+      'dsh.reviewEditorEdits',
     ])
     expect(subscriptions).toHaveLength(registrations.length)
 

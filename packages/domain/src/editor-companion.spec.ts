@@ -1,0 +1,80 @@
+import { describe, expect, it } from 'vitest'
+import {
+  editorCapability,
+  isEditorCompanionCapabilities,
+  isEditorCompanionDescription,
+  isEditorCompanionPoll,
+  isEditorCompanionRequest,
+  isEditorCompanionValue,
+} from './editor-companion.js'
+
+describe('editor companion v2 boundaries', () => {
+  it('validates each operation and its distinct permission without accepting arbitrary commands or paths', () => {
+    expect(
+      isEditorCompanionRequest({ kind: 'document', path: 'src/main.ts', startLine: 2, endLine: 4 }),
+    ).toBe(true)
+    expect(editorCapability({ kind: 'state' })).toBeUndefined()
+    expect(editorCapability({ kind: 'document' })).toBe('content')
+    expect(editorCapability({ kind: 'propose', path: 'a.ts', expectedVersion: 1, edits: [] })).toBe('edit')
+    for (const request of [
+      { kind: 'document', path: '../private' },
+      { kind: 'document', path: 'C:/private' },
+      { kind: 'selection', command: 'anything' },
+      { kind: 'document', startLine: 4, endLine: 2 },
+      { kind: 'document', startLine: undefined },
+      { kind: 'definitions', line: 0, column: 1 },
+      { kind: 'propose', path: 'a.ts', expectedVersion: 0, edits: [] },
+    ])
+      expect(isEditorCompanionRequest(request)).toBe(false)
+    expect(isEditorCompanionCapabilities(['content', 'content'])).toBe(false)
+    expect(isEditorCompanionCapabilities(['shell'])).toBe(false)
+  })
+  it('bounds edits and validates complete operation results and cancellation events', () => {
+    const range = { start: { line: 1, column: 1 }, end: { line: 1, column: 2 } }
+    expect(
+      isEditorCompanionRequest({
+        kind: 'propose',
+        path: 'a.ts',
+        expectedVersion: 1,
+        edits: [{ range, text: 'new' }],
+      }),
+    ).toBe(true)
+    expect(
+      isEditorCompanionRequest({
+        kind: 'propose',
+        path: 'a.ts',
+        expectedVersion: 1,
+        edits: [{ range, text: 'x'.repeat(65_537) }],
+      }),
+    ).toBe(false)
+    const value = {
+      kind: 'document',
+      relativePath: 'a.ts',
+      languageId: 'typescript',
+      version: 2,
+      dirty: true,
+      range,
+      text: 'new',
+      truncated: false,
+    }
+    expect(isEditorCompanionValue(value)).toBe(true)
+    expect(isEditorCompanionValue({ ...value, endpoint: 'private' })).toBe(false)
+    expect(
+      isEditorCompanionValue({
+        kind: 'locations',
+        items: [{ relativePath: '/private', range }],
+        truncated: false,
+        excluded: 0,
+      }),
+    ).toBe(false)
+    expect(isEditorCompanionPoll({ kind: 'cancel', requestId: 'fixture_request_1234' })).toBe(true)
+    expect(
+      isEditorCompanionDescription({
+        protocolVersion: 3,
+        packageVersion: '0.2.0',
+        capabilities: [],
+        maxGrants: 16,
+      }),
+    ).toBe(false)
+  })
+})

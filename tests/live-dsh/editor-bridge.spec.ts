@@ -5,7 +5,13 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { EditorCompanionService } from '../../packages/application/src/services/editor-companion-service.js'
+import { verifyCompanionHost } from '../../apps/extension/src/editor/companion-host-proof.js'
+import {
+  EDITOR_COMPANION_TOOLS,
+  type EditorCompanionValue,
+} from '../../packages/domain/src/editor-companion.js'
 import { LIVE_TIMEOUT_MS, startManagedRuntime, spawnManagedChild } from './harness.js'
 import { AlphaLoopbackApiClient } from '../../packages/dsh-adapter/src/versions/alpha/transport.js'
 
@@ -25,6 +31,7 @@ describe.skipIf(!enabled)('DSH rc.2 editor companion (isolated real runtime)', (
         const runtimeCommand = process.env.DSH_LIVE_RUNTIME
         if (runtimeCommand === undefined)
           throw new Error('Select the exact runtime executable for the probe.')
+        let launchCommand = runtimeCommand
         const runtimeRequire = createRequire(
           path.join(path.dirname(path.dirname(runtimeCommand)), 'package.json'),
         )
@@ -42,15 +49,16 @@ export function apply(ctx) {
     constructor(ctx) { super(ctx, 'editorBridgeProbe') }
     async invoke(request, signal) {
       const agent = ctx.agents.get(request.sessionId) ?? (await ctx.agents.resume({ resumeSessionId: request.sessionId })).agent
-      if (!ctx.tools.schemas(scopeOf(agent)).some(tool => tool.name === 'vscode_get_editor_state')) return { ok: false, reason: 'not-catalogued' }
-      const result = await ctx.tools.execute({ name: 'vscode_get_editor_state', arguments: {}, callId: 'fixture-editor-call', agent, signal })
+      const catalogue = ctx.tools.schemas(scopeOf(agent))
+      if (!${JSON.stringify(Object.keys(EDITOR_COMPANION_TOOLS))}.every(name => catalogue.some(tool => tool.name === name))) return { ok: false, reason: 'not-catalogued' }
+      const result = await ctx.tools.execute({ name: request.name ?? 'vscode_get_editor_state', arguments: request.arguments ?? {}, callId: 'fixture-editor-call', agent, signal })
       return result.isError ? { ok: false, reason: result.error.code } : { ok: true, snapshot: result.value }
     }
   }
   new Probe(ctx)
   ctx.typert.register({ package: 'editor-bridge-live-probe', face: 'host', schemas: [], model: { services: [], events: [], objects: [] }, invocations: [{
     id: 'editor-bridge-live-probe#invoke', service: 'editorBridgeProbe', namespace: 'editorBridgeProbe', method: 'invoke', invocation: { kind: 'direct' },
-    parameters: [{ name: 'request', wire: 'request', source: 'json', codec: { mode: 'strict', typeSymbol: 'Request', create: () => z.strictObject({ sessionId: z.string() }) } }],
+    parameters: [{ name: 'request', wire: 'request', source: 'json', codec: { mode: 'strict', typeSymbol: 'Request', create: () => z.strictObject({ sessionId: z.string(), name: z.string().optional(), arguments: z.record(z.string(), z.unknown()).optional() }) } }],
     cancellation: { parameter: 'signal' }, result: { mode: 'strict', typeSymbol: 'Result', create: () => z.union([z.strictObject({ ok: z.literal(true), snapshot: z.record(z.string(), z.unknown()) }), z.strictObject({ ok: z.literal(false), reason: z.string() })]) }
   }] })
 }
@@ -66,6 +74,7 @@ export function apply(ctx) {
               installer,
               `import { runCli } from ${moduleUrl('@deepseek-ai/dsh/lib/bin.js')}; await runCli({ packageManager: { command: process.execPath, args: [${JSON.stringify(pnpmEntry)}] } });`,
             )
+            launchCommand = installer
           }
           const install = spawnManagedChild(
             installer,
@@ -109,7 +118,7 @@ export function apply(ctx) {
           patchFile,
           `- insert:\n${bridgeEntry}    - id: live-editor-probe\n      name: ${JSON.stringify(probeFile.replaceAll('\\', '/'))}\n`,
         )
-        runtime = await startManagedRuntime({ dshHome: home, patchFile })
+        runtime = await startManagedRuntime({ dshHome: home, patchFile, requestedRuntime: launchCommand })
         const { backend } = runtime
         const repository = backend.editorBridge
         if (repository === undefined) throw new Error('The exact adapter did not expose the companion port.')
@@ -172,6 +181,92 @@ export function apply(ctx) {
           }
           await repository.respond(binding.bindingId, request.requestId, { ok: true, snapshot })
           expect(await toolResult).toMatchObject({ value: { ok: true, value: { ok: true, snapshot } } })
+          await repository.detach(binding.bindingId)
+          const companion = repository.companion
+          if (companion === undefined) throw new Error('Missing negotiated companion repository.')
+          expect(await companion.describe()).toMatchObject({
+            protocolVersion: 2,
+            packageVersion: '0.2.0',
+            maxGrants: 16,
+          })
+          await verifyCompanionHost(companion, new AbortController().signal)
+          await expect(companion.verifyHost(randomUUID())).rejects.toMatchObject({
+            code: 'CAPABILITY_UNAVAILABLE',
+          })
+          const service = new EditorCompanionService()
+          let slowSignal: AbortSignal | undefined
+          let calls = 0
+          const document: EditorCompanionValue = {
+            kind: 'document',
+            relativePath: 'sample.ts',
+            languageId: 'typescript',
+            version: 3,
+            dirty: true,
+            range: { start: { line: 1, column: 1 }, end: { line: 1, column: 6 } },
+            text: 'const',
+            truncated: false,
+          }
+          try {
+            await service.start(companion, session.id, randomUUID(), ['content'], {
+              execute: (request, signal) => {
+                calls += 1
+                if (request.kind === 'document' && request.path === 'slow.ts') {
+                  slowSignal = signal
+                  return new Promise<EditorCompanionValue>(() => undefined)
+                }
+                return Promise.resolve(document)
+              },
+            })
+            const invoke = (
+              name: string,
+              args: Readonly<Record<string, unknown>>,
+              signal?: AbortSignal,
+            ): Promise<unknown> =>
+              transport.remoteRequest(
+                'editorBridgeProbe/invoke',
+                { request: { sessionId: session.id, name, arguments: args } },
+                signal,
+              )
+            expect(await invoke('vscode_read_document', { path: 'sample.ts' })).toMatchObject({
+              ok: true,
+              value: { ok: true, snapshot: document },
+            })
+            expect(await invoke('vscode_get_diagnostics', { path: 'sample.ts' })).toMatchObject({
+              ok: true,
+              value: { ok: false },
+            })
+            expect(calls).toBe(1)
+            const cancelled = new AbortController()
+            const pending = expect(
+              invoke('vscode_read_document', { path: 'slow.ts' }, cancelled.signal),
+            ).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
+            await vi.waitFor(() => expect(slowSignal).toBeDefined(), { timeout: 5_000 })
+            cancelled.abort()
+            await pending
+            await vi.waitFor(() => expect(slowSignal?.aborted).toBe(true), { timeout: 5_000 })
+            expect(await invoke('vscode_read_document', { path: 'sample.ts' })).toMatchObject({
+              ok: true,
+              value: { ok: true, snapshot: document },
+            })
+            expect(service.active).toBe(true)
+            const second = await backend.sessions.create({
+              workspaceId: workspace.id,
+              configuration: {
+                preset: '',
+                toolMode: 'native',
+                permissionPreset: '',
+                planMode: false,
+                model: { providerId: '', modelId: '' },
+              },
+            })
+            const otherBinding = await companion.attach(second.id, randomUUID(), [])
+            await expect(companion.attach(session.id, randomUUID(), [])).rejects.toMatchObject({
+              code: 'BACKEND_BUSY',
+            })
+            await companion.detach(otherBinding.bindingId)
+          } finally {
+            await service.stop()
+          }
         } finally {
           await transport.close()
         }
@@ -185,6 +280,28 @@ export function apply(ctx) {
         await expect(repository.poll(binding.bindingId)).rejects.toMatchObject({
           code: 'CAPABILITY_UNAVAILABLE',
         })
+        if (bundle !== undefined) {
+          const plugins = backend.pluginBundles
+          if (plugins === undefined) throw new Error('Missing native bundle manager.')
+          expect(
+            (await plugins.listBundles()).find((item) => item.name === '@dsh-vscode/editor-bridge'),
+          ).toMatchObject({ installed: true, version: '0.2.0' })
+          expect((await plugins.setBundleEnabled('@dsh-vscode/editor-bridge', false)).application).toMatch(
+            /^(?:applied|restart-required)$/u,
+          )
+          expect((await plugins.setBundleEnabled('@dsh-vscode/editor-bridge', true)).application).toMatch(
+            /^(?:applied|restart-required)$/u,
+          )
+          const removed = await plugins.removeBundle('@dsh-vscode/editor-bridge')
+          expect(removed.application, JSON.stringify(removed)).toMatch(/^(?:applied|restart-required)$/u)
+          const installed = await plugins.installBundle(
+            bundle,
+            { requestId: randomUUID(), saveExact: true, approvedBuilds: [] },
+            AbortSignal.timeout(30_000),
+          )
+          expect(installed).toMatchObject({ version: '0.2.0' })
+          expect(installed.application).toMatch(/^(?:applied|restart-required)$/u)
+        }
         console.log(
           '[dsh-live-editor-bridge] rc.2 plugin, actual Agent/tool execution pipeline, Remote round trip, binding conflict, cancellation and detach passed; no model invoked',
         )

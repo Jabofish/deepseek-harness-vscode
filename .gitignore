@@ -13,6 +13,7 @@ Thumbs.db
 
 # Generated Webview assets copied into the extension package by Vite.
 apps/extension/media/
+apps/extension/resources/editor-companion.tgz
 
 # VS Code test/download caches.
 .vscode-test/

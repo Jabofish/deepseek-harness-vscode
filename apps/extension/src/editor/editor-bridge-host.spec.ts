@@ -10,6 +10,9 @@ const ui = vi.hoisted(() => ({
   hide: vi.fn(),
   dispose: vi.fn(),
   trusted: true,
+  pick: vi.fn(),
+  warning: vi.fn(),
+  proof: vi.fn(),
 }))
 vi.mock('vscode', () => ({
   workspace: {
@@ -21,9 +24,18 @@ vi.mock('vscode', () => ({
   },
   window: {
     showErrorMessage: ui.errors,
+    showQuickPick: ui.pick,
+    showWarningMessage: ui.warning,
     createStatusBarItem: () => ({ show: ui.show, hide: ui.hide, dispose: ui.dispose }),
   },
   StatusBarAlignment: { Right: 2 },
+}))
+vi.mock('./companion-host-proof.js', () => ({ verifyCompanionHost: ui.proof }))
+vi.mock('./editor-companion-provider.js', () => ({
+  EditorCompanionProvider: class {
+    readonly proposals = { pending: () => [] }
+    dispose(): void {}
+  },
 }))
 vi.mock('./editor-state-provider.js', () => ({
   EditorStateProvider: class {
@@ -33,7 +45,10 @@ vi.mock('./editor-state-provider.js', () => ({
   },
 }))
 
-function harness(ownership: 'managed' | 'external' = 'managed'): {
+function harness(
+  ownership: 'managed' | 'external' = 'managed',
+  rich = false,
+): {
   host: EditorBridgeHost
   attach: ReturnType<typeof vi.fn>
   detach: ReturnType<typeof vi.fn>
@@ -45,6 +60,9 @@ function harness(ownership: 'managed' | 'external' = 'managed'): {
   ui.show.mockClear()
   ui.hide.mockClear()
   ui.trusted = true
+  ui.pick.mockReset().mockResolvedValue([])
+  ui.warning.mockReset().mockResolvedValue('Continue')
+  ui.proof.mockReset().mockResolvedValue(undefined)
   const attach = vi.fn().mockResolvedValue({ bindingId: 'fixture_binding_1234', protocolVersion: 1 })
   const detach = vi.fn().mockResolvedValue(undefined)
   const backend = {
@@ -52,6 +70,28 @@ function harness(ownership: 'managed' | 'external' = 'managed'): {
     sessions: { get: () => Promise.resolve({ id: 'session-a', cwd: path.resolve('editor-bridge-fixture') }) },
     events: { subscribe: () => () => undefined },
     editorBridge: {
+      ...(rich
+        ? {
+            companion: {
+              describe: () =>
+                Promise.resolve({
+                  protocolVersion: 2,
+                  packageVersion: '0.2.0',
+                  capabilities: ['content', 'edit'],
+                  maxGrants: 16,
+                }),
+              attach: vi.fn().mockImplementation((...args: unknown[]) => {
+                attach(...args)
+                return Promise.resolve({ bindingId: 'fixture_binding_1234', protocolVersion: 2 })
+              }),
+              detach,
+              poll: (_binding: string, signal: AbortSignal) =>
+                new Promise((_resolve, reject) =>
+                  signal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true }),
+                ),
+            },
+          }
+        : {}),
       attach,
       detach,
       respond: vi.fn(),
@@ -94,6 +134,41 @@ function harness(ownership: 'managed' | 'external' = 'managed'): {
   }
 }
 describe('native editor sharing lifetime', () => {
+  it('negotiates capabilities, defaults to metadata and revokes a rich grant on session change', async () => {
+    const { host, attach, detach, navigation, changeSelection } = harness('managed', true)
+    expect(await host.enable()).toBe(true)
+    expect(ui.proof).toHaveBeenCalledTimes(1)
+    expect(ui.pick).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.objectContaining({ capability: 'content', picked: false })]),
+      expect.objectContaining({ canPickMany: true }),
+    )
+    expect(attach).toHaveBeenCalledWith('session-a', expect.any(String), [], expect.any(AbortSignal))
+    navigation.activeSessionId = 'session-b'
+    changeSelection()
+    await vi.waitFor(() => expect(detach).toHaveBeenCalledTimes(1))
+    await host.dispose()
+  })
+  it('rejects a failed same-host proof and dismissed external consent before creating a grant', async () => {
+    const failed = harness('managed', true)
+    ui.proof.mockRejectedValue(new Error('different filesystem'))
+    expect(await failed.host.enable()).toBe(false)
+    expect(failed.attach).not.toHaveBeenCalled()
+    await failed.host.dispose()
+    const external = harness('external', true)
+    ui.warning.mockResolvedValue(undefined)
+    expect(await external.host.enable()).toBe(false)
+    expect(external.attach).not.toHaveBeenCalled()
+    ui.warning.mockResolvedValue('Continue')
+    ui.pick.mockResolvedValue([{ capability: 'content' }])
+    expect(await external.host.enable()).toBe(true)
+    expect(external.attach).toHaveBeenCalledWith(
+      'session-a',
+      expect.any(String),
+      ['content'],
+      expect.any(AbortSignal),
+    )
+    await external.host.dispose()
+  })
   it('starts only on the native action and revokes when the selected session changes', async () => {
     const { host, attach, detach, navigation, changeSelection } = harness()
     expect(attach).not.toHaveBeenCalled()

@@ -30,6 +30,9 @@ const fail = (reason: EditorBridgeFailure): EditorBridgeResult<never> => ({ stat
 /** One explicit owner/session lease. No persisted grants, snapshots, or unbounded queues. */
 export class EditorBridgeBroker {
   private binding: Binding | undefined
+  public hasSession(sessionId: string): boolean {
+    return this.binding?.sessionId === sessionId
+  }
   public constructor(private readonly limits = { leaseMs: 10_000, pollMs: 1_000, callMs: 5_000 }) {}
 
   public attach(sessionId: string, ownerId: string, peerId: string): EditorBridgeResult<EditorBridgeBinding> {

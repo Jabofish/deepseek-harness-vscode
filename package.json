@@ -11,7 +11,8 @@
     "pnpm": ">=11.0.0"
   },
   "scripts": {
-    "build": "pnpm --filter @dsh-vscode/editor-bridge build && pnpm --filter @dsh-vscode/webview build && pnpm --filter deepseek-harness-client build",
+    "build": "node scripts/build-editor-companion.mjs && pnpm --filter @dsh-vscode/webview build && pnpm --filter deepseek-harness-client build",
+    "build:companion": "node scripts/build-editor-companion.mjs",
     "check": "concurrently --kill-others-on-fail -n format,docs,i18n,lint,typecheck,test \"pnpm format:check\" \"pnpm docs:check\" \"pnpm i18n:check\" \"pnpm lint\" \"pnpm typecheck\" \"pnpm test\"",
     "clean": "pnpm -r --if-present clean",
     "dev": "pnpm --parallel --filter @dsh-vscode/webview --filter deepseek-harness-client dev",

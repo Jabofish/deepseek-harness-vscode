@@ -31,14 +31,15 @@ export default tseslint.config(
             'scripts/publish-marketplace.cjs',
             'scripts/patch-js-debug-ipv6-probe.cjs',
             'scripts/check-docs.mjs',
+            'scripts/build-editor-companion.mjs',
             'scripts/i18n.mjs',
             'scripts/release-notes.mjs',
             'scripts/read-stylesheet.mjs',
             'scripts/read-stylesheet.d.mts',
           ],
           // The build/config scripts above are intentionally outside every
-          // tsconfig; twelve files exceed the default match limit.
-          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 12,
+          // tsconfig; thirteen files exceed the default match limit.
+          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 13,
         },
         tsconfigRootDir: import.meta.dirname,
       },

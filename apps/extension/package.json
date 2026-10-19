@@ -53,6 +53,9 @@
     "onCommand:dsh.addDiagnosticContext",
     "onCommand:dsh.shareEditorState",
     "onCommand:dsh.stopSharingEditorState",
+    "onCommand:dsh.manageEditorCompanion",
+    "onCommand:dsh.installEditorCompanion",
+    "onCommand:dsh.reviewEditorEdits",
     "onView:dsh.sessionList",
     "onCommand:dsh.openSessionList"
   ],
@@ -214,6 +217,21 @@
         "icon": "$(circle-slash)"
       },
       {
+        "command": "dsh.manageEditorCompanion",
+        "title": "DSH: Manage Editor Companion",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "dsh.installEditorCompanion",
+        "title": "DSH: Install Editor Companion",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "dsh.reviewEditorEdits",
+        "title": "DSH: Review Proposed Editor Edits",
+        "icon": "$(diff)"
+      },
+      {
         "command": "dsh.authorizeExternalConnection",
         "title": "Authorize External Connection",
         "category": "DSH"
@@ -261,6 +279,11 @@
     ],
     "menus": {
       "view/title": [
+        {
+          "command": "dsh.manageEditorCompanion",
+          "when": "view == dsh.chatView && dsh.connected",
+          "group": "editorSharing@0"
+        },
         {
           "command": "dsh.shareEditorState",
           "when": "view == dsh.chatView && dsh.connected",

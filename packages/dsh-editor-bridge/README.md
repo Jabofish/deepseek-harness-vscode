@@ -1,65 +1,111 @@
 # VS Code editor companion for DSH
 
-An optional, locally installable DSH bundle exposing `vscode_get_editor_state`.
-The tool reads explicitly shared metadata from the VS Code Extension Host:
-workspace-relative file name, language, document version, unsaved state,
-one-based UTF-16 selection, and cached error/warning counts. It does not read
-document text or diagnostic messages. Counts are observations, not proof that
-language services or compilation have finished.
-
-## Build and install
-
-Use the exact DSH runtime specified in the repository's
+An optional DSH bundle giving an agent explicitly scoped access to the actual
+VS Code editor, including unsaved buffers. It uses the authenticated Remote
+connection and adds no listening port. The exact runtime is pinned in the
 [compatibility contract](../../docs/dsh-contract.md#编辑器配套插件).
-From the repository root:
+
+## Install and manage
+
+Build with `pnpm build` (bundle only: `pnpm build:companion`). The extension
+includes the private local bundle; these commands do not publish it to npm.
+
+1. Connect an extension-managed DSH in a trusted workspace.
+2. Run **DSH: Install Editor Companion**, or **DSH: Manage Editor Companion**
+   from the Command Palette or the DSH view's More Actions menu.
+3. Confirm installation; reconnect if DSH requires it.
+4. Select a session whose working directory matches an open workspace root.
+5. Run **DSH: Share Editor State with Current Session** and select permissions.
+   No capabilities selected means metadata access only.
+
+The manager displays installed/active versions and protocol, and offers enable,
+disable, uninstall, local archive installation, cached restore, access revocation
+and edit review. Replacements require a recovery archive of the installed version.
+Confirmed failed/cancelled replacements attempt to restore it. Unknown outcomes
+are recovered using the original installation ID, blocking duplicate installs.
+Archives are identity-checked and kept in a bounded, hash-verified cache. Install
+only trusted archives: package validation is not a code signature.
+
+DSH's own plugin manager must have a working pnpm invocation in its execution
+environment. A broken/missing package-manager command can make mutations fail
+even when status queries and editor tools work. A profile started without the
+required hot-reload support may require offline CLI maintenance; the manager
+reports that upstream refusal rather than bypassing the profile lock.
+
+External loopback runtimes may share editor access after native trust confirmation
+and proof of access to the Extension Host filesystem. Installation, removal and
+process control remain exclusive to extension-managed instances. For an external
+runtime, install the bundle into its selected home/profile yourself, for example:
 
 ```powershell
-pnpm install --frozen-lockfile
 pnpm --filter @dsh-vscode/editor-bridge pack --pack-destination artifacts
-dsh plugin --profile web add "<absolute path to artifacts/dsh-vscode-editor-bridge-0.1.0.tgz>"
+dsh plugin --profile web add "<absolute path to artifacts/dsh-vscode-editor-bridge-0.2.0.tgz>"
 ```
 
-Installation changes the selected DSH home's `web` profile. Choose that home
-explicitly when testing. Reconnect the extension-owned runtime after installation;
-if the running DSH asks for a restart, use the extension's own reconnect action.
-The extension does not install the bundle automatically or control external DSH
-processes. This package is private and is not published to npm by these steps.
+## Tools and permissions
 
-## Use
+File paths are relative to the selected session root; coordinates are one-based
+UTF-16. Tool registration is automatic and supports DSH tool discovery. Each
+request rechecks its capability, trust, document and workspace boundaries.
 
-1. Open one trusted local workspace folder. Use an extension-managed local DSH
-   instance (`new-isolated`, or one started by `auto`).
-2. Select an ordinary DSH session whose working directory matches that folder.
-3. From the DSH view's **More Actions** menu or the Command Palette, run
-   **DSH: Share Editor State with Current Session**.
-4. Keep a saved file open in the editor; its current buffer may contain unsaved
-   changes. Ask the model to call `vscode_get_editor_state`.
-5. Click **DSH: Editor state shared** in the status bar, or run
-   **DSH: Stop Sharing Editor State**, to revoke access.
+| Tool                      | Required permission | Behavior                                                                                |
+| ------------------------- | ------------------- | --------------------------------------------------------------------------------------- |
+| `vscode_get_editor_state` | Metadata grant      | Active file, language, version, dirty flag, selection and diagnostic counts.            |
+| `vscode_read_document`    | Content             | Current buffer, optional line range/expected version; at most 65,536 UTF-16 code units. |
+| `vscode_read_selection`   | Content             | Actual selected text, version and truncation status.                                    |
+| `vscode_get_diagnostics`  | Diagnostics         | Bounded cached messages/ranges/severity; does not wait for compilation.                 |
+| `vscode_find_symbols`     | Language services   | Document symbols or a workspace symbol query confined to the selected root.             |
+| `vscode_find_definitions` | Language services   | Definition locations with out-of-root results excluded.                                 |
+| `vscode_find_references`  | Language services   | Reference locations with the same containment rules.                                    |
+| `vscode_open_file`        | Navigation          | Validated file and position, preserving keyboard focus.                                 |
+| `vscode_propose_edit`     | Edit proposals      | Versioned, non-overlapping edits to one document; returns pending and never writes.     |
+| `vscode_get_edit_result`  | Edit proposals      | Pending/applied/declined/stale/cancelled receipt for this grant.                        |
 
-Sharing is volatile and belongs to one session/window/workspace. Session changes,
-workspace changes, disconnect and shutdown revoke it. Reconnect does not restore
-authorization. A missing editor is an unavailable result, not an empty snapshot.
-Only one owner/session can hold a lease per DSH process in this MVP. External
-instances, remote workspaces, multiple roots, file editing and source/diagnostic
-body retrieval are outside the first supported scope.
+An edit requires a separate user action: **DSH: Review Proposed Editor Edits** or the native
+Review notification, followed by native diff inspection and explicit Apply. The
+Host rechecks permission, trust, root, version and original text before applying
+one undoable edit group. It never saves the file. Dismissing confirmation leaves
+the proposal pending. At most eight proposals are kept per grant, expiring after
+ten minutes; before/after documents are limited to 262,144 UTF-16 code units each.
 
-## Protocol and verification
+## Scope and lifecycle
 
-The plugin uses DSH's existing authenticated Remote connection. It adds no
-listening port. Fixed `attach`, `poll`, `respond`, and `detach` methods carry
-strictly validated messages. Binding identities stay in the Host. A bounded
-poll renews a short lease; cancellation, expiry and teardown release pending
-requests. The tool can only request metadata for its own bound Agent session.
+Up to sixteen different sessions/windows can hold independent grants in one DSH.
+A session cannot be claimed by a second window. Each grant selects one multi-root
+workspace folder and allows four concurrent requests. Per-request cancellation
+does not revoke other requests. Session/root changes, disconnect, shutdown,
+explicit stop and lease expiry revoke access. Reconnection never restores access.
+Missing editors, unavailable language providers, stale versions and denied
+permissions return explicit errors.
 
-`pnpm check` covers contracts, ownership, cancellation, stale replies, metadata
-allowlists and Host lifecycle. The opt-in
-`tests/live-dsh/editor-bridge.spec.ts` exercises an isolated real DSH and its
-Agent/tool execution pipeline without a model request. The separate
-`tests/vscode-e2e/editor-bridge.ts` exercises the real VS Code metadata provider.
-These are separate evidence paths; a complete model-driven UI scenario remains
-manual acceptance work.
+Files must be regular files inside the selected real root; symlink escapes,
+files over 2 MiB and arbitrary URI schemes are rejected. Open buffers may contain
+unsaved changes; untitled documents outside a root are unavailable. Language
+queries depend on installed VS Code providers and are not an indexing service.
 
-中文：安装本地 bundle 后，在受管本地 DSH 的当前会话中主动开启编辑器状态共享。
-工具仅返回相对文件名、语言、版本、未保存标记、选区和诊断数量；切换会话或断连会撤销。
-状态栏可随时停用。代码和诊断正文不包含在首版能力中。
+In SSH, WSL or containers, both extension and DSH must execute on the workspace
+Extension Host. Matching paths or a forwarded loopback address are insufficient:
+a short-lived random filesystem challenge must succeed. Desktop-to-remote path
+mapping and arbitrary remote HTTP sharing are unavailable. Remote environment
+acceptance remains separate from local tests.
+
+Code and diagnostic details go to the granted DSH tool. Structured companion
+cards in the Webview show safe summaries in live events and restored history.
+This does not redact text the model chooses to quote in its reply. Credentials,
+privileged paths and grant identifiers stay in the Host.
+
+## Protocol and evidence
+
+Package 0.2.0 negotiates protocol 2 via `vscodeEditorCompanion/describe`,
+`verifyHost`, `attach`, `poll`, `respond` and `detach`, retaining legacy metadata
+protocol 1. Inputs, outputs and limits are strictly validated. Grants bind to
+both the Agent session and Remote Peer. Slow operations do not stop lease renewal;
+stale replies cannot satisfy later requests. No privileged Webview route is added.
+
+`pnpm check` covers contracts, containment, permissions, cancellation, edit
+conflicts, rollback and projections. `tests/live-dsh/editor-bridge.spec.ts`
+exercises an isolated real DSH Agent/tool pipeline without model inference.
+`tests/vscode-e2e/editor-bridge.ts` separately exercises real VS Code APIs with
+registered language-provider fixtures. Manual diff acceptance, a model-driven
+editor scenario and SSH/container acceptance are not implied by these tests.
+See the [completion record](../../reviews/dsh-editor-companion-completion.md).

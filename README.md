@@ -21,7 +21,7 @@
 
 The connected DSH version determines which advanced capabilities are available. Unsupported operations show a clear unavailable state. The [compatibility contract](docs/dsh-contract.md) lists exact adapter boundaries; the [capability matrix](docs/capability-matrix.md) summarizes supported functions, limitations and completion status.
 
-The optional [editor companion](packages/dsh-editor-bridge/README.md) lets a DSH agent query explicitly shared editor metadata, including unsaved state and cached diagnostic counts. Enable it for the current session through **DSH: Share Editor State with Current Session**; the status bar provides a stop-sharing action. Its initial scope is one trusted local folder with an extension-managed DSH.
+The optional [editor companion](packages/dsh-editor-bridge/README.md) gives a DSH agent explicit, scoped access to unsaved text, selections, cached diagnostics, language services, navigation and reviewed edit proposals. Use **DSH: Manage Editor Companion** to install and manage it, then **DSH: Share Editor State with Current Session** to select permissions. Edits require a separate native diff review and confirmation; the status bar manages access and pending proposals. Multi-root and independent session grants are supported. See the companion guide for runtime, remote-environment and acceptance limits.
 
 ## Install and start
 

@@ -1,6 +1,5 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
-import type { TypertContribution } from '@deepseek-ai/dsh-typert-registry'
 import { TypertRemoteService, type InvocationDescriptor } from '@deepseek-ai/dsh-typert-protocol'
 import { z } from 'zod'
 import {
@@ -17,6 +16,8 @@ import {
   type EditorBridgeResult,
 } from '@dsh-vscode/domain'
 import { EditorBridgeBroker } from './broker.js'
+import { VscodeEditorCompanion } from './companion-remote.js'
+import { registerEditorRemote } from './remote-registration.js'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -40,9 +41,11 @@ const isTrue = (value: unknown): value is true => value === true
 /** Independently installable, optional companion. All Remote boundaries use strict schemas. */
 export class VscodeEditorBridge extends TypertRemoteService {
   private readonly broker = new EditorBridgeBroker()
+  private readonly companion: VscodeEditorCompanion
 
   public constructor(ctx: Context) {
     super(ctx, 'vscodeEditorBridge')
+    this.companion = new VscodeEditorCompanion(ctx, this.broker)
     const methods = [
       descriptor('attach', attach, isEditorBridgeBinding),
       descriptor('poll', binding, isEditorBridgePoll),
@@ -50,15 +53,7 @@ export class VscodeEditorBridge extends TypertRemoteService {
       descriptor('detach', binding, isTrue),
     ]
     // Public manual registration is supported for hand-written third-party wire schemas.
-    const registry = ctx.typert
-    if (!hasRegistration(registry)) throw new Error('The DSH reflection registry is unavailable.')
-    registry.register({
-      package: '@dsh-vscode/editor-bridge',
-      face: 'host',
-      schemas: [],
-      model: { services: [], events: [], objects: [] },
-      invocations: methods,
-    })
+    registerEditorRemote(ctx, [...methods, ...this.companion.invocations])
     const broker = this.broker
     ctx.effect(function* () {
       yield () => broker.dispose()
@@ -74,7 +69,13 @@ export class VscodeEditorBridge extends TypertRemoteService {
       },
       execute: async (args, exec) => {
         if (!z.strictObject({}).safeParse(args).success) throw new Error('Editor state takes no arguments.')
-        const snapshot = await this.broker.read(exec.agent?.session.id, exec.signal)
+        const sessionId = exec.agent?.session.id
+        const value =
+          sessionId !== undefined && this.companion.broker.hasSession(sessionId)
+            ? await this.companion.broker.read(sessionId, { kind: 'state' }, exec.signal)
+            : undefined
+        const snapshot =
+          value?.kind === 'state' ? value.state : await this.broker.read(sessionId, exec.signal)
         if (!isEditorStateSnapshot(snapshot)) throw new Error('Invalid editor snapshot.')
         return snapshot
       },
@@ -85,6 +86,7 @@ export class VscodeEditorBridge extends TypertRemoteService {
     const peer = this.peer()
     if (peer === undefined || !attach.safeParse(request).success)
       return { status: 'error', reason: 'unavailable' }
+    if (this.companion.broker.hasSession(request.sessionId)) return { status: 'error', reason: 'busy' }
     return this.broker.attach(request.sessionId, request.ownerId, peer)
   }
   public poll(
@@ -117,10 +119,6 @@ export const name = 'vscode-editor-bridge'
 export const inject = ['typert', 'tools']
 export function apply(ctx: Context): void {
   new VscodeEditorBridge(ctx)
-}
-
-function hasRegistration(value: object): value is { register(contribution: TypertContribution): () => void } {
-  return 'register' in value && typeof value.register === 'function'
 }
 
 function descriptor<T>(

@@ -13,6 +13,16 @@ Bring local or remote [DeepSeek Harness](https://github.com/deepseek-ai/deepseek
 
 Available operations depend on the connected DSH runtime. Unsupported capabilities are shown explicitly; [exact compatibility and current limitations](https://github.com/Jabofish/deepseek-harness-vscode/tree/main/docs) are documented in the repository.
 
+The optional editor bundle adds ten tools for metadata, unsaved text/selection,
+cached diagnostics, symbols/definitions/references, navigation and reviewed edit
+proposals. Run **DSH: Manage Editor Companion** to install or manage it, then
+**DSH: Share Editor State with Current Session** to choose permissions. Each
+session grant selects one workspace root; multiple sessions/windows are isolated.
+Edits require separate native diff review and confirmation, remain unsaved and
+can be undone. Installation and process control are restricted to extension-owned
+DSH; external sharing needs native trust confirmation and same-host verification.
+Model-driven, manual diff and remote-workspace acceptance remain separate checks.
+
 ## Get started
 
 1. Open the **DeepSeek Harness** view.

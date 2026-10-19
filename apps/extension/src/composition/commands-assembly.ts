@@ -270,6 +270,9 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
         'dsh.addDiagnosticContext': () => captureEditorContextFromCommand('diagnostic'),
         'dsh.shareEditorState': () => editorBridge.enable(),
         'dsh.stopSharingEditorState': () => editorBridge.stop(),
+        'dsh.manageEditorCompanion': () => editorBridge.manage(),
+        'dsh.installEditorCompanion': () => editorBridge.install(),
+        'dsh.reviewEditorEdits': () => editorBridge.reviewEdits(),
       },
     })
     void postEditorContextAvailabilityEvent()

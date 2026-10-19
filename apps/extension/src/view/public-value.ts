@@ -4,6 +4,7 @@ import type { WorkspaceSummary } from '@dsh-vscode/domain'
 import { isCanonicalWorkspaceRelativePath } from '@dsh-vscode/domain'
 
 import { isPathWithin } from '../backend/path-safety.js'
+import { publicEditorCompanionTool } from './editor-companion-public.js'
 
 /**
  * Project a workspace summary across the Host/Webview boundary.
@@ -75,6 +76,8 @@ export function sanitizePublicValue(
     })
   if (typeof value !== 'object' || value === null) return value
   const source = value as Record<string, unknown>
+  const editorTool = publicEditorCompanionTool(source)
+  if (editorTool !== undefined) return editorTool
   const result: Record<string, unknown> = {}
   for (const [key, entry] of Object.entries(source)) {
     if (isSensitivePublicField(parentKey, key, entry, source)) continue

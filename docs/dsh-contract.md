@@ -99,15 +99,15 @@ rc.2 与 rc.1 的 Connection / Gateway、全部 API Remote、Session V4、Accoun
 
 ## 编辑器配套插件
 
-可选包 `@dsh-vscode/editor-bridge` 的协议 v1 首次固定到 `dsh-v0.2.1-rc.2` / `687f282e8625c6b8d11ff58211a90524be2e4317`。插件独立构建为带 `dsh.bundle.patch` 的本地安装包；不要求修改 DSH 核心。第三方手写 Remote 使用上游 Typert Registry 的公开 `register` 能力注册严格输入/输出描述，不依赖 SRC 解析或改变现有客户端的协议。
+可选包 `@dsh-vscode/editor-bridge` 固定到 `dsh-v0.2.1-rc.2` / `687f282e8625c6b8d11ff58211a90524be2e4317`；包 0.2.0 同时提供元数据协议 1 与能力协议 2。插件独立构建为带 `dsh.bundle.patch` 的本地安装包；不要求修改 DSH 核心。第三方手写 Remote 使用上游 Typert Registry 的公开 `register` 能力注册严格输入/输出描述，同包同 Host face 合并为一次贡献，避免覆盖。工具 schema 遵循目标版本支持的子集，数量与长度等边界由运行时严格校验。
 
-`rc212` 提供可选仓储入口，缺少插件时返回能力不可用。固定 `vscodeEditorBridge/attach`、`poll`、`respond`、`detach` 均以 `request` 为命名参数，业务结果为严格的 `status: ok/error` 联合。绑定响应声明协议版本；未知版本或字段被拒绝。首版 Host 只接受受管 loopback 实例、单个受信本地工作区以及工作目录匹配的普通会话。
+`rc212` 提供可选仓储入口，缺少插件时返回能力不可用。旧 `vscodeEditorBridge/attach`、`poll`、`respond`、`detach` 保留兼容；新 `vscodeEditorCompanion/describe`、`verifyHost`、`attach`、`poll`、`respond`、`detach` 均以 `request` 为命名参数，业务结果为严格的 `status: ok/error` 联合。未知版本或字段被拒绝。仅能力缺失可回退旧协议，回退限受管 loopback 单根本地元数据共享。新协议要求受信根与权威会话 cwd 匹配，并通过工作区侧临时随机文件哈希挑战；外部 loopback 实例还需单独原生确认。
 
-一个 DSH 进程仅保留一个 owner/session 绑定，绑定还校验实际 Remote Peer。`poll` 最长等待一秒并续期十秒 lease；工具请求最多等待五秒且至多一个待处理请求。`exec.signal` 取消、lease 过期、解绑和插件卸载释放等待；过期或重复回复不可用于后续请求。Host 授权不持久化，切换会话、工作区或连接后需重新开启。
+旧协议保留一个绑定、十秒 lease、五秒请求时限；新协议最多十六个独立会话绑定，每个最多四个请求，`poll` 最长一秒，lease 十五秒，请求时限十秒。绑定校验真实 Remote Peer，同一会话不能被另一窗口占用，新旧协议不能重复授权同一会话。`exec.signal` 取消只释放对应请求；lease 过期、解绑和插件卸载释放授权及等待。采集与 poll 独立运行，迟到或重复回复不能满足新请求。Host 授权不持久化，切换会话、工作区或连接后需重新开启。
 
-`vscode_get_editor_state` 不接受模型参数，只读取调用 Agent 所绑定会话的编辑器元数据。选区坐标为一基 UTF-16；诊断计数来自当前缓存，不表示语言服务完成。代码、选中文本、诊断消息、绝对路径与凭据不进入工具结果。Webview 不持有绑定身份或通信权限，用户通过原生命令和状态栏控制授权。
+`vscode_get_editor_state` 仍不接受模型参数且只返回元数据。协议 2 按内容、诊断、语言服务、导航、编辑提案分别授权，提供九个新增工具；完整目录与边界见[配套包说明](../packages/dsh-editor-bridge/README.md)。选区坐标为一基 UTF-16，诊断是缓存观察，不表示编译完成。内容最多 65,536 字符，结果条目最多 200，文件受真实根路径与 2 MiB 限制。提案仅待审，原生用户确认后校验原文与版本再一次性可撤销写入，不自动保存；工具不能替用户确认。结构化工具正文只返回已授权 DSH，Webview 实时及恢复历史仅接收安全摘要，不持有绑定身份或通信权限。
 
-原生包的公开 peer 固定到目标 DSH 家族；其发布的 Typert Registry 类型引用缺少 Protocol 依赖，本仓库为该精确包使用 `packageExtensions`，防止 legacy codec 依赖导致错误类型解析。构建包包含所需本仓库纯规则，不依赖运行时读取工作区源码。安装与使用见[配套包说明](../packages/dsh-editor-bridge/README.md)，独立验证边界见[MVP 检查记录](../reviews/dsh-editor-bridge-mvp.md)。
+原生包的公开 peer 固定到目标 DSH 家族；其发布的 Typert Registry 类型引用缺少 Protocol 依赖，本仓库为该精确包使用 `packageExtensions`，防止 legacy codec 依赖导致错误类型解析。构建包包含所需本仓库纯规则，不依赖运行时读取工作区源码。原生管理器仅修改扩展受管实例的 bundle，安装确认丢失按原 ID 恢复；HMR 模式已安装名称不可直接重装，替换前先保留恢复档案并移除旧条目。真实源码来源包括 `packages/core/tools`、`packages/typert/registry` 和 `packages/boot/plugin-manager`。验证边界见[补全记录](../reviews/dsh-editor-companion-completion.md)。
 
 ## 启动与传输
 

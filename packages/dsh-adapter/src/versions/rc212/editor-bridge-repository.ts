@@ -13,6 +13,7 @@ import {
   type EditorBridgeRepository,
 } from '@dsh-vscode/domain'
 import { unwrapRpcResultValue } from '../rc6/rpc.js'
+import { Rc212EditorCompanionRepository } from './editor-companion-repository.js'
 
 interface Transport {
   remoteRequest(
@@ -30,7 +31,10 @@ const failure = (code: AppErrorCode): AppError =>
 
 /** Our protocol v1, verified on dsh-v0.2.1-rc.2; fixed endpoints, no mutation retries. */
 export class Rc212EditorBridgeRepository implements EditorBridgeRepository {
-  public constructor(private readonly transport: Transport) {}
+  public readonly companion: Rc212EditorCompanionRepository
+  public constructor(private readonly transport: Transport) {
+    this.companion = new Rc212EditorCompanionRepository(transport)
+  }
 
   public attach(sessionId: string, ownerId: string, signal?: AbortSignal): Promise<EditorBridgeBinding> {
     if (!sessionId || sessionId.length > 256 || !isEditorBridgeId(ownerId))
