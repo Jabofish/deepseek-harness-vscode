@@ -97,6 +97,18 @@ rc.2 与 rc.1 的 Connection / Gateway、全部 API Remote、Session V4、Accoun
 
 对非空但未识别的标签，先进行公共握手，再按显式优先级只读 `probeCompatibility`。候选拒绝、超时或契约不匹配时尝试下一个；全部失败才拒绝连接。成功后保留真实版本标签、所选 Adapter 和兼容警告。只可复用经过证明安全的基础 wire：Session v2/v3/V4、`delivery`、turn-window、目录/交付事件和其他版本专属字段不能通过相近版本号猜测；未知 Remote 或事件安全降级为 unknown 或 `CAPABILITY_UNAVAILABLE`。畸形 SemVer-like 身份在 wire probe 前拒绝。
 
+## 编辑器配套插件
+
+可选包 `@dsh-vscode/editor-bridge` 的协议 v1 首次固定到 `dsh-v0.2.1-rc.2` / `687f282e8625c6b8d11ff58211a90524be2e4317`。插件独立构建为带 `dsh.bundle.patch` 的本地安装包；不要求修改 DSH 核心。第三方手写 Remote 使用上游 Typert Registry 的公开 `register` 能力注册严格输入/输出描述，不依赖 SRC 解析或改变现有客户端的协议。
+
+`rc212` 提供可选仓储入口，缺少插件时返回能力不可用。固定 `vscodeEditorBridge/attach`、`poll`、`respond`、`detach` 均以 `request` 为命名参数，业务结果为严格的 `status: ok/error` 联合。绑定响应声明协议版本；未知版本或字段被拒绝。首版 Host 只接受受管 loopback 实例、单个受信本地工作区以及工作目录匹配的普通会话。
+
+一个 DSH 进程仅保留一个 owner/session 绑定，绑定还校验实际 Remote Peer。`poll` 最长等待一秒并续期十秒 lease；工具请求最多等待五秒且至多一个待处理请求。`exec.signal` 取消、lease 过期、解绑和插件卸载释放等待；过期或重复回复不可用于后续请求。Host 授权不持久化，切换会话、工作区或连接后需重新开启。
+
+`vscode_get_editor_state` 不接受模型参数，只读取调用 Agent 所绑定会话的编辑器元数据。选区坐标为一基 UTF-16；诊断计数来自当前缓存，不表示语言服务完成。代码、选中文本、诊断消息、绝对路径与凭据不进入工具结果。Webview 不持有绑定身份或通信权限，用户通过原生命令和状态栏控制授权。
+
+原生包的公开 peer 固定到目标 DSH 家族；其发布的 Typert Registry 类型引用缺少 Protocol 依赖，本仓库为该精确包使用 `packageExtensions`，防止 legacy codec 依赖导致错误类型解析。构建包包含所需本仓库纯规则，不依赖运行时读取工作区源码。安装与使用见[配套包说明](../packages/dsh-editor-bridge/README.md)，独立验证边界见[MVP 检查记录](../reviews/dsh-editor-bridge-mvp.md)。
+
 ## 启动与传输
 
 `packages/dsh-adapter/src/launch-contract.ts` 集中生成启动参数。`0.0.1-rc.1/.2/.5`、`0.1.0-rc.2/.3/.6/.7` 使用 `--profile web --host 127.0.0.1 --port <n>`；从 `0.1.0-rc.8` 起的已核对入口还传 `--no-open`。未知版本不猜可选 flag。端口为已验证的 loopback 端口，不扫描范围。进程所有权规则见 [架构](architecture.md)。

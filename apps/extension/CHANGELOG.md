@@ -1,5 +1,10 @@
 # Change Log
 
+## Unreleased
+
+- 新增可选 DSH 编辑器配套插件 MVP：用户可为当前会话开启/撤销编辑器元数据共享，Agent 工具读取相对文件名、语言、版本、未保存标记、选区及缓存诊断计数。首版限单根受信本地工作区和扩展持有的 DSH，不读取代码或诊断正文。
+- Adds an optional DSH editor companion MVP. Explicit session sharing exposes editor metadata, unsaved state, selection and cached diagnostic counts through a model-callable tool; a native status indicator revokes access. Initial scope is one trusted local folder and an extension-managed DSH, without source or diagnostic bodies.
+
 ## 0.3.4
 
 - 修复会话标题不同步、Agent 与 Creator 被错误禁用，以及目标、队列和后台任务恢复后仍提示读取失败的问题。

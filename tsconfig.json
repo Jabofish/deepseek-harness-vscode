@@ -5,6 +5,7 @@
     { "path": "apps/webview" },
     { "path": "packages/application" },
     { "path": "packages/domain" },
+    { "path": "packages/dsh-editor-bridge" },
     { "path": "packages/dsh-adapter" },
     { "path": "packages/timeline" },
     { "path": "packages/ui" },

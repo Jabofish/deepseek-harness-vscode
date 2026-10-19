@@ -21,6 +21,8 @@
 
 高级能力取决于连接的 DSH 版本；不支持的操作会明确显示不可用。[兼容契约](docs/dsh-contract.md)列出精确 Adapter 边界；[能力矩阵](docs/capability-matrix.md)概述具体功能、限制和完成状态。
 
+可选的[编辑器配套插件](packages/dsh-editor-bridge/README.md)让 DSH Agent 查询主动共享的编辑器状态，包括未保存标记和缓存诊断数量。通过 **DSH: Share Editor State with Current Session** 为当前会话启用，状态栏可随时停用。首版限单个受信本地文件夹与扩展持有的 DSH。
+
 ## 安装与开始使用
 
 从 [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=Direwolf.deepseek-harness-client) 安装扩展，或从[最新 GitHub Release](https://github.com/Jabofish/deepseek-harness-vscode/releases/latest)下载对应平台的 VSIX，再执行 **Extensions: Install from VSIX...**。

@@ -21,6 +21,8 @@
 
 The connected DSH version determines which advanced capabilities are available. Unsupported operations show a clear unavailable state. The [compatibility contract](docs/dsh-contract.md) lists exact adapter boundaries; the [capability matrix](docs/capability-matrix.md) summarizes supported functions, limitations and completion status.
 
+The optional [editor companion](packages/dsh-editor-bridge/README.md) lets a DSH agent query explicitly shared editor metadata, including unsaved state and cached diagnostic counts. Enable it for the current session through **DSH: Share Editor State with Current Session**; the status bar provides a stop-sharing action. Its initial scope is one trusted local folder with an extension-managed DSH.
+
 ## Install and start
 
 Install [DeepSeek Harness Companion for VS Code](https://marketplace.visualstudio.com/items?itemName=Direwolf.deepseek-harness-client) from the Marketplace, or download a platform VSIX from the [latest GitHub Release](https://github.com/Jabofish/deepseek-harness-vscode/releases/latest) and use **Extensions: Install from VSIX...**.

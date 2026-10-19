@@ -51,6 +51,8 @@
     "onCommand:dsh.addFileContext",
     "onCommand:dsh.addSymbolContext",
     "onCommand:dsh.addDiagnosticContext",
+    "onCommand:dsh.shareEditorState",
+    "onCommand:dsh.stopSharingEditorState",
     "onView:dsh.sessionList",
     "onCommand:dsh.openSessionList"
   ],
@@ -202,6 +204,16 @@
         "icon": "$(error)"
       },
       {
+        "command": "dsh.shareEditorState",
+        "title": "DSH: Share Editor State with Current Session",
+        "icon": "$(broadcast)"
+      },
+      {
+        "command": "dsh.stopSharingEditorState",
+        "title": "DSH: Stop Sharing Editor State",
+        "icon": "$(circle-slash)"
+      },
+      {
         "command": "dsh.authorizeExternalConnection",
         "title": "Authorize External Connection",
         "category": "DSH"
@@ -249,6 +261,16 @@
     ],
     "menus": {
       "view/title": [
+        {
+          "command": "dsh.shareEditorState",
+          "when": "view == dsh.chatView && dsh.connected",
+          "group": "editorSharing@1"
+        },
+        {
+          "command": "dsh.stopSharingEditorState",
+          "when": "view == dsh.chatView && dsh.connected",
+          "group": "editorSharing@2"
+        },
         {
           "command": "dsh.newSession",
           "when": "view == dsh.chatView",

@@ -44,6 +44,7 @@ import type {
 import type { PermissionOption, QuestionAnswer } from './tools.js'
 import type { UserQuestionRepository } from './user-questions.js'
 import type { WorkspaceCreateInput, WorkspaceSummary } from './workspaces.js'
+import type { EditorBridgeRepository } from './editor-bridge.js'
 
 export interface AsyncEventSource<T> {
   subscribe(listener: (event: T) => void): () => void
@@ -316,6 +317,8 @@ export interface ExportRepository {
 }
 
 export interface DshBackend {
+  /** Optional editor companion; activation is a separate explicit Host action. */
+  readonly editorBridge?: EditorBridgeRepository
   readonly inspectorDevtools?: InspectorDevtoolsRepository
   readonly modsBand?: ModsBandRepository
   /** Optional account lifecycle exposed only by the exact RC2 profile. */
