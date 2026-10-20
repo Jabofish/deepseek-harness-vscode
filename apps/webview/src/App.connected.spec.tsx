@@ -1990,6 +1990,84 @@ describe('App connected rendering', () => {
     expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' }).value).toBe('')
   })
 
+  it('keeps a pending first-message attachment handle until its send settles', async () => {
+    const state = connectedState(false)
+    let resolveSend: (() => void) | undefined
+    const sendPendingPrompt = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSend = resolve
+        }),
+    )
+    const uri = 'dsh-attachment:00000000-0000-4000-8000-000000000015'
+    const ingestAttachment = vi.fn().mockResolvedValue({ uri, name: 'notes.txt', mimeType: 'text/plain' })
+    const releaseAttachments = vi.fn().mockResolvedValue(undefined)
+    const { updateState } = renderWithMutableState({
+      ...state,
+      pendingSession: { revision: 1, workspaceId: 'w1', configuration: connectedState(true).configuration! },
+    })
+    Object.assign(currentStore, { sendPendingPrompt, ingestAttachment, releaseAttachments })
+
+    const input = document.querySelector('.dsh-composer textarea')
+    expect(input).toBeInstanceOf(HTMLTextAreaElement)
+    fireEvent.change(input!, { target: { value: 'first message' } })
+    fireEvent.paste(input!, {
+      clipboardData: { files: [new File(['notes'], 'notes.txt', { type: 'text/plain' })] },
+    })
+    await screen.findByRole('button', { name: 'Remove notes.txt' })
+    fireEvent.submit(input!.closest('form')!)
+    await waitFor(() => expect(sendPendingPrompt).toHaveBeenCalled())
+
+    // Opening the created session changes the composer owner while the Host is
+    // still resolving the attachment. Releasing here would make it reject.
+    updateState(connectedState(true))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove notes.txt' })).toBeNull())
+    expect(releaseAttachments).not.toHaveBeenCalledWith([uri])
+
+    await act(async () => {
+      resolveSend?.()
+      await Promise.resolve()
+    })
+    expect(releaseAttachments).not.toHaveBeenCalledWith([uri])
+  })
+
+  it('releases a detached first-message attachment after a definite send failure', async () => {
+    const state = connectedState(false)
+    let rejectSend: ((reason: unknown) => void) | undefined
+    const sendPendingPrompt = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectSend = reject
+        }),
+    )
+    const uri = 'dsh-attachment:00000000-0000-4000-8000-000000000016'
+    const ingestAttachment = vi.fn().mockResolvedValue({ uri, name: 'notes.txt', mimeType: 'text/plain' })
+    const releaseAttachments = vi.fn().mockResolvedValue(undefined)
+    const { updateState } = renderWithMutableState({
+      ...state,
+      pendingSession: { revision: 1, workspaceId: 'w1', configuration: connectedState(true).configuration! },
+    })
+    Object.assign(currentStore, { sendPendingPrompt, ingestAttachment, releaseAttachments })
+
+    const input = document.querySelector('.dsh-composer textarea')
+    fireEvent.change(input!, { target: { value: 'first message' } })
+    fireEvent.paste(input!, {
+      clipboardData: { files: [new File(['notes'], 'notes.txt', { type: 'text/plain' })] },
+    })
+    await screen.findByRole('button', { name: 'Remove notes.txt' })
+    fireEvent.submit(input!.closest('form')!)
+    await waitFor(() => expect(sendPendingPrompt).toHaveBeenCalled())
+    updateState(connectedState(true))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove notes.txt' })).toBeNull())
+
+    await act(async () => {
+      rejectSend?.(new Error('Host rejected the prompt'))
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(releaseAttachments).toHaveBeenCalledWith([uri]))
+    expect(await screen.findByText('Prompt failed.')).toBeDefined()
+  })
+
   it('keeps the draft when an attachment read fails before sending', async () => {
     const state = connectedState(true)
     let rejectIngest: ((reason: unknown) => void) | undefined
@@ -2410,8 +2488,9 @@ describe('App connected rendering', () => {
     )
 
     // The user navigates to an existing session while the send is still
-    // working: the switch discards the pending composition's own attachment,
-    // and the draft text survives the navigation by design.
+    // working: the switch hides the pending composition's own attachment, but
+    // its handle must stay resolvable until the Host answers, and the draft
+    // text survives the navigation by design.
     updateState({
       ...state,
       activeSessionId: 's2',
@@ -2429,7 +2508,8 @@ describe('App connected rendering', () => {
       ],
       workspaces: [{ ...state.workspaces[0]!, sessionIds: ['s1', 's2'], sessionCount: 2 }],
     })
-    await waitFor(() => expect(releaseAttachments).toHaveBeenCalledWith([uri]))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove notes.txt' })).toBeNull())
+    expect(releaseAttachments).not.toHaveBeenCalled()
     const sessionPrompt = await screen.findByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
     fireEvent.paste(sessionPrompt, {
       clipboardData: { files: [new File(['later'], 'later.txt', { type: 'text/plain' })] },
@@ -2443,6 +2523,8 @@ describe('App connected rendering', () => {
       await send.catch(() => undefined)
     })
     expect(await screen.findByText('Prompt failed.')).toBeDefined()
+    // Nothing was delivered, so the hidden pending handle is now released.
+    await waitFor(() => expect(releaseAttachments).toHaveBeenCalledWith([uri]))
     expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' }).value).toBe(
       'a prompt I do not want to retype',
     )

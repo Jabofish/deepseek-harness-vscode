@@ -104,6 +104,8 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
   /** Latest attachments, readable synchronously by submit before React commits. */
   const attachmentsRef = useRef<readonly PromptAttachment[]>([])
   const pendingIngestsRef = useRef<Set<PendingAttachmentIngest>>(new Set())
+  /** Handles named by a submission the Host may still be resolving. */
+  const inFlightAttachmentUrisRef = useRef<Set<string>>(new Set())
   const attachmentDraftKeysRef = useRef<Map<string, string>>(new Map())
   /** Decoded bytes of pasted image drafts still tracked in the composer, by uri. */
   const imageBytesByUriRef = useRef<Map<string, number>>(new Map())
@@ -285,9 +287,18 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
   }
   const discardAttachmentDrafts = useStableCallback((): void => {
     attachmentGenerationRef.current += 1
+    const inFlight = inFlightAttachmentUrisRef.current
+    const uris = attachmentsRef.current.map((attachment) => attachment.uri)
+    // A submission in flight may already have handed these handles to the
+    // Host; releasing them now would make the Host reject the prompt. Remove
+    // them from the composer but keep the handles alive until it settles.
     removeAttachmentDrafts(
-      attachmentsRef.current.map((attachment) => attachment.uri),
+      uris.filter((uri) => !inFlight.has(uri)),
       true,
+    )
+    removeAttachmentDrafts(
+      uris.filter((uri) => inFlight.has(uri)),
+      false,
     )
     setOpenFilePickerOpen(false)
   })
@@ -378,6 +389,10 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
     const before = store.getState()
     const beforeIds = new Set(before.timeline.nodes.map((node) => node.id))
     const beforeRequests = new Set(before.directPromptRequestIds)
+    const snapshotUris = attachmentSnapshot.map((attachment) => attachment.uri)
+    for (const uri of snapshotUris) inFlightAttachmentUrisRef.current.add(uri)
+    let delivered = false
+    let uncertain = false
     let awaitingVisibility = false
     let admissionStarted = false
     let deliveredSessionId: string | undefined
@@ -392,6 +407,7 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
     }
     return submission
       .then(async () => {
+        delivered = true
         if (!mountedRef.current || Boolean(signal?.aborted)) return
         const admitted = store.getState()
         deliveredSessionId = admitted.activeSessionId
@@ -480,6 +496,9 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
         const aborted =
           Boolean(signal?.aborted) || (reason instanceof DOMException && reason.name === 'AbortError')
         if (aborted) {
+          // The request may already have reached the Host; its handles must
+          // stay resolvable until the late-acceptance check settles.
+          uncertain = true
           if (!signal?.aborted && admissionStarted) {
             // The RPC was accepted and the session left the panel (or the
             // backend) while we waited for its durable row. Clear the text
@@ -549,6 +568,15 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
               ? t('app.error.promptTimeout')
               : (publicProtocolErrorMessage(reason) ?? t('app.error.prompt')),
           )
+      })
+      .finally(() => {
+        for (const uri of snapshotUris) inFlightAttachmentUrisRef.current.delete(uri)
+        if (delivered || uncertain) return
+        // The send definitively failed. If a conversation switch already took
+        // the chips away, their handles have no future consumer.
+        const displayed = new Set(attachmentsRef.current.map((attachment) => attachment.uri))
+        const detached = snapshotUris.filter((uri) => !displayed.has(uri))
+        if (detached.length > 0) void store.releaseAttachments(detached).catch(() => undefined)
       })
   }
 
