@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 会话历史补齐与重试提示改为显示在正文上方，修复刚进入会话时正文被挤到右半边、同步完成后才恢复宽度的问题。
+- Stacks history loading and retry notices above messages so opening a session keeps content at full width throughout synchronization.
+
 - 聚焦布局的标准和紧凑视图不再为每次模型请求重复显示首 Token 与生成速度；整轮 Token 用量保留一次，逐请求指标在详细或完整视图中查看。
 - Focused standard and compact views no longer repeat first-token and generation-rate headers for every model request. Completed Turn token totals remain available once; detailed and verbose views retain request metrics.
 

@@ -26,6 +26,13 @@ const focusedStyles = readStylesheet(new URL('./focused-workbench.css', import.m
 const selectionStyles = readStylesheet(new URL('./components/02-selection.css', import.meta.url))
 
 describe('Conversation space ownership', () => {
+  it('stacks transcript hydration notices above content so opening a session cannot halve its width', () => {
+    // TimelineRow returns the pending/retrying notice and the message as
+    // siblings. Horizontal flex split a real 224px startup row into two
+    // 112px columns until the full-content response removed the notice.
+    expect(effective(appStyles, '.dsh-timeline__row', 'flex-direction')).toBe('column')
+  })
+
   it('keeps notifications in document flow', () => {
     const styles = `${appStyles}\n${layoutStyles}`
     for (const selector of ['.dsh-app__notices', '.dsh-app__notice-summary', '.dsh-app__notice-list']) {
