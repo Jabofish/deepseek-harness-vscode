@@ -604,7 +604,6 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
         onKeyDown={handleTimelineScrollKeyDown}
         onScroll={handleScroll}
       >
-        {complete.failed ? <p role="alert">{t('transcript.syncRetrying')}</p> : null}
         {props.hasMoreHistory && props.onLoadOlderHistory !== undefined ? (
           <div className="dsh-timeline__history-more">
             <button
@@ -655,7 +654,17 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
                       className={`dsh-timeline__row${node.id === enteredId ? ' dsh-timeline__row--enter' : ''}`}
                       style={{ transform: `translateY(${item.start}px)` }}
                     >
-                      <TimelineRow node={node} context={nodeRenderContext} />
+                      <TimelineRow
+                        node={node}
+                        context={nodeRenderContext}
+                        contentStatus={
+                          presentedSourceNodeIds(node).some((id) => complete.pendingIds.has(id))
+                            ? complete.failed
+                              ? 'retrying'
+                              : 'loading'
+                            : undefined
+                        }
+                      />
                     </div>
                   )
                 })
@@ -666,7 +675,17 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
                     data-node-id={node.id}
                     className={`dsh-timeline__row${node.id === enteredId ? ' dsh-timeline__row--enter' : ''}`}
                   >
-                    <TimelineRow node={node} context={nodeRenderContext} />
+                    <TimelineRow
+                      node={node}
+                      context={nodeRenderContext}
+                      contentStatus={
+                        presentedSourceNodeIds(node).some((id) => complete.pendingIds.has(id))
+                          ? complete.failed
+                            ? 'retrying'
+                            : 'loading'
+                          : undefined
+                      }
+                    />
                   </div>
                 ))}
           </div>

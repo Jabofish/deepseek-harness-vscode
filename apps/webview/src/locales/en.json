@@ -1770,5 +1770,6 @@
   "editorIntegration.repair": "Repair setup",
   "editorIntegration.restart": "Restart DSH",
   "editorIntegration.undo": "Undo last agent edit",
-  "editorIntegration.startManaged": "Use a dedicated DSH"
+  "editorIntegration.startManaged": "Use a dedicated DSH",
+  "transcript.syncLoading": "Reading the complete content… The current display is still incomplete."
 }

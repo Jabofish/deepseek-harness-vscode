@@ -1770,5 +1770,6 @@
   "editorIntegration.repair": "修复配置",
   "editorIntegration.restart": "重启 DSH",
   "editorIntegration.undo": "撤销上一次 Agent 编辑",
-  "editorIntegration.startManaged": "使用独立 DSH 实例"
+  "editorIntegration.startManaged": "使用独立 DSH 实例",
+  "transcript.syncLoading": "正在读取完整内容，当前显示尚未完整。"
 }

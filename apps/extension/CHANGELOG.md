@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 自动读取完整会话内容期间明确提示当前显示尚未完整，读取成功后移除提示，无需用户额外操作。
+- Marks content as incomplete while it is read automatically and clears the status once complete, with no additional user action.
+
 - 实时审批与提问缺少答复标识时触发协议恢复，不再显示无法答复的交互；已失效请求与工作区权限拒绝使用不同错误。
 - Recovers malformed live approvals and questions without inventing response identities, and distinguishes expired interactions from workspace access denial.
 
