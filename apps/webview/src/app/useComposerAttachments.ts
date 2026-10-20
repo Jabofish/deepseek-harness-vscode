@@ -48,6 +48,11 @@ export interface ComposerAttachmentDependencies {
   readonly readDraft: () => string
 }
 
+interface PendingAttachmentIngest {
+  readonly generation: number
+  readonly promise: Promise<boolean>
+}
+
 export interface ComposerAttachments {
   readonly attachments: readonly PromptAttachment[]
   readonly attachmentPreviews: Readonly<Record<string, string>>
@@ -96,6 +101,9 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
   const [referenceQuoted, setReferenceQuoted] = useState(false)
   const [attachingOpenFileId, setAttachingOpenFileId] = useState<string | undefined>()
   const [openFileAttachmentIds, setOpenFileAttachmentIds] = useState<Record<string, string>>({})
+  /** Latest attachments, readable synchronously by submit before React commits. */
+  const attachmentsRef = useRef<readonly PromptAttachment[]>([])
+  const pendingIngestsRef = useRef<Set<PendingAttachmentIngest>>(new Set())
   const attachmentDraftKeysRef = useRef<Map<string, string>>(new Map())
   /** Decoded bytes of pasted image drafts still tracked in the composer, by uri. */
   const imageBytesByUriRef = useRef<Map<string, number>>(new Map())
@@ -242,9 +250,12 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
       return
     }
     attachmentDraftKeysRef.current.set(attachment.uri, draftKey)
-    setAttachments((current) =>
-      current.some((item) => item.uri === attachment.uri) ? current : [...current, attachment],
-    )
+    const current = attachmentsRef.current
+    if (!current.some((item) => item.uri === attachment.uri)) {
+      const next = [...current, attachment]
+      attachmentsRef.current = next
+      setAttachments(next)
+    }
     if (openFileId !== undefined)
       setOpenFileAttachmentIds((current) => ({ ...current, [attachment.uri]: openFileId }))
   }
@@ -255,7 +266,9 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
       attachmentDraftKeysRef.current.delete(uri)
       imageBytesByUriRef.current.delete(uri)
     }
-    setAttachments((current) => current.filter((attachment) => !removed.has(attachment.uri)))
+    const next = attachmentsRef.current.filter((attachment) => !removed.has(attachment.uri))
+    attachmentsRef.current = next
+    setAttachments(next)
     setAttachmentPreviews((current) =>
       Object.fromEntries(Object.entries(current).filter(([uri]) => !removed.has(uri))),
     )
@@ -273,7 +286,7 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
   const discardAttachmentDrafts = useStableCallback((): void => {
     attachmentGenerationRef.current += 1
     removeAttachmentDrafts(
-      attachments.map((attachment) => attachment.uri),
+      attachmentsRef.current.map((attachment) => attachment.uri),
       true,
     )
     setOpenFilePickerOpen(false)
@@ -281,7 +294,7 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
   const ingestFiles = (files: readonly File[]): void => {
     const imageFiles = files.filter((file) => file.type.startsWith('image/'))
     if (imageLimits !== undefined && imageFiles.length > 0) {
-      const existingImages = attachments.filter((attachment) =>
+      const existingImages = attachmentsRef.current.filter((attachment) =>
         attachment.mimeType?.startsWith('image/'),
       ).length
       const existingImageBytes = [...imageBytesByUriRef.current.values()].reduce(
@@ -324,10 +337,10 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
         pendingImageStatsRef.current.count += 1
         pendingImageStatsRef.current.bytes += file.size
       }
-      void readFileAsBase64(file, t, imageLimits)
+      const ingest = readFileAsBase64(file, t, imageLimits)
         .then((payload) => store.ingestAttachment(payload))
         .then((attachment) => {
-          if (attachment === undefined) return
+          if (attachment === undefined) return true
           appendAttachment(attachment, undefined, generation, origin)
           // Only a draft actually tracked by appendAttachment contributes bytes:
           // duplicates resolve to the earlier uri and released handles never do.
@@ -337,35 +350,31 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
             !imageBytesByUriRef.current.has(attachment.uri)
           )
             imageBytesByUriRef.current.set(attachment.uri, file.size)
+          return true
         })
-        .catch((reason: unknown) =>
-          setError(reason instanceof Error ? reason.message : t('app.error.attachPasted')),
-        )
+        .catch((reason: unknown) => {
+          setError(reason instanceof Error ? reason.message : t('app.error.attachPasted'))
+          return false
+        })
         .finally(() => {
           if (isImage) {
             pendingImageStatsRef.current.count -= 1
             pendingImageStatsRef.current.bytes -= file.size
           }
         })
+      const pending: PendingAttachmentIngest = { generation, promise: ingest }
+      pendingIngestsRef.current.add(pending)
+      void ingest.then(() => pendingIngestsRef.current.delete(pending))
     }
   }
-  const submitPrompt = (mode: 'queue' | 'steer', signal?: AbortSignal): Promise<void> => {
-    if (active === undefined && !hasPendingSession) return Promise.resolve()
-    // Navigation can resolve between the keystroke and this handler. The
-    // composer still reads as the old conversation for one render, but the
-    // store already moved; sending here would target a panel the user left.
-    const expectedSessionId = active?.id
-    const expectedPendingRevision =
-      active === undefined ? store.getState().pendingSession?.revision : undefined
-    if (
-      active === undefined
-        ? store.getState().pendingSession?.revision !== expectedPendingRevision
-        : store.getState().activeSessionId !== expectedSessionId
-    )
-      return Promise.resolve()
-    const text = deps.readDraft()
-    const submissionOwner = deps.draftOwner
-    const attachmentSnapshot = attachments
+  const deliverPrompt = (
+    mode: 'queue' | 'steer',
+    signal: AbortSignal | undefined,
+    text: string,
+    submissionOwner: string | undefined,
+    expectedSessionId: string | undefined,
+    attachmentSnapshot: readonly PromptAttachment[],
+  ): Promise<void> => {
     const before = store.getState()
     const beforeIds = new Set(before.timeline.nodes.map((node) => node.id))
     const beforeRequests = new Set(before.directPromptRequestIds)
@@ -375,9 +384,9 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
     let submission: Promise<void>
     try {
       submission =
-        active === undefined
+        expectedSessionId === undefined
           ? store.sendPendingPrompt(text, attachmentSnapshot, mode, signal)
-          : store.sendPrompt(active.id, text, attachmentSnapshot, mode, signal)
+          : store.sendPrompt(expectedSessionId, text, attachmentSnapshot, mode, signal)
     } catch (reason) {
       submission = Promise.reject(reason instanceof Error ? reason : new Error(t('app.error.prompt')))
     }
@@ -541,6 +550,42 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
               : (publicProtocolErrorMessage(reason) ?? t('app.error.prompt')),
           )
       })
+  }
+
+  const submitPrompt = (mode: 'queue' | 'steer', signal?: AbortSignal): Promise<void> => {
+    if (active === undefined && !hasPendingSession) return Promise.resolve()
+    // Navigation can resolve between the keystroke and this handler. The
+    // composer still reads as the old conversation for one render, but the
+    // store already moved; sending here would target a panel the user left.
+    const expectedSessionId = active?.id
+    const expectedPendingRevision =
+      active === undefined ? store.getState().pendingSession?.revision : undefined
+    const targetIsCurrent = (): boolean =>
+      active === undefined
+        ? store.getState().pendingSession?.revision === expectedPendingRevision
+        : store.getState().activeSessionId === expectedSessionId
+    if (!targetIsCurrent()) return Promise.resolve()
+    const text = deps.readDraft()
+    const submissionOwner = deps.draftOwner
+    const generation = attachmentGenerationRef.current
+    const pending = [...pendingIngestsRef.current]
+      .filter((entry) => entry.generation === generation)
+      .map((entry) => entry.promise)
+    // Keep the ordinary path synchronous: admission and optimistic rendering
+    // must not wait on an extra microtask when no file is being read.
+    if (pending.length === 0) {
+      if (signal?.aborted || !targetIsCurrent()) return Promise.resolve()
+      return deliverPrompt(mode, signal, text, submissionOwner, expectedSessionId, attachmentsRef.current)
+    }
+    return Promise.all(pending).then((results) => {
+      // A failed read already surfaced its error; keep the draft so the user
+      // can retry instead of sending text without the attachment they picked.
+      if (!results.every(Boolean) || signal?.aborted) return
+      // Reading and navigation can both settle during the wait; only send the
+      // conversation's own handles to the conversation still on screen.
+      if (!targetIsCurrent()) return
+      return deliverPrompt(mode, signal, text, submissionOwner, expectedSessionId, attachmentsRef.current)
+    })
   }
   /**
    * Loads the open-file snapshot that both the composer menu row and the

@@ -1951,6 +1951,77 @@ describe('App connected rendering', () => {
     })
   })
 
+  it('waits for a pasted attachment to finish ingesting before sending', async () => {
+    const state = connectedState(true)
+    const uri = 'dsh-attachment:00000000-0000-4000-8000-000000000014'
+    let resolveIngest: ((value: { uri: string; name: string; mimeType: string }) => void) | undefined
+    const ingestAttachment = vi.fn(
+      () =>
+        new Promise<{ uri: string; name: string; mimeType: string }>((resolve) => {
+          resolveIngest = resolve
+        }),
+    )
+    const sendPrompt = vi.fn().mockResolvedValue(undefined)
+    currentStore = { ...storeFor(state), ingestAttachment, sendPrompt }
+    render(<App />)
+
+    const prompt = screen.getByRole('textbox', { name: 'Prompt' })
+    fireEvent.change(prompt, { target: { value: 'send this with the file' } })
+    fireEvent.paste(prompt, {
+      clipboardData: { files: [new File(['notes'], 'notes.txt', { type: 'text/plain' })] },
+    })
+    await waitFor(() => expect(ingestAttachment).toHaveBeenCalledTimes(1))
+    fireEvent.submit(prompt.closest('form')!)
+    expect(sendPrompt).not.toHaveBeenCalled()
+
+    await act(async () => {
+      resolveIngest?.({ uri, name: 'notes.txt', mimeType: 'text/plain' })
+      await Promise.resolve()
+    })
+    await waitFor(() =>
+      expect(sendPrompt).toHaveBeenCalledWith(
+        's1',
+        'send this with the file',
+        [expect.objectContaining({ uri })],
+        'queue',
+        expect.any(AbortSignal),
+      ),
+    )
+    expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' }).value).toBe('')
+  })
+
+  it('keeps the draft when an attachment read fails before sending', async () => {
+    const state = connectedState(true)
+    let rejectIngest: ((reason: unknown) => void) | undefined
+    const ingestAttachment = vi.fn(
+      () =>
+        new Promise<undefined>((_resolve, reject) => {
+          rejectIngest = reject
+        }),
+    )
+    const sendPrompt = vi.fn().mockResolvedValue(undefined)
+    currentStore = { ...storeFor(state), ingestAttachment, sendPrompt }
+    render(<App />)
+
+    const prompt = screen.getByRole('textbox', { name: 'Prompt' })
+    fireEvent.change(prompt, { target: { value: 'keep this draft' } })
+    fireEvent.paste(prompt, {
+      clipboardData: { files: [new File(['notes'], 'notes.txt', { type: 'text/plain' })] },
+    })
+    await waitFor(() => expect(ingestAttachment).toHaveBeenCalledTimes(1))
+    fireEvent.submit(prompt.closest('form')!)
+    await act(async () => {
+      rejectIngest?.(new Error('Unable to attach pasted file.'))
+      await Promise.resolve()
+    })
+
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toContain('Unable to attach pasted file.'),
+    )
+    expect(sendPrompt).not.toHaveBeenCalled()
+    expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' }).value).toBe('keep this draft')
+  })
+
   it('releases an opaque Host attachment handle when its draft chip is removed', async () => {
     const state = connectedState(true)
     const uri = 'dsh-attachment:00000000-0000-4000-8000-000000000001'
@@ -2465,6 +2536,7 @@ describe('App connected rendering', () => {
       resolveSend()
       await Promise.resolve()
     })
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Cancel sending' })).toBeNull())
     updateState(withSecond)
     expect(await screen.findByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })).toHaveProperty(
       'value',
