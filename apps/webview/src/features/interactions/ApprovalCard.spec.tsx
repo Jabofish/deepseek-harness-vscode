@@ -21,6 +21,26 @@ function approvalRequest(): PermissionRequest {
 }
 
 describe('ApprovalCard', () => {
+  it('keeps rejection available while a complete request is still loading', () => {
+    const onRespond = vi.fn()
+    render(
+      <ApprovalCard
+        request={approvalRequest()}
+        disabled={false}
+        contentPending
+        contentFailed
+        onRespond={onRespond}
+      />,
+    )
+    const allow = screen.getByRole<HTMLButtonElement>('button', { name: 'Allow once' })
+    const deny = screen.getByRole<HTMLButtonElement>('button', { name: 'Reject' })
+    expect(allow.disabled).toBe(true)
+    expect(deny.disabled).toBe(false)
+    expect(screen.getByRole('status').textContent).toContain('Retrying automatically')
+    fireEvent.click(allow)
+    fireEvent.click(deny)
+    expect(onRespond.mock.calls).toEqual([['rejected']])
+  })
   afterEach(() => {
     cleanup()
     window.localStorage.clear()

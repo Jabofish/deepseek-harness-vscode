@@ -250,6 +250,8 @@
   "workflow.phase.summary": "{status} {count}",
   "workflow.openMember": "打开 {label}",
   "approval.risk": "风险",
+  "approval.loadingRequest": "正在读取完整工具请求，仍可拒绝。",
+  "approval.loadingFailed": "暂时无法读取完整请求，正在自动重试；仍可拒绝。",
   "approval.risk.unknown": "DSH 未提供",
   "approval.risk.low": "低",
   "approval.risk.medium": "中",

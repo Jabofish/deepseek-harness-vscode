@@ -409,9 +409,13 @@ export class TranscriptWindowService {
       (displayed !== this.tail && revision !== this.revision)
     )
       throw stale()
-    const node = displayed.timeline.nodes.find((candidate) => candidate.id === nodeId)
+    const resident = this.tail?.sessionId === sessionId ? this.tail : displayed
+    const displayedNode = displayed.timeline.nodes.find((candidate) => candidate.id === nodeId)
+    // An approval can outlive its visible tool row (paging or a busy turn).
+    // Its active canonical body remains readable without changing the viewport.
+    const node = displayedNode ?? resident.liveBodies.get(nodeId)
     if (node === undefined) throw stale()
-    const safe = this.deps.publicValue(node, displayed.cwd)
+    const safe = this.deps.publicValue(node, displayedNode === undefined ? resident.cwd : displayed.cwd)
     const parsed = transcriptNodeSchema.safeParse(safe)
     if (parsed.success) return parsed.data as TimelineNode
     if (

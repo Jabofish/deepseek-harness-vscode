@@ -201,7 +201,7 @@ export function permission(value: Record<string, unknown>): PermissionRequest {
     // does not use is no pairing and must not claim to be one).
     ...(typeof value.callId === 'string' && value.callId !== '' ? { callId: value.callId } : {}),
     ...(typeof value.commandLine === 'string' && value.commandLine.trim() !== ''
-      ? { commandLine: value.commandLine.trim().slice(0, 4_096) }
+      ? { commandLine: value.commandLine }
       : {}),
     risk: 'unknown',
     options: [

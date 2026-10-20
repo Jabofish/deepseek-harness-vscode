@@ -9,6 +9,8 @@ export interface ApprovalCardProps {
   readonly disabled: boolean
   /** Command the request asks to authorize, resolved from the paired call. */
   readonly command?: string
+  readonly contentPending?: boolean
+  readonly contentFailed?: boolean
   readonly onRespond: (optionId: string) => void
 }
 
@@ -41,6 +43,11 @@ export const ApprovalCard = memo(function ApprovalCard(props: ApprovalCardProps)
         </span>
       </header>
       <div className="dsh-interaction__body" tabIndex={0}>
+        {props.contentPending === true ? (
+          <p role="status">
+            {t(props.contentFailed === true ? 'approval.loadingFailed' : 'approval.loadingRequest')}
+          </p>
+        ) : null}
         <ContentFlow as="p" className="dsh-interaction__description">
           {description}
         </ContentFlow>
@@ -58,7 +65,7 @@ export const ApprovalCard = memo(function ApprovalCard(props: ApprovalCardProps)
             className={`dsh-button dsh-button--compact ${option.kind === 'deny' ? 'dsh-button--secondary' : 'dsh-button--primary'}`}
             key={option.id}
             type="button"
-            disabled={props.disabled}
+            disabled={props.disabled || (props.contentPending === true && option.kind !== 'deny')}
             onClick={() => props.onRespond(option.id)}
           >
             {option.label}

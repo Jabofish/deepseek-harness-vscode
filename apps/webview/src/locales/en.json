@@ -250,6 +250,8 @@
   "workflow.phase.summary": "{status} {count}",
   "workflow.openMember": "Open {label}",
   "approval.risk": "Risk",
+  "approval.loadingRequest": "Reading the full tool request… You can still reject it.",
+  "approval.loadingFailed": "Could not read the full request. Retrying automatically; you can still reject it.",
   "approval.risk.unknown": "not specified by DSH",
   "approval.risk.low": "low",
   "approval.risk.medium": "medium",

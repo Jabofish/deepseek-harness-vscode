@@ -677,11 +677,13 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                           {t('composer.stop')}
                         </button>
                       )}
-                      {pendingPermissions.map(({ request, command }) => (
+                      {pendingPermissions.map(({ request, command, contentPending, contentFailed }) => (
                         <ApprovalCard
                           key={request.id}
                           request={request}
                           disabled={respondingInteractionId !== undefined}
+                          contentPending={contentPending}
+                          contentFailed={contentFailed}
                           {...(command === undefined ? {} : { command })}
                           onRespond={approvalRespondFor(request)}
                         />

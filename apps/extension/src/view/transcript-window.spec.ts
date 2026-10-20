@@ -187,6 +187,36 @@ describe('Host transcript windows', () => {
     client.service.dispose()
   })
 
+  it('serves an active approval tool after its row leaves the displayed window', () => {
+    const client = fixture()
+    const opened = client.open()
+    client.service.accept({
+      type: 'tool.updated',
+      sessionId,
+      sequence: 1,
+      tool: {
+        id: 'pending-call',
+        name: 'bash',
+        category: 'terminal',
+        title: 'bash',
+        status: 'running',
+        inputSummary: '{"command":"whole command"}',
+        metadata: {},
+        presentation: { phase: 'call', card: 'terminal', title: 'whole command' },
+      },
+    })
+    const resident = client.service['tail']!
+    expect(resident.liveBodies.has('pending-call')).toBe(true)
+    resident.timeline = { ...resident.timeline, nodes: [] }
+    expect(
+      client.service.fullNode(sessionId, 'pending-call', opened.revision, new AbortController().signal),
+    ).toMatchObject({
+      kind: 'tool',
+      tool: { inputSummary: '{"command":"whole command"}', presentation: { title: 'whole command' } },
+    })
+    client.service.dispose()
+  })
+
   it('keeps compacted history stable when follow replays native rows below the read cut', async () => {
     const invalidated = vi.fn()
     const posted: TranscriptWindow[] = []

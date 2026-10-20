@@ -8,24 +8,33 @@ export function useCompleteTranscriptNodes(
   nodes: readonly TimelineNode[],
   omittedIds: readonly string[] | undefined,
   load: ((id: string, signal?: AbortSignal) => Promise<TimelineNode>) | undefined,
-): { readonly nodes: readonly TimelineNode[]; readonly pending: boolean; readonly failed: boolean } {
+  requiredIds?: readonly string[],
+): {
+  readonly nodes: readonly TimelineNode[]
+  readonly pending: boolean
+  readonly pendingIds: ReadonlySet<string>
+  readonly failed: boolean
+} {
   const [loaded, setLoaded] = useState<{
     readonly sessionId: string
-    readonly values: ReadonlyMap<string, { readonly source: TimelineNode; readonly node: TimelineNode }>
+    readonly values: ReadonlyMap<
+      string,
+      { readonly source: TimelineNode | undefined; readonly node: TimelineNode }
+    >
   }>({ sessionId, values: new Map() })
   const [failed, setFailed] = useState({ sessionId, value: false })
   const wake = useRef<(() => void) | undefined>(undefined)
-  const latest = useRef({ sessionId, nodes, omittedIds, load })
+  const latest = useRef({ sessionId, nodes, omittedIds, load, requiredIds })
   useLayoutEffect(() => {
-    latest.current = { sessionId, nodes, omittedIds, load }
-  }, [sessionId, nodes, omittedIds, load])
+    latest.current = { sessionId, nodes, omittedIds, load, requiredIds }
+  }, [sessionId, nodes, omittedIds, load, requiredIds])
 
   useEffect(() => {
     const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
     let retry = 0
     let running = false
-    const values = new Map<string, { source: TimelineNode; node: TimelineNode }>()
+    const values = new Map<string, { source: TimelineNode | undefined; node: TimelineNode }>()
     let initialized = false
     const refresh = async (): Promise<void> => {
       if (controller.signal.aborted || running) return
@@ -34,16 +43,21 @@ export function useCompleteTranscriptNodes(
       if (controller.signal.aborted) return
       const current = latest.current
       if (current.sessionId !== sessionId) return
-      const omitted = new Set(current.omittedIds)
+      const required = new Set(current.requiredIds)
+      const omitted = new Set([...(current.omittedIds ?? []), ...required])
       const sources = new Map(current.nodes.map((node) => [node.id, node]))
       const before = values.size
-      for (const id of values.keys()) if (!omitted.has(id) || !sources.has(id)) values.delete(id)
+      for (const id of values.keys())
+        if (!omitted.has(id) || (!sources.has(id) && !required.has(id))) values.delete(id)
       if (!initialized || before !== values.size) setLoaded({ sessionId, values: new Map(values) })
       initialized = true
       let requestFailed = false
       for (const id of omitted) {
         const source = sources.get(id)
-        if (source === undefined || values.get(id)?.source === source) continue
+        if ((!sources.has(id) && !required.has(id)) || (values.has(id) && values.get(id)?.source === source))
+          continue
+        // Required ids already represented by an intact transport node need no read.
+        if (source !== undefined && current.omittedIds?.includes(id) !== true) continue
         try {
           if (current.load === undefined) throw new Error('Transcript reader unavailable')
           const node = await current.load(id, controller.signal)
@@ -61,9 +75,11 @@ export function useCompleteTranscriptNodes(
       retry = requestFailed ? Math.min(retry + 1, 5) : 0
       running = false
       const next = latest.current
-      const pending = next.nodes.some(
-        (node) => next.omittedIds?.includes(node.id) === true && values.get(node.id)?.source !== node,
-      )
+      const pending =
+        next.nodes.some(
+          (node) => next.omittedIds?.includes(node.id) === true && values.get(node.id)?.source !== node,
+        ) ||
+        next.requiredIds?.some((id) => !next.nodes.some((node) => node.id === id) && !values.has(id)) === true
       if (pending)
         timer = setTimeout(
           () => {
@@ -86,28 +102,39 @@ export function useCompleteTranscriptNodes(
 
   useEffect(() => {
     wake.current?.()
-  }, [nodes, omittedIds, load])
+  }, [nodes, omittedIds, load, requiredIds])
 
   return useMemo(() => {
     const omitted = new Set(omittedIds)
     const values =
       loaded.sessionId === sessionId
         ? loaded.values
-        : new Map<string, { readonly source: TimelineNode; readonly node: TimelineNode }>()
-    let pending = false
+        : new Map<string, { readonly source: TimelineNode | undefined; readonly node: TimelineNode }>()
+    const pendingIds = new Set<string>()
     let changed = false
     const complete = nodes.map((node) => {
       if (!omitted.has(node.id)) return node
       const value = values.get(node.id)
-      if (value?.source !== node) pending = true
+      if (value?.source !== node) pendingIds.add(node.id)
       if (value === undefined) return node
       changed = true
       return value.node
     })
+    for (const id of requiredIds ?? []) {
+      if (nodes.some((node) => node.id === id)) continue
+      const value = values.get(id)
+      if (value === undefined) pendingIds.add(id)
+      else {
+        complete.push(value.node)
+        changed = true
+      }
+    }
+    const pending = pendingIds.size > 0
     return {
       nodes: changed ? complete : nodes,
       pending,
+      pendingIds,
       failed: pending && failed.sessionId === sessionId && failed.value,
     }
-  }, [failed, loaded, nodes, omittedIds, sessionId])
+  }, [failed, loaded, nodes, omittedIds, requiredIds, sessionId])
 }

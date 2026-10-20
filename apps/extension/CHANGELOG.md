@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 审批保留完整命令行，并自动补齐被传输裁切或移出当前窗口的工具请求；读取完成前仍可拒绝，批准等待完整请求就绪。
+- Preserves complete approval commands and automatically reads clipped or off-window tool requests. Rejection remains available while approval waits for complete request content.
+
 - 编辑器写入回执异常时核对实际缓冲区，保留已应用或结果不明的撤回快照；工具预先声明编辑容量与批次数量上限。
 - Retains undo snapshots for applied or uncertain native edit outcomes and declares edit size and batch limits before execution.
 

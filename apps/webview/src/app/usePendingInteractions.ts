@@ -3,6 +3,7 @@ import type { PermissionRequest, QuestionAnswer, UserQuestion } from '@dsh-vscod
 import type { AppStore } from './store.js'
 import type { useI18n } from '../i18n.js'
 import { approvalCommand } from '../features/interactions/approval-command.js'
+import { useCompleteTranscriptNodes } from '../features/chat/useCompleteTranscriptNodes.js'
 import { useStableCallback } from './useStableCallback.js'
 import { requestId } from './store/ids.js'
 import { object } from './store/unknown-record.js'
@@ -17,6 +18,8 @@ import {
 export interface PendingApproval {
   readonly request: PermissionRequest
   readonly command?: string | undefined
+  readonly contentPending: boolean
+  readonly contentFailed: boolean
 }
 
 interface PendingInteractions {
@@ -60,21 +63,54 @@ export function usePendingInteractions({
   readonly store: AppStore
   readonly state: Pick<
     ReturnType<AppStore['getState']>,
-    'permissions' | 'questions' | 'timeline' | 'projections'
+    'permissions' | 'questions' | 'timeline' | 'projections' | 'transcript' | 'connectionEpoch'
   >
   readonly activeSessionId: string | undefined
   readonly setRespondingInteractionId: Dispatch<SetStateAction<string | undefined>>
   readonly setError: (message: string | undefined) => void
   readonly t: ReturnType<typeof useI18n>['t']
 }): PendingInteractions {
+  const pairedIds = useMemo(
+    () => [
+      ...new Set(
+        state.permissions
+          .filter((request) => request.sessionId === activeSessionId && request.commandLine === undefined)
+          .flatMap((request) => (request.callId === undefined ? [] : [request.callId])),
+      ),
+    ],
+    [activeSessionId, state.permissions],
+  )
+  const pairedNodes = useMemo(
+    () => state.timeline.nodes.filter((node) => pairedIds.includes(node.id)),
+    [pairedIds, state.timeline.nodes],
+  )
+  const loadNode = useCallback(
+    (id: string, signal?: AbortSignal) => store.loadTranscriptNode(id, signal),
+    [store],
+  )
+  const fullRequests = useCompleteTranscriptNodes(
+    `${activeSessionId ?? ''}:${state.connectionEpoch}`,
+    pairedNodes,
+    state.transcript?.omittedNodeIds,
+    loadNode,
+    pairedIds,
+  )
   const pendingPermissions = useMemo(
     () =>
       activeSessionId === undefined || state.permissions.length === 0
         ? EMPTY_PERMISSION_REQUESTS
         : state.permissions
             .filter((request) => request.sessionId === activeSessionId)
-            .map((request) => ({ request, command: approvalCommand(request, state.timeline.nodes) })),
-    [activeSessionId, state.permissions, state.timeline.nodes],
+            .map((request) => ({
+              request,
+              command: approvalCommand(request, fullRequests.nodes),
+              contentPending: request.callId !== undefined && fullRequests.pendingIds.has(request.callId),
+              contentFailed:
+                request.callId !== undefined &&
+                fullRequests.pendingIds.has(request.callId) &&
+                fullRequests.failed,
+            })),
+    [activeSessionId, state.permissions, fullRequests],
   )
   const sessionProjection = activeSessionId === undefined ? undefined : state.projections[activeSessionId]
   const questionProjection = sessionProjection?.userQuestions
