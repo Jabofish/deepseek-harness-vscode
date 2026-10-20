@@ -139,4 +139,3 @@ exercises an isolated real DSH Agent/tool pipeline without model inference.
 `tests/vscode-e2e/editor-bridge.ts` separately exercises real VS Code APIs with
 registered language-provider fixtures. Native VS Code Undo and independent editor reversion are also exercised. A
 model-driven editor scenario and SSH/container acceptance are not implied by these tests.
-See the [completion record](../../reviews/dsh-editor-companion-completion.md).

@@ -4,7 +4,7 @@
 
 ## 上游来源与安装默认
 
-当前上游最新发布包为 `@deepseek-ai/dsh@0.2.1-rc.2`；扩展引导安装默认包为 `@deepseek-ai/dsh@0.2.1-rc.2`，固定源码与隔离运行证据见[交付检查](../reviews/dsh-rc212-release-review.md)。发布版本与安装默认分别由 `LATEST_PUBLISHED_DSH_VERSION`、`DEFAULT_INSTALL_DSH_VERSION` 维护；新增适配不自动切换默认，安装和更新均使用经过验证的精确版本，不跟随浮动 dist-tag。默认版本不代表所有能力完成，timed 提问等验收缺口仍见能力矩阵。
+当前上游最新发布包为 `@deepseek-ai/dsh@0.2.1-rc.2`；扩展引导安装默认包为 `@deepseek-ai/dsh@0.2.1-rc.2`，固定源码见下文版本表，隔离验证方法见[质量流程](quality.md)。发布版本与安装默认分别由 `LATEST_PUBLISHED_DSH_VERSION`、`DEFAULT_INSTALL_DSH_VERSION` 维护；新增适配不自动切换默认，安装和更新均使用经过验证的精确版本，不跟随浮动 dist-tag。默认版本不代表所有能力完成，timed 提问等验收缺口仍见能力矩阵。
 
 历史 Host API 的固定基线是提交 [`47f943859bef60e4160492346772ded9b24f765a`](https://github.com/deepseek-ai/deepseek-harness/tree/47f943859bef60e4160492346772ded9b24f765a)：[RPC map](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/host/apiproxy/src/api/rpc-map.ts)、[events](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/host/apiproxy/src/api/events.ts)、[tool catalog](https://github.com/deepseek-ai/deepseek-harness/tree/47f943859bef60e4160492346772ded9b24f765a/packages/core/tools)。它只证明该 Host API 家族；较新的 Connection/Gateway、typed Remote 和 Session Controller 必须从**目标版本自己的 tag/commit 和实际存在的接口文件**核对。尤其 `0.1.5-rc.2` 与 `0.1.5-rc.3` 的 wire 比较不能引用上述已不存在的旧 RPC 文件；两者被适配器消费的 Session Controller、typed Remote、Connection/Gateway 与工具运行时源码相同，仍保留各自精确身份。
 
@@ -91,7 +91,7 @@ Plugin Manager 只在新入口读取并校验五种 `restartReason`，从 mutati
 
 账号奖励通知的 `title` 和 display 字段可以缺省；`campaign`、`amount`、`currency`、`grantedAt` 可以是任意 JSON，不能据此拒绝整批通知，也不能把它们原样投影。只发送安全字符串显示字段和有界标题，缺省金额仍允许显示及确认奖励；`orderId` 继续严格校验，确认身份留在 Host。
 
-rc.2 与 rc.1 的 Connection / Gateway、全部 API Remote、Session V4、Account、Plugin Manager 和工具声明源码相同。新增 Search / Fetch provider 通过 `settings.describe` 暴露 `web` 的实时 provider 选择和 `web-deepseek-api` 的配置，包括结果数量及是否发送原始问题；通用插件配置界面从运行时 schema 生成控件，不内置 provider 清单。密钥继续通过 Host 原生凭据入口管理。上游临时模型标签只改变展示，不改变目录名称、model ID 或路由，本扩展保持权威目录原值。精确准入、继承的错误 / 取消 / 释放及隔离真实配置读写入口见 `rc211-contract.spec.ts`、`rc211-incremental-contract.spec.ts` 和 `tests/live-dsh/rc211-surfaces.spec.ts`；逐项运行结果和 PR 审查边界见[交付检查记录](../reviews/dsh-rc212-release-review.md)。
+rc.2 与 rc.1 的 Connection / Gateway、全部 API Remote、Session V4、Account、Plugin Manager 和工具声明源码相同。新增 Search / Fetch provider 通过 `settings.describe` 暴露 `web` 的实时 provider 选择和 `web-deepseek-api` 的配置，包括结果数量及是否发送原始问题；通用插件配置界面从运行时 schema 生成控件，不内置 provider 清单。密钥继续通过 Host 原生凭据入口管理。上游临时模型标签只改变展示，不改变目录名称、model ID 或路由，本扩展保持权威目录原值。精确准入、继承的错误 / 取消 / 释放及隔离真实配置读写入口见 `rc211-contract.spec.ts`、`rc211-incremental-contract.spec.ts` 和 `tests/live-dsh/rc211-surfaces.spec.ts`。
 
 ### 未知版本
 
@@ -113,7 +113,7 @@ rc.2 与 rc.1 的 Connection / Gateway、全部 API Remote、Session V4、Accoun
 
 工具读取未保存缓冲区、选区、诊断、语言服务与导航，或直接执行可撤销编辑。空选区返回空文本；文档读取每次最多 200 行、16,384 个 UTF-16 单元，选区保留 65,536 单元上限。分页以返回 range.end 的行和列作为下一次 startLine/startColumn，越过 EOF 的起点返回 invalid-range，结束行截到 EOF，不把末行冒充请求行；条目最多 200。草稿仅返回可验证的相对句柄，不返回原始 untitled URI。多根名称清理并去重，嵌套根按最长路径归属；真实路径允许根内符号链接，拒绝根外目标。重基只在已知旧版本且修改范围可明确区分时执行，有界快照不复制巨大文件；不确定冲突返回 stale，不能宣称写入成功。编辑按当前设置授权，不再逐次弹确认，原生 Undo 和独立撤回保留；编辑及独立撤回通过 VS Code 保存整个缓冲区（包含原有未保存内容），回执 saved 布尔值说明该次保存是否成功。propose 接受 applied/stale/cancelled 的不早于期望版本回执，旧 pending 仍须版本相等；未知回执 ID 返回 not-found，文件不存在与权限/IO 故障不再冒充越界，读版本错误不使用写操作文案。结果不明的编辑不得自动重发，需先读取核对。正文仅返回已授权 DSH；结构化实时/历史工具卡投影安全摘要。
 
-完整目录与限制见[配套包说明](../packages/dsh-editor-bridge/README.md)，实现与证据见[易用性检查记录](../reviews/dsh-editor-companion-usability.md)。独立 tgz 安装保留为高级维护方式；未知安装结果按原请求 ID 恢复，不重复发送 mutation。受管默认路径不依赖其安装成功。
+完整目录与限制见[配套包说明](../packages/dsh-editor-bridge/README.md)。独立 tgz 安装保留为高级维护方式；未知安装结果按原请求 ID 恢复，不重复发送 mutation。受管默认路径不依赖其安装成功。
 
 ## 启动与传输
 

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- 修复长回复结束后全文入口消失、待建草稿串入已有会话、取消发送后迟到消息仍保留草稿，以及附件读取、移除和超时期间的投递竞态。
+- Preserves full-content access after long replies finish, keeps new-chat drafts with their intended conversation, clears late accepted drafts after cancellation, and protects attachments across ingestion, removal and send timeouts.
+
+- 控制消息部分投递失败时恢复漏收的聊天面板；恢复会重读连接和交互状态，不因此启动或重连 DSH。
+- Recovers chats that missed control messages, including partial broadcasts across multiple views, by rereading connection and interaction state without starting or reconnecting DSH.
+
 ## 0.3.6
 
 - 编辑器配套改为用户主动安装：在设置中选择“安装并启用配套插件”后才加载，F5 同样遵循此选择；安装后继续随扩展更新，后台不再自动安装插件包。
