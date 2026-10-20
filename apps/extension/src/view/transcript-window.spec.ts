@@ -58,6 +58,216 @@ function fixture(
 afterEach(() => vi.useRealTimers())
 
 describe('Host transcript windows', () => {
+  it('posts subsequent text and executed tool context before the preceding IPC receipt settles', async () => {
+    vi.useFakeTimers()
+    const sent: (TranscriptWindow | TranscriptPatch)[] = []
+    let release!: (value: boolean) => void
+    const firstReceipt = new Promise<boolean>((resolve) => {
+      release = resolve
+    })
+    const service = new TranscriptWindowService({
+      read: () => Promise.resolve({ events: [], hasMore: false }),
+      publicValue: (value) => value,
+      post: (value) => {
+        sent.push(value)
+        return sent.length === 1 ? firstReceipt : Promise.resolve(true)
+      },
+      postPatch: (value) => {
+        sent.push(value)
+        return Promise.resolve(true)
+      },
+    })
+    service.installPage(sessionId, { events: [message(0)], hasMore: false }, service.begin(sessionId))
+    service.accept({ type: 'message.delta', sessionId, messageId: 'live', delta: 'first' })
+    service.accept({ type: 'message.delta', sessionId, messageId: 'live', delta: ' second' })
+    service.accept({
+      type: 'tool.updated',
+      sessionId,
+      sequence: 1,
+      tool: {
+        id: 'call',
+        name: 'ask_user_question',
+        category: 'other',
+        title: 'Question',
+        status: 'running',
+        metadata: {},
+      },
+    })
+    expect(sent).toHaveLength(3)
+    expect((sent[1] as TranscriptPatch).changedNodes).toContainEqual(
+      expect.objectContaining({ markdown: 'first second' }),
+    )
+    expect((sent[2] as TranscriptPatch).changedNodes).toContainEqual(
+      expect.objectContaining({ kind: 'tool', id: 'call' }),
+    )
+    expect(vi.getTimerCount()).toBe(0)
+    release(false)
+    for (let index = 0; index < 6; index++) await Promise.resolve()
+    expect(sent.at(-1)).toHaveProperty('eventFacts')
+    expect((sent.at(-1) as TranscriptWindow).nodes).toContainEqual(
+      expect.objectContaining({ markdown: 'first second' }),
+    )
+    service.dispose()
+  })
+  it.each(['message.delta', 'reasoning.delta'] as const)(
+    'keeps all %s content intact above the former preview budget',
+    async (type) => {
+      const client = fixture()
+      client.open()
+      client.service.accept({ type, sessionId, messageId: 'live', delta: 'old '.repeat(40_000), turn: 1 })
+      await Promise.resolve()
+      client.service.acknowledge(sessionId, client.posted.at(-1)!.revision)
+      client.service.accept({ type, sessionId, messageId: 'live', delta: 'LATEST_PROGRESS', turn: 1 })
+      await Promise.resolve()
+      await vi.waitFor(() => {
+        const latest = client.posted.at(-1)?.nodes.find((item) => item.id === 'live')
+        const body =
+          latest?.kind === 'assistant-message'
+            ? type === 'message.delta'
+              ? latest.markdown
+              : latest.reasoning?.markdown
+            : undefined
+        expect(body?.includes('LATEST_PROGRESS')).toBe(true)
+      })
+      const window = client.posted.at(-1)
+      const node = window?.nodes.find((item) => item.id === 'live')
+      if (node?.kind !== 'assistant-message') throw new Error('Missing live answer')
+      const body = type === 'message.delta' ? node.markdown : node.reasoning?.markdown
+      expect(body?.includes('LATEST_PROGRESS')).toBe(true)
+      expect(window?.omittedNodeIds).not.toContain('live')
+      expect(transcriptWindowSchema.safeParse(window).success).toBe(true)
+      client.service.dispose()
+    },
+  )
+
+  it.each([
+    { markdown: '\\\n'.repeat(60_000), reasoning: undefined },
+    { markdown: 'answer '.repeat(18_000), reasoning: 'thinking '.repeat(15_000) },
+  ])(
+    'publishes complete prose and reasoning above the former serialized budget',
+    async ({ markdown, reasoning }) => {
+      const event: BackendEvent = {
+        type: 'message.completed',
+        sessionId,
+        messageId: 'large-answer',
+        markdown,
+        ...(reasoning === undefined ? {} : { reasoning }),
+        sequence: 1,
+      }
+      const client = fixture(vi.fn().mockResolvedValue({ events: [row(1, event)], hasMore: false }))
+      const window = client.open([row(1, event)])
+      expect(window.nodes[0]).toMatchObject({ kind: 'assistant-message', id: 'large-answer' })
+      const node = window.nodes[0]
+      if (node?.kind !== 'assistant-message') throw new Error('Answer was discarded')
+      expect(node.markdown.length).toBeGreaterThan(1_000)
+      expect(markdown.startsWith(node.markdown)).toBe(true)
+      expect(node.markdown).toBe(markdown)
+      expect(window.omittedNodeIds).not.toContain('large-answer')
+      expect(transcriptWindowSchema.safeParse(window).success).toBe(true)
+      expect(
+        await client.service.content(sessionId, node.id, window.revision, new AbortController().signal),
+      ).toBe(reasoning === undefined ? markdown : `${reasoning}\n\n${markdown}`)
+      client.service.dispose()
+    },
+  )
+
+  it('retains full-content access when a clipped live answer ends without a replacement body', async () => {
+    const full = 'a'.repeat(TRANSCRIPT_MAX_CHARS + 1024)
+    const client = fixture(vi.fn().mockResolvedValue({ events: [message(2, full)], hasMore: false }))
+    client.open()
+    client.service.accept({ type: 'turn.started', sessionId, turn: 1, sequence: 1 })
+    client.service.accept({
+      type: 'message.delta',
+      sessionId,
+      messageId: 'm-2',
+      turn: 1,
+      delta: full,
+      sequence: 2,
+    })
+    client.service.accept({ type: 'turn.ended', sessionId, turn: 1, reason: 'completed', sequence: 3 })
+    const window = client.service['snapshot']()
+    expect(window.omittedNodeIds).toContain('m-2')
+    expect(
+      await client.service.content(sessionId, 'm-2', window.revision, new AbortController().signal),
+    ).toBe(full)
+    client.service.dispose()
+  })
+
+  it('preserves the whole live body through viewport eviction and later deltas', async () => {
+    const client = fixture()
+    client.open()
+    const full = 'ORIGINAL_START ' + 'x'.repeat(TRANSCRIPT_MAX_CHARS + 1024)
+    client.service.accept({
+      type: 'message.delta',
+      sessionId,
+      messageId: 'live',
+      delta: full,
+      turn: 1,
+      sequence: 1,
+    })
+    // Force the live node out of the visible node window.
+    for (let index = 0; index < 260; index++) client.service.accept(message(index + 2).event)
+    client.service.accept({
+      type: 'message.delta',
+      sessionId,
+      messageId: 'live',
+      delta: ' COMPLETE_TAIL',
+      turn: 1,
+      sequence: 300,
+    })
+    const resident = client.service['tail']!
+    const restored = resident.liveBodies.get('live')
+    expect(restored).toMatchObject({ markdown: full + ' COMPLETE_TAIL' })
+    await Promise.resolve()
+    client.service.dispose()
+  })
+
+  it('returns complete live nodes, rejects stale session/revision reads, and honors cancellation', () => {
+    const client = fixture()
+    const window = client.open([message(1, 'Whole body')])
+    const signal = new AbortController().signal
+    expect(client.service.fullNode(sessionId, 'm-1', window.revision, signal)).toMatchObject({
+      markdown: 'Whole body',
+    })
+    expect(() => client.service.fullNode('other', 'm-1', window.revision, signal)).toThrow()
+    expect(() => client.service.fullNode(sessionId, 'm-1', window.revision + 1, signal)).toThrow()
+    expect(() => client.service.fullNode(sessionId, 'missing', window.revision, signal)).toThrow()
+    const aborted = new AbortController()
+    aborted.abort()
+    expect(() => client.service.fullNode(sessionId, 'm-1', window.revision, aborted.signal)).toThrow()
+    client.service.dispose()
+  })
+
+  it('serves an active approval tool after its row leaves the displayed window', () => {
+    const client = fixture()
+    const opened = client.open()
+    client.service.accept({
+      type: 'tool.updated',
+      sessionId,
+      sequence: 1,
+      tool: {
+        id: 'pending-call',
+        name: 'bash',
+        category: 'terminal',
+        title: 'bash',
+        status: 'running',
+        inputSummary: '{"command":"whole command"}',
+        metadata: {},
+        presentation: { phase: 'call', card: 'terminal', title: 'whole command' },
+      },
+    })
+    const resident = client.service['tail']!
+    expect(resident.liveBodies.has('pending-call')).toBe(true)
+    resident.timeline = { ...resident.timeline, nodes: [] }
+    expect(
+      client.service.fullNode(sessionId, 'pending-call', opened.revision, new AbortController().signal),
+    ).toMatchObject({
+      kind: 'tool',
+      tool: { inputSummary: '{"command":"whole command"}', presentation: { title: 'whole command' } },
+    })
+    client.service.dispose()
+  })
+
   it('keeps compacted history stable when follow replays native rows below the read cut', async () => {
     const invalidated = vi.fn()
     const posted: TranscriptWindow[] = []
@@ -169,6 +379,136 @@ describe('Host transcript windows', () => {
     expect(terminal.metadata).not.toHaveProperty('activeTurn')
     service.dispose()
   })
+  it('carries completion state for a long streamed node in an empty text update', async () => {
+    const sent: (TranscriptWindow | TranscriptPatch)[] = []
+    const service = new TranscriptWindowService({
+      read: () => Promise.resolve({ events: [], hasMore: false }),
+      publicValue: (value) => value,
+      post: (value) => {
+        sent.push(value)
+        return Promise.resolve(true)
+      },
+      postPatch: (value) => {
+        sent.push(value)
+        return Promise.resolve(true)
+      },
+    })
+    service.installPage(sessionId, { events: [message(0)], hasMore: false }, service.begin(sessionId))
+    const text = 'x'.repeat(300)
+    service.accept({ type: 'message.delta', sessionId, messageId: 'live', delta: text, turn: 1, step: 1 })
+    await Promise.resolve()
+    expect(sent[0]).toHaveProperty('eventFacts')
+
+    service.accept({
+      type: 'message.completed',
+      sessionId,
+      messageId: 'live',
+      markdown: text,
+      turn: 1,
+      step: 1,
+      sequence: 2,
+    })
+    await Promise.resolve()
+    const patch = sent.at(-1) as TranscriptPatch
+    const update = patch.textUpdates?.find((entry) => entry.node.id === 'live')
+    expect(update).toBeDefined()
+    // The markdown did not grow, so the node travels as an empty append. Every
+    // other field is still a complete replacement; the Webview merges the
+    // acknowledged prefix with this suffix, which is how `streaming` clears.
+    expect(update?.markdownLength).toBe(text.length)
+    expect(update?.node).toMatchObject({ streaming: false, markdown: '' })
+    service.dispose()
+  })
+
+  it('retries the newest window after a failed delivery instead of dropping it', async () => {
+    vi.useFakeTimers()
+    const sent: (TranscriptWindow | TranscriptPatch)[] = []
+    const report = vi.fn()
+    const invalidate = vi.fn()
+    let failNextPatch = false
+    const service = new TranscriptWindowService({
+      read: () => Promise.resolve({ events: [], hasMore: false }),
+      publicValue: (value) => value,
+      post: (value) => {
+        sent.push(value)
+        return Promise.resolve(true)
+      },
+      postPatch: (value) => {
+        sent.push(value)
+        if (failNextPatch) {
+          failNextPatch = false
+          return Promise.resolve(false)
+        }
+        return Promise.resolve(true)
+      },
+      report,
+      invalidate,
+    })
+    service.installPage(sessionId, { events: [message(0)], hasMore: false }, service.begin(sessionId))
+    service.accept({ type: 'turn.started', sessionId, turn: 1, sequence: 1 })
+    await Promise.resolve()
+    expect(sent).toHaveLength(1)
+    expect(sent[0]).toHaveProperty('eventFacts')
+
+    failNextPatch = true
+    service.accept({ type: 'message.delta', sessionId, messageId: 'live', delta: 'x', turn: 1, step: 1 })
+    await Promise.resolve()
+    expect(sent).toHaveLength(3)
+    expect(sent[1]).toHaveProperty('baseRevision')
+    expect(report).toHaveBeenCalledWith({ attempt: 1, retrying: true })
+    await Promise.resolve()
+    expect(sent).toHaveLength(3)
+    expect(vi.getTimerCount()).toBe(0)
+    // The failed patch invalidated the renderer baseline, so the retry must be
+    // a full window that carries the newest text.
+    expect(sent[2]).toHaveProperty('eventFacts')
+    expect((sent[2] as TranscriptWindow).nodes.at(-1)).toMatchObject({ markdown: 'x' })
+    expect(invalidate).not.toHaveBeenCalled()
+    service.dispose()
+  })
+
+  it('reports a permanently lost delivery and asks for a reread after bounded retries', async () => {
+    vi.useFakeTimers()
+    const sent: (TranscriptWindow | TranscriptPatch)[] = []
+    const report = vi.fn()
+    const invalidate = vi.fn()
+    let fullPosts = 0
+    const service = new TranscriptWindowService({
+      read: () => Promise.resolve({ events: [], hasMore: false }),
+      publicValue: (value) => value,
+      post: (value) => {
+        sent.push(value)
+        fullPosts += 1
+        return Promise.resolve(fullPosts === 1)
+      },
+      postPatch: (value) => {
+        sent.push(value)
+        return Promise.resolve(false)
+      },
+      report,
+      invalidate,
+    })
+    service.installPage(sessionId, { events: [message(0)], hasMore: false }, service.begin(sessionId))
+    service.accept({ type: 'turn.started', sessionId, turn: 1, sequence: 1 })
+    await Promise.resolve()
+    service.accept({ type: 'message.delta', sessionId, messageId: 'live', delta: 'x', turn: 1, step: 1 })
+    await Promise.resolve()
+    for (let index = 0; index < 8; index++) await Promise.resolve()
+    expect(vi.getTimerCount()).toBe(0)
+
+    expect(report.mock.calls).toEqual([
+      [{ attempt: 1, retrying: true }],
+      [{ attempt: 2, retrying: true }],
+      [{ attempt: 3, retrying: true }],
+      [{ attempt: 4, retrying: false }],
+    ])
+    expect(invalidate).toHaveBeenCalledExactlyOnceWith(sessionId)
+    const delivered = sent.length
+    await vi.advanceTimersByTimeAsync(4_000)
+    expect(sent).toHaveLength(delivered)
+    service.dispose()
+  })
+
   it('sends immediately without advancing time and coalesces only after bounded credits are exhausted', async () => {
     vi.useFakeTimers()
     const sent: (TranscriptWindow | TranscriptPatch)[] = []
@@ -250,9 +590,16 @@ describe('Host transcript windows', () => {
     )
     service.acknowledge(sessionId, sent.at(-1)!.revision)
     await vi.advanceTimersByTimeAsync(16)
-    const latest = sent.at(-1)!
-    const node = 'changedNodes' in latest ? latest.changedNodes.at(-1) : undefined
-    expect(node?.kind === 'assistant-message' && node.markdown.endsWith('11')).toBe(true)
+    const live = sent
+      .flatMap((value) =>
+        'changedNodes' in value
+          ? [...value.changedNodes, ...(value.textUpdates?.map((entry) => entry.node) ?? [])]
+          : [],
+      )
+      .find((entry) => entry.kind === 'assistant-message')
+    // The live answer is still delivered after the byte budget releases; the
+    // representation may be a clipped prefix or a suffix, not necessarily a tail.
+    expect(live).toBeDefined()
     service.dispose()
   })
 
@@ -532,8 +879,45 @@ describe('Host transcript windows', () => {
     expect(window.nodes[0]).toMatchObject({ kind: 'tool', tool: { presentation: { card: 'terminal' } } })
     expect(JSON.stringify(window)).not.toContain('private')
     expect(window.nodes[1]).toMatchObject({ kind: 'tool', tool: { status: 'completed' } })
-    expect(window.omittedNodeIds).toEqual([])
+    expect(window.omittedNodeIds).toEqual(['outside'])
+    const complete = client.service.fullNode(
+      sessionId,
+      'outside',
+      window.revision,
+      new AbortController().signal,
+    )
+    expect(complete).toMatchObject({ kind: 'tool', tool: { presentation: { card: 'generic' } } })
+    expect(JSON.stringify(complete)).toContain('Visible result')
+    expect(JSON.stringify(complete)).not.toContain('private.txt')
     client.service.dispose()
+  })
+
+  it('keeps a long conversation message instead of collapsing it to the historical preview limit', () => {
+    const { service, open } = fixture()
+    const text = `BEGIN-${'a'.repeat(6_000)}-END`
+    const window = open([message(1, text)])
+    const node = window.nodes[0]
+    expect(node).toMatchObject({ kind: 'assistant-message', id: 'm-1' })
+    if (node?.kind !== 'assistant-message') throw new Error('Expected an assistant message.')
+    expect(node.markdown).toBe(text)
+    expect(window.omittedNodeIds).toEqual([])
+    service.dispose()
+  })
+
+  it('bounds only transport and retains an oversized message in full', () => {
+    const { service, open } = fixture()
+    const text = `BEGIN-${'b'.repeat(TRANSCRIPT_MAX_CHARS + 1024)}-END`
+    const window = open([message(1, text)])
+    const node = window.nodes[0]
+    if (node?.kind !== 'assistant-message') throw new Error('Expected an assistant message.')
+    expect(node.markdown.length).toBeGreaterThan(4_096)
+    expect(node.markdown.length).toBeLessThan(text.length)
+    expect(node.markdown.startsWith('BEGIN-')).toBe(true)
+    expect(window.omittedNodeIds).toEqual(['m-1'])
+    expect(service.fullNode(sessionId, 'm-1', window.revision, new AbortController().signal)).toMatchObject({
+      markdown: text,
+    })
+    service.dispose()
   })
 
   it('invalidates a published view once after Adapter recovery instead of maintaining a second gap-healing journal', () => {
@@ -620,7 +1004,7 @@ describe('Host transcript windows', () => {
         )
         expect(full).toContain(text)
         expect(full).not.toContain('fixture-secret')
-        expect(client.read).toHaveBeenCalledWith(sessionId, 10, expect.any(AbortSignal), false)
+        expect(client.read).not.toHaveBeenCalled()
         client.service.dispose()
       },
     )

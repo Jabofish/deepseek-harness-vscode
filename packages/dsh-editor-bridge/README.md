@@ -4,8 +4,8 @@ The editor integration is bundled with the VS Code extension. It uses DSH's
 existing authenticated Remote connection and adds no listening port. Editor
 access follows the selected session after the user chooses to install the companion
 in Settings. It is not automatically installed, including during F5 launches. The
-agent edits save automatically and remain undoable. Saving includes any
-earlier unsaved content in the same buffer.
+agent edits remain undoable. Initially clean buffers save automatically;
+existing unsaved user changes remain unsaved when edits are applied or undone.
 
 ## Start and configure
 
@@ -14,43 +14,39 @@ earlier unsaved content in the same buffer.
 3. Use the editor tools. No separate download, CLI install or permission picker.
 
 **Settings → General → Editor integration** provides live status, a persistent
-workspace on/off switch, explicit installation, read-only mode, retry, repair, managed
+workspace on/off switch, explicit installation and cancellation, read-only mode, retry, repair, managed
 restart and Undo. These controls also work before a DSH connection exists. An
 external instance with no companion offers **Use a dedicated DSH**, starting an
 extension-owned instance while leaving the external process running.
 
-Managed startup uses an extension-owned overlay and a self-contained runtime
-factory. It loads services from the selected DSH installation instead of pulling
-exact-version peer dependencies into a profile. It neither installs a package nor
-changes the DSH profile, so routine startup does not require pnpm or network access.
-After installation consent, updating the extension supplies the next startup's integration, including when an
-older companion was already installed. In default automatic connection mode, the
-extension compares the running companion's build fingerprint with the shipped
-build. A stale same-host companion triggers a switch to a fresh extension-owned
-instance; the external process is left running. If startup fails, chat falls back
-to the original connection. Explicit custom/attach-only connections stay selected.
-Turning automatic setup off applies to the
-next startup; turning editor tools off immediately revokes access.
+Installation uses DSH's standard plugin manager and the archive shipped with the
+extension. It requires a working package manager in the connected DSH environment.
+The package exports English/Chinese display metadata so DSH's own plugin inventory
+shows its title and description. Startup injects no local-file plugin or overlay.
+Already installed companions can update through the same manager after consent;
+missing packages always retain the explicit Install action. External processes are
+never modified or replaced automatically. Turning editor tools off revokes access.
+Cancel installation addresses the original DSH request. The panel keeps an unknown
+outcome visible and prevents duplicate installs until status recovery confirms it;
+if cancellation was too late, it shows the actual installed result.
 
 The repository's **F5** launch runs `pnpm build` before starting the Extension
 Development Host. This rebuilds the companion from current source even without a
 version bump. The debug launch requests a fresh owned DSH on a free port, ignoring
 discovery of old processes without changing saved connection settings. Each build
-has its own immutable runtime module path, so ESM caching cannot reuse old code.
+has its own package build fingerprint, so an installed stale build can be detected.
 Stop and start debugging with F5 after editing companion source; reloading a running
 window alone does not run the pre-launch build task. Installation consent and the
 editor access switch both apply during debugging.
 
-The fixed CLI/tool contracts include the default `0.2.0-rc.2` and the `0.2.1`
-alpha.1–alpha.5/rc.1–rc.2 family. Actual isolated runtime evidence currently covers
-`0.2.0-rc.2`, `0.2.1-rc.1` and `0.2.1-rc.2`. Other versions first advertise `--patch`
-through a bounded read-only help probe. Failure to prepare/load the optional
-integration does not stop DSH startup. The client negotiates its own tool protocol
+The standard package-manager contract is pinned in `docs/dsh-contract.md` for
+DSH `0.2.1-rc.2`. Failure to install or load the optional integration does not stop
+DSH startup. The client negotiates its own tool protocol
 separately from DSH's version and falls back to metadata when only protocol 1 is
 available. Unsupported tools leave chat, attachment and manual editor context usable.
 
 **Repair setup** remains available for compatible extension-managed profiles.
-The optional standalone archive is built by `pnpm build:companion`; explicit
+The standard plugin archive is built by `pnpm build:companion`; explicit
 archive/profile mutations still require the DSH package manager to work. Unknown
 installation outcomes recover by original request ID instead of replaying mutations.
 Existing versions are preserved for rollback when available. Filesystem/profile
@@ -79,7 +75,7 @@ An edit is written as one undoable editor group the moment the agent asks for it
 user is not asked to review a diff, no notification pops up and no editor tab is opened
 or focused. The touched lines get a two-second highlight when the file is already on
 screen. The Host rechecks trust, root, version and original
-text first, then saves the whole buffer through VS Code. The receipt carries `saved: true` on success or `saved: false` if the edit applied but saving failed; do not resend that edit. Saving includes pre-existing unsaved content and honors VS Code save participants. A transient status bar entry offers **Undo**, and
+text first, then saves through VS Code only when the buffer was initially clean and still matches the applied edit. The receipt carries `saved: true` on save success or `saved: false` when user changes are retained unsaved or saving failed; do not resend that edit. Undo also preserves unsaved user changes. Saving honors VS Code save participants. A transient status bar entry offers **Undo**, and
 **DSH: Undo Last Editor Edit** reverts the most recent applied edit while the buffer
 still matches what the agent produced. The undo record lives in the extension rather than
 in the grant, so it survives a reconnect, a session switch and a stopped grant; reverting
@@ -127,7 +123,7 @@ privileged paths and grant identifiers stay in the Host.
 
 ## Protocol and evidence
 
-Package 0.2.0 negotiates protocol 2 via `vscodeEditorCompanion/describe`,
+Package 0.2.1 negotiates protocol 2 via `vscodeEditorCompanion/describe`,
 `verifyHost`, `attach`, `poll`, `respond` and `detach`, retaining legacy metadata
 protocol 1. Inputs, outputs and limits are strictly validated. Grants bind to
 both the Agent session and Remote Peer. Slow operations do not stop lease renewal;
@@ -139,4 +135,3 @@ exercises an isolated real DSH Agent/tool pipeline without model inference.
 `tests/vscode-e2e/editor-bridge.ts` separately exercises real VS Code APIs with
 registered language-provider fixtures. Native VS Code Undo and independent editor reversion are also exercised. A
 model-driven editor scenario and SSH/container acceptance are not implied by these tests.
-See the [completion record](../../reviews/dsh-editor-companion-completion.md).

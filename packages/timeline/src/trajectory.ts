@@ -207,6 +207,10 @@ function trajectoryRecordForNode(node: TimelineNode): TrajectoryRecordData | und
       if (node.tool.preparation !== undefined) break
       const running = node.tool.status === 'queued' || node.tool.status === 'running'
       const startedAt = toEpochMillis(node.tool.startedAt)
+      const output = [node.tool.outputSummary, node.tool.error, node.tool.autoReviewDenial?.reason].filter(
+        (part): part is string => part !== undefined && part !== '',
+      )
+      const outputDetail = [...new Set(output)].join('\n\n')
       record = {
         id: `tool\u0000${node.id}`,
         kind: 'tool',
@@ -215,7 +219,7 @@ function trajectoryRecordForNode(node: TimelineNode): TrajectoryRecordData | und
         timeSeconds: running ? null : toolDurationSeconds(node.tool.startedAt, node.tool.completedAt),
         ...(startedAt === undefined ? {} : { startedAt }),
         ...(node.tool.inputSummary === undefined ? {} : { inputDetail: node.tool.inputSummary }),
-        ...(node.tool.outputSummary === undefined ? {} : { outputDetail: node.tool.outputSummary }),
+        ...(outputDetail === '' ? {} : { outputDetail }),
         isError: node.tool.status === 'failed',
         streaming: running,
       }

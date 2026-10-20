@@ -1954,6 +1954,17 @@ describe('rc6 stateful frame degradation', () => {
     })
   })
 
+  it('preserves every character of a long explicit approval command', () => {
+    const commandLine = '  start\n' + 'x'.repeat(12_000) + '\nFINAL_ARGUMENT  '
+    const event = rc6Mapper.event('approval/requested', {
+      sessionId: 's1',
+      approvalId: 'approval-1',
+      toolName: 'bash',
+      commandLine,
+    })
+    expect(event).toMatchObject({ type: 'permission.requested', request: { commandLine } })
+  })
+
   it('rejects a malformed localized approval display reason', () => {
     // DSH 0.1.7-rc.2 at 477b4f420553e8a52c2fbccc464d7561b239c443 keeps
     // `displayReason` on the live approval request only; it requires an English

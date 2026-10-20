@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { pluginBundleErrorCodeSchema, pluginBundleChangeResultSchema } from './feature-plugin.js'
 
 export const editorIntegrationPreferencesSchema = z
   .object({ enabled: z.boolean(), autoSetup: z.boolean(), allowEdits: z.boolean() })
@@ -27,5 +28,11 @@ export const editorIntegrationStatusSchema = z
     canInstall: z.boolean(),
     canRestart: z.boolean(),
     canUndo: z.boolean(),
+    installation: z
+      .enum(['installing', 'cancelling', 'unknown', 'cancelled', 'failed', 'installed'])
+      .optional(),
+    canCancelInstall: z.boolean().optional(),
+    installationErrorCode: pluginBundleErrorCodeSchema.optional(),
+    installationFailureKind: pluginBundleChangeResultSchema.shape.failureKind,
   })
   .strict()

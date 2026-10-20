@@ -15,6 +15,35 @@ describe('DshStreamController', () => {
     await Promise.all(controllers.splice(0).map((controller) => controller.close()))
   })
 
+  it('reconnects a live interaction with a missing reply identity and accepts its authoritative replay', async () => {
+    const first = new ControlledStream()
+    const second = new ControlledStream()
+    const controller = new DshStreamController(streamTransport([]), undefined, undefined, {
+      streamSource: controlledGenerationSource([first, second]),
+      closeTransport: false,
+    })
+    controllers.push(controller)
+    const received: BackendEvent[] = []
+    controller.subscribe((event) => received.push(event))
+    first.push(subscribeFrame('s1', 0))
+    first.push({
+      payload: { type: 'approval/requested', sessionId: 's1', approvalId: 'a1', toolName: 'bash' },
+    })
+    await waitFor(() => received.some((event) => event.type === 'connection.lost'))
+    expect(received.some((event) => event.type === 'permission.requested')).toBe(false)
+    await waitForAtMost(() => second.signal !== undefined, 2_000)
+    second.push(subscribeFrame('s1', 0))
+    second.push({
+      rpcId: 'native-response-id',
+      payload: { type: 'approval/requested', sessionId: 's1', approvalId: 'a1', toolName: 'bash' },
+    })
+    await waitFor(() => received.some((event) => event.type === 'permission.requested'))
+    const approvals = received.filter((event) => event.type === 'permission.requested')
+    expect(approvals).toHaveLength(1)
+    expect(approvals[0]?.request).toMatchObject({ id: 'a1', rpcId: 'native-response-id' })
+    expect(received.some((event) => event.type === 'connection.restored')).toBe(true)
+  })
+
   it('keeps projection keys that share one durable event sequence', async () => {
     const sessionId = 's1'
     const sequence = 4

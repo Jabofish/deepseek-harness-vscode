@@ -23,27 +23,23 @@ function terminalProps(overrides: Partial<ToolTerminalRenderProps['view']> = {})
 }
 
 describe('ToolTerminalPreview', () => {
-  it('folds output, preserves raw copy text, and exposes the exit status', async () => {
+  it('renders all output, preserves raw copy text, and exposes the exit status', async () => {
     const output = Array.from({ length: 18 }, (_, index) => `line ${index + 1}`).join('\n') + '\n'
     const writeText = vi.fn().mockResolvedValue(undefined)
     vi.stubGlobal('navigator', { clipboard: { writeText } })
     const { container } = render(<ToolTerminalPreview {...terminalProps({ output, exitCode: 2 })} />)
 
-    expect(container.querySelectorAll('.dsh-tool-terminal-preview__line')).toHaveLength(16)
+    expect(container.querySelectorAll('.dsh-tool-terminal-preview__line')).toHaveLength(18)
     expect(container.textContent).toContain('line 1')
     expect(container.textContent).toContain('line 8')
     expect(container.textContent).toContain('line 11')
     expect(container.textContent).toContain('line 18')
-    expect(container.textContent).not.toContain('line 9')
+    expect(container.textContent).toContain('line 9')
     expect(container.textContent).toContain('Exit status: 2')
-    expect(screen.getByRole('button', { name: 'Show 2 more output lines' })).toBeDefined()
+    expect(screen.queryByRole('button', { name: 'Show 2 more output lines' })).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Copy' }))
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(output))
-
-    fireEvent.click(screen.getByRole('button', { name: 'Show 2 more output lines' }))
-    expect(container.querySelectorAll('.dsh-tool-terminal-preview__line')).toHaveLength(18)
-    expect(screen.getByRole('button', { name: 'Show fewer output lines' })).toBeDefined()
   })
 
   it('gives a terminating signal precedence over an exit code', () => {

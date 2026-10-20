@@ -1,4 +1,4 @@
-import { AppError } from '@dsh-vscode/domain'
+import { AppError, type PermissionPresetCatalog } from '@dsh-vscode/domain'
 import type { DshTransport } from '../../contracts.js'
 import { recordOrUndefined } from '../../repositories/shared/guards.js'
 import { unwrapRpcResultValue } from '../rc6/rpc.js'
@@ -8,6 +8,13 @@ export async function readPermissionCatalog(
   transport: DshTransport,
   signal?: AbortSignal,
 ): Promise<readonly string[]> {
+  return (await readPermissionCatalogSnapshot(transport, signal)).items
+}
+
+export async function readPermissionCatalogSnapshot(
+  transport: DshTransport,
+  signal?: AbortSignal,
+): Promise<PermissionPresetCatalog> {
   await transport.waitForEventStreamReady?.(signal)
   const value = recordOrUndefined(
     unwrapRpcResultValue<unknown>(
@@ -33,5 +40,17 @@ export async function readPermissionCatalog(
       message: 'DSH returned a malformed permission catalog.',
       retryable: false,
     })
-  return [...new Set(options.map((entry: { value: string }) => entry.value).filter((id) => id !== 'custom'))]
+  const items = [
+    ...new Set(options.map((entry: { value: string }) => entry.value).filter((id) => id !== 'custom')),
+  ]
+  // Earlier catalogs publish choices only. Never infer their default from
+  // option order or a built-in preset name.
+  const defaultPreset = value?.defaultPreset
+  if (defaultPreset !== undefined && (typeof defaultPreset !== 'string' || !items.includes(defaultPreset)))
+    throw new AppError({
+      code: 'PROTOCOL_ERROR',
+      message: 'DSH returned a malformed default permission preset.',
+      retryable: false,
+    })
+  return { items, ...(defaultPreset === undefined ? {} : { defaultPreset }) }
 }

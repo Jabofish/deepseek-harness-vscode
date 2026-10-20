@@ -323,6 +323,34 @@ describe('ProtocolClient', () => {
     }
   })
 
+  it.each(['app.ready', 'connection.retry'] as const)(
+    'keeps %s alive through cold startup and still permits cancellation',
+    async (type) => {
+      const timeoutSpy = vi.spyOn(window, 'setTimeout')
+      const posted: ProtocolEnvelope[] = []
+      const client = new ProtocolClient({
+        postMessage: (value) => posted.push(value),
+        getState: () => undefined,
+        setState: () => undefined,
+      })
+      try {
+        const controller = new AbortController()
+        const pending = client.request({ type, requestId: 'slow-start' }, controller.signal)
+        const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+        expect(timeoutSpy.mock.calls.some(([, timeout]) => timeout === 120_000)).toBe(true)
+        controller.abort()
+        await rejected
+        expect(posted.at(-1)?.message).toMatchObject({
+          type: 'feature.request.cancel',
+          payload: { targetRequestId: 'slow-start' },
+        })
+      } finally {
+        timeoutSpy.mockRestore()
+        client.dispose()
+      }
+    },
+  )
+
   it('keeps a session export alive past the ordinary request timeout', async () => {
     const setTimeoutSpy = vi.spyOn(window, 'setTimeout')
     const client = new ProtocolClient({
@@ -383,6 +411,51 @@ describe('ProtocolClient', () => {
       await expect(request).resolves.toEqual({ status: 'ready' })
     } finally {
       setTimeoutSpy.mockRestore()
+      client.dispose()
+    }
+  })
+
+  it('keeps companion installation pending while cancellation uses a separate request', async () => {
+    const timers = vi.spyOn(window, 'setTimeout')
+    const client = new ProtocolClient({
+      postMessage: () => undefined,
+      getState: () => undefined,
+      setState: () => undefined,
+    })
+    try {
+      const setup = client.featureRequest({
+        type: 'editor.companion.action',
+        requestId: 'companion-install',
+        payload: { action: 'setup' },
+      })
+      const cancel = client.featureRequest({
+        type: 'editor.companion.action',
+        requestId: 'companion-cancel',
+        payload: { action: 'cancel-install' },
+      })
+      expect(timers.mock.calls.some(([, timeout]) => timeout === 600_000)).toBe(true)
+      client.handle({
+        protocolVersion: PROTOCOL_VERSION,
+        message: {
+          type: 'feature.response',
+          requestId: 'companion-cancel',
+          ok: true,
+          payload: { kind: 'empty' },
+        },
+      })
+      await cancel
+      client.handle({
+        protocolVersion: PROTOCOL_VERSION,
+        message: {
+          type: 'feature.response',
+          requestId: 'companion-install',
+          ok: true,
+          payload: { kind: 'empty' },
+        },
+      })
+      await expect(setup).resolves.toEqual({ kind: 'empty' })
+    } finally {
+      timers.mockRestore()
       client.dispose()
     }
   })

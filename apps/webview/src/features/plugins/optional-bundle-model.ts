@@ -254,6 +254,7 @@ export function isValidRegistry(value: string): boolean {
 }
 
 export function failureKey(result: PluginBundleChangeResult): string {
+  if (result.failureKind === 'pnpm-missing') return 'plugins.manager.failure.pnpmMissing'
   if (result.errorCode === 'already-installed') return 'plugins.manager.failure.alreadyInstalled'
   if (result.errorCode === 'incompatible-version') return 'plugins.manager.failure.incompatible'
   if (result.errorCode === 'management-required' || result.errorCode === 'unaddressable')

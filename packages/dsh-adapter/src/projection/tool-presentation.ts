@@ -7,7 +7,7 @@ import type {
   ToolPresentationView,
 } from '@dsh-vscode/domain'
 
-import { safePayload } from '../redaction.js'
+import { serializeToolContent } from '../redaction.js'
 import { recordOrUndefined, zeroBasedLine } from '../repositories/shared/guards.js'
 
 /** Project the official rc.8 presentation union without leaking upstream types. */
@@ -269,7 +269,6 @@ export function presentationDiffLocations(
     if (seen.has(diff.path)) continue
     seen.add(diff.path)
     locations.push({ path: diff.path })
-    if (locations.length >= 32) break
   }
   return locations.length === 0 ? undefined : locations
 }
@@ -525,45 +524,7 @@ function presentationContent(
 function presentationValue(value: unknown): string | undefined {
   if (value === undefined) return undefined
   if (typeof value === 'string') return projectedText(value)
-  const sanitized = safePresentationValue(value)
-  if (sanitized === undefined) return undefined
-  return JSON.stringify(sanitized)
-}
-
-function safePresentationValue(value: unknown, depth = 0): unknown {
-  if (depth > 3) return undefined
-  if (typeof value === 'string') return value
-  if (typeof value === 'number' || typeof value === 'boolean' || value === null) return value
-  if (Array.isArray(value)) return value.slice(0, 32).map((entry) => safePresentationValue(entry, depth + 1))
-  const record = recordOrUndefined(value)
-  if (record === undefined) return undefined
-  const output: Record<string, unknown> = {}
-  for (const [key, entry] of Object.entries(record)) {
-    if (isSensitivePresentationField(key)) continue
-    const safe = safePresentationValue(entry, depth + 1)
-    if (safe !== undefined) output[key] = safe
-  }
-  return output
-}
-
-const SENSITIVE_PRESENTATION_FIELDS = new Set([
-  'authorization',
-  'token',
-  'secret',
-  'password',
-  'apikey',
-  'accessToken',
-  'refreshToken',
-  'privateKey',
-  'body',
-  'response',
-])
-
-function isSensitivePresentationField(key: string): boolean {
-  const normalized = key.replace(/[_-]/gu, '').toLocaleLowerCase()
-  return [...SENSITIVE_PRESENTATION_FIELDS].some(
-    (field) => field.replace(/[_-]/gu, '').toLocaleLowerCase() === normalized,
-  )
+  return serializeToolContent(value)
 }
 
 function requiredText(value: unknown): string | undefined {
@@ -627,7 +588,6 @@ function toolLocations(
     seen.add(path)
     const line = zeroBasedLine(record?.line)
     locations.push({ path, ...(line === undefined ? {} : { line }) })
-    if (locations.length >= 32) break
   }
   return locations.length === 0 ? undefined : locations
 }
@@ -652,6 +612,5 @@ function array(value: unknown): readonly unknown[] {
  * Webview folds and copies these bodies as if they were complete.
  */
 function projectedText(value: unknown): string {
-  const text = typeof value === 'string' ? value : JSON.stringify(safePayload(value))
-  return text ?? ''
+  return serializeToolContent(value)
 }

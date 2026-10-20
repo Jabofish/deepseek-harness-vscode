@@ -119,6 +119,49 @@ function backend(
 }
 
 describe('TaskCenterRegistry', () => {
+  it('keeps streaming text, reasoning and tools out of task reads while publishing control changes immediately', () => {
+    const onChange = vi.fn()
+    const current = backend()
+    const registry = new TaskCenterRegistry({ onChange })
+    registry.attach(current, () => 'folder-1')
+    for (let index = 0; index < 100; index++) {
+      current.events.emit({
+        type: 'message.delta',
+        sessionId: 'session-1',
+        messageId: 'message',
+        delta: 'text',
+      })
+      current.events.emit({
+        type: 'reasoning.delta',
+        sessionId: 'session-1',
+        messageId: 'message',
+        delta: 'reason',
+      })
+      current.events.emit({
+        type: 'tool.updated',
+        sessionId: 'session-1',
+        tool: { id: 'tool', name: 'read', category: 'other', title: 'Read', status: 'running', metadata: {} },
+      })
+    }
+    current.events.emit({ type: 'session.status', sessionId: 'session-1', status: 'running', replayed: true })
+    expect(onChange).not.toHaveBeenCalled()
+    current.events.emit({ type: 'session.status', sessionId: 'session-1', status: 'running' })
+    current.events.emit({
+      type: 'question.requested',
+      question: { id: 'q', sessionId: 'session-1', prompt: 'Continue?', allowFreeText: true },
+    })
+    current.events.emit({
+      type: 'question.resolved',
+      sessionId: 'session-1',
+      questionId: 'q',
+      outcome: 'answered',
+    })
+    current.events.emit({ type: 'turn.ended', sessionId: 'session-1', turn: 1, reason: 'aborted' })
+    current.events.emit({ type: 'session.projection', sessionId: 'session-1', key: 'goal', value: null })
+    expect(onChange.mock.calls).toEqual(Array.from({ length: 5 }, () => ['session-1']))
+    registry.dispose()
+  })
+
   it('builds a current-session-only projection from existing repositories', async () => {
     const registry = new TaskCenterRegistry({ now: () => 2_000 })
     registry.attach(backend(), () => 'folder-1')

@@ -5,6 +5,8 @@ import { writeClipboard } from './clipboard.js'
 
 export interface CopyButtonProps {
   readonly text: string
+  /** Full text loader for a clipped row; falls back to `text` when absent. */
+  readonly resolveText?: (() => Promise<string>) | undefined
   readonly className: string
   readonly translate?: Translate | undefined
 }
@@ -13,6 +15,7 @@ type CopyState = 'idle' | 'copied' | 'failed'
 
 export function CopyButton(props: CopyButtonProps): ReactElement {
   const { t: defaultTranslate } = useI18n()
+  const { resolveText, text } = props
   const t = props.translate ?? defaultTranslate
   const [state, setState] = useState<CopyState>('idle')
   const copyPending = useRef(false)
@@ -32,22 +35,22 @@ export function CopyButton(props: CopyButtonProps): ReactElement {
     if (state !== 'idle' || copyPending.current) return
     const epoch = copyEpoch.current
     copyPending.current = true
-    void writeClipboard(props.text)
-      .then((success) => {
-        if (epoch !== copyEpoch.current) return
-        copyPending.current = false
-        // A denied clipboard write used to disappear silently; both outcomes
-        // now state themselves, on the button and to screen readers.
-        setState(success ? 'copied' : 'failed')
-        copyTimer.current = window.setTimeout(() => {
-          copyTimer.current = undefined
-          setState('idle')
-        }, 1_000)
-      })
-      .catch(() => {
-        if (epoch === copyEpoch.current) copyPending.current = false
-      })
-  }, [props.text, state])
+    const finish = (success: boolean): void => {
+      if (epoch !== copyEpoch.current) return
+      copyPending.current = false
+      // A denied clipboard write used to disappear silently; both outcomes
+      // now state themselves, on the button and to screen readers.
+      setState(success ? 'copied' : 'failed')
+      copyTimer.current = window.setTimeout(() => {
+        copyTimer.current = undefined
+        setState('idle')
+      }, 1_000)
+    }
+    void (async () => {
+      const value = resolveText === undefined ? text : await resolveText()
+      return writeClipboard(value)
+    })().then(finish, () => finish(false))
+  }, [resolveText, text, state])
 
   const label =
     state === 'copied'

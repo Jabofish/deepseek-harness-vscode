@@ -19,7 +19,8 @@ export interface Applied {
 }
 
 /**
- * Edits apply immediately and save through VS Code, without opening or focusing a tab.
+ * Edits apply immediately without opening or focusing a tab. Only an initially
+ * clean buffer is saved; user-owned unsaved changes stay in the buffer.
  * A version change no longer discards the edit on its own: when the agent's ranges sit
  * entirely outside the span the user just changed, they are rebased and applied.
  */
@@ -107,7 +108,7 @@ export class CompanionEditProposals implements vscode.Disposable {
   /** Reverts one applied edit group when the agent's span is still unambiguous. */
   public async undo(id: string): Promise<boolean> {
     const entry = this.ledger.get(id)
-    if (entry === undefined || entry.status !== 'applied') return false
+    if (entry === undefined || (entry.status !== 'applied' && entry.status !== 'uncertain')) return false
     const outcome = await revertEdit(entry, () => this.workspace.assert(this.lifetime.signal))
     if (outcome !== 'reverted') return false
     this.ledger.settle(entry, 'reverted')
@@ -129,27 +130,46 @@ export class CompanionEditProposals implements vscode.Disposable {
       this.ledger.settle(entry, 'stale')
       return
     }
+    let dispatched = false
     try {
       this.workspace.assert(signal)
+      const maySave = !document.isDirty
       const change = new vscode.WorkspaceEdit()
       for (const edit of edits)
         change.replace(document.uri, this.workspace.range(document, edit.range), edit.text)
+      dispatched = true
       const applied = await vscode.workspace.applyEdit(change)
       entry.version = document.version
-      this.ledger.settle(entry, applied ? 'applied' : 'stale')
+      const observed = document.getText()
+      this.ledger.settle(
+        entry,
+        applied || observed === entry.after ? 'applied' : observed === entry.before ? 'stale' : 'uncertain',
+      )
+      if (!applied && entry.status !== 'stale') entry.saved = false
       if (applied) {
         entry.saved = false
         try {
           this.workspace.assert(signal)
-          await this.workspace.validate(document.uri, signal)
-          entry.saved = (await document.save()) && !document.isDirty
+          if (maySave) {
+            await this.workspace.validate(document.uri, signal)
+            // User typing while apply/validation was pending must not be saved
+            // together with the agent edit.
+            if (document.getText() === entry.after) entry.saved = (await document.save()) && !document.isDirty
+          }
         } catch {
           /* Never turn an applied edit into a failed mutation because saving failed. */
         }
         entry.version = document.version
       }
     } catch {
-      this.ledger.settle(entry, 'stale')
+      // A native reply can fail after writing. The current buffer confirms an
+      // exact result; otherwise retain the snapshot without claiming no write.
+      entry.version = document.version
+      entry.saved = false
+      this.ledger.settle(
+        entry,
+        dispatched ? (document.getText() === entry.after ? 'applied' : 'uncertain') : 'stale',
+      )
     }
     if (entry.status === 'applied') {
       try {

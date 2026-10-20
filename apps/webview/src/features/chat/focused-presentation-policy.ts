@@ -6,6 +6,7 @@ export interface FocusedPresentationPolicy {
   readonly groupTools: boolean
   readonly liveProcessDetail: boolean
   readonly settledReasoningPreview: boolean
+  readonly requestMetrics: boolean
 }
 const POLICIES: Readonly<Record<TranscriptViewMode, FocusedPresentationPolicy>> = {
   compact: {
@@ -13,24 +14,28 @@ const POLICIES: Readonly<Record<TranscriptViewMode, FocusedPresentationPolicy>> 
     groupTools: true,
     liveProcessDetail: false,
     settledReasoningPreview: false,
+    requestMetrics: false,
   },
   standard: {
     foldCompletedTurns: true,
     groupTools: true,
     liveProcessDetail: true,
     settledReasoningPreview: true,
+    requestMetrics: false,
   },
   detailed: {
     foldCompletedTurns: true,
     groupTools: false,
     liveProcessDetail: true,
     settledReasoningPreview: true,
+    requestMetrics: true,
   },
   verbose: {
     foldCompletedTurns: false,
     groupTools: false,
     liveProcessDetail: false,
     settledReasoningPreview: true,
+    requestMetrics: true,
   },
 }
 export function focusedPresentationPolicy(mode: TranscriptViewMode): FocusedPresentationPolicy {

@@ -57,12 +57,12 @@ describe('ToolSearchPreview', () => {
     )
 
     expect(container.querySelector('[data-search="paths"]')).not.toBeNull()
-    expect(container.querySelectorAll('.dsh-tool-search-preview__line')).toHaveLength(16)
+    expect(container.querySelectorAll('.dsh-tool-search-preview__line')).toHaveLength(18)
     expect(container.textContent).toContain('Showing 18 of 24 paths')
     expect(container.textContent).toContain('src/feature-1.ts')
     expect(container.textContent).toContain('src/feature-18.ts')
-    expect(container.textContent).not.toContain('src/feature-9.ts')
-    expect(screen.getByRole('button', { name: 'Show 2 more search rows' })).toBeDefined()
+    expect(container.textContent).toContain('src/feature-9.ts')
+    expect(screen.queryByRole('button', { name: 'Show 2 more search rows' })).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Copy' }))
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(paths.join('\n')))
@@ -110,7 +110,7 @@ describe('ToolSearchPreview', () => {
     )
   })
 
-  it('restores the file header when a fold tail starts inside its matches', () => {
+  it('keeps every match and its file attribution without a second expansion', () => {
     const matches = Array.from({ length: 10 }, (_, index) => ({
       lineNumber: index + 1,
       line: `match ${index + 1}`,
@@ -132,8 +132,8 @@ describe('ToolSearchPreview', () => {
     )
 
     expect(container.querySelectorAll('.dsh-tool-search-preview__file-header')).toHaveLength(2)
-    expect(container.querySelectorAll('.dsh-tool-search-preview__line')).toHaveLength(14)
-    expect(screen.getByRole('button', { name: 'Show 6 more search rows' })).toBeDefined()
+    expect(container.querySelectorAll('.dsh-tool-search-preview__line')).toHaveLength(20)
+    expect(screen.queryByRole('button', { name: 'Show 6 more search rows' })).toBeNull()
   })
 
   it('shows an explicit empty result without offering an empty copy', () => {

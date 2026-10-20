@@ -47,6 +47,70 @@ function child(onKill: (signal: NodeJS.Signals | undefined) => void): SpawnedChi
 }
 
 describe('DshProcessSupervisor', () => {
+  it('allows a cold runtime to become ready after the former 15-second deadline', async () => {
+    vi.useFakeTimers()
+    const kill = vi.fn<(signal: NodeJS.Signals | undefined) => void>()
+    const managed = child(kill)
+    const supervisor = new DshProcessSupervisor({
+      managedPort: () => 4317,
+      spawn: () => ({
+        ...managed,
+        stdout: (async function* () {
+          await new Promise((resolve) => setTimeout(resolve, 33_000))
+          yield 'dsh web: http://127.0.0.1:4317\n'
+        })(),
+      }),
+    })
+    try {
+      const starting = supervisor.start(runtime())
+      const accepted = expect(starting).resolves.toMatchObject({ pid: 42 })
+      await vi.advanceTimersByTimeAsync(33_000)
+      await accepted
+      expect(kill).not.toHaveBeenCalled()
+      await (await starting).stop()
+      expect(kill).toHaveBeenCalledOnce()
+    } finally {
+      await supervisor.dispose()
+      vi.useRealTimers()
+    }
+  })
+
+  it.each(['timeout', 'cancel'] as const)(
+    'cleans up the owned child after a readiness %s',
+    async (outcome) => {
+      vi.useFakeTimers()
+      const kill = vi.fn<(signal: NodeJS.Signals | undefined) => void>()
+      const managed = child(kill)
+      const never = deferred<string>()
+      const supervisor = new DshProcessSupervisor({
+        managedPort: () => 4317,
+        spawn: () => ({
+          ...managed,
+          stdout: (async function* () {
+            yield await never.promise
+          })(),
+        }),
+      })
+      try {
+        const controller = new AbortController()
+        const starting = supervisor.start(runtime(), controller.signal)
+        const rejected = expect(starting).rejects.toMatchObject({
+          code: outcome === 'cancel' ? 'REQUEST_CANCELLED' : 'BACKEND_UNREACHABLE',
+        })
+        await vi.advanceTimersByTimeAsync(33_000)
+        expect(kill).not.toHaveBeenCalled()
+        if (outcome === 'cancel') controller.abort()
+        else await vi.advanceTimersByTimeAsync(27_000)
+        await rejected
+        expect(kill).toHaveBeenCalledOnce()
+      } finally {
+        never.resolve('')
+        await supervisor.dispose()
+        vi.useRealTimers()
+      }
+    },
+  )
+
   it.each([
     '0.0.1-rc.1',
     '0.0.1-rc.2',

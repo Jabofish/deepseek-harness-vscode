@@ -64,8 +64,119 @@ async function fixture(): Promise<{
 }
 const signal = (): AbortSignal => new AbortController().signal
 describe('granted editor operations', () => {
+  it.each(['exact', 'user-changed', 'not-written'] as const)(
+    'retains an undo record after an ambiguous native %s reply',
+    async (outcome) => {
+      const { provider, document, file, ledger } = await fixture()
+      const apply = native.applyEdit.getMockImplementation()!
+      native.applyEdit.mockImplementationOnce(async (edit) => {
+        if (outcome !== 'not-written') await apply(edit)
+        if (outcome === 'user-changed') {
+          document.text += '// user draft\n'
+          document.version += 1
+        }
+        throw new Error('Native reply lost')
+      })
+      const receipt = await provider.execute(
+        {
+          kind: 'propose',
+          path: 'sample.ts',
+          expectedVersion: 1,
+          edits: [{ range: { start: { line: 1, column: 1 }, end: { line: 1, column: 6 } }, text: 'let' }],
+        },
+        signal(),
+      )
+      if (receipt.kind !== 'proposal') throw new Error('Missing proposal')
+      expect(receipt).toMatchObject({ status: outcome === 'exact' ? 'applied' : 'uncertain', saved: false })
+      expect(isEditorCompanionValue(receipt)).toBe(true)
+      expect(ledger.lastApplied()?.before).toBe('const value = 2\n')
+      expect(await provider.proposals.undo(receipt.proposalId)).toBe(true)
+      expect(document.text).toBe(`const value = 2\n${outcome === 'user-changed' ? '// user draft\n' : ''}`)
+      expect(document.save).not.toHaveBeenCalled()
+      expect(await readFile(file, 'utf8')).toBe('const value = 1\n')
+    },
+  )
+
+  it('applies and undoes an edit without saving a pre-existing dirty buffer', async () => {
+    const { provider, document, file } = await fixture()
+    const receipt = await provider.execute(
+      {
+        kind: 'propose',
+        path: 'sample.ts',
+        expectedVersion: 1,
+        edits: [{ range: { start: { line: 1, column: 1 }, end: { line: 1, column: 6 } }, text: 'let' }],
+      },
+      signal(),
+    )
+    if (receipt.kind !== 'proposal') throw new Error('Missing proposal')
+    expect(receipt).toMatchObject({ status: 'applied', saved: false })
+    expect(document.text).toBe('let value = 2\n')
+    expect(document.isDirty).toBe(true)
+    expect(await readFile(file, 'utf8')).toBe('const value = 1\n')
+    expect(await provider.proposals.undo(receipt.proposalId)).toBe(true)
+    expect(document.text).toBe('const value = 2\n')
+    expect(document.isDirty).toBe(true)
+    expect(document.save).not.toHaveBeenCalled()
+    expect(await readFile(file, 'utf8')).toBe('const value = 1\n')
+  })
+
+  it('does not save user changes made while the native apply was pending', async () => {
+    const { provider, document, file } = await fixture()
+    await document.save()
+    document.save.mockClear()
+    const apply = native.applyEdit.getMockImplementation()!
+    native.applyEdit.mockImplementationOnce(async (edit) => {
+      const applied = await apply(edit)
+      document.text += '// user is still typing\n'
+      document.version += 1
+      document.isDirty = true
+      return applied
+    })
+    const receipt = await provider.execute(
+      {
+        kind: 'propose',
+        path: 'sample.ts',
+        expectedVersion: 1,
+        edits: [{ range: { start: { line: 1, column: 1 }, end: { line: 1, column: 6 } }, text: 'let' }],
+      },
+      signal(),
+    )
+    expect(receipt).toMatchObject({ status: 'applied', saved: false })
+    expect(document.save).not.toHaveBeenCalled()
+    expect(document.text).toContain('// user is still typing')
+    expect(await readFile(file, 'utf8')).toBe('const value = 2\n')
+  })
+
+  it('does not save unrelated user changes when undoing an already saved agent edit', async () => {
+    const { provider, document, file } = await fixture()
+    await document.save()
+    document.save.mockClear()
+    const receipt = await provider.execute(
+      {
+        kind: 'propose',
+        path: 'sample.ts',
+        expectedVersion: 1,
+        edits: [{ range: { start: { line: 1, column: 1 }, end: { line: 1, column: 6 } }, text: 'let' }],
+      },
+      signal(),
+    )
+    if (receipt.kind !== 'proposal') throw new Error('Missing proposal')
+    expect(receipt).toMatchObject({ saved: true })
+    document.text += '// user draft\n'
+    document.version += 1
+    document.isDirty = true
+    document.save.mockClear()
+    expect(await provider.proposals.undo(receipt.proposalId)).toBe(true)
+    expect(document.text).toBe('const value = 2\n// user draft\n')
+    expect(document.isDirty).toBe(true)
+    expect(document.save).not.toHaveBeenCalled()
+    expect(await readFile(file, 'utf8')).toBe('let value = 2\n')
+  })
+
   it('returns applied/saved through both reply validators, retrieves the receipt and keeps access after a missing file', async () => {
     const { provider, document, file, root } = await fixture()
+    await document.save()
+    document.save.mockClear()
     const broker = new EditorCompanionBroker()
     const unwrap = <T>(reply: EditorCompanionResult<T>): T => {
       if (reply.status !== 'ok') throw new Error(reply.reason)
@@ -138,6 +249,8 @@ describe('granted editor operations', () => {
   })
   it('reports an applied buffer edit when saving fails, and ignores failures of the optional edit indicator', async () => {
     const { provider, document, file, folder, ledger } = await fixture()
+    await document.save()
+    document.save.mockClear()
     document.save.mockRejectedValueOnce(new Error('save denied'))
     const receipt = await provider.execute(
       {
@@ -153,7 +266,7 @@ describe('granted editor operations', () => {
     expect(receipt).toMatchObject({ status: 'applied', saved: false, version: 2 })
     expect(document.text).toContain('// retained')
     expect(document.isDirty).toBe(true)
-    expect(await readFile(file, 'utf8')).toBe('const value = 1\n')
+    expect(await readFile(file, 'utf8')).toBe('const value = 2\n')
     const indicator = new EditorCompanionProvider(
       [folder],
       ['edit'],
@@ -176,7 +289,7 @@ describe('granted editor operations', () => {
         },
         signal(),
       ),
-    ).toMatchObject({ status: 'applied', saved: true, version: 3 })
+    ).toMatchObject({ status: 'applied', saved: false, version: 3 })
   })
   it('paginates documents and long lines without losing CRLF or surrogate pairs, and refuses starts past EOF', async () => {
     const { provider, document } = await fixture()
@@ -338,6 +451,8 @@ describe('granted editor operations', () => {
   })
   it('applies an undoable edit immediately and saves the file', async () => {
     const { provider, document, file } = await fixture()
+    await document.save()
+    document.save.mockClear()
     await expect(
       provider.execute(
         {

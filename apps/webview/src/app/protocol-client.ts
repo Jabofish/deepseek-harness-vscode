@@ -58,12 +58,17 @@ const PLUGIN_INSTALL_TIMEOUT_MS = 600_000
 
 /** Per-type host budgets; any request not listed keeps the ordinary timeout. */
 const EXTENDED_TIMEOUT_MS: Readonly<Record<string, number>> = {
+  // Covers discovery, a cold managed start, endpoint login and backend probing.
+  'app.ready': 120_000,
+  'connection.retry': 120_000,
+  'connection.configure': 120_000,
   'workspace.addFolder': NATIVE_DIALOG_TIMEOUT_MS,
   'attachment.pick': NATIVE_DIALOG_TIMEOUT_MS,
   'provider.secret.configure': NATIVE_DIALOG_TIMEOUT_MS,
   'plugin.credential.configure': NATIVE_DIALOG_TIMEOUT_MS,
   'plugin.bundle.install': PLUGIN_INSTALL_TIMEOUT_MS,
   'plugin.bundle.waitForInstall': PLUGIN_INSTALL_TIMEOUT_MS,
+  'editor.companion.action': PLUGIN_INSTALL_TIMEOUT_MS,
   'mods.band.read': 30_000,
   'runtime.action': RUNTIME_UPDATE_INSTALL_TIMEOUT_MS,
   'runtime.update.check': RUNTIME_UPDATE_CHECK_TIMEOUT_MS,

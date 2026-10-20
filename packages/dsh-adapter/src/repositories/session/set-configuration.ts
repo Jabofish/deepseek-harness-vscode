@@ -119,7 +119,10 @@ async function applySessionConfiguration(
     current.configuration.permissionPresetKnown === false && deps.readPermissionPresets !== undefined
       ? currentPermissionValue
       : currentPermission
-  const permissionChanged = requestedPermission !== permissionBaseline
+  const permissionChanged =
+    configuration.permissionPresetKnown !== false &&
+    (requestedPermission !== permissionBaseline ||
+      (configuration.permissionPresetKnown === true && currentPermission === undefined))
   if (
     permissionChanged &&
     deps.readPermissionPresets !== undefined &&
@@ -263,8 +266,10 @@ async function applySessionConfiguration(
     // A full snapshot carries the unobserved plan display fallback during
     // unrelated edits. Preserve explicit default/off writes when plan is the only edit.
     if (
-      configuration.planMode !== current.configuration.planMode ||
-      (current.configuration.planModeKnown === false && !anotherSettingChanged)
+      configuration.planModeKnown !== false &&
+      (configuration.planMode !== current.configuration.planMode ||
+        (current.configuration.planModeKnown === false &&
+          (configuration.planModeKnown === true || !anotherSettingChanged)))
     )
       await apply(
         () => command(configuration.planMode ? '/plan' : '/plan off', signal),

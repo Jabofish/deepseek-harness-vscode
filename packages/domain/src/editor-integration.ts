@@ -1,3 +1,5 @@
+import type { PluginBundleFailureCode, PluginInstallFailureKind } from './plugin-bundles.js'
+
 /** Public editor integration state. Contains no runtime address, filesystem path or grant identity. */
 export interface EditorIntegrationPreferences {
   readonly enabled: boolean
@@ -32,4 +34,9 @@ export interface EditorIntegrationStatus {
   readonly canInstall: boolean
   readonly canRestart: boolean
   readonly canUndo: boolean
+  readonly installation?:
+    'installing' | 'cancelling' | 'unknown' | 'cancelled' | 'failed' | 'installed' | undefined
+  readonly canCancelInstall?: boolean | undefined
+  readonly installationErrorCode?: PluginBundleFailureCode | undefined
+  readonly installationFailureKind?: PluginInstallFailureKind | undefined
 }

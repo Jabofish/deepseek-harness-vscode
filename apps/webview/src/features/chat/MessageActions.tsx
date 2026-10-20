@@ -37,6 +37,10 @@ export interface MessageActionsProps {
   readonly onFeedbackPrepare?: () =>
     Promise<MessageFeedbackItem | undefined> | MessageFeedbackItem | undefined
   readonly feedbackUnavailable?: boolean | undefined
+  /** The Host projected only a prefix of this message. */
+  readonly truncated?: boolean | undefined
+  /** Resolves the complete message text for copying a clipped row. */
+  readonly loadFullText?: (() => Promise<string>) | undefined
   readonly translate?: Translate
 }
 
@@ -201,7 +205,14 @@ export function MessageActions(props: MessageActionsProps): ReactElement {
   return (
     <>
       <div className="dsh-message-actions" role="toolbar" aria-label={translate('message.actions')}>
-        <CopyButton text={props.text} className="dsh-message-actions__button" translate={translate} />
+        <CopyButton
+          text={props.text}
+          {...(props.truncated === true && props.loadFullText !== undefined
+            ? { resolveText: props.loadFullText }
+            : {})}
+          className="dsh-message-actions__button"
+          translate={translate}
+        />
         {hasFeedback ? (
           <>
             <button

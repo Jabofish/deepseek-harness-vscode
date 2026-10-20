@@ -8,6 +8,7 @@ import {
 import { ScrollToLatestButton, useScrollFollow } from '../../components/common/index.js'
 import { useI18n, type Translate } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
+import { useCompleteTranscriptNodes } from '../chat/useCompleteTranscriptNodes.js'
 
 export interface TrajectoryViewProps {
   readonly sessionId: string | undefined
@@ -18,6 +19,9 @@ export interface TrajectoryViewProps {
   readonly nodeChangeStart?: number
   readonly nodeChangeBase?: readonly TimelineNode[]
   readonly streaming: boolean
+  readonly contentScope?: string
+  readonly omittedNodeIds?: readonly string[]
+  readonly loadFullNode?: (nodeId: string, signal?: AbortSignal) => Promise<TimelineNode>
 }
 
 /**
@@ -44,9 +48,19 @@ export const TrajectoryView = memo(function TrajectoryView(props: TrajectoryView
     [props.sessionId],
   )
 
+  const complete = useCompleteTranscriptNodes(
+    props.contentScope ?? props.sessionId ?? '',
+    props.nodes,
+    props.omittedNodeIds,
+    props.loadFullNode,
+  )
+  const sourceNodes = complete.nodes
+  const changeStart = sourceNodes === props.nodes ? props.nodeChangeStart : undefined
+  const changeBase = sourceNodes === props.nodes ? props.nodeChangeBase : undefined
+
   const projection = useMemo(
-    () => trajectoryProjectorState.project(props.nodes, props.nodeChangeStart, props.nodeChangeBase),
-    [props.nodeChangeBase, props.nodeChangeStart, props.nodes, trajectoryProjectorState],
+    () => trajectoryProjectorState.project(sourceNodes, changeStart, changeBase),
+    [changeBase, changeStart, sourceNodes, trajectoryProjectorState],
   )
   const matches = useMemo(() => searchTrajectoryRecords(projection, query), [projection, query])
   const searching = query.trim() !== ''
@@ -58,6 +72,9 @@ export const TrajectoryView = memo(function TrajectoryView(props: TrajectoryView
     }
     return undefined
   }, [projection, selectedId])
+  // Record identities are minted by the local projector as kind + NUL + node id.
+  const selectedSourceId = selectedId?.slice(selectedId.indexOf('\u0000') + 1)
+  const selectedPending = selectedSourceId !== undefined && complete.pendingIds.has(selectedSourceId)
 
   const lastRecord = projection.sections.at(-1)?.records.at(-1)
   const tailSignature = lastRecord === undefined ? '' : `${lastRecord.id}:${lastRecord.text.length}`
@@ -107,51 +124,22 @@ export const TrajectoryView = memo(function TrajectoryView(props: TrajectoryView
           </span>
         )}
       </div>
-      <div
-        ref={scrollRef}
-        className="dsh-trajectory"
-        data-scroll-follow={isPinnedToBottom ? 'pinned' : 'free'}
-        aria-label={t('trajectory.ledger')}
-      >
-        <div ref={contentRef} className="dsh-trajectory__content">
-          {projection.recordCount === 0 ? (
-            <p className="dsh-trajectory__empty">{t('trajectory.empty')}</p>
-          ) : searching ? (
-            matches.length === 0 ? (
-              <p className="dsh-trajectory__empty">{t('trajectory.noMatch', { query: query.trim() })}</p>
-            ) : (
-              <ul className="dsh-trajectory__rows">
-                {matches.map((record) => (
-                  <TrajectoryRow
-                    key={record.id}
-                    record={record}
-                    selected={selectedId === record.id}
-                    onSelect={selectRecord}
-                    t={t}
-                  />
-                ))}
-              </ul>
-            )
-          ) : (
-            projection.sections.map((section, sectionIndex) => (
-              <section
-                className="dsh-trajectory__section"
-                key={
-                  section.kind === 'turn' ? `turn:${section.turn ?? sectionIndex}` : `between:${sectionIndex}`
-                }
-                aria-label={
-                  section.kind === 'turn'
-                    ? t('trajectory.turn', { turn: section.turn ?? 0 })
-                    : t('trajectory.betweenTurns')
-                }
-              >
-                <h3 className="dsh-trajectory__section-title">
-                  {section.kind === 'turn'
-                    ? t('trajectory.turn', { turn: section.turn ?? 0 })
-                    : t('trajectory.betweenTurns')}
-                </h3>
+      <div className="dsh-trajectory-stage">
+        <div
+          ref={scrollRef}
+          className="dsh-trajectory"
+          data-scroll-follow={isPinnedToBottom ? 'pinned' : 'free'}
+          aria-label={t('trajectory.ledger')}
+        >
+          <div ref={contentRef} className="dsh-trajectory__content">
+            {projection.recordCount === 0 ? (
+              <p className="dsh-trajectory__empty">{t('trajectory.empty')}</p>
+            ) : searching ? (
+              matches.length === 0 ? (
+                <p className="dsh-trajectory__empty">{t('trajectory.noMatch', { query: query.trim() })}</p>
+              ) : (
                 <ul className="dsh-trajectory__rows">
-                  {section.records.map((record) => (
+                  {matches.map((record) => (
                     <TrajectoryRow
                       key={record.id}
                       record={record}
@@ -161,30 +149,68 @@ export const TrajectoryView = memo(function TrajectoryView(props: TrajectoryView
                     />
                   ))}
                 </ul>
-              </section>
-            ))
-          )}
-          {props.streaming ? (
-            <span className="dsh-sr-only" aria-live="polite">
-              {t('timeline.streaming')}
-            </span>
-          ) : null}
+              )
+            ) : (
+              projection.sections.map((section, sectionIndex) => (
+                <section
+                  className="dsh-trajectory__section"
+                  key={
+                    section.kind === 'turn'
+                      ? `turn:${section.turn ?? sectionIndex}`
+                      : `between:${sectionIndex}`
+                  }
+                  aria-label={
+                    section.kind === 'turn'
+                      ? t('trajectory.turn', { turn: section.turn ?? 0 })
+                      : t('trajectory.betweenTurns')
+                  }
+                >
+                  <h3 className="dsh-trajectory__section-title">
+                    {section.kind === 'turn'
+                      ? t('trajectory.turn', { turn: section.turn ?? 0 })
+                      : t('trajectory.betweenTurns')}
+                  </h3>
+                  <ul className="dsh-trajectory__rows">
+                    {section.records.map((record) => (
+                      <TrajectoryRow
+                        key={record.id}
+                        record={record}
+                        selected={selectedId === record.id}
+                        onSelect={selectRecord}
+                        t={t}
+                      />
+                    ))}
+                  </ul>
+                </section>
+              ))
+            )}
+            {props.streaming ? (
+              <span className="dsh-sr-only" aria-live="polite">
+                {t('timeline.streaming')}
+              </span>
+            ) : null}
+          </div>
         </div>
+        {showJumpToLatest && selected === undefined ? (
+          <ScrollToLatestButton label={t('timeline.jump')} onClick={scrollToLatest} />
+        ) : null}
+        {selected === undefined ? null : (
+          <TrajectoryInspector
+            record={selected}
+            {...(selectedPending
+              ? { contentStatus: complete.failed ? ('retrying' as const) : ('loading' as const) }
+              : {})}
+            onClose={() => {
+              setSelectedId(undefined)
+              // The keyboard returns to the row that asked for the details.
+              const target = selectedRowRef.current
+              selectedRowRef.current = null
+              if (target !== null && target.isConnected) target.focus()
+            }}
+            t={t}
+          />
+        )}
       </div>
-      {showJumpToLatest ? <ScrollToLatestButton label={t('timeline.jump')} onClick={scrollToLatest} /> : null}
-      {selected === undefined ? null : (
-        <TrajectoryInspector
-          record={selected}
-          onClose={() => {
-            setSelectedId(undefined)
-            // The keyboard returns to the row that asked for the details.
-            const target = selectedRowRef.current
-            selectedRowRef.current = null
-            if (target !== null && target.isConnected) target.focus()
-          }}
-          t={t}
-        />
-      )}
     </div>
   )
 })
@@ -226,6 +252,7 @@ const TrajectoryRow = memo(function TrajectoryRow(props: {
 
 function TrajectoryInspector(props: {
   readonly record: TrajectoryRecord
+  readonly contentStatus?: 'loading' | 'retrying'
   readonly onClose: () => void
   readonly t: Translate
 }): ReactElement {
@@ -266,6 +293,11 @@ function TrajectoryInspector(props: {
           <Icon name="close" />
         </button>
       </header>
+      {props.contentStatus === undefined ? null : (
+        <p role={props.contentStatus === 'retrying' ? 'alert' : 'status'}>
+          {t(props.contentStatus === 'retrying' ? 'transcript.syncRetrying' : 'transcript.syncLoading')}
+        </p>
+      )}
       <dl className="dsh-trajectory-inspector__facts">
         <dt>{t('trajectory.duration')}</dt>
         <dd>{record.streaming ? t('trajectory.running') : formatDuration(record.timeSeconds)}</dd>

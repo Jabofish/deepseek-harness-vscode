@@ -38,6 +38,7 @@ function handoffView(
         onEdit={vi.fn()}
         onRemove={onRemove}
         onModeChange={vi.fn()}
+        onDismissPending={vi.fn()}
       />
     </I18nProvider>
   )
@@ -69,6 +70,7 @@ function renderQueue(
         onEdit={onEdit}
         onRemove={vi.fn()}
         onModeChange={onModeChange}
+        onDismissPending={vi.fn()}
       />
     </I18nProvider>,
   )
@@ -77,44 +79,137 @@ function renderQueue(
 describe('QueuePanel', () => {
   afterEach(() => cleanup())
 
-  it('hides only the correlated direct send, preserving an identical queued message and its handoff', () => {
-    const direct = { ...queuedInput('direct-message', 'same text'), rpcId: 'direct-request' }
-    const queued = { ...queuedInput('queued-message', 'same text'), rpcId: 'other-request' }
+  it('does not turn an idle direct-send projection into a queue row or a handoff receipt', () => {
+    const item = { ...queuedInput('direct-message', 'Hello'), rpcId: 'direct-request' }
+    const directEntries = [{ ...item, id: 'pending:direct-request', queueIdsBefore: [] }]
     const props = {
       running: false,
-      directRequestIds: ['direct-request'],
-      transcript: {
-        sessionId: 'session-1',
-        revision: 1,
-        nodes: [],
-        eventFacts: [],
-        lastSequence: 1,
-        hasMore: false,
-        historical: false,
-        omittedNodeIds: [],
-      },
       onEdit: vi.fn(),
       onRemove: vi.fn(),
       onModeChange: vi.fn(),
+      onDismissPending: vi.fn(),
+    }
+    const transcript: TranscriptWindow = {
+      sessionId: 'session-1',
+      revision: 1,
+      nodes: [],
+      eventFacts: [],
+      lastSequence: 1,
+      hasMore: false,
+      historical: false,
+      omittedNodeIds: [],
     }
     const view = render(
       <I18nProvider>
-        <QueuePanel {...props} items={[direct]} />
+        <QueuePanel {...props} items={[item]} directEntries={directEntries} transcript={transcript} />
       </I18nProvider>,
     )
     expect(screen.queryByRole('region', { name: 'Queued prompts' })).toBeNull()
     view.rerender(
       <I18nProvider>
-        <QueuePanel {...props} items={[direct, queued]} />
+        <QueuePanel {...props} items={[]} directEntries={directEntries} transcript={transcript} />
       </I18nProvider>,
     )
-    expect(screen.getAllByRole('textbox')).toHaveLength(1)
+    expect(screen.queryByRole('region', { name: 'Queued prompts' })).toBeNull()
+  })
+
+  it('keeps a real queue row visible even when it carries a direct request id', () => {
+    const direct = { ...queuedInput('direct-message', 'same text'), rpcId: 'direct-request' }
+    render(
+      <I18nProvider>
+        <QueuePanel
+          items={[direct]}
+          running={false}
+          onEdit={vi.fn()}
+          onRemove={vi.fn()}
+          onModeChange={vi.fn()}
+          onDismissPending={vi.fn()}
+        />
+      </I18nProvider>,
+    )
+    // A row that DSH actually queued must stay editable even if the client
+    // originally classified the send as a direct turn.
+    expect(screen.getByRole('region', { name: 'Queued prompts' })).toBeTruthy()
+    expect(screen.getByDisplayValue('same text')).toBeTruthy()
+  })
+
+  it('shows an accepted queue send before the authoritative projection arrives', () => {
+    const dismiss = vi.fn()
+    const pending = { ...queuedInput('pending:request', 'waiting prompt'), rpcId: 'request' }
+    render(
+      <I18nProvider>
+        <QueuePanel
+          items={[]}
+          pendingEntries={[pending]}
+          running
+          onEdit={vi.fn()}
+          onRemove={vi.fn()}
+          onModeChange={vi.fn()}
+          onDismissPending={dismiss}
+        />
+      </I18nProvider>,
+    )
+    expect(screen.getByText('Sending…')).toBeTruthy()
+    expect(screen.getByText('waiting prompt')).toBeTruthy()
+    expect(screen.queryByRole('textbox')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss syncing prompt 1' }))
+    expect(dismiss).toHaveBeenCalledWith('pending:request')
+  })
+
+  it('drops the local sending receipt when the queue projects the same content without an rpc id', () => {
+    const pending = { ...queuedInput('pending:request', 'same prompt'), rpcId: 'request' }
+    const projected = queuedInput('projected', 'same prompt')
+    const view = render(
+      <I18nProvider>
+        <QueuePanel
+          items={[]}
+          pendingEntries={[pending]}
+          running
+          onEdit={vi.fn()}
+          onRemove={vi.fn()}
+          onModeChange={vi.fn()}
+          onDismissPending={vi.fn()}
+        />
+      </I18nProvider>,
+    )
+    expect(screen.getByText('Sending…')).toBeTruthy()
     view.rerender(
       <I18nProvider>
-        <QueuePanel {...props} items={[]} />
+        <QueuePanel
+          items={[projected]}
+          pendingEntries={[pending]}
+          running
+          onEdit={vi.fn()}
+          onRemove={vi.fn()}
+          onModeChange={vi.fn()}
+          onDismissPending={vi.fn()}
+        />
       </I18nProvider>,
     )
-    expect(screen.getAllByText('same text')).toHaveLength(1)
+    expect(screen.queryByText('Sending…')).toBeNull()
+    expect(screen.getByDisplayValue('same prompt')).toBeTruthy()
+  })
+
+  it('keeps a second identical receipt until its own row is projected', () => {
+    const first = { ...queuedInput('pending:one', 'same prompt'), rpcId: 'request-one' }
+    const second = { ...queuedInput('pending:two', 'same prompt'), rpcId: 'request-two' }
+    render(
+      <I18nProvider>
+        <QueuePanel
+          items={[queuedInput('projected', 'same prompt')]}
+          pendingEntries={[first, second]}
+          running
+          onEdit={vi.fn()}
+          onRemove={vi.fn()}
+          onModeChange={vi.fn()}
+          onDismissPending={vi.fn()}
+        />
+      </I18nProvider>,
+    )
+    // Only one projected row exists, so only one of the two local receipts may
+    // disappear; the other send is still unconfirmed and must stay visible.
+    expect(screen.getByText('Sending…')).toBeTruthy()
+    expect(screen.getByDisplayValue('same prompt')).toBeTruthy()
   })
 
   it('keeps removed queue text visible until the matching durable message renders, without duplication or resending', () => {
@@ -175,14 +270,41 @@ describe('QueuePanel', () => {
     expect(screen.queryByText('Syncing with conversation…')).toBeNull()
   })
 
+  it('marks a removal in progress until the authoritative queue drops the row', async () => {
+    let resolveRemove: (() => void) | undefined
+    const remove = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveRemove = resolve
+        }),
+    )
+    const item = queuedInput('queued', 'Remove me')
+    const view = render(handoffView([item], [], remove))
+    fireEvent.click(screen.getByRole('button', { name: 'Remove queued prompt 1' }))
+
+    expect(screen.getByText('Removing…')).toBeTruthy()
+    expect(screen.queryByRole('textbox')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Remove queued prompt 1' }).hasAttribute('disabled')).toBe(true)
+    await act(async () => {
+      resolveRemove?.()
+      await Promise.resolve()
+    })
+    // The Host accepted it, but the row stays busy until the queue confirms.
+    expect(screen.getByText('Removing…')).toBeTruthy()
+    view.rerender(handoffView([], [], remove))
+    expect(screen.queryByRole('region', { name: 'Queued prompts' })).toBeNull()
+  })
+
   it('keeps a rejected removal eligible for normal transcript handoff', async () => {
     const item = queuedInput('pending', 'Keep after failed removal')
     const remove = vi.fn().mockRejectedValue(new Error('Removal failed'))
     const view = render(handoffView([item], [], remove))
     fireEvent.click(screen.getByRole('button', { name: 'Remove queued prompt 1' }))
+    expect(screen.getByText('Removing…')).toBeTruthy()
     await act(async () => {
       await Promise.resolve()
     })
+    expect(screen.queryByText('Removing…')).toBeNull()
     expect(screen.getByDisplayValue(item.text)).toBeTruthy()
     view.rerender(handoffView([], [], remove))
     expect(screen.getByText(item.text)).toBeTruthy()
@@ -218,6 +340,7 @@ describe('QueuePanel', () => {
           onEdit={vi.fn()}
           onRemove={vi.fn()}
           onModeChange={vi.fn()}
+          onDismissPending={vi.fn()}
         />
       </I18nProvider>
     )
@@ -300,6 +423,7 @@ describe('QueuePanel', () => {
           onEdit={onEdit}
           onRemove={vi.fn()}
           onModeChange={vi.fn()}
+          onDismissPending={vi.fn()}
         />
       </I18nProvider>,
     )
@@ -307,6 +431,52 @@ describe('QueuePanel', () => {
     expect(screen.getByDisplayValue('changed elsewhere')).toBe(editor)
     fireEvent.blur(editor)
     expect(onEdit).not.toHaveBeenCalled()
+  })
+
+  it('keeps a draft typed while a newer queue projection arrives and submits it', () => {
+    const onEdit = vi.fn()
+    const view = renderQueue([queuedInput('q1', 'first')], true, vi.fn(), onEdit)
+    const editor = screen.getByRole('textbox', { name: 'Edit queued prompt 1' })
+    fireEvent.change(editor, { target: { value: 'typed while another client updated' } })
+
+    view.rerender(
+      <I18nProvider>
+        <QueuePanel
+          items={[queuedInput('q1', 'changed elsewhere')]}
+          running
+          onEdit={onEdit}
+          onRemove={vi.fn()}
+          onModeChange={vi.fn()}
+          onDismissPending={vi.fn()}
+        />
+      </I18nProvider>,
+    )
+
+    expect(screen.getByDisplayValue('typed while another client updated')).toBe(editor)
+    fireEvent.blur(editor)
+    expect(onEdit).toHaveBeenCalledWith('q1', 'typed while another client updated')
+  })
+
+  it('reverts a preserved draft to the newest projection on Escape', () => {
+    const view = renderQueue([queuedInput('q1', 'first')], true)
+    const editor = screen.getByRole('textbox', { name: 'Edit queued prompt 1' })
+    fireEvent.change(editor, { target: { value: 'my draft' } })
+
+    view.rerender(
+      <I18nProvider>
+        <QueuePanel
+          items={[queuedInput('q1', 'changed elsewhere')]}
+          running
+          onEdit={vi.fn()}
+          onRemove={vi.fn()}
+          onModeChange={vi.fn()}
+          onDismissPending={vi.fn()}
+        />
+      </I18nProvider>,
+    )
+    fireEvent.keyDown(editor, { key: 'Escape' })
+
+    expect(screen.getByDisplayValue('changed elsewhere')).toBe(editor)
   })
 
   it('promotes a queued prompt to steer', () => {

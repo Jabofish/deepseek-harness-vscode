@@ -86,19 +86,33 @@
   outline-offset: -1px;
 }
 
-/* Details reserve their own row. Neither the inspector nor jump controls may
- * cover the ledger; both keep their own bounded space above the composer. */
+/* Record details float inside the ledger shell. Opening them must not shrink
+ * the ledger or move the composer; the panel owns its scrolling content. */
 .dsh-trajectory-shell--inspecting {
-  --dsh-trajectory-inspector-max-height: min(50%, 24rem);
+  --dsh-trajectory-inspector-max-height: min(calc(100% - var(--dsh-space-2)), max(14rem, 70%), 36rem);
+}
+
+.dsh-trajectory-stage {
+  position: relative;
+  display: flex;
+  flex: 1 1 0%;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .dsh-trajectory-inspector {
-  position: relative;
-  flex: 0 1 auto;
-  width: 100%;
+  position: absolute;
+  inset-inline: var(--dsh-space-1);
+  inset-block-end: var(--dsh-space-1);
+  z-index: 8;
   min-width: 0;
   min-height: 0;
-  max-height: var(--dsh-trajectory-inspector-max-height, min(50%, 24rem));
+  max-height: var(
+    --dsh-trajectory-inspector-max-height,
+    min(calc(100% - var(--dsh-space-2)), max(14rem, 70%), 36rem)
+  );
   overflow-x: hidden;
   overflow-y: auto;
 }

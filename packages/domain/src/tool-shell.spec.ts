@@ -22,6 +22,30 @@ describe('parseShellExitStatus', () => {
     expect(parseShellExitStatus('boom\n[exit code: 2]')).toEqual({ output: 'boom', exitCode: 2 })
   })
 
+  it('preserves negative Windows process exit codes', () => {
+    expect(parseShellExitStatus('crashed\n[exit code: -1073741510]')).toEqual({
+      output: 'crashed',
+      exitCode: -1073741510,
+    })
+  })
+
+  it.each(['null', '999999999999999999999999999999'])(
+    'keeps an unknown %s exit visible without inventing success',
+    (code) => {
+      const output = `stopped\n[exit code: ${code}]`
+      expect(parseShellExitStatus(output)).toEqual({ output })
+      expect(
+        settledToolPresentation(callCard, {
+          name: 'pwsh',
+          rawArguments: shellArgs(),
+          output,
+          failed: false,
+          settled: true,
+        }),
+      ).toBeUndefined()
+    },
+  )
+
   it('prefers a final signal marker over any exit marker', () => {
     expect(parseShellExitStatus('gone\n[killed by signal: SIGTERM]')).toEqual({
       output: 'gone',
@@ -67,6 +91,17 @@ describe('hasSpillNotice', () => {
 })
 
 describe('settledToolPresentation', () => {
+  it('marks a negative exit result as failed instead of success', () => {
+    const view = settledToolPresentation(callCard, {
+      name: 'pwsh',
+      rawArguments: shellArgs(),
+      output: 'crashed\n[exit code: -1073741510]',
+      failed: false,
+      settled: true,
+    })
+    expect(view).toMatchObject({ phase: 'result', card: 'terminal', exitCode: -1073741510 })
+    expect(terminalPresentationFailed(view)).toBe(true)
+  })
   it('settles a running shell card into the card its own result states', () => {
     expect(
       settledToolPresentation(callCard, {

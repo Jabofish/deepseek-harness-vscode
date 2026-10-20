@@ -156,6 +156,28 @@ export function createSessionRequestHandler(
       await vscode.window.showTextDocument(document, { preview: true })
       return { opened: true }
     }
+    if (request.type === 'session.transcript.content') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      const content = await deps.transcript.content(
+        request.payload.sessionId,
+        request.payload.nodeId,
+        request.payload.revision,
+        signal,
+        false,
+      )
+      return { content }
+    }
+    if (request.type === 'session.transcript.node') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      return {
+        node: deps.transcript.fullNode(
+          request.payload.sessionId,
+          request.payload.nodeId,
+          request.payload.revision,
+          signal,
+        ),
+      }
+    }
 
     if (request.type === 'session.create') {
       const workspace = await ensureCurrentWorkspace(request.payload.workspaceId, signal)
@@ -266,7 +288,7 @@ export function createSessionRequestHandler(
     }
 
     if (request.type === 'session.cancel') {
-      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal, { controlOnly: true })
       return sessionUseCases.cancel(request.payload.sessionId, signal)
     }
 

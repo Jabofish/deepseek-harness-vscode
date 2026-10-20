@@ -78,7 +78,7 @@ export interface SessionScope {
     this: void,
     sessionId: string,
     signal: AbortSignal,
-    options?: { readonly fresh?: boolean; readonly allowArchived?: boolean },
+    options?: { readonly fresh?: boolean; readonly allowArchived?: boolean; readonly controlOnly?: boolean },
   ): Promise<SessionDetail>
   requireCurrentWorkspaceId(this: void, workspaceId: string, signal: AbortSignal): Promise<void>
   requireOwnedQueuedInput(this: void, inputId: string, signal: AbortSignal): Promise<void>
@@ -118,6 +118,17 @@ export function createSessionScope(deps: SessionScopeDependencies): SessionScope
     { readonly generation: number; readonly detail: SessionDetail }
   >()
   const currentWorkspaceSessionLoads = new Map<string, SharedSessionLoad>()
+  // Stop may reuse proven ownership across advisory directory invalidations.
+  // Authority is still bound to the exact backend and VS Code workspace roots.
+  const controlSessions = new Map<string, { backend: DshBackend; roots: string; detail: SessionDetail }>()
+  const controlRoots = (): string =>
+    JSON.stringify([
+      ...currentWorkspaceFolders()
+        .map((folder) => folder.uri.fsPath)
+        .sort(),
+      temporaryWorkspaceManager.current?.path,
+      temporaryWorkspaceManager.reference?.path,
+    ])
   let currentWorkspaceSessionGeneration = 0
   const invalidateCurrentWorkspaceSessionDetails = (): void => {
     currentWorkspaceSessionGeneration += 1
@@ -194,9 +205,20 @@ export function createSessionScope(deps: SessionScopeDependencies): SessionScope
   const requireCurrentWorkspaceSession = async (
     sessionId: string,
     signal: AbortSignal,
-    options: { readonly fresh?: boolean; readonly allowArchived?: boolean } = {},
+    options: {
+      readonly fresh?: boolean
+      readonly allowArchived?: boolean
+      readonly controlOnly?: boolean
+    } = {},
   ): Promise<SessionDetail> => {
     signal.throwIfAborted()
+    if (options.controlOnly === true) {
+      const known = controlSessions.get(sessionId)
+      if (known?.backend === backendService.requireBackend() && known.roots === controlRoots())
+        return known.detail
+      controlSessions.delete(sessionId)
+      currentWorkspaceSessionDetails.delete(sessionId)
+    }
     if (options.fresh !== true && options.allowArchived !== true) {
       const cached = currentWorkspaceSessionDetails.get(sessionId)
       if (cached?.generation === currentWorkspaceSessionGeneration) return cached.detail
@@ -217,6 +239,8 @@ export function createSessionScope(deps: SessionScopeDependencies): SessionScope
       return joinSessionLoad(pending, signal)
 
     const generation = currentWorkspaceSessionGeneration
+    const authorityBackend = backendService.requireBackend()
+    const authorityRoots = controlRoots()
     const controller = new AbortController()
     const loadSignal = controller.signal
     const load = (async (): Promise<SessionDetail> => {
@@ -272,6 +296,19 @@ export function createSessionScope(deps: SessionScopeDependencies): SessionScope
         currentWorkspaceSessionDetails.delete(sessionId)
         if (JSON.stringify(metadata).length <= 256 * 1024)
           currentWorkspaceSessionDetails.set(sessionId, { generation, detail: metadata })
+        if (
+          JSON.stringify(metadata).length <= 256 * 1024 &&
+          backendService.requireBackend() === authorityBackend &&
+          controlRoots() === authorityRoots
+        ) {
+          controlSessions.delete(sessionId)
+          controlSessions.set(sessionId, {
+            backend: authorityBackend,
+            roots: authorityRoots,
+            detail: metadata,
+          })
+          while (controlSessions.size > 64) controlSessions.delete(controlSessions.keys().next().value!)
+        }
         while (currentWorkspaceSessionDetails.size > 16)
           currentWorkspaceSessionDetails.delete(currentWorkspaceSessionDetails.keys().next().value!)
       }
@@ -326,8 +363,8 @@ export function createSessionScope(deps: SessionScopeDependencies): SessionScope
     const owner = backendService.requireBackend().interactions.sessionForPermission?.(requestId)
     if (owner === undefined) {
       throw new AppError({
-        code: 'PERMISSION_DENIED',
-        message: 'The requested permission is not owned by the current workspace.',
+        code: 'STALE_INTERACTION',
+        message: 'This permission request is no longer available. Refresh the conversation and retry.',
         retryable: false,
       })
     }
@@ -337,8 +374,8 @@ export function createSessionScope(deps: SessionScopeDependencies): SessionScope
     const owner = backendService.requireBackend().interactions.sessionForQuestion?.(questionId)
     if (owner === undefined) {
       throw new AppError({
-        code: 'PERMISSION_DENIED',
-        message: 'The requested question is not owned by the current workspace.',
+        code: 'STALE_INTERACTION',
+        message: 'This question is no longer available. Refresh the conversation and retry.',
         retryable: false,
       })
     }

@@ -26,20 +26,30 @@ const focusedStyles = readStylesheet(new URL('./focused-workbench.css', import.m
 const selectionStyles = readStylesheet(new URL('./components/02-selection.css', import.meta.url))
 
 describe('Conversation space ownership', () => {
-  it('keeps notifications and trajectory details in document flow', () => {
+  it('stacks transcript hydration notices above content so opening a session cannot halve its width', () => {
+    // TimelineRow returns the pending/retrying notice and the message as
+    // siblings. Horizontal flex split a real 224px startup row into two
+    // 112px columns until the full-content response removed the notice.
+    expect(effective(appStyles, '.dsh-timeline__row', 'flex-direction')).toBe('column')
+  })
+
+  it('keeps notifications in document flow', () => {
     const styles = `${appStyles}\n${layoutStyles}`
-    for (const selector of [
-      '.dsh-app__notices',
-      '.dsh-app__notice-summary',
-      '.dsh-app__notice-list',
-      '.dsh-trajectory-inspector',
-    ]) {
+    for (const selector of ['.dsh-app__notices', '.dsh-app__notice-summary', '.dsh-app__notice-list']) {
       expect(ruleBodies(styles, selector).length, selector).toBeGreaterThan(0)
       expect(declared(styles, selector, 'position'), selector).not.toContain('absolute')
       expect(declared(styles, selector, 'position'), selector).not.toContain('fixed')
     }
     expect(effective(styles, '.dsh-app__notice-list', 'overflow')).toBe('auto')
     expect(effective(styles, '.dsh-conversation', 'overflow-y')).toBe('auto')
+  })
+
+  it('floats record details without reserving a row or a second tiny text scroller', () => {
+    expect(effective(layoutStyles, '.dsh-trajectory-inspector', 'position')).toBe('absolute')
+    expect(declared(layoutStyles, '.dsh-trajectory-inspector', 'flex')).toEqual([])
+    expect(effective(layoutStyles, '.dsh-trajectory-inspector', 'overflow-y')).toBe('auto')
+    expect(declared(appStyles, '.dsh-trajectory-inspector__block pre', 'max-height')).toEqual([])
+    expect(declared(appStyles, '.dsh-trajectory-inspector__block pre', 'overflow')).toEqual([])
   })
 
   it('floats the jump control over the transcript instead of claiming a row', () => {

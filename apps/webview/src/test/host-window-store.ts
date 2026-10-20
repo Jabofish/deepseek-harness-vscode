@@ -131,12 +131,14 @@ export function createHostBackedAppStore(
       /* No view is installed while the first open is still pending. */
     }
   })
+  const forward = <T>(request: WebviewRequest, signal?: AbortSignal): Promise<T> =>
+    signal === undefined ? client.request<T>(request) : client.request<T>(request, signal)
   const bridge = {
-    request: async <T>(request: WebviewRequest): Promise<T> => {
+    request: async <T>(request: WebviewRequest, signal?: AbortSignal): Promise<T> => {
       if (request.type === 'session.open') {
         const generation = host.begin(request.payload.sessionId)
         try {
-          const raw = await client.request<unknown>(request)
+          const raw = await forward<unknown>(request, signal)
           if (!isSessionOpenDetail(raw, request.payload.sessionId)) return raw as T
           const detail = raw as unknown as SessionDetail
           const transcript = host.install({ ...detail, history: entries(detail.history) }, generation)
@@ -148,7 +150,7 @@ export function createHostBackedAppStore(
       if (request.type === 'subagent.history') {
         const generation = host.begin(request.payload.sessionId, true)
         try {
-          const raw = await client.request<unknown>(request)
+          const raw = await forward<unknown>(request, signal)
           const transcript = host.installPage(request.payload.sessionId, page(raw), generation)
           return { ...(raw as object), events: [], transcript } as T
         } finally {
@@ -160,23 +162,42 @@ export function createHostBackedAppStore(
           request.payload.sessionId,
           request.payload.direction,
           request.payload.revision,
-          new AbortController().signal,
+          signal ?? new AbortController().signal,
         )) as T
       if (request.type === 'session.transcript.ack') {
         host.acknowledge(request.payload.sessionId, request.payload.revision)
         return {} as T
       }
+      if (request.type === 'session.transcript.node')
+        return {
+          node: host.fullNode(
+            request.payload.sessionId,
+            request.payload.nodeId,
+            request.payload.revision,
+            signal ?? new AbortController().signal,
+          ),
+        } as T
+      if (request.type === 'session.transcript.content')
+        return {
+          content: await host.content(
+            request.payload.sessionId,
+            request.payload.nodeId,
+            request.payload.revision,
+            signal ?? new AbortController().signal,
+            false,
+          ),
+        } as T
       if (request.type === 'session.transcript.openContent') {
         const content = await host.content(
           request.payload.sessionId,
           request.payload.nodeId,
           request.payload.revision,
-          new AbortController().signal,
+          signal ?? new AbortController().signal,
         )
         options.onContent?.(content)
         return { opened: true } as T
       }
-      return client.request<T>(request)
+      return forward<T>(request, signal)
     },
     featureRequest: client.featureRequest?.bind(client),
     subscribeFeature: client.subscribeFeature?.bind(client),

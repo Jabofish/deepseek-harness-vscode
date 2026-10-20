@@ -1,7 +1,4 @@
 import * as vscode from 'vscode'
-import { configuredCompanionArguments } from '../editor/managed-companion.js'
-import { readEditorPreferences } from '../editor/editor-integration-settings.js'
-import { companionNeedsUpdate } from '../editor/companion-update.js'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { access } from 'node:fs/promises'
@@ -239,15 +236,6 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
   const probe = new VersionedBackendProbe(adapters, { fetch: network.fetch })
   const factory = new VersionedBackendFactory(adapters)
   const supervisor = new DshProcessSupervisor({
-    additionalArguments: (runtime, signal) =>
-      configuredCompanionArguments(
-        runtime,
-        vscode.Uri.joinPath(context.extensionUri, 'resources').fsPath,
-        context.globalStorageUri.fsPath,
-        signal,
-        readEditorPreferences(),
-        vscode.workspace.isTrusted,
-      ),
     managedPort: () => (usesDevelopmentRuntime(context) ? 0 : configuration.read().connection.managedPort),
     workingDirectory: () => currentWorkspaceFolder()?.uri.fsPath ?? process.cwd(),
     toolMode: () => configuration.read().defaultAgent.toolMode,
@@ -447,39 +435,7 @@ export function createConnectionLifecycle(deps: ConnectionLifecycleDependencies)
       autoStart:
         (development || current.runtime.autoStart) && (vscode.workspace.isTrusted || !hasWorkspaceFolder),
     }
-    let result = await coordinator.connect(request, signal)
-    if (
-      !development &&
-      mode === 'auto' &&
-      !useConfiguredEndpoint &&
-      request.autoStart &&
-      vscode.workspace.isTrusted &&
-      context.extensionUri !== undefined &&
-      readEditorPreferences().enabled &&
-      readEditorPreferences().autoSetup &&
-      (await companionNeedsUpdate(
-        result.backend,
-        vscode.Uri.joinPath(context.extensionUri, 'resources').fsPath,
-        signal,
-      ))
-    ) {
-      // Discovery finished first. A stale external companion is left running;
-      // switch this window to a fresh owned process that loads the shipped build.
-      try {
-        result = await coordinator.connect(
-          {
-            mode: 'new-isolated',
-            autoStart: true,
-            ...(request.runtimeVersion === undefined ? {} : { runtimeVersion: request.runtimeVersion }),
-          },
-          signal,
-        )
-      } catch {
-        signal?.throwIfAborted()
-        // If a new runtime cannot start, keep ordinary chat on the original target.
-        result = await coordinator.connect(request, signal)
-      }
-    }
+    const result = await coordinator.connect(request, signal)
     signal?.throwIfAborted()
     await attach(result.backend)
     signal?.throwIfAborted()

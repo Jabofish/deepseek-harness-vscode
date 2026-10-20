@@ -56,6 +56,13 @@ const contextItem = (index: number, sizeBytes = 1): Record<string, unknown> => (
 })
 
 describe('staged feature protocol contracts', () => {
+  it('accepts a bounded task invalidation without a fabricated task row or untyped payload', () => {
+    const event = { type: 'feature.event', name: 'tasks.invalidated', identity, sessionId: 'session-1' }
+    expect(featureHostEventSchema.safeParse(event).success).toBe(true)
+    expect(featureHostEventSchema.safeParse({ ...event, sessionId: '' }).success).toBe(false)
+    expect(featureHostEventSchema.safeParse({ ...event, payload: { raw: 'unexpected' } }).success).toBe(false)
+  })
+
   it('accepts safe discriminated requests without accepting arbitrary payloads', () => {
     expect(
       featureRequestSchema.safeParse({

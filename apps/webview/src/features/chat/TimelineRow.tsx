@@ -14,15 +14,29 @@ export const TimelineRow = memo(
   function TimelineRow(props: {
     readonly node: PresentedTimelineNode
     readonly context: TimelineNodeRenderContext
+    readonly contentStatus?: 'loading' | 'retrying' | undefined
   }): ReactElement {
-    return props.node.kind === 'focused-turn' ? (
-      <FocusedTurn node={props.node} context={props.context} />
-    ) : (
-      renderTimelineNode(props.node, props.context)
+    return (
+      <>
+        {props.contentStatus === undefined ? null : (
+          <p role={props.contentStatus === 'retrying' ? 'alert' : 'status'}>
+            {props.context.t(
+              props.contentStatus === 'retrying' ? 'transcript.syncRetrying' : 'transcript.syncLoading',
+            )}
+          </p>
+        )}
+        {props.node.kind === 'focused-turn' ? (
+          <FocusedTurn node={props.node} context={props.context} />
+        ) : (
+          renderTimelineNode(props.node, props.context)
+        )}
+      </>
     )
   },
   (previous, next) =>
-    previous.node === next.node && timelineRowContextEqual(previous.node, previous.context, next.context),
+    previous.node === next.node &&
+    previous.contentStatus === next.contentStatus &&
+    timelineRowContextEqual(previous.node, previous.context, next.context),
 )
 
 function timelineRowContextEqual(
@@ -53,6 +67,8 @@ function timelineRowContextEqual(
     previous.onFeedback !== next.onFeedback ||
     previous.onFeedbackSubmit !== next.onFeedbackSubmit ||
     previous.onFeedbackPrepare !== next.onFeedbackPrepare ||
+    previous.truncatedNodeIds !== next.truncatedNodeIds ||
+    previous.loadFullContent !== next.loadFullContent ||
     previous.feedbackUnavailable !== next.feedbackUnavailable ||
     previous.transcriptView !== next.transcriptView ||
     previous.performanceUsage !== next.performanceUsage ||

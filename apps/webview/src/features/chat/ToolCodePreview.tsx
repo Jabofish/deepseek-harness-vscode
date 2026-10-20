@@ -5,7 +5,6 @@ import { CopyButton } from './CopyButton.js'
 import { useI18n } from '../../i18n.js'
 import { getWebviewHighlighter, resolveBundledLanguage, SHIKI_THEMES, type WebviewLanguage } from './shiki.js'
 
-const DEFAULT_MAX_LINES = 16
 const MAX_HIGHLIGHT_SOURCE_LENGTH = 64_000
 
 /**
@@ -21,7 +20,6 @@ export function ToolCodePreview(props: ToolCodeRenderProps): ReactElement {
   const rootRef = useRef<HTMLDivElement>(null)
   const [activated, setActivated] = useState(() => typeof IntersectionObserver === 'undefined')
   const [highlighted, setHighlighted] = useState<HighlightedCode | undefined>(undefined)
-  const [expanded, setExpanded] = useState(false)
 
   useEffect(() => {
     if (activated || language === undefined || source.length > MAX_HIGHLIGHT_SOURCE_LENGTH) return
@@ -70,10 +68,6 @@ export function ToolCodePreview(props: ToolCodeRenderProps): ReactElement {
     }
   }, [activated, language, source])
 
-  const hidden = Math.max(0, props.lines.length - DEFAULT_MAX_LINES)
-  const capped = hidden > 0 && !expanded
-  const headLines = Math.ceil(DEFAULT_MAX_LINES / 2)
-  const tailLines = DEFAULT_MAX_LINES - headLines
   const highlightedSource =
     highlighted !== undefined && highlighted.language === language && highlighted.source === source
       ? highlighted.tokens
@@ -139,27 +133,7 @@ export function ToolCodePreview(props: ToolCodeRenderProps): ReactElement {
         tabIndex={0}
         data-highlighted={highlightedSource === undefined ? 'false' : 'true'}
       >
-        {capped ? renderRows(props.lines.slice(0, headLines), 0) : renderRows(props.lines, 0)}
-        {hidden > 0 ? (
-          <button
-            type="button"
-            className="dsh-tool-code-preview__fold"
-            aria-expanded={expanded}
-            aria-label={
-              expanded
-                ? translate('toolrow.presentation.collapseLines')
-                : translate('toolrow.presentation.expandLines', { count: hidden })
-            }
-            onClick={() => setExpanded((value) => !value)}
-          >
-            {expanded
-              ? translate('toolrow.presentation.collapseLines')
-              : translate('toolrow.presentation.expandLines', { count: hidden })}
-          </button>
-        ) : null}
-        {capped
-          ? renderRows(props.lines.slice(props.lines.length - tailLines), props.lines.length - tailLines)
-          : null}
+        {renderRows(props.lines, 0)}
       </pre>
     </div>
   )

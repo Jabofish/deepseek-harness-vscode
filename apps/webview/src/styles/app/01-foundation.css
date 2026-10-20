@@ -38,7 +38,7 @@ body {
  * also lowers the min-content width, so a flex or grid item stops pushing its
  * ancestors past the viewport. Zero specificity keeps the rule inert wherever a
  * feature already decided how its text behaves, and `white-space: pre` surfaces
- * (code blocks, diffs, terminal output) keep scrolling instead of wrapping.
+ * (diffs and terminal output) keep scrolling instead of wrapping.
  * `max-width: 100%` is what makes the repo's truncation trio
  * (`overflow: hidden` + `text-overflow: ellipsis` + `white-space: nowrap`) work
  * under shrink-to-fit sizing: without it a nowrap label in a centred grid item

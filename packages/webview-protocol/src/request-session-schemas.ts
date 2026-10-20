@@ -2,6 +2,13 @@ import { z } from 'zod'
 import { id, requestBase, session, promptSchema, agentConfigurationSchema } from './request-common.js'
 
 export const sessionRequestSchemas = [
+  z
+    .object({
+      type: z.literal('session.transcript.node'),
+      ...requestBase,
+      payload: z.object({ sessionId: id, revision: z.number().int().nonnegative(), nodeId: id }).strict(),
+    })
+    .strict(),
   z.object({ type: z.literal('permissions.presets.list'), ...requestBase }).strict(),
   z
     .object({
@@ -33,6 +40,13 @@ export const sessionRequestSchemas = [
   z
     .object({
       type: z.literal('session.transcript.openContent'),
+      ...requestBase,
+      payload: z.object({ sessionId: id, revision: z.number().int().nonnegative(), nodeId: id }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('session.transcript.content'),
       ...requestBase,
       payload: z.object({ sessionId: id, revision: z.number().int().nonnegative(), nodeId: id }).strict(),
     })

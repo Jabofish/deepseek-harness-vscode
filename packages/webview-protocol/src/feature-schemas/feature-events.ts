@@ -68,6 +68,14 @@ export const featureHostEventSchema = z.discriminatedUnion('name', [
   z
     .object({
       type: z.literal('feature.event'),
+      name: z.literal('tasks.invalidated'),
+      identity: featureEventIdentitySchema,
+      sessionId: id,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('feature.event'),
       name: z.literal('tasks.updated'),
       identity: featureEventIdentitySchema,
       task: taskSummarySchema,

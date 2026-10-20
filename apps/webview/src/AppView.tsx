@@ -355,12 +355,16 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                       store={store}
                       modelScope="global"
                       key={state.pendingSession.revision}
+                      draftKey={`pending:${state.pendingSession.revision}`}
                       disabled={backend.kind !== 'connected'}
                       running={false}
                       attachments={attachments}
                       configuration={state.pendingSession.configuration}
                       configurationDraft
                       permissionPresets={state.newSessionPermissionPresets ?? []}
+                      {...(state.newSessionPermissionDefault === undefined
+                        ? {}
+                        : { defaultPermissionPreset: state.newSessionPermissionDefault })}
                       presets={state.presets}
                       presetMutable
                       {...(newSessionPresetSelectionEnabled === undefined
@@ -511,45 +515,6 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                           >
                             {t('inspector.title')}
                           </button>
-                          {state.transcript === undefined ||
-                          state.transcript.omittedNodeIds.length === 0 ? null : (
-                            <details className="dsh-conversation__content-menu">
-                              <summary>{t('transcript.fullContent')}</summary>
-                              <div className="dsh-conversation__content-list">
-                                {state.transcript.omittedNodeIds.map((id) => {
-                                  const node = state.timeline.nodes.find((candidate) => candidate.id === id)
-                                  const label =
-                                    node?.kind === 'tool'
-                                      ? node.tool.title
-                                      : node !== undefined && 'markdown' in node
-                                        ? node.markdown.slice(0, 64)
-                                        : t('transcript.fullContent')
-                                  return (
-                                    <button
-                                      key={id}
-                                      type="button"
-                                      disabled={
-                                        (node?.kind === 'assistant-message' &&
-                                          (node.streaming || node.reasoning?.streaming === true)) ||
-                                        (node?.kind === 'reasoning' && node.streaming) ||
-                                        (node?.kind === 'tool' &&
-                                          (node.tool.status === 'running' || node.tool.status === 'queued'))
-                                      }
-                                      className="dsh-button dsh-button--secondary dsh-button--compact"
-                                      onClick={() => {
-                                        closeMenu()
-                                        void store
-                                          .openTranscriptContent(id)
-                                          .catch((reason) => setError(String(reason)))
-                                      }}
-                                    >
-                                      {label}
-                                    </button>
-                                  )
-                                })}
-                              </div>
-                            </details>
-                          )}
                         </>
                       )}
                     </ConversationActionsMenu>
@@ -653,10 +618,20 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                       onFeedback={timelineOnFeedback}
                       onFeedbackPrepare={timelineOnFeedbackPrepare}
                       onFeedbackSubmit={timelineOnFeedbackSubmit}
+                      {...(state.transcript === undefined
+                        ? {}
+                        : { omittedNodeIds: state.transcript.omittedNodeIds })}
+                      loadFullNode={(nodeId, signal) => store.loadTranscriptNode(nodeId, signal)}
+                      loadFullContent={(nodeId) => store.loadTranscriptContent(nodeId)}
                     />
                   ) : (
                     <TrajectoryView
                       sessionId={active.id}
+                      contentScope={`${state.connectionEpoch}:${state.timeline.sessionId ?? active.id}`}
+                      {...(state.transcript === undefined
+                        ? {}
+                        : { omittedNodeIds: state.transcript.omittedNodeIds })}
+                      loadFullNode={(nodeId, signal) => store.loadTranscriptNode(nodeId, signal)}
                       panelId={CONVERSATION_VIEW_IDS.trajectory.panel}
                       panelLabelledBy={CONVERSATION_VIEW_IDS.trajectory.tab}
                       nodes={state.timeline.nodes}
@@ -672,13 +647,21 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                   <QueuePanel
                     key={state.activeSessionId}
                     items={state.queue}
-                    directRequestIds={state.directPromptRequestIds}
+                    directEntries={state.directPromptReceipts}
+                    {...(state.pendingPrompts === undefined
+                      ? {}
+                      : {
+                          pendingEntries: state.pendingPrompts.filter(
+                            (prompt) => prompt.sessionId === state.activeSessionId,
+                          ),
+                        })}
                     transcript={state.transcript}
                     connected={backend.kind === 'connected'}
                     running={activeRunning}
                     onEdit={queueOnEdit}
                     onRemove={queueOnRemove}
                     onModeChange={queueOnModeChange}
+                    onDismissPending={(id) => store.dismissPendingPrompt(id)}
                     onLoadImage={timelineOnLoadImage}
                   />
                   {pendingPermissions.length > 0 || pendingQuestions.length > 0 ? (
@@ -703,11 +686,13 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                           {t('composer.stop')}
                         </button>
                       )}
-                      {pendingPermissions.map(({ request, command }) => (
+                      {pendingPermissions.map(({ request, command, contentPending, contentFailed }) => (
                         <ApprovalCard
                           key={request.id}
                           request={request}
                           disabled={respondingInteractionId !== undefined}
+                          contentPending={contentPending}
+                          contentFailed={contentFailed}
                           {...(command === undefined ? {} : { command })}
                           onRespond={approvalRespondFor(request)}
                         />
@@ -740,6 +725,8 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                     {subagentReadOnlyReason === undefined || activeRunning ? (
                       <>
                         <ConnectedComposer
+                          key={active.id}
+                          draftKey={active.id}
                           store={store}
                           modelScope="session"
                           disabled={backend.kind !== 'connected'}

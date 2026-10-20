@@ -8,11 +8,11 @@ import {
   samePresetDescriptorList,
   sameStringList,
   strictListValues,
-  stringList,
 } from './list-equality.js'
 import { isModelDescriptor, isModelProvider } from './model-catalog.js'
 import type { StateSetter } from './types.js'
 import { object } from './unknown-record.js'
+import { parsePermissionCatalog } from './permission-catalog.js'
 
 export interface GlobalCatalogController {
   readonly invalidate: () => void
@@ -76,9 +76,10 @@ export function createGlobalCatalogController({
       modelGeneration += 1
       nextPresetRosterGeneration()
       setState((current) =>
-        (current.newSessionPermissionPresets?.length ?? 0) === 0
+        (current.newSessionPermissionPresets?.length ?? 0) === 0 &&
+        current.newSessionPermissionDefault === undefined
           ? current
-          : { ...current, newSessionPermissionPresets: [] },
+          : { ...current, newSessionPermissionPresets: [], newSessionPermissionDefault: undefined },
       )
     },
     refreshModels: async (): Promise<void> => {
@@ -92,12 +93,17 @@ export function createGlobalCatalogController({
       const rosterGeneration = nextPresetRosterGeneration()
       const applyPermissions = (value: unknown): void => {
         if (isDisposed() || !isCurrent() || !isPresetRosterCurrent(rosterGeneration)) return
-        const permissionPresets = stringList(value)
+        const catalog = parsePermissionCatalog(value)
         setState((current) => {
-          const next = permissionPresets ?? []
-          return sameStringList(current.newSessionPermissionPresets ?? [], next)
+          const next = catalog?.items ?? []
+          return sameStringList(current.newSessionPermissionPresets ?? [], next) &&
+            current.newSessionPermissionDefault === catalog?.defaultPreset
             ? current
-            : { ...current, newSessionPermissionPresets: next }
+            : {
+                ...current,
+                newSessionPermissionPresets: next,
+                newSessionPermissionDefault: catalog?.defaultPreset,
+              }
         })
       }
       const applyRoster = (value: unknown): void => {

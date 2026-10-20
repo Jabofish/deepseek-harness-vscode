@@ -1,4 +1,47 @@
 import type { FocusedWorkNode, PresentedTimelineNode } from './focused-timeline-projection.js'
+import { assistantMessageId } from './timeline-shared.js'
+
+export function rowCopyNeedsFullContent(node: PresentedTimelineNode, omitted: ReadonlySet<string>): boolean {
+  return copyParts(node).some((part) => omitted.has(part.id))
+}
+
+/** Resolve each omitted source, rather than copying the combined preview. */
+export async function loadRowCopyMarkdown(
+  node: PresentedTimelineNode,
+  omitted: ReadonlySet<string>,
+  load: (id: string) => Promise<string>,
+): Promise<string | undefined> {
+  if (!rowCopyNeedsFullContent(node, omitted)) return rowCopyMarkdown(node)
+  const parts: string[] = []
+  for (const part of copyParts(node)) {
+    if (omitted.has(part.id)) {
+      parts.push(await load(part.id))
+    } else parts.push(part.markdown)
+  }
+  return readableMarkdown(parts.join('\n\n'))
+}
+
+function copyParts(
+  node: PresentedTimelineNode,
+): readonly { id: string; markdown: string; streaming?: boolean }[] {
+  switch (node.kind) {
+    case 'user-message':
+    case 'assistant-message':
+      return readableMarkdown(node.markdown) === undefined ? [] : [node]
+    case 'assistant-turn': {
+      const messages = node.blocks
+        .filter((block) => block.kind === 'message')
+        .filter((block) => readableMarkdown(block.markdown) !== undefined)
+      return node.blocks.length > 0
+        ? messages
+        : [{ id: assistantMessageId(node) ?? node.id, markdown: node.markdown, streaming: node.streaming }]
+    }
+    case 'focused-turn':
+      return node.answer === undefined ? node.nodes.flatMap(copyParts) : copyParts(node.answer)
+    default:
+      return []
+  }
+}
 
 /**
  * The Markdown a transcript row publishes for a reader, or `undefined` when

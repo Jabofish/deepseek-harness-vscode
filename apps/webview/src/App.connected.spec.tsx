@@ -287,6 +287,11 @@ function storeFor(state: AppState): AppStore {
     loadOlderHistory: vi.fn().mockResolvedValue(undefined),
     navigateTranscript: vi.fn().mockResolvedValue(undefined),
     openTranscriptContent: vi.fn().mockResolvedValue(undefined),
+    loadTranscriptContent: vi.fn().mockResolvedValue(''),
+    loadTranscriptNode: vi.fn().mockRejectedValue(new Error('Unavailable')),
+    dismissPendingPrompt: vi.fn(),
+    forgetDirectPromptRequests: vi.fn(),
+    refreshQueue: vi.fn().mockResolvedValue([]),
     openSubagent: vi.fn().mockResolvedValue(undefined),
     renameSession: vi.fn().mockResolvedValue(undefined),
     renameWorkspace: vi.fn().mockResolvedValue(undefined),
@@ -720,7 +725,7 @@ describe('App connected rendering', () => {
     expect(screen.getByTestId('timeline')).toBeDefined()
   })
 
-  it('keeps an idle send in the composer through RPC acceptance until its durable message appears', async () => {
+  it('releases an accepted idle send before its durable message while reconciling Inbox state', async () => {
     let state = connectedState(true)
     const listeners = new Set<() => void>()
     const publish = (next: AppState): void => {
@@ -742,6 +747,19 @@ describe('App connected rendering', () => {
         publish({
           ...state,
           directPromptRequestIds: ['direct-request'],
+          directPromptReceipts: [
+            {
+              id: 'pending:direct-request',
+              rpcId: 'direct-request',
+              sessionId: 's1',
+              text: 'Hello',
+              attachments: [],
+              textOnly: true,
+              mode: 'queue',
+              createdAt: '2026-01-01T00:00:00.000Z',
+              queueIdsBefore: [],
+            },
+          ],
           queue: [
             {
               id: 'direct-message',
@@ -763,14 +781,17 @@ describe('App connected rendering', () => {
     fireEvent.change(input, { target: { value: 'Hello' } })
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(input.value).toBe('Hello')
+    // The direct send remains in the composer even when native inbox admission
+    // briefly projects a queue row. It must never flash in the queue dock.
+    expect(state.queue).toHaveLength(1)
     expect(screen.queryByRole('region', { name: 'Queued prompts' })).toBeNull()
     expect(screen.getByRole('button', { name: 'Cancel sending' }).getAttribute('aria-busy')).toBe('true')
     await act(async () => {
       acknowledge()
       await ack
     })
-    expect(input.value).toBe('Hello')
-    expect(screen.getByRole('button', { name: 'Cancel sending' })).toBeTruthy()
+    expect(input.value).toBe('')
+    expect(screen.queryByRole('button', { name: 'Cancel sending' })).toBeNull()
     // Identity wins even if DSH expands a reference in the displayed text.
     act(() => {
       publish({
@@ -794,6 +815,278 @@ describe('App connected rendering', () => {
       expect(screen.queryByRole('button', { name: 'Cancel sending' })).toBeNull()
     })
     expect(screen.queryByRole('region', { name: 'Queued prompts' })).toBeNull()
+  })
+
+  it.each([
+    { cancelled: false, receipt: 'matching' },
+    { cancelled: true, receipt: 'matching' },
+    { cancelled: false, receipt: 'different' },
+    { cancelled: false, receipt: 'failed' },
+    { cancelled: false, receipt: 'recovered' },
+    { cancelled: true, receipt: 'recovered' },
+  ])(
+    'checks a long admitted prompt against full content: $receipt, cancelled=$cancelled',
+    async ({ cancelled, receipt }) => {
+      let state = connectedState(true)
+      const listeners = new Set<() => void>()
+      const publish = (next: AppState): void => {
+        state = next
+        for (const listener of listeners) listener()
+      }
+      const text = 'Long prompt '.repeat(12_000)
+      const loadTranscriptContent =
+        receipt === 'recovered'
+          ? vi.fn().mockRejectedValueOnce(new Error('Transient history failure')).mockResolvedValue(text)
+          : receipt === 'failed'
+            ? vi.fn().mockRejectedValue(new Error('History unavailable'))
+            : vi.fn().mockResolvedValue(receipt === 'matching' ? text : `${text}different suffix`)
+      currentStore = {
+        ...storeFor(state),
+        getState: () => state,
+        subscribe: (listener) => {
+          listeners.add(listener)
+          return () => listeners.delete(listener)
+        },
+        sendPrompt: vi.fn((_id, _text, _attachments, _mode, signal?: AbortSignal) => {
+          publish({ ...state, directPromptRequestIds: ['request'] })
+          if (cancelled)
+            return new Promise<void>((_resolve, reject) => {
+              signal?.addEventListener('abort', () => reject(new DOMException('Cancelled', 'AbortError')), {
+                once: true,
+              })
+            })
+          return Promise.resolve()
+        }),
+        loadTranscriptContent,
+      }
+      render(<App />)
+      const input = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+      fireEvent.change(input, { target: { value: text } })
+      await act(async () => {
+        fireEvent.keyDown(input, { key: 'Enter' })
+        await Promise.resolve()
+      })
+      if (cancelled)
+        await act(async () => {
+          fireEvent.click(screen.getByRole('button', { name: 'Cancel sending' }))
+          await Promise.resolve()
+        })
+      const nodes: AppState['timeline']['nodes'] = [
+        { kind: 'user-message', id: 'admitted', markdown: text.slice(0, 128 * 1024) },
+      ]
+      act(() =>
+        publish({
+          ...state,
+          timeline: { ...state.timeline, nodes },
+          transcript: {
+            sessionId: 's1',
+            revision: 1,
+            nodes,
+            lastSequence: 1,
+            hasMore: false,
+            historical: false,
+            omittedNodeIds: ['admitted'],
+            eventFacts: [],
+          },
+        }),
+      )
+      await waitFor(() => expect(loadTranscriptContent).toHaveBeenCalledWith('admitted'))
+      if (!cancelled || receipt === 'matching' || receipt === 'recovered')
+        await waitFor(() => expect(input.value.length).toBe(0))
+      else expect(input.value).toBe(text)
+    },
+  )
+
+  it('accepts a direct send that DSH actually queued when the row has no request identity', async () => {
+    vi.useFakeTimers()
+    try {
+      let state = connectedState(true)
+      const listeners = new Set<() => void>()
+      const publish = (next: AppState): void => {
+        state = next
+        for (const listener of listeners) listener()
+      }
+      const queuedRow = {
+        id: 'queued-behind-direct',
+        sessionId: 's1',
+        text: 'Hello',
+        attachments: [],
+        textOnly: true,
+        mode: 'queue' as const,
+        createdAt: '2026-01-01T00:00:00.000Z',
+      }
+      const refreshQueue = vi.fn(() => {
+        publish({ ...state, queue: [queuedRow] })
+        return Promise.resolve([queuedRow])
+      })
+      currentStore = {
+        ...storeFor(state),
+        getState: () => state,
+        subscribe: (listener) => {
+          listeners.add(listener)
+          return () => listeners.delete(listener)
+        },
+        sendPrompt: vi.fn(() => {
+          publish({ ...state, directPromptRequestIds: ['direct-request'] })
+          return Promise.resolve()
+        }),
+        refreshQueue,
+      }
+      render(<App />)
+      const input = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+      fireEvent.change(input, { target: { value: 'Hello' } })
+      fireEvent.keyDown(input, { key: 'Enter' })
+      await act(async () => {
+        await Promise.resolve()
+      })
+      expect(input.value).toBe('')
+
+      // rc.6 queue rows cannot name the request, so the timeout check must
+      // recognize this new row by its content instead of failing the send.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000)
+      })
+      expect(refreshQueue).toHaveBeenCalledWith('s1')
+      expect(input.value).toBe('')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('releases an accepted draft immediately and preserves a newer draft when its transcript arrives', async () => {
+    let state = connectedState(true)
+    const listeners = new Set<() => void>()
+    const publish = (next: AppState): void => {
+      state = next
+      for (const listener of listeners) listener()
+    }
+    const sendPrompt = vi.fn(() => {
+      publish({ ...state, directPromptRequestIds: ['accepted-request'] })
+      return Promise.resolve()
+    })
+    currentStore = {
+      ...storeFor(state),
+      getState: () => state,
+      subscribe: (listener) => {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
+      forgetDirectPromptRequests: (ids) =>
+        publish({
+          ...state,
+          directPromptRequestIds: (state.directPromptRequestIds ?? []).filter((id) => !ids.includes(id)),
+        }),
+      sendPrompt,
+    }
+    render(<App />)
+    const input = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+    fireEvent.change(input, { target: { value: 'accepted before cancel' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(sendPrompt).toHaveBeenCalledTimes(1))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(screen.queryByRole('button', { name: 'Cancel sending' })).toBeNull()
+    expect(input.value).toBe('')
+    fireEvent.change(input, { target: { value: 'new draft' } })
+    act(() =>
+      publish({
+        ...state,
+        timeline: {
+          ...state.timeline,
+          nodes: [
+            {
+              kind: 'user-message',
+              id: 'accepted-message',
+              rpcId: 'accepted-request',
+              markdown: 'accepted before cancel',
+            },
+          ],
+        },
+      }),
+    )
+    await waitFor(() => expect(input.value).toBe('new draft'))
+  })
+
+  it('clears the cancelled draft when the accepted direct turn arrives late', async () => {
+    let state = connectedState(true)
+    const listeners = new Set<() => void>()
+    const publish = (next: AppState): void => {
+      state = next
+      for (const listener of listeners) listener()
+    }
+    const sendPrompt = vi.fn(
+      (
+        _sessionId: string,
+        _text: string,
+        _attachments: Parameters<AppStore['sendPrompt']>[2],
+        _mode: Parameters<AppStore['sendPrompt']>[3],
+        signal?: AbortSignal,
+      ) => {
+        publish({ ...state, directPromptRequestIds: ['direct-request'] })
+        return new Promise<void>((_resolve, reject) => {
+          const abort = (): void => reject(new DOMException('Cancelled', 'AbortError'))
+          if (signal?.aborted === true) abort()
+          else signal?.addEventListener('abort', abort, { once: true })
+        })
+      },
+    )
+    currentStore = {
+      ...storeFor(state),
+      getState: () => state,
+      subscribe: (listener) => {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
+      sendPrompt,
+    }
+    render(<App />)
+    const input = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+    fireEvent.change(input, { target: { value: 'late delivery' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel sending' })).toBeDefined())
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel sending' }))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    // The RPC was already accepted; the durable row proves the cancellation
+    // stopped only the local wait and must release the sent draft.
+    act(() => {
+      publish({
+        ...state,
+        timeline: {
+          ...state.timeline,
+          nodes: [
+            {
+              kind: 'user-message',
+              id: 'late-message',
+              rpcId: 'direct-request',
+              markdown: 'late delivery',
+            },
+          ],
+        },
+      })
+    })
+    await waitFor(() => expect(input.value).toBe(''))
+  })
+
+  it('shows the native permission default through the main new-session composer', async () => {
+    const configuration = { ...connectedState(true).configuration!, permissionPresetKnown: false }
+    const state = {
+      ...connectedState(false),
+      pendingSession: { revision: 1, workspaceId: 'w1', configuration },
+      newSessionPermissionPresets: ['read-only', 'organization-safe'],
+      newSessionPermissionDefault: 'read-only',
+    }
+    const choose = vi.fn()
+    currentStore = { ...storeFor(state), configurePendingSession: choose }
+    render(<App />)
+    expect(screen.queryByRole('button', { name: 'Access: Unknown permission' })).toBeNull()
+    fireEvent.click(await screen.findByRole('button', { name: 'Access: Read Only' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Organization Safe' }))
+    expect(choose).toHaveBeenCalledWith(
+      expect.objectContaining({ permissionPreset: 'organization-safe', permissionPresetKnown: true }),
+    )
   })
 
   it('renders a local draft and routes its first message through deferred creation', async () => {
@@ -1883,6 +2176,262 @@ describe('App connected rendering', () => {
     })
   })
 
+  it('waits for a pasted attachment to finish ingesting before sending', async () => {
+    const state = connectedState(true)
+    const uri = 'dsh-attachment:00000000-0000-4000-8000-000000000014'
+    let resolveIngest: ((value: { uri: string; name: string; mimeType: string }) => void) | undefined
+    const ingestAttachment = vi.fn(
+      () =>
+        new Promise<{ uri: string; name: string; mimeType: string }>((resolve) => {
+          resolveIngest = resolve
+        }),
+    )
+    const sendPrompt = vi.fn().mockResolvedValue(undefined)
+    currentStore = { ...storeFor(state), ingestAttachment, sendPrompt }
+    render(<App />)
+
+    const prompt = screen.getByRole('textbox', { name: 'Prompt' })
+    fireEvent.change(prompt, { target: { value: 'send this with the file' } })
+    fireEvent.paste(prompt, {
+      clipboardData: { files: [new File(['notes'], 'notes.txt', { type: 'text/plain' })] },
+    })
+    await waitFor(() => expect(ingestAttachment).toHaveBeenCalledTimes(1))
+    fireEvent.submit(prompt.closest('form')!)
+    expect(sendPrompt).not.toHaveBeenCalled()
+
+    await act(async () => {
+      resolveIngest?.({ uri, name: 'notes.txt', mimeType: 'text/plain' })
+      await Promise.resolve()
+    })
+    await waitFor(() =>
+      expect(sendPrompt).toHaveBeenCalledWith(
+        's1',
+        'send this with the file',
+        [expect.objectContaining({ uri })],
+        'queue',
+        expect.any(AbortSignal),
+      ),
+    )
+    expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' }).value).toBe('')
+  })
+
+  it('keeps a pending first-message attachment handle until its send settles', async () => {
+    const state = connectedState(false)
+    let resolveSend: (() => void) | undefined
+    const sendPendingPrompt = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSend = resolve
+        }),
+    )
+    const uri = 'dsh-attachment:00000000-0000-4000-8000-000000000015'
+    const ingestAttachment = vi.fn().mockResolvedValue({ uri, name: 'notes.txt', mimeType: 'text/plain' })
+    const releaseAttachments = vi.fn().mockResolvedValue(undefined)
+    const { updateState } = renderWithMutableState({
+      ...state,
+      pendingSession: { revision: 1, workspaceId: 'w1', configuration: connectedState(true).configuration! },
+    })
+    Object.assign(currentStore, { sendPendingPrompt, ingestAttachment, releaseAttachments })
+
+    const input = document.querySelector('.dsh-composer textarea')
+    expect(input).toBeInstanceOf(HTMLTextAreaElement)
+    fireEvent.change(input!, { target: { value: 'first message' } })
+    fireEvent.paste(input!, {
+      clipboardData: { files: [new File(['notes'], 'notes.txt', { type: 'text/plain' })] },
+    })
+    await screen.findByRole('button', { name: 'Remove notes.txt' })
+    fireEvent.submit(input!.closest('form')!)
+    await waitFor(() => expect(sendPendingPrompt).toHaveBeenCalled())
+
+    // Opening the created session changes the composer owner while the Host is
+    // still resolving the attachment. Releasing here would make it reject.
+    updateState(connectedState(true))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove notes.txt' })).toBeNull())
+    expect(releaseAttachments).not.toHaveBeenCalledWith([uri])
+
+    await act(async () => {
+      resolveSend?.()
+      await Promise.resolve()
+    })
+    expect(releaseAttachments).not.toHaveBeenCalledWith([uri])
+  })
+
+  it('releases a detached first-message attachment after a definite send failure', async () => {
+    const state = connectedState(false)
+    let rejectSend: ((reason: unknown) => void) | undefined
+    const sendPendingPrompt = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectSend = reject
+        }),
+    )
+    const uri = 'dsh-attachment:00000000-0000-4000-8000-000000000016'
+    const ingestAttachment = vi.fn().mockResolvedValue({ uri, name: 'notes.txt', mimeType: 'text/plain' })
+    const releaseAttachments = vi.fn().mockResolvedValue(undefined)
+    const { updateState } = renderWithMutableState({
+      ...state,
+      pendingSession: { revision: 1, workspaceId: 'w1', configuration: connectedState(true).configuration! },
+    })
+    Object.assign(currentStore, { sendPendingPrompt, ingestAttachment, releaseAttachments })
+
+    const input = document.querySelector('.dsh-composer textarea')
+    fireEvent.change(input!, { target: { value: 'first message' } })
+    fireEvent.paste(input!, {
+      clipboardData: { files: [new File(['notes'], 'notes.txt', { type: 'text/plain' })] },
+    })
+    await screen.findByRole('button', { name: 'Remove notes.txt' })
+    fireEvent.submit(input!.closest('form')!)
+    await waitFor(() => expect(sendPendingPrompt).toHaveBeenCalled())
+    updateState(connectedState(true))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove notes.txt' })).toBeNull())
+
+    await act(async () => {
+      rejectSend?.(new Error('Host rejected the prompt'))
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(releaseAttachments).toHaveBeenCalledWith([uri]))
+    expect(await screen.findByText('Prompt failed.')).toBeDefined()
+  })
+
+  it('abandons a waiting attachment send after navigating away and back', async () => {
+    const initial = connectedState(true)
+    let resolveIngest: ((value: { uri: string; name: string; mimeType: string }) => void) | undefined
+    const ingestAttachment = vi.fn(
+      () =>
+        new Promise<{ uri: string; name: string; mimeType: string }>((resolve) => {
+          resolveIngest = resolve
+        }),
+    )
+    const sendPrompt = vi.fn().mockResolvedValue(undefined)
+    const releaseAttachments = vi.fn().mockResolvedValue(undefined)
+    const { updateState } = renderWithMutableState(initial)
+    Object.assign(currentStore, { ingestAttachment, sendPrompt, releaseAttachments })
+    const input = screen.getByRole('textbox', { name: 'Prompt' })
+    fireEvent.change(input, { target: { value: 'needs the file' } })
+    fireEvent.paste(input, {
+      clipboardData: { files: [new File(['data'], 'slow.txt', { type: 'text/plain' })] },
+    })
+    await waitFor(() => expect(ingestAttachment).toHaveBeenCalledTimes(1))
+    fireEvent.submit(input.closest('form')!)
+    updateState({
+      ...initial,
+      pendingSession: { revision: 99, workspaceId: 'w1', configuration: initial.configuration! },
+    })
+    updateState(initial)
+    const uri = 'dsh-attachment:00000000-0000-4000-8000-000000000018'
+    await act(async () => {
+      resolveIngest?.({ uri, name: 'slow.txt', mimeType: 'text/plain' })
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(releaseAttachments).toHaveBeenCalledWith([uri]))
+    expect(sendPrompt).not.toHaveBeenCalled()
+    expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' }).value).toBe('needs the file')
+  })
+
+  it('does not release a detached handle after an unconfirmed send timeout', async () => {
+    const initial = connectedState(true)
+    let rejectSend: ((reason: unknown) => void) | undefined
+    const sendPrompt = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectSend = reject
+        }),
+    )
+    const releaseAttachments = vi.fn().mockResolvedValue(undefined)
+    const uri = 'dsh-attachment:00000000-0000-4000-8000-000000000019'
+    const { updateState } = renderWithMutableState(initial)
+    Object.assign(currentStore, {
+      sendPrompt,
+      releaseAttachments,
+      ingestAttachment: vi.fn().mockResolvedValue({ uri, name: 'slow.txt', mimeType: 'text/plain' }),
+    })
+    const input = screen.getByRole('textbox', { name: 'Prompt' })
+    fireEvent.change(input, { target: { value: 'slow send' } })
+    fireEvent.paste(input, {
+      clipboardData: { files: [new File(['data'], 'slow.txt', { type: 'text/plain' })] },
+    })
+    await screen.findByRole('button', { name: 'Remove slow.txt' })
+    fireEvent.submit(input.closest('form')!)
+    await waitFor(() => expect(sendPrompt).toHaveBeenCalledTimes(1))
+    updateState({
+      ...initial,
+      pendingSession: { revision: 99, workspaceId: 'w1', configuration: initial.configuration! },
+    })
+    await act(async () => {
+      rejectSend?.(Object.assign(new Error('Delivery unconfirmed'), { retryable: true }))
+      await Promise.resolve()
+    })
+    await screen.findByRole('alert')
+    expect(releaseAttachments).not.toHaveBeenCalled()
+  })
+
+  it('keeps the draft when an attachment read fails before sending', async () => {
+    const state = connectedState(true)
+    let rejectIngest: ((reason: unknown) => void) | undefined
+    const ingestAttachment = vi.fn(
+      () =>
+        new Promise<undefined>((_resolve, reject) => {
+          rejectIngest = reject
+        }),
+    )
+    const sendPrompt = vi.fn().mockResolvedValue(undefined)
+    currentStore = { ...storeFor(state), ingestAttachment, sendPrompt }
+    render(<App />)
+
+    const prompt = screen.getByRole('textbox', { name: 'Prompt' })
+    fireEvent.change(prompt, { target: { value: 'keep this draft' } })
+    fireEvent.paste(prompt, {
+      clipboardData: { files: [new File(['notes'], 'notes.txt', { type: 'text/plain' })] },
+    })
+    await waitFor(() => expect(ingestAttachment).toHaveBeenCalledTimes(1))
+    fireEvent.submit(prompt.closest('form')!)
+    await act(async () => {
+      rejectIngest?.(new Error('Unable to attach pasted file.'))
+      await Promise.resolve()
+    })
+
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toContain('Unable to attach pasted file.'),
+    )
+    expect(sendPrompt).not.toHaveBeenCalled()
+    expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' }).value).toBe('keep this draft')
+  })
+
+  it('keeps a removed chip handle alive while the Host still resolves its submission', async () => {
+    const state = connectedState(true)
+    const uri = 'dsh-attachment:00000000-0000-4000-8000-000000000017'
+    let rejectSend: ((reason: unknown) => void) | undefined
+    const sendPrompt = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectSend = reject
+        }),
+    )
+    const releaseAttachments = vi.fn().mockResolvedValue(undefined)
+    currentStore = {
+      ...storeFor(state),
+      sendPrompt,
+      releaseAttachments,
+      ingestAttachment: vi.fn().mockResolvedValue({ uri, name: 'retained.txt', mimeType: 'text/plain' }),
+    }
+    render(<App />)
+    const input = screen.getByRole('textbox', { name: 'Prompt' })
+    fireEvent.change(input, { target: { value: 'with attachment' } })
+    fireEvent.paste(input, {
+      clipboardData: { files: [new File(['data'], 'retained.txt', { type: 'text/plain' })] },
+    })
+    const remove = await screen.findByRole('button', { name: 'Remove retained.txt' })
+    fireEvent.submit(input.closest('form')!)
+    await waitFor(() => expect(sendPrompt).toHaveBeenCalledTimes(1))
+    fireEvent.click(remove)
+    expect(releaseAttachments).not.toHaveBeenCalled()
+    await act(async () => {
+      rejectSend?.(new Error('Host rejected the prompt'))
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(releaseAttachments).toHaveBeenCalledWith([uri]))
+  })
+
   it('releases an opaque Host attachment handle when its draft chip is removed', async () => {
     const state = connectedState(true)
     const uri = 'dsh-attachment:00000000-0000-4000-8000-000000000001'
@@ -2271,8 +2820,9 @@ describe('App connected rendering', () => {
     )
 
     // The user navigates to an existing session while the send is still
-    // working: the switch discards the pending composition's own attachment,
-    // and the draft text survives the navigation by design.
+    // working: the switch hides the pending composition's own attachment, but
+    // its handle must stay resolvable until the Host answers, and the draft
+    // text stays with its pending owner rather than entering the existing chat.
     updateState({
       ...state,
       activeSessionId: 's2',
@@ -2290,8 +2840,11 @@ describe('App connected rendering', () => {
       ],
       workspaces: [{ ...state.workspaces[0]!, sessionIds: ['s1', 's2'], sessionCount: 2 }],
     })
-    await waitFor(() => expect(releaseAttachments).toHaveBeenCalledWith([uri]))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove notes.txt' })).toBeNull())
+    expect(releaseAttachments).not.toHaveBeenCalled()
     const sessionPrompt = await screen.findByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+    expect(sessionPrompt.value).toBe('')
+    fireEvent.change(sessionPrompt, { target: { value: 'draft for the existing chat' } })
     fireEvent.paste(sessionPrompt, {
       clipboardData: { files: [new File(['later'], 'later.txt', { type: 'text/plain' })] },
     })
@@ -2304,10 +2857,108 @@ describe('App connected rendering', () => {
       await send.catch(() => undefined)
     })
     expect(await screen.findByText('Prompt failed.')).toBeDefined()
+    // Nothing was delivered, so the hidden pending handle is now released.
+    await waitFor(() => expect(releaseAttachments).toHaveBeenCalledWith([uri]))
     expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' }).value).toBe(
-      'a prompt I do not want to retype',
+      'draft for the existing chat',
     )
     expect(screen.getByRole('button', { name: 'Remove later.txt' })).toBeDefined()
+  })
+
+  it('keeps each conversation draft with its own conversation', async () => {
+    const state = connectedState(true)
+    const withSecond: AppState = {
+      ...state,
+      sessions: [
+        ...state.sessions,
+        {
+          id: 's2',
+          title: 'Another',
+          workspaceId: 'w1',
+          blank: false,
+          status: 'idle' as const,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      workspaces: [{ ...state.workspaces[0]!, sessionIds: ['s1', 's2'], sessionCount: 2 }],
+    }
+    const { updateState } = renderWithMutableState(withSecond)
+    const input = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+    fireEvent.change(input, { target: { value: 'draft for one' } })
+
+    updateState({ ...withSecond, activeSessionId: 's2' })
+    const second = await screen.findByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+    expect(second).not.toBe(input)
+    expect(second).toHaveProperty('value', '')
+    // Undo history belongs to the composer instance, not to the Webview: a
+    // switch must not let Ctrl+Z restore the previous conversation's draft.
+    fireEvent.keyDown(second, { key: 'z', ctrlKey: true })
+    expect(second.value).toBe('')
+    fireEvent.change(second, { target: { value: 'draft for two' } })
+
+    updateState(withSecond)
+    expect(await screen.findByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })).toHaveProperty(
+      'value',
+      'draft for one',
+    )
+    updateState({ ...withSecond, activeSessionId: 's2' })
+    expect(await screen.findByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })).toHaveProperty(
+      'value',
+      'draft for two',
+    )
+  })
+
+  it('clears a submitted draft from the conversation that sent it after a switch', async () => {
+    const state = connectedState(true)
+    const withSecond: AppState = {
+      ...state,
+      sessions: [
+        ...state.sessions,
+        {
+          id: 's2',
+          title: 'Another',
+          workspaceId: 'w1',
+          blank: false,
+          status: 'idle' as const,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      workspaces: [{ ...state.workspaces[0]!, sessionIds: ['s1', 's2'], sessionCount: 2 }],
+    }
+    const { updateState } = renderWithMutableState(withSecond)
+    let resolveSend: () => void = () => undefined
+    Object.assign(currentStore, {
+      sendPrompt: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveSend = resolve
+          }),
+      ),
+    })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), {
+      target: { value: 'sent from one' },
+    })
+    fireEvent.submit(screen.getByRole('textbox', { name: 'Prompt' }).closest('form')!)
+
+    // The conversation changes while the RPC settles; the submitted text must
+    // not reappear in the new conversation or linger in the old one.
+    updateState({ ...withSecond, activeSessionId: 's2' })
+    expect(await screen.findByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })).toHaveProperty(
+      'value',
+      '',
+    )
+    await act(async () => {
+      resolveSend()
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Cancel sending' })).toBeNull())
+    updateState(withSecond)
+    expect(await screen.findByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })).toHaveProperty(
+      'value',
+      '',
+    )
   })
 
   it('releases the previous attachment handles only when the displayed draft changes', async () => {

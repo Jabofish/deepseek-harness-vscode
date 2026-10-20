@@ -8,6 +8,28 @@ async function flushContinuations(): Promise<void> {
 }
 
 describe('session configuration transactions', () => {
+  it('does not apply unchosen draft policy fallbacks before the first message', async () => {
+    const h = configurationFixture({ planExposed: false, commandOutcome: () => 'unknown' })
+    h.state.get('s1')!.plan = true
+    await h.repository.setConfiguration('s1', {
+      ...configuration('workspace-write', 'old'),
+      permissionPresetKnown: false,
+      planModeKnown: false,
+    })
+    expect(h.calls.filter((call) => call.line)).toEqual([])
+    expect(h.state.get('s1')).toMatchObject({ permission: 'read-only', plan: true })
+  })
+
+  it('honors an explicit Plan choice even while applying a model choice', async () => {
+    const h = configurationFixture({ planExposed: false })
+    await h.repository.setConfiguration('s1', {
+      ...configuration('read-only', 'new'),
+      planModeKnown: true,
+    })
+    expect(h.calls.filter((call) => call.line).map((call) => call.line)).toEqual(['/plan off'])
+    expect(h.state.get('s1')).toMatchObject({ plan: false, provider: 'new' })
+  })
+
   it('does not write an unknown plan fallback during a model-only update', async () => {
     const h = configurationFixture({
       planExposed: false,

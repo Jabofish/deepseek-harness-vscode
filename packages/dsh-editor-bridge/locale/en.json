@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "VS Code Editor Companion",
+    "description": "Provides editor context, diagnostics, code navigation and authorized file edits for the connected VS Code window."
+  }
+}

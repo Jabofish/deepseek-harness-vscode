@@ -40,6 +40,9 @@ interface ReadyEndpoint {
   readonly launchUrl?: string
 }
 
+// Cold plugin/profile loading on Windows can exceed 30 seconds. Endpoint
+// login remains a separate short step; cancellation still aborts either wait.
+const startupReadinessTimeoutMs = 60_000
 const startupStepTimeoutMs = 15_000
 
 export class DshProcessSupervisor implements ProcessSupervisor {
@@ -222,7 +225,7 @@ export class DshProcessSupervisor implements ProcessSupervisor {
       return status
     })
     try {
-      const readyEndpoint = await withTimeout(ready, startupStepTimeoutMs, signal)
+      const readyEndpoint = await withTimeout(ready, startupReadinessTimeoutMs, signal)
       await awaitWithAbort(
         Promise.resolve(
           this.dependencies.onReadyEndpoint?.(readyEndpoint.endpoint, readyEndpoint.launchUrl, signal),

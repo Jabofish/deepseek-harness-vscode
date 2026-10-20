@@ -22,6 +22,18 @@ describe('CopyButton', () => {
     expect(screen.getByRole('button', { name: 'Copied' })).toBeDefined()
   })
 
+  it('resolves the complete text before writing a clipped row', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('navigator', { clipboard: { writeText } })
+    const resolveText = vi.fn().mockResolvedValue('complete payload')
+    render(<CopyButton text="truncated prefix" resolveText={resolveText} className="btn" />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy' }))
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('complete payload'))
+    expect(resolveText).toHaveBeenCalledTimes(1)
+  })
+
   it('states a refused copy instead of staying silent', async () => {
     vi.useFakeTimers()
     vi.stubGlobal('navigator', {

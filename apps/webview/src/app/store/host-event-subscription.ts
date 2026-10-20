@@ -14,7 +14,8 @@ import type { createSurfaceActions } from './surface-actions.js'
 import { parseHostDomainEvent } from './event-parser.js'
 import { backendEventSessionId, applyHostMessage } from './host-message-reducers.js'
 import { object } from './unknown-record.js'
-import { stringList } from './list-equality.js'
+import { parsePermissionCatalog } from './permission-catalog.js'
+import { connectionIdentity } from './session-projection.js'
 
 type AccountEventActions = Pick<
   ReturnType<typeof createAccountActions>,
@@ -52,6 +53,7 @@ export interface HostEventSubscriptionDependencies {
   readonly pluginInstallRecovery: Pick<PluginInstallRecoveryController, 'progress'>
   readonly projectionSequences: ProjectionSequenceIndex
   readonly refresh: () => Promise<void>
+  readonly refreshSessionDirectory: () => Promise<void>
   readonly refreshModelCatalog: () => Promise<void>
   readonly refreshCommands: (sessionId?: string, force?: boolean) => Promise<void>
   readonly refreshLiveGoals: () => Promise<void>
@@ -78,6 +80,7 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
     pluginInstallRecovery,
     projectionSequences,
     refresh,
+    refreshSessionDirectory,
     refreshCommands,
     refreshLiveGoals,
     refreshSessionModelDirectoryForSession,
@@ -87,9 +90,19 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
     turnWatchers,
   } = deps
   let permissionCatalogGeneration = 0
+  let resyncing = false
   const unsubscribe = client.subscribe((message) => {
     if (lifecycle.isDisposed()) return
     const previousBackendKind = getState().backend.kind
+    const previousConnectionEpoch = getState().connectionEpoch
+    const snapshot =
+      message.type === 'event' && message.name === 'connection.snapshot' ? object(message.payload) : undefined
+    const nextIdentity = connectionIdentity(snapshot)
+    const sameConnection =
+      previousBackendKind === 'connected' &&
+      snapshot?.kind === 'connected' &&
+      nextIdentity !== undefined &&
+      nextIdentity === projectionSequences.connectionIdentity
     // Surface frames are Host-owned UI control messages whose handling includes
     // store side effects (opening the bound session, asking the Host to open the
     // active session in the editor area). They own their own reduction and never
@@ -97,18 +110,32 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
     if (surfaceActions.applySurfaceEvent(message)) return
     if (message.type === 'event' && message.name === 'ui.resync') {
       turnWatchers.disposeAll()
-      const state = getState()
-      if (state.backend.kind === 'connected' && state.activeSessionId !== undefined) {
-        void client
-          .request({
-            type: 'session.transcript.resync',
-            requestId: requestId(),
-            payload: { sessionId: state.activeSessionId },
-          })
-          .catch(() => undefined)
-        reopenActiveView()
-        void refresh().catch(() => undefined)
-      }
+      if (resyncing) return
+      resyncing = true
+      // The missing control frame may itself have been the connection snapshot.
+      // Recover it and replay process-local interactions before reopening a view.
+      void client
+        .request({ type: 'app.ready', requestId: requestId(), payload: { snapshotOnly: true } })
+        .then(() => {
+          if (lifecycle.isDisposed()) return
+          const state = getState()
+          if (state.backend.kind !== 'connected') return
+          if (state.activeSessionId !== undefined) {
+            void client
+              .request({
+                type: 'session.transcript.resync',
+                requestId: requestId(),
+                payload: { sessionId: state.activeSessionId },
+              })
+              .catch(() => undefined)
+            reopenActiveView()
+          }
+          void refresh().catch(() => undefined)
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          resyncing = false
+        })
       return
     }
     if (message.type === 'event' && message.name === 'session.transcript.invalidated') {
@@ -122,7 +149,7 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
     }
     if (
       message.type === 'event' &&
-      (message.name === 'connection.snapshot' || message.name === 'connection.lost')
+      (message.name === 'connection.lost' || (message.name === 'connection.snapshot' && !sameConnection))
     ) {
       permissionCatalogGeneration += 1
       lifecycle.invalidateGlobalCatalogs()
@@ -173,7 +200,7 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
           pending.version === lifecycle.getOpenVersion() &&
           getState().activeSessionId === pending.sessionId
         )
-          applyHostMessage(message, getState(), setState, parsedEvent, projectionSequences)
+          applyHostMessage(message, getState(), setState, parsedEvent, projectionSequences, reopenActiveView)
       }
     }
     // Buffer session-scoped view/control updates during the opening barrier.
@@ -192,13 +219,18 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
       message.name === 'ui.sessions.toggle' &&
       currentState.drawer === 'sessions'
     )
-      void refresh()
+      void refreshSessionDirectory()
     if (
       message.type === 'event' &&
       message.name === 'connection.snapshot' &&
       object(message.payload)?.kind === 'connected'
     ) {
-      if (previousBackendKind !== 'connected') void refresh().catch(() => undefined)
+      // An app.ready snapshot of the same connection must not retire the
+      // startup catalog without replacing it. A new identity always refreshes.
+      // applyHostMessage already reopens/refreshes a changed connection epoch.
+      // Legacy snapshots without an identity still need the fallback refresh.
+      if (!sameConnection && currentState.connectionEpoch === previousConnectionEpoch)
+        void refresh().catch(() => undefined)
       setState((current) => ({
         ...current,
         pluginInventoryRevision: current.pluginInventoryRevision + 1,
@@ -238,7 +270,12 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
       const generation = ++permissionCatalogGeneration
       // Clear the stale allowlist immediately; a failed read must not keep Auto
       // selectable after its live integration has been removed.
-      setState((current) => ({ ...current, permissionPresets: [], newSessionPermissionPresets: [] }))
+      setState((current) => ({
+        ...current,
+        permissionPresets: [],
+        newSessionPermissionPresets: [],
+        newSessionPermissionDefault: undefined,
+      }))
       void client
         .request<unknown>({
           type: 'permissions.presets.list',
@@ -246,13 +283,14 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
         })
         .then((value) => {
           if (lifecycle.isDisposed() || generation !== permissionCatalogGeneration) return
-          const permissionPresets = stringList(value)
-          if (permissionPresets !== undefined)
+          const catalog = parsePermissionCatalog(value)
+          if (catalog !== undefined)
             setState((current) => ({
               ...current,
-              newSessionPermissionPresets: permissionPresets,
+              newSessionPermissionPresets: catalog.items,
+              newSessionPermissionDefault: catalog.defaultPreset,
               ...(version === lifecycle.getOpenVersion() && current.activeSessionId === sessionId
-                ? { permissionPresets }
+                ? { permissionPresets: catalog.items }
                 : {}),
             }))
         })
@@ -304,7 +342,9 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
         message.name === 'session.added' ||
         message.name === 'session.removed')
     )
-      void refresh()
+      // Workspace/session membership does not change the global model,
+      // credential or preset catalogs. Their own events refresh those owners.
+      void refreshSessionDirectory()
     if (message.type === 'event' && message.name === 'session.created') {
       const created = object(message.payload)
       const createdId = typeof created?.id === 'string' ? created.id : undefined
@@ -312,7 +352,7 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
         // This is an explicit creation path. It owns the startup choice and
         // must not race the fallback selected from a concurrent refresh.
         lifecycle.clearStartupRestorePending()
-        void refresh()
+        void refreshSessionDirectory()
           .then(() => callbacks.openCreatedSession?.(createdId))
           .catch(() => undefined)
       }

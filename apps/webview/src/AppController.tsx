@@ -32,7 +32,7 @@ import { createAppStore, type AppState, type AppStore } from './app/store.js'
 import { sameShallowSelection, useAppStoreSelector } from './app/useAppStoreSelector.js'
 import { selectAppViewState } from './app/store/view-state.js'
 import { selectSessionModels } from './app/store/model-directory-state.js'
-import { readDraft, resetDraft, setDraft } from './app/draft-store.js'
+import { activateDraftOwner, clearDraftIf, readDraft, resetDraft } from './app/draft-store.js'
 import { publicProtocolErrorMessage } from './app/protocol-client.js'
 import { useDshSettings } from './app/useDshSettings.js'
 import { useComposerAttachments } from './app/useComposerAttachments.js'
@@ -321,6 +321,11 @@ const useAppControllerImpl = () => {
     [eventCountNodes, state.timeline.eventCount],
   )
   const activeSessionId = active?.id
+  const composerOwner =
+    state.pendingSession === undefined ? activeSessionId : `pending:${state.pendingSession.revision}`
+  // Switch drafts before the new conversation paints, so a frame of the other
+  // conversation's text can never appear in (or be submitted from) this one.
+  useLayoutEffect(() => activateDraftOwner(composerOwner), [composerOwner])
   const showDshEvents =
     codingToolsEnabled && dshEventVisibility.visible && dshEventVisibility.sessionId !== undefined
       ? dshEventVisibility.sessionId === activeSessionId
@@ -418,21 +423,21 @@ const useAppControllerImpl = () => {
     subagentEntries: state.subagents.entries,
     editorContext: state.editorContext,
     mountedRef,
-    setDraft,
+    draftOwner: composerOwner,
+    clearDraftIf,
     readDraft,
   })
-  const composerOwner =
-    state.pendingSession === undefined ? activeSessionId : `pending:${state.pendingSession.revision}`
   const previousComposerOwner = useRef(composerOwner)
-  useEffect(() => {
+  useLayoutEffect(() => {
     // Superseded navigation resolves without switching the store. Clear the
     // handles only when the displayed conversation actually changes, so a
     // delayed completion cannot discard the new conversation's attachments.
+    // A layout effect (not a passive one) guarantees a submit handler cannot
+    // observe the previous conversation's handles after the switch paints.
     if (composerOwner === undefined || previousComposerOwner.current === composerOwner) return
     previousComposerOwner.current = composerOwner
     discardAttachmentDrafts()
-    if (state.pendingSession !== undefined) setDraft('')
-  }, [composerOwner, discardAttachmentDrafts, state.pendingSession])
+  }, [composerOwner, discardAttachmentDrafts])
   // Runtime status and explicit Turn boundaries come from DSH. A settled
   // assistant step alone never closes a Turn while tools/later steps are active.
   const streaming = activeRunning

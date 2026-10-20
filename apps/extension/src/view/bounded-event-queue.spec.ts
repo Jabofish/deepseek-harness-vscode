@@ -1,58 +1,85 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { BoundedEventQueue } from './bounded-event-queue.js'
 
 describe('bounded Host event posting', () => {
-  it('invalidates an overflowing queue once, releases every caller, and preserves ordered later posts', async () => {
-    const observed: number[] = []
-    const queue = new BoundedEventQueue(
-      () => {
-        observed.push(0)
-        return Promise.resolve()
-      },
-      2,
-      100,
+  it('invokes text and control IPC in source order without awaiting earlier receipts', async () => {
+    const observed: string[] = []
+    let release!: (value: boolean) => void
+    const queue = new BoundedEventQueue(() => Promise.resolve())
+    const first = queue.enqueue(
+      () =>
+        new Promise<boolean>((resolve) => {
+          release = resolve
+        }),
+      1,
     )
-    let finish: ((value: boolean) => void) | undefined
-    const first = queue.enqueue(() => {
-      observed.push(1)
-      return new Promise((resolve) => {
-        finish = resolve
-      })
-    }, 10)
-    const second = queue.enqueue(() => Promise.resolve(true), 10)
-    const third = queue.enqueue(() => Promise.resolve(true), 10)
-    expect(await queue.enqueue(() => Promise.resolve(true), 10)).toBe(false)
-    await expect(second).resolves.toBe(false)
-    await expect(third).resolves.toBe(false)
-    const later = queue.enqueue(() => {
-      observed.push(9)
+    const ordinary = queue.enqueue(() => {
+      observed.push('text')
       return Promise.resolve(true)
-    }, 10)
-    finish?.(true)
+    }, 1)
+    const tool = queue.enqueue(() => {
+      observed.push('tool')
+      return Promise.resolve(true)
+    }, 1)
+    const question = queue.enqueue(
+      () => {
+        observed.push('question')
+        return Promise.resolve(true)
+      },
+      1,
+      true,
+    )
+    await Promise.all([ordinary, tool, question])
+    expect(observed).toEqual(['text', 'tool', 'question'])
+    release(true)
     await expect(first).resolves.toBe(true)
-    await expect(later).resolves.toBe(true)
-    expect(observed).toEqual([1, 0, 9])
     queue.dispose()
   })
 
-  it('uses a character budget, permits one atomic in-flight frame, and clears pending references on disposal', async () => {
-    let finish: ((value: boolean) => void) | undefined
+  it('bounds outstanding work, reserves control capacity and retains actual delivery results', async () => {
+    const resync = vi.fn(() => Promise.resolve())
+    const queue = new BoundedEventQueue(resync, 2, 100)
+    const releases: ((value: boolean) => void)[] = []
+    const post = (): Promise<boolean> => new Promise((resolve) => releases.push(resolve))
+    const first = queue.enqueue(post, 10)
+    const second = queue.enqueue(post, 10)
+    expect(await queue.enqueue(post, 10)).toBe(false)
+    expect(resync).toHaveBeenCalledOnce()
+    expect(releases).toHaveLength(2)
+    await expect(queue.enqueue(() => Promise.resolve(true), 1, true)).resolves.toBe(true)
+    releases.forEach((release) => release(true))
+    await expect(first).resolves.toBe(true)
+    await expect(second).resolves.toBe(true)
+    await expect(queue.enqueue(() => Promise.resolve(true), 1)).resolves.toBe(true)
+    queue.dispose()
+  })
+
+  it('permits one atomic oversized frame and releases waiters on disposal despite late receipts', async () => {
     const queue = new BoundedEventQueue(() => Promise.resolve(), 128, 20)
+    let release!: (value: boolean) => void
     const first = queue.enqueue(
       () =>
-        new Promise((resolve) => {
-          finish = resolve
+        new Promise<boolean>((resolve) => {
+          release = resolve
         }),
       100,
     )
-    const pending = queue.enqueue(() => Promise.resolve(true), 12)
-    expect(await queue.enqueue(() => Promise.resolve(true), 12)).toBe(false)
-    await expect(pending).resolves.toBe(false)
-    const abandoned = queue.enqueue(() => Promise.resolve(true), 1)
-    queue.dispose()
-    await expect(abandoned).resolves.toBe(false)
     expect(await queue.enqueue(() => Promise.resolve(true), 1)).toBe(false)
-    finish?.(true)
-    await first
+    queue.dispose()
+    await expect(first).resolves.toBe(false)
+    expect(await queue.enqueue(() => Promise.resolve(true), 1)).toBe(false)
+    release(true)
+  })
+
+  it('releases budgets after synchronous and asynchronous delivery failures', async () => {
+    const queue = new BoundedEventQueue(() => Promise.resolve(), 1, 20)
+    await expect(
+      queue.enqueue(() => {
+        throw new Error('post failed')
+      }, 1),
+    ).resolves.toBe(false)
+    await expect(queue.enqueue(() => Promise.reject(new Error('post rejected')), 1)).resolves.toBe(false)
+    await expect(queue.enqueue(() => Promise.resolve(true), 1)).resolves.toBe(true)
+    queue.dispose()
   })
 })

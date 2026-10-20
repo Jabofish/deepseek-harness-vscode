@@ -1,6 +1,4 @@
 import { translate } from '../../i18n.js'
-import type { PresetSessionSyncTarget } from './session-configuration-controller.js'
-export type { PresetSessionSyncTarget } from './session-configuration-controller.js'
 import type { ProtocolClient } from '../protocol-client.js'
 import { requestId } from './ids.js'
 import { parsePresetRoster } from './agent-config.js'
@@ -16,10 +14,8 @@ export interface SettingsActionHost {
   readonly setState: StateSetter
   readonly refreshModelCatalog: () => Promise<void>
   readonly applyBusyEnter: (values: Readonly<Record<string, unknown>>) => void
-  readonly capturePresetSessionTarget: () => PresetSessionSyncTarget | undefined
   readonly nextPresetRosterGeneration: () => number
   readonly isPresetRosterCurrent: (generation: number) => boolean
-  readonly synchronizeBlankSessionPreset: (target: PresetSessionSyncTarget, preset: string) => Promise<void>
 }
 
 export type SettingsActionMethods = Pick<
@@ -47,7 +43,7 @@ export type SettingsActionMethods = Pick<
 >
 
 export function createSettingsActions(host: SettingsActionHost): SettingsActionMethods {
-  const { client, setState, applyBusyEnter, capturePresetSessionTarget, synchronizeBlankSessionPreset } = host
+  const { client, setState, applyBusyEnter } = host
   return {
     readSettings: async () => {
       return parseExtensionSettings(
@@ -167,21 +163,19 @@ export function createSettingsActions(host: SettingsActionHost): SettingsActionM
       return models
     },
     loadPresetRoster: async () => {
-      const target = capturePresetSessionTarget()
       const generation = host.nextPresetRosterGeneration()
       const roster = parsePresetRoster(
         await client.request<unknown>({ type: 'preset.list', requestId: requestId() }),
       )
       if (roster === undefined || !host.isPresetRosterCurrent(generation)) return roster
-      const hostDefaultPreset = roster.presets.find((preset) => preset.isDefault)?.id
       setState((current) => {
         const presets = arraysEqual(current.presets, roster.presets) ? current.presets : roster.presets
         if (presets === current.presets && current.presetSelectionEnabled === roster.modeSelectionEnabled)
           return current
         return withPresetSelectionEnabled({ ...current, presets }, roster.modeSelectionEnabled)
       })
-      if (target !== undefined && hostDefaultPreset !== undefined)
-        await synchronizeBlankSessionPreset(target, hostDefaultPreset)
+      // Discovery refreshes available choices. A changed default must not
+      // overwrite the configuration of an existing conversation or draft.
       return roster
     },
     readPresetDocument: async (presetId) => {

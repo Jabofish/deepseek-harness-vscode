@@ -16,6 +16,7 @@ import { parseHostDomainEvent, isSurfaceEventName } from './event-parser.js'
 import { parseDshUpdateProgress } from './host-settings.js'
 import { EMPTY_SUBAGENT_CATALOG } from './initial-state.js'
 import { reduceJobFollow } from './job-follow.js'
+import { confirmPendingPrompts } from './pending-prompts.js'
 import {
   removeMatching,
   sameGoalList,
@@ -63,7 +64,8 @@ export function applyHostMessage(
     try {
       setState(installTranscript(state, parseTranscript(message.payload)))
     } catch {
-      /* Invalid windows cannot replace the current transcript. */
+      // A malformed full window needs the same authoritative recovery as a bad patch.
+      if (object(message.payload)?.sessionId === state.activeSessionId) onConnectionEpoch?.()
     }
     return
   }
@@ -461,6 +463,10 @@ export function applyHostMessage(
         next = withAvailableList(next, 'queue')
         if (!sameQueuedInputList(next.queue, event.items)) next = { ...next, queue: event.items }
       }
+      if (next.pendingPrompts !== undefined) {
+        const remaining = confirmPendingPrompts(next.pendingPrompts, event.items)
+        if (remaining !== undefined) next = { ...next, pendingPrompts: remaining }
+      }
     }
   } else if (event.type === 'goal.updated' && event.sessionId === next.activeSessionId) {
     next = withAvailableList(next, 'goals')
@@ -536,6 +542,7 @@ export function withoutConnectionScopedSurfaces(state: AppState): AppState {
       ),
     },
     sessionDirectoryStatus: 'loading',
+    directPromptReceipts: [],
     queue: [],
     jobs: [],
     jobFollow: undefined,

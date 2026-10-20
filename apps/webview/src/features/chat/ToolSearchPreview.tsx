@@ -3,8 +3,6 @@ import type { ToolSearchRenderProps } from '@dsh-vscode/ui'
 import { CopyButton } from './CopyButton.js'
 import { useI18n } from '../../i18n.js'
 
-const DEFAULT_MAX_LINES = 16
-
 type SearchView = ToolSearchRenderProps['view']
 
 type SearchRow =
@@ -24,8 +22,6 @@ type SearchRow =
     }
   | { readonly type: 'path'; readonly path: string }
 
-type FileRow = Extract<SearchRow, { readonly type: 'file' }>
-
 /**
  * Webview renderer for the two structured DSH search result shapes. It keeps
  * file attribution when the result fold cuts through a match group, and the
@@ -35,24 +31,10 @@ type FileRow = Extract<SearchRow, { readonly type: 'file' }>
 export function ToolSearchPreview(props: ToolSearchRenderProps): ReactElement {
   const { t: defaultTranslate } = useI18n()
   const translate = props.translate ?? defaultTranslate
-  const [expanded, setExpanded] = useState(false)
   const [collapsed, setCollapsed] = useState<ReadonlySet<number>>(() => new Set())
   const rows = toRows(props.view, collapsed)
   const shown = shownCount(props.view)
   const empty = rows.length === 0
-  const hidden = Math.max(0, rows.length - DEFAULT_MAX_LINES)
-  const capped = hidden > 0 && !expanded
-  const headLines = Math.ceil(DEFAULT_MAX_LINES / 2)
-  const tailLines = DEFAULT_MAX_LINES - headLines
-  const head = capped ? rows.slice(0, headLines) : rows
-  const naturalTail = capped ? rows.slice(rows.length - tailLines) : []
-  const tailLead = naturalTail[0]
-  const tailHeader =
-    tailLead?.type === 'match' && !head.some((row) => row.type === 'file' && row.index === tailLead.fileIndex)
-      ? rows.find((row): row is FileRow => row.type === 'file' && row.index === tailLead.fileIndex)
-      : undefined
-  const tail = tailHeader === undefined ? naturalTail : naturalTail.slice(1)
-
   const toggleFile = (index: number): void => {
     setCollapsed((previous) => {
       const next = new Set(previous)
@@ -78,30 +60,7 @@ export function ToolSearchPreview(props: ToolSearchRenderProps): ReactElement {
         <div className="dsh-tool-search-preview__empty">{translate('toolrow.presentation.noResults')}</div>
       ) : (
         <div className="dsh-tool-search-preview__body" tabIndex={0}>
-          {head.map((row) => (
-            <div key={rowKey(row)}>{renderRow(row, toggleFile)}</div>
-          ))}
-          {hidden > 0 ? (
-            <button
-              type="button"
-              className="dsh-tool-search-preview__fold"
-              aria-expanded={expanded}
-              aria-label={
-                expanded
-                  ? translate('toolrow.presentation.collapseSearchLines')
-                  : translate('toolrow.presentation.expandSearchLines', { count: hidden })
-              }
-              onClick={() => setExpanded((value) => !value)}
-            >
-              {expanded
-                ? translate('toolrow.presentation.collapseSearchLines')
-                : translate('toolrow.presentation.expandSearchLines', { count: hidden })}
-            </button>
-          ) : null}
-          {tailHeader === undefined ? null : (
-            <div key={`tail-header:${rowKey(tailHeader)}`}>{renderRow(tailHeader, toggleFile)}</div>
-          )}
-          {tail.map((row) => (
+          {rows.map((row) => (
             <div key={rowKey(row)}>{renderRow(row, toggleFile)}</div>
           ))}
         </div>

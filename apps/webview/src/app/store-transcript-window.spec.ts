@@ -50,6 +50,16 @@ class Client {
         ...window(request.payload.sessionId, request.payload.revision + 1, 'Older reply'),
         historical: true,
       }
+    if (request.type === 'session.transcript.node')
+      result = {
+        node: {
+          kind: 'assistant-message',
+          id: request.payload.nodeId,
+          markdown: 'Whole live body',
+          streaming: true,
+        },
+      }
+    if (request.type === 'session.transcript.content') result = { content: 'Complete reply' }
     return Promise.resolve(result as T)
   }
   public subscribe(listener: (message: HostMessage) => void): () => void {
@@ -68,6 +78,58 @@ class Client {
 }
 
 describe('Webview installs Host windows', () => {
+  it('loads the complete message text through the content route', async () => {
+    const client = new Client()
+    const store = createAppStore(client as unknown as ProtocolClient)
+    try {
+      await store.openSession('s')
+      await expect(store.loadTranscriptContent('reply-s')).resolves.toBe('Complete reply')
+      expect(client.requests.at(-1)).toMatchObject({
+        type: 'session.transcript.content',
+        payload: { sessionId: 's', revision: 1, nodeId: 'reply-s' },
+      })
+    } finally {
+      store.dispose()
+    }
+  })
+
+  it('loads a complete structured live node through the scoped transcript route', async () => {
+    const client = new Client()
+    const store = createAppStore(client as unknown as ProtocolClient)
+    try {
+      await store.openSession('s')
+      await expect(store.loadTranscriptNode('reply-s')).resolves.toMatchObject({
+        id: 'reply-s',
+        markdown: 'Whole live body',
+        streaming: true,
+      })
+      expect(client.requests.at(-1)).toMatchObject({
+        type: 'session.transcript.node',
+        payload: { sessionId: 's', revision: 1, nodeId: 'reply-s' },
+      })
+    } finally {
+      store.dispose()
+    }
+  })
+
+  it('requests authoritative recovery when a full window is malformed', async () => {
+    const client = new Client()
+    const store = createAppStore(client as unknown as ProtocolClient)
+    try {
+      await store.openSession('s')
+      client.send('session.transcript', { ...window('s', 2), nodes: 'invalid nodes' })
+      for (let index = 0; index < 30; index++) await Promise.resolve()
+      expect(
+        client.requests.filter(
+          (request) => request.type === 'session.open' && request.payload.sessionId === 's',
+        ).length,
+      ).toBe(2)
+      expect(store.getState().transcript?.nodes[0]).toMatchObject({ markdown: 'Final reply' })
+    } finally {
+      store.dispose()
+    }
+  })
+
   it('notifies subscribers synchronously when a Host view arrives', async () => {
     const client = new Client()
     const store = createAppStore(client as unknown as ProtocolClient)
@@ -186,6 +248,24 @@ describe('Webview installs Host windows', () => {
       expect(store.getState()).not.toHaveProperty('history')
       client.emit(window('s', 100, 'Wrong session'))
       expect(store.getState().timeline.sessionId).toBe('other')
+    } finally {
+      store.dispose()
+    }
+  })
+
+  it('coalesces streaming acknowledgements to the newest revision in one microtask', async () => {
+    const client = new Client()
+    const store = createAppStore(client as unknown as ProtocolClient)
+    try {
+      await store.openSession('s')
+      client.requests.length = 0
+      client.emit(window('s', 2, 'a'))
+      client.emit(window('s', 3, 'b'))
+      client.emit(window('s', 4, 'c'))
+      await Promise.resolve()
+      const acks = client.requests.filter((request) => request.type === 'session.transcript.ack')
+      expect(acks).toHaveLength(1)
+      expect(acks[0]).toMatchObject({ payload: { sessionId: 's', revision: 4 } })
     } finally {
       store.dispose()
     }

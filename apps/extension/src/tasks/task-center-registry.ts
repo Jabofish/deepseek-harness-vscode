@@ -617,7 +617,11 @@ export class TaskCenterRegistry implements TaskRepository {
       for (const [taskId, interaction] of this.interactions)
         if (interaction.sessionId === event.sessionId) this.interactions.delete(taskId)
     }
-    if (sessionId !== undefined) this.onChange?.(sessionId)
+    // Transcript chunks do not change a task's status, ownership or actions.
+    // Re-reading every repository here turns a token stream into a task/list
+    // and session/history request storm, followed by another Webview reread.
+    if (sessionId !== undefined && event.replayed !== true && changesTaskSummary(event))
+      this.onChange?.(sessionId)
   }
 
   private removeInteraction(interactionId: string, sessionId: string): void {
@@ -646,6 +650,33 @@ export class TaskCenterRegistry implements TaskRepository {
 
   private isCurrentAttachment(backend: DshBackend, attachmentGeneration: number): boolean {
     return this.backend === backend && this.attachmentGeneration === attachmentGeneration
+  }
+}
+
+function changesTaskSummary(event: BackendEvent): boolean {
+  switch (event.type) {
+    case 'session.status':
+    case 'session.activity':
+    case 'session.title':
+    case 'session.configuration':
+    case 'session.added':
+    case 'session.removed':
+    case 'session.subscribed':
+    case 'session.gap':
+    case 'turn.started':
+    case 'turn.ended':
+    case 'permission.requested':
+    case 'permission.resolved':
+    case 'question.requested':
+    case 'question.resolved':
+    case 'goal.updated':
+    case 'jobs.updated':
+    case 'subagent.catalog.updated':
+      return true
+    case 'session.projection':
+      return ['title', 'sessionListMetadata', 'agentPreset', 'goal'].includes(event.key)
+    default:
+      return false
   }
 }
 

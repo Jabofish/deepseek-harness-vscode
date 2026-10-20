@@ -2,6 +2,78 @@
 
 ## Unreleased
 
+- 补齐桌面启动时的 pnpm/fnm 路径，安装失败在设置中保留 DSH 安全错误分类；修正重启可代替安装及强制保存原有未保存内容的旧提示。
+- Restores pnpm/fnm paths for desktop launches and retains native installation failure categories in settings; corrects stale restart and unsaved-buffer descriptions.
+
+- 编辑器配套通过 DSH 标准插件管理器安装、升级和取消，不再注入本地文件 overlay；配套包提供原生中英文标题和描述。安装面板保留进度、取消及未知结果恢复，取消过晚时按 DSH 实际结果显示。
+- Installs, updates and cancels the editor companion through DSH's standard plugin manager instead of a local-file overlay. The package exports native English/Chinese metadata; settings show progress, cancellation and recovery without claiming a late cancellation succeeded.
+
+- 重复排队相同内容时，一个无请求标识的队列项只确认一次发送，重复快照不再提前隐藏其他待发送回执。
+- Keeps identical queued submissions distinct when runtime rows lack request identities, including across repeated snapshots.
+
+- Markdown 代码块随栏宽自动换行，长标识符也可折行；流式与完成后的显示一致，保留缩进和复制原文。
+- Markdown code blocks wrap to the available width, including long identifiers, during streaming and after completion while preserving indentation and copied source text.
+
+- 会话历史补齐与重试提示改为显示在正文上方，修复刚进入会话时正文被挤到右半边、同步完成后才恢复宽度的问题。
+- Stacks history loading and retry notices above messages so opening a session keeps content at full width throughout synchronization.
+
+- 聚焦布局的标准和紧凑视图不再为每次模型请求重复显示首 Token 与生成速度；整轮 Token 用量保留一次，逐请求指标在详细或完整视图中查看。
+- Focused standard and compact views no longer repeat first-token and generation-rate headers for every model request. Completed Turn token totals remain available once; detailed and verbose views retain request metrics.
+
+- 新会话的创建回执已确认预设和模型、且没有额外权限或 Plan 选择时，不再重复配置读取；显式配置、复用会话与失败重试仍先完成配置再发送。
+- Skips redundant configuration reads when a fresh create receipt confirms the preset/model and no additional permission or Plan choice was made. Explicit choices, reused sessions and retries still configure before sending.
+
+- 会话和工作区目录变化只刷新对应目录，不再连带重复读取模型、设置和凭据；全局目录继续由启动、显式刷新和各自的变更事件更新。
+- Session/workspace membership changes refresh their directory without repeating model, settings and credential reads. Startup, explicit refreshes and catalog change events continue to update global directories.
+
+- 任务状态变化只发送一次失效通知，前端复用进行中的读取并核对最新状态；文本、推理和工具进度不再触发任务与会话历史的重复拉取。
+- Task changes invalidate the view once, share in-flight reads, and reconcile the latest state. Streaming text, reasoning and tool progress no longer trigger repeated task and session-history reads.
+
+- 会话内容到达后立即投递，不再等待上一条 IPC 回执；保留有界背压，工具上下文随调用发送，失败后立即有界恢复。发送获确认后立即释放输入框，编辑器配套准备不阻塞发送，停止复用当前连接和工作区下已验证的会话归属。
+- Delivers conversation updates without serial IPC receipt waits, retains bounded backpressure, sends active tool context immediately, and retries failed delivery without a fixed delay. Accepted sends release the composer immediately; optional editor setup and advisory ownership refreshes no longer hold up ordinary sends or verified session stops.
+
+- 自动读取完整会话内容期间明确提示当前显示尚未完整，读取成功后移除提示，无需用户额外操作。
+- Marks content as incomplete while it is read automatically and clears the status once complete, with no additional user action.
+
+- 实时审批与提问缺少答复标识时触发协议恢复，不再显示无法答复的交互；已失效请求与工作区权限拒绝使用不同错误。
+- Recovers malformed live approvals and questions without inventing response identities, and distinguishes expired interactions from workspace access denial.
+
+- 审批保留完整命令行，并自动补齐被传输裁切或移出当前窗口的工具请求；读取完成前仍可拒绝，批准等待完整请求就绪。
+- Preserves complete approval commands and automatically reads clipped or off-window tool requests. Rejection remains available while approval waits for complete request content.
+
+- 编辑器写入回执异常时核对实际缓冲区，保留已应用或结果不明的撤回快照；工具预先声明编辑容量与批次数量上限。
+- Retains undo snapshots for applied or uncertain native edit outcomes and declares edit size and batch limits before execution.
+
+- 编辑器配套修改和撤销不再连带保存用户的未保存内容；应用或路径校验期间新增的缓冲区修改也不会被自动保存，回执明确保留 saved:false。
+- Editor companion edits and reverts preserve unsaved user buffers, including changes made while applying or validating an edit, and report saved:false explicitly.
+
+- 预设失效时明确拒绝发送，不再静默换成其他模式；刷新目录不改写已有会话或草稿的选择，空目录不再补造 standard 预设。
+- Rejects unavailable preset choices without substituting another mode. Catalog refreshes preserve session and draft choices, and empty catalogs no longer invent a standard preset.
+
+- 保留 Windows 负数退出码；退出码为 null 或无法可靠表示时展示原始结果，不再误报为退出成功。
+- Preserves negative Windows exit codes and keeps unknown exit markers in the result instead of reporting a clean exit.
+
+- 首条消息发送前先应用草稿中选择的权限、Plan 和会话配置；配置失败或取消时保留草稿与已创建的会话，不继续投递。
+- Applies staged permission, Plan and session choices before the first message. Configuration failures or cancellation retain the draft and created session without admitting the prompt.
+
+- 修复 Windows 冷启动超过 15 秒即被误判失败的问题；启动和连接请求使用匹配的有界等待，取消仍立即生效。
+- Allows slow Windows cold starts to finish with aligned startup and connection deadlines while retaining immediate cancellation.
+
+- 长提示词的回显被省略且缺少请求标识时，重读全文确认投递，避免已发送内容卡在输入框；右键复制补齐长回复，并防止迟到的读取覆盖较新的复制操作。
+- Confirms delivery of clipped long prompts without request identities by rereading their full content. Context-menu copying retrieves complete replies and ignores reads superseded by a newer copy gesture.
+
+- 工具对象不再误用日志采样限制，完整保留参数、返回字段、换行、数组和深层内容；脱敏后不适合专用卡片的安全正文仍在会话内显示。畸形全量时间线触发自动重读恢复。
+- Separates complete tool content from diagnostic sampling, preserving arguments, result fields, whitespace, arrays and nested data. Keeps safe output readable when redaction prevents a specialized card, and recovers malformed full transcript windows automatically.
+
+- 正文、思考和工具结果在主会话内自动补齐；取消“查看全文”和菜单补取入口，保留会话内折叠，展开即显示全部已收到内容。长数组、工具分组及代码、终端和搜索结果不再因展示限制缺项。发送排队输入期间仍可独立停止当前回复。
+- Automatically completes prose, reasoning and tool results inside the conversation, with inline disclosures and no full-content menu. Removes display limits on arrays, grouped tools, code, terminal and search output. Keeps Stop response available during a pending queued send.
+
+- 修复待建草稿串入已有会话、取消发送后迟到消息仍保留草稿，以及附件读取、移除和超时期间的投递竞态。
+- Keeps new-chat drafts with their intended conversation, clears late accepted drafts after cancellation, and protects attachments across ingestion, removal and send timeouts.
+
+- 控制消息部分投递失败时恢复漏收的聊天面板；恢复会重读连接和交互状态，不因此启动或重连 DSH。
+- Recovers chats that missed control messages, including partial broadcasts across multiple views, by rereading connection and interaction state without starting or reconnecting DSH.
+
 ## 0.3.6
 
 - 编辑器配套改为用户主动安装：在设置中选择“安装并启用配套插件”后才加载，F5 同样遵循此选择；安装后继续随扩展更新，后台不再自动安装插件包。

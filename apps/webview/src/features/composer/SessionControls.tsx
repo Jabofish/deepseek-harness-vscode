@@ -44,6 +44,7 @@ export interface SessionControlsProps {
   readonly permissionPresets: readonly string[]
   /** Before session creation, choices update the draft instead of sending a command. */
   readonly configurationDraft?: boolean
+  readonly defaultPermissionPreset?: string
   /** Optional command directory; omitted means capability discovery is unavailable. */
   readonly commands?: readonly DynamicCommand[]
   readonly estimatedContextTokens?: number
@@ -73,6 +74,8 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
   const selectorsRef = useRef<HTMLDivElement>(null)
   const riskContext = JSON.stringify([
     props.configuration.permissionPreset,
+    props.configuration.permissionPresetKnown,
+    props.configurationDraft,
     props.disabled,
     props.permissionPresets,
   ])
@@ -130,6 +133,13 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
   // value that the permission plugin exposes (for example `full-access` or
   // `danger-full-access`).
   const permissionPreset = props.configuration.permissionPreset
+  const permissionKnown = props.configuration.permissionPresetKnown !== false
+  const inheritsPermission = props.configurationDraft === true && !permissionKnown
+  const displayedPermission = inheritsPermission
+    ? props.defaultPermissionPreset
+    : permissionKnown
+      ? permissionPreset
+      : undefined
   const availablePermissionPresets = useMemo(
     () =>
       props.configuration.permissionPresetKnown === false
@@ -203,10 +213,13 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
     },
     [applyPermissionPreset, riskContext],
   )
-  const handlePlanToggle = useCallback(
-    (): void => onCommand(configuration.planMode ? '/plan off' : '/plan'),
-    [configuration.planMode, onCommand],
-  )
+  const handlePlanToggle = useCallback((): void => {
+    if (props.configurationDraft === true)
+      void Promise.resolve(
+        onChange({ ...configuration, planMode: !configuration.planMode, planModeKnown: true }),
+      ).catch(() => undefined)
+    else onCommand(configuration.planMode ? '/plan off' : '/plan')
+  }, [props.configurationDraft, configuration, onChange, onCommand])
   const contextWindowTokens = positiveTokenCount(props.contextWindowTokens)
   /**
    * What the seat states as the current model. The configuration is the
@@ -370,17 +383,25 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
         {showPermission ? (
           <SelectMenu
             className={`dsh-session-controls__access-picker${
-              isFullAccessPreset(permissionPreset) ? ' dsh-session-controls__access-picker--full-access' : ''
+              displayedPermission !== undefined && isFullAccessPreset(displayedPermission)
+                ? ' dsh-session-controls__access-picker--full-access'
+                : ''
             }`}
-            icon={permissionIcon(permissionPreset)}
+            icon={permissionIcon(displayedPermission ?? '')}
             displayLabel
             label={
-              props.configuration.permissionPresetKnown === false
-                ? t('controls.unknown')
-                : formatPermissionLabel(permissionPreset, t)
+              displayedPermission !== undefined
+                ? formatPermissionLabel(displayedPermission, t)
+                : t(inheritsPermission ? 'controls.defaultPermission' : 'controls.unknown')
             }
             ariaLabel={t('controls.access')}
-            title={permissionCommandAvailable ? t('controls.accessChange') : t('controls.accessUnavailable')}
+            title={
+              inheritsPermission
+                ? t('controls.defaultPermissionHint')
+                : permissionCommandAvailable
+                  ? t('controls.accessChange')
+                  : t('controls.accessUnavailable')
+            }
             value={props.configuration.permissionPresetKnown === false ? '' : permissionPreset}
             options={permissionMenuOptions}
             disabled={

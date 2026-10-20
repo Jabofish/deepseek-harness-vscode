@@ -18,7 +18,10 @@ const customPreset: AgentPresetDescriptor = { id: 'custom-mode', trust: 'user', 
 
 describe('session preset resolution', () => {
   it('leaves an empty optional registry to the DSH host default', () => {
-    expect(resolveSessionConfigurationForRoster(requested, [])).toEqual({ ...requested, preset: '' })
+    expect(resolveSessionConfigurationForRoster({ ...requested, preset: '' }, [])).toEqual({
+      ...requested,
+      preset: '',
+    })
   })
 
   it('keeps a requested preset only when it exists in the host roster', () => {
@@ -32,37 +35,49 @@ describe('session preset resolution', () => {
 
   it.each([
     {
-      name: 'a missing choice uses the healthy default',
+      name: 'a missing choice does not silently use the healthy default',
       preset: 'missing',
       roster: [customPreset, defaultPreset],
-      expected: 'standard',
     },
     {
-      name: 'a broken choice uses a healthy candidate',
+      name: 'a broken choice does not silently use a healthy candidate',
       preset: 'standard',
       roster: [{ ...defaultPreset, broken: 'unavailable' }, customPreset],
-      expected: 'custom-mode',
     },
     {
-      name: 'a roster without a default uses its first candidate',
+      name: 'a missing choice does not silently use the first candidate',
       preset: 'missing',
       roster: [customPreset, { ...defaultPreset, isDefault: false }],
-      expected: 'custom-mode',
     },
     {
-      name: 'an entirely broken roster preserves an explicit listed choice',
+      name: 'an entirely broken roster cannot run an explicit listed choice',
       preset: 'custom-mode',
       roster: [
         { ...defaultPreset, broken: 'unavailable' },
         { ...customPreset, broken: 'unavailable' },
       ],
-      expected: 'custom-mode',
     },
-  ])('$name', ({ preset, roster, expected }) => {
-    expect(resolveSessionConfigurationForRoster({ ...requested, preset }, roster).preset).toBe(expected)
+  ])('$name', ({ preset, roster }) => {
+    expect(() => resolveSessionConfigurationForRoster({ ...requested, preset }, roster)).toThrow(AppError)
   })
 
-  it('keeps writable model and policy choices while excluding projection metadata', () => {
+  it('rejects a stale explicit choice even when the registry has become empty', () => {
+    expect(() => resolveSessionConfigurationForRoster(requested, [])).toThrow(AppError)
+  })
+
+  it('resolves an unchosen default using only healthy advertised presets', () => {
+    expect(resolveSessionConfigurationForRoster({ ...requested, preset: '' }, [defaultPreset]).preset).toBe(
+      'standard',
+    )
+    expect(
+      resolveSessionConfigurationForRoster({ ...requested, preset: '' }, [
+        { ...defaultPreset, broken: 'bad' },
+        customPreset,
+      ]).preset,
+    ).toBe('custom-mode')
+  })
+
+  it('keeps model choices and the unknown-policy markers instead of writing display fallbacks', () => {
     const configuration: AgentConfiguration = {
       ...requested,
       permissionPresetKnown: false,
@@ -77,6 +92,8 @@ describe('session preset resolution', () => {
     expect(resolved).toEqual({
       ...requested,
       planMode: true,
+      permissionPresetKnown: false,
+      planModeKnown: false,
       sandboxMode: 'workspace-write',
       approvalPolicy: 'on-request',
       model: { providerId: 'local', modelId: 'chosen', reasoningLevel: 'high' },
@@ -128,7 +145,9 @@ describe('ModelSettingsUseCases configuration', () => {
     const controller = new AbortController()
     list.mockResolvedValue({ presets: [], authorable: false })
 
-    await expect(useCases.resolveSessionConfiguration(requested, controller.signal)).resolves.toEqual({
+    await expect(
+      useCases.resolveSessionConfiguration({ ...requested, preset: '' }, controller.signal),
+    ).resolves.toEqual({
       ...requested,
       preset: '',
     })
@@ -140,10 +159,18 @@ describe('ModelSettingsUseCases configuration', () => {
     const { list, setConfiguration, useCases } = harness()
     const controller = new AbortController()
 
-    await useCases.setSessionConfiguration('session', { ...requested, preset: 'missing' }, controller.signal)
+    await useCases.setSessionConfiguration('session', requested, controller.signal)
 
     expect(list).toHaveBeenCalledExactlyOnceWith(controller.signal)
     expect(setConfiguration).toHaveBeenCalledExactlyOnceWith('session', requested, controller.signal)
+  })
+
+  it('rejects a stale choice before writing any configuration', async () => {
+    const { setConfiguration, useCases } = harness()
+    await expect(
+      useCases.setSessionConfiguration('session', { ...requested, preset: 'missing' }),
+    ).rejects.toMatchObject({ code: 'INVALID_CONFIGURATION' })
+    expect(setConfiguration).not.toHaveBeenCalled()
   })
 
   it('propagates a roster failure without applying a guessed configuration', async () => {

@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
+import type { AgentConfiguration } from '@dsh-vscode/domain'
+import { activateDraftOwner, clearDraftIf, readDraft, resetDraft, setDraft } from './draft-store.js'
 import type { ProtocolClient } from './protocol-client.js'
 import {
   createHostBackedAppStore as createAppStore,
   type FixtureRequest as WebviewRequest,
 } from '../test/host-window-store.js'
 
-const configuration = {
+const configuration: AgentConfiguration = {
   preset: 'standard',
   toolMode: 'native',
   permissionPreset: 'workspace-write',
@@ -42,6 +44,8 @@ function deferred<T>(): {
 function fixture(
   failFirstOpen = false,
   beforeList?: () => Promise<void>,
+  beforeConfigure?: () => Promise<void>,
+  createReceipt?: Record<string, unknown>,
 ): {
   store: ReturnType<typeof createAppStore>
   requests: WebviewRequest[]
@@ -75,8 +79,9 @@ function fixture(
       }
       if (request.type === 'session.create') {
         created = true
-        return { id: 'created' }
+        return createReceipt ?? { id: 'created' }
       }
+      if (request.type === 'session.configure') await beforeConfigure?.()
       if (request.type === 'session.open') {
         if (openFailures > 0) {
           openFailures -= 1
@@ -94,6 +99,28 @@ function fixture(
 }
 
 describe('New Session draft', () => {
+  it('transfers first-message text only after opening the created session', async () => {
+    resetDraft()
+    const { store } = fixture(true)
+    try {
+      await store.refreshSessions()
+      await store.stageSession('w1')
+      const owner = `pending:${store.getState().pendingSession!.revision}`
+      activateDraftOwner(owner)
+      setDraft('Hello')
+      await expect(store.sendPendingPrompt('Hello', [], 'queue')).rejects.toThrow('Open failed')
+      expect(readDraft()).toBe('Hello')
+      await store.sendPendingPrompt('Hello', [], 'queue')
+      activateDraftOwner('created')
+      expect(readDraft()).toBe('Hello')
+      clearDraftIf(owner, 'Hello')
+      expect(readDraft()).toBe('')
+    } finally {
+      store.dispose()
+      resetDraft()
+    }
+  })
+
   it('keeps New local until the first ordinary message is submitted', async () => {
     const { store, requests } = fixture()
     try {
@@ -102,19 +129,141 @@ describe('New Session draft', () => {
       await store.stageSession('w1')
       expect(requests).toHaveLength(before)
       expect(store.getState().pendingSession?.workspaceId).toBe('w1')
+      expect(store.getState().pendingSession?.configuration.preset).toBe('')
       expect(store.activeSessionId).toBeUndefined()
 
       await store.sendPendingPrompt('Hello', [], 'queue')
       const createIndex = requests.findIndex((request) => request.type === 'session.create')
+      const configureIndex = requests.findIndex((request) => request.type === 'session.configure')
       const sendIndex = requests.findIndex((request) => request.type === 'session.sendPrompt')
       expect(createIndex).toBeGreaterThanOrEqual(before)
-      expect(sendIndex).toBeGreaterThan(createIndex)
+      expect(configureIndex).toBeGreaterThan(createIndex)
+      expect(sendIndex).toBeGreaterThan(configureIndex)
       expect(store.activeSessionId).toBe('created')
       expect(store.getState().pendingSession).toBeUndefined()
     } finally {
       store.dispose()
     }
   })
+
+  it('waits for the selected permissions and Plan before sending the first prompt', async () => {
+    const gate = deferred<void>()
+    const { store, requests } = fixture(false, undefined, () => gate.promise, session('created'))
+    try {
+      await store.refreshSessions()
+      await store.stageSession('w1')
+      const chosen = { ...configuration, permissionPreset: 'read-only', planMode: true }
+      store.configurePendingSession(chosen)
+      const send = store.sendPendingPrompt('Hello', [], 'queue')
+      await vi.waitFor(() => expect(requests.some((r) => r.type === 'session.configure')).toBe(true))
+      expect(requests.find((r) => r.type === 'session.configure')?.payload).toEqual({
+        sessionId: 'created',
+        configuration: chosen,
+      })
+      expect(requests.some((r) => r.type === 'session.sendPrompt' || r.type === 'session.open')).toBe(false)
+      gate.resolve()
+      await send
+      expect(requests.filter((r) => r.type === 'session.sendPrompt')).toHaveLength(1)
+    } finally {
+      gate.resolve()
+      store.dispose()
+    }
+  })
+
+  it('uses a fresh authoritative create receipt without reconfiguring untouched display defaults', async () => {
+    const { store, requests } = fixture(false, undefined, undefined, session('created'))
+    try {
+      await store.refreshSessions()
+      await store.stageSession('w1')
+      await store.sendPendingPrompt('Hello', [], 'queue')
+      expect(requests.some((request) => request.type === 'session.configure')).toBe(false)
+      expect(requests.some((request) => request.type === 'session.sendPrompt')).toBe(true)
+    } finally {
+      store.dispose()
+    }
+  })
+
+  it('rechecks configuration on retry even if the first fresh create needed no additional writes', async () => {
+    const { store, requests } = fixture(true, undefined, undefined, session('created'))
+    try {
+      await store.refreshSessions()
+      await store.stageSession('w1')
+      await expect(store.sendPendingPrompt('Hello', [], 'queue')).rejects.toThrow('Open failed')
+      expect(requests.some((request) => request.type === 'session.configure')).toBe(false)
+      await store.sendPendingPrompt('Hello', [], 'queue')
+      expect(requests.filter((request) => request.type === 'session.configure')).toHaveLength(1)
+      expect(requests.filter((request) => request.type === 'session.create')).toHaveLength(1)
+    } finally {
+      store.dispose()
+    }
+  })
+
+  it('configures a model that the create receipt did not confirm', async () => {
+    const { store, requests } = fixture(false, undefined, undefined, session('created'))
+    try {
+      await store.refreshSessions()
+      await store.stageSession('w1')
+      const pending = store.getState().pendingSession!.configuration
+      store.configurePendingSession({ ...pending, model: { providerId: 'provider', modelId: 'selected' } })
+      await store.sendPendingPrompt('Hello', [], 'queue')
+      expect(requests.filter((request) => request.type === 'session.configure')).toHaveLength(1)
+    } finally {
+      store.dispose()
+    }
+  })
+
+  it('preserves the pending draft and created ID when configuration fails, then retries safely', async () => {
+    let fail = true
+    const { store, requests } = fixture(false, undefined, () =>
+      fail ? Promise.reject(new Error('Configuration failed')) : Promise.resolve(),
+    )
+    resetDraft()
+    try {
+      await store.refreshSessions()
+      await store.stageSession('w1')
+      const owner = `pending:${store.getState().pendingSession!.revision}`
+      activateDraftOwner(owner)
+      setDraft('Hello')
+      await expect(store.sendPendingPrompt('Hello', [], 'queue')).rejects.toThrow('Configuration failed')
+      expect(readDraft()).toBe('Hello')
+      expect(store.getState().pendingSession?.createdSessionId).toBe('created')
+      expect(requests.some((r) => r.type === 'session.sendPrompt' || r.type === 'session.open')).toBe(false)
+      fail = false
+      await store.sendPendingPrompt('Hello', [], 'queue')
+      expect(requests.filter((r) => r.type === 'session.create')).toHaveLength(1)
+      expect(requests.filter((r) => r.type === 'session.configure')).toHaveLength(2)
+      expect(requests.filter((r) => r.type === 'session.sendPrompt')).toHaveLength(1)
+    } finally {
+      store.dispose()
+      resetDraft()
+    }
+  })
+
+  it.each(['cancel', 'new-draft', 'configuration'] as const)(
+    'does not send a stale first prompt after %s during configuration',
+    async (change) => {
+      const gate = deferred<void>()
+      const controller = new AbortController()
+      const { store, requests } = fixture(false, undefined, () => gate.promise)
+      try {
+        await store.refreshSessions()
+        await store.stageSession('w1')
+        const send = store.sendPendingPrompt('Hello', [], 'queue', controller.signal)
+        await vi.waitFor(() => expect(requests.some((r) => r.type === 'session.configure')).toBe(true))
+        if (change === 'cancel') controller.abort()
+        else if (change === 'new-draft') await store.stageSession('w1')
+        else store.configurePendingSession({ ...configuration, planMode: true })
+        gate.resolve()
+        await expect(send).rejects.toMatchObject(
+          change === 'cancel' ? { name: 'AbortError' } : { code: 'REQUEST_CANCELLED' },
+        )
+        expect(requests.some((r) => r.type === 'session.sendPrompt' || r.type === 'session.open')).toBe(false)
+      } finally {
+        gate.resolve()
+        store.dispose()
+      }
+    },
+  )
 
   it('does not create a session for an empty draft or a command', async () => {
     const { store, requests } = fixture()

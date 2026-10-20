@@ -33,25 +33,20 @@ function codeProps(overrides: Partial<ToolCodeRenderProps> = {}): ToolCodeRender
 }
 
 describe('ToolCodePreview', () => {
-  it('folds the middle of long read windows and preserves file line numbers', () => {
+  it('renders every read-window line with its original file line number', () => {
     const lines = Array.from({ length: 18 }, (_, index) => ({
       number: index + 101,
       text: `line ${index + 101}`,
     }))
     const { container } = render(<ToolCodePreview {...codeProps({ lines, totalLines: 40 })} />)
 
-    expect(container.querySelectorAll('.dsh-tool-code-preview__line')).toHaveLength(16)
+    expect(container.querySelectorAll('.dsh-tool-code-preview__line')).toHaveLength(18)
     expect(container.textContent).toContain('line 101')
     expect(container.textContent).toContain('line 108')
     expect(container.textContent).toContain('line 111')
     expect(container.textContent).toContain('line 118')
-    expect(container.textContent).not.toContain('line 109')
-    expect(screen.getByRole('button', { name: 'Show 2 more lines' })).toBeDefined()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Show 2 more lines' }))
-    expect(container.querySelectorAll('.dsh-tool-code-preview__line')).toHaveLength(18)
     expect(container.textContent).toContain('line 109')
-    expect(screen.getByRole('button', { name: 'Show fewer lines' })).toBeDefined()
+    expect(screen.queryByRole('button', { name: 'Show 2 more lines' })).toBeNull()
   })
 
   it('copies only source text and keeps highlighting lazy with a plaintext fallback', async () => {

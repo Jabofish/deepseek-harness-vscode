@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type {
   ImageAttachmentLimits,
   EditorContextItem,
@@ -8,6 +8,7 @@ import type {
 } from '@dsh-vscode/domain'
 import type { AppStore, OpenFileCandidate, ReferenceCandidate } from './store.js'
 import { publicProtocolErrorMessage } from './protocol-client.js'
+import { matchesQueuedPrompt } from './store/pending-prompts.js'
 import { useStableCallback } from './useStableCallback.js'
 import { readFileAsBase64, formatByteSize } from './attachment-reader.js'
 import {
@@ -43,8 +44,14 @@ export interface ComposerAttachmentDependencies {
    * re-renders only the composer binding. The hook never reads the draft at
    * render time; submit reads it once at event time through `readDraft`.
    */
-  readonly setDraft: Dispatch<SetStateAction<string>>
+  readonly draftOwner: string | undefined
+  readonly clearDraftIf: (owner: string | undefined, text: string) => void
   readonly readDraft: () => string
+}
+
+interface PendingAttachmentIngest {
+  readonly generation: number
+  readonly promise: Promise<boolean>
 }
 
 export interface ComposerAttachments {
@@ -80,7 +87,6 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
   const { store, t, setError, active, activeSessionId, imageLimits, hasPendingSession, subagentEntries } =
     deps
   const mountedRef = deps.mountedRef
-  const setDraft = deps.setDraft
   const [attachments, setAttachments] = useState<PromptAttachment[]>([])
   const [attachmentPreviews, setAttachmentPreviews] = useState<Record<string, string>>({})
   const [attachmentPreviewFailures, setAttachmentPreviewFailures] = useState<readonly string[]>([])
@@ -96,6 +102,11 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
   const [referenceQuoted, setReferenceQuoted] = useState(false)
   const [attachingOpenFileId, setAttachingOpenFileId] = useState<string | undefined>()
   const [openFileAttachmentIds, setOpenFileAttachmentIds] = useState<Record<string, string>>({})
+  /** Latest attachments, readable synchronously by submit before React commits. */
+  const attachmentsRef = useRef<readonly PromptAttachment[]>([])
+  const pendingIngestsRef = useRef<Set<PendingAttachmentIngest>>(new Set())
+  /** Handles named by a submission the Host may still be resolving. */
+  const inFlightAttachmentUrisRef = useRef<Set<string>>(new Set())
   const attachmentDraftKeysRef = useRef<Map<string, string>>(new Map())
   /** Decoded bytes of pasted image drafts still tracked in the composer, by uri. */
   const imageBytesByUriRef = useRef<Map<string, number>>(new Map())
@@ -242,9 +253,12 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
       return
     }
     attachmentDraftKeysRef.current.set(attachment.uri, draftKey)
-    setAttachments((current) =>
-      current.some((item) => item.uri === attachment.uri) ? current : [...current, attachment],
-    )
+    const current = attachmentsRef.current
+    if (!current.some((item) => item.uri === attachment.uri)) {
+      const next = [...current, attachment]
+      attachmentsRef.current = next
+      setAttachments(next)
+    }
     if (openFileId !== undefined)
       setOpenFileAttachmentIds((current) => ({ ...current, [attachment.uri]: openFileId }))
   }
@@ -255,7 +269,9 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
       attachmentDraftKeysRef.current.delete(uri)
       imageBytesByUriRef.current.delete(uri)
     }
-    setAttachments((current) => current.filter((attachment) => !removed.has(attachment.uri)))
+    const next = attachmentsRef.current.filter((attachment) => !removed.has(attachment.uri))
+    attachmentsRef.current = next
+    setAttachments(next)
     setAttachmentPreviews((current) =>
       Object.fromEntries(Object.entries(current).filter(([uri]) => !removed.has(uri))),
     )
@@ -263,25 +279,35 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
     setOpenFileAttachmentIds((current) =>
       Object.fromEntries(Object.entries(current).filter(([uri]) => !removed.has(uri))),
     )
-    if (release)
+    const releasable = uris.filter((uri) => !inFlightAttachmentUrisRef.current.has(uri))
+    if (release && releasable.length > 0)
       void store
-        .releaseAttachments(uris)
+        .releaseAttachments(releasable)
         .catch((reason: unknown) =>
           setError(reason instanceof Error ? reason.message : t('app.error.releaseAttachment')),
         )
   }
   const discardAttachmentDrafts = useStableCallback((): void => {
     attachmentGenerationRef.current += 1
+    const inFlight = inFlightAttachmentUrisRef.current
+    const uris = attachmentsRef.current.map((attachment) => attachment.uri)
+    // A submission in flight may already have handed these handles to the
+    // Host; releasing them now would make the Host reject the prompt. Remove
+    // them from the composer but keep the handles alive until it settles.
     removeAttachmentDrafts(
-      attachments.map((attachment) => attachment.uri),
+      uris.filter((uri) => !inFlight.has(uri)),
       true,
+    )
+    removeAttachmentDrafts(
+      uris.filter((uri) => inFlight.has(uri)),
+      false,
     )
     setOpenFilePickerOpen(false)
   })
   const ingestFiles = (files: readonly File[]): void => {
     const imageFiles = files.filter((file) => file.type.startsWith('image/'))
     if (imageLimits !== undefined && imageFiles.length > 0) {
-      const existingImages = attachments.filter((attachment) =>
+      const existingImages = attachmentsRef.current.filter((attachment) =>
         attachment.mimeType?.startsWith('image/'),
       ).length
       const existingImageBytes = [...imageBytesByUriRef.current.values()].reduce(
@@ -324,10 +350,10 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
         pendingImageStatsRef.current.count += 1
         pendingImageStatsRef.current.bytes += file.size
       }
-      void readFileAsBase64(file, t, imageLimits)
+      const ingest = readFileAsBase64(file, t, imageLimits)
         .then((payload) => store.ingestAttachment(payload))
         .then((attachment) => {
-          if (attachment === undefined) return
+          if (attachment === undefined) return true
           appendAttachment(attachment, undefined, generation, origin)
           // Only a draft actually tracked by appendAttachment contributes bytes:
           // duplicates resolve to the earlier uri and released handles never do.
@@ -337,86 +363,204 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
             !imageBytesByUriRef.current.has(attachment.uri)
           )
             imageBytesByUriRef.current.set(attachment.uri, file.size)
+          return true
         })
-        .catch((reason: unknown) =>
-          setError(reason instanceof Error ? reason.message : t('app.error.attachPasted')),
-        )
+        .catch((reason: unknown) => {
+          setError(reason instanceof Error ? reason.message : t('app.error.attachPasted'))
+          return false
+        })
         .finally(() => {
           if (isImage) {
             pendingImageStatsRef.current.count -= 1
             pendingImageStatsRef.current.bytes -= file.size
           }
         })
+      const pending: PendingAttachmentIngest = { generation, promise: ingest }
+      pendingIngestsRef.current.add(pending)
+      void ingest.then(() => pendingIngestsRef.current.delete(pending))
     }
   }
-  const submitPrompt = (mode: 'queue' | 'steer', signal?: AbortSignal): Promise<void> => {
-    if (active === undefined && !hasPendingSession) return Promise.resolve()
-    const text = deps.readDraft()
-    const attachmentSnapshot = attachments
+  const deliverPrompt = (
+    mode: 'queue' | 'steer',
+    signal: AbortSignal | undefined,
+    text: string,
+    submissionOwner: string | undefined,
+    expectedSessionId: string | undefined,
+    attachmentSnapshot: readonly PromptAttachment[],
+  ): Promise<void> => {
     const before = store.getState()
     const beforeIds = new Set(before.timeline.nodes.map((node) => node.id))
     const beforeRequests = new Set(before.directPromptRequestIds)
+    // A content fallback must not claim a row that was already queued before
+    // this submission: rc.6 rows carry no request identity.
+    const queueBeforeIds = new Set(expectedSessionId === undefined ? [] : before.queue.map((item) => item.id))
+    const admissionReads = new WeakMap<object, Promise<boolean>>()
+    const confirmClippedAdmission = (sessionId: string, observed: () => void): boolean => {
+      const current = store.getState()
+      if (current.activeSessionId !== sessionId || current.backend.kind !== 'connected') return false
+      const omitted = new Set(current.transcript?.omittedNodeIds)
+      let pending = false
+      for (const node of current.timeline.nodes) {
+        if (
+          node.kind !== 'user-message' ||
+          beforeIds.has(node.id) ||
+          !omitted.has(node.id) ||
+          node.markdown.length >= text.length ||
+          !text.startsWith(node.markdown)
+        )
+          continue
+        pending = true
+        let read = admissionReads.get(node)
+        if (read === undefined) {
+          read = Promise.resolve()
+            .then(() =>
+              store.getState().activeSessionId === sessionId &&
+              store.getState().connectionEpoch === before.connectionEpoch
+                ? store.loadTranscriptContent(node.id)
+                : undefined,
+            )
+            .then(
+              (full) => full === text,
+              () => {
+                // A failed read is not evidence that the accepted message
+                // differs. Allow the admission wait to retry this same node.
+                admissionReads.delete(node)
+                return false
+              },
+            )
+          admissionReads.set(node, read)
+        }
+        void read.then((matches) => {
+          const latest = store.getState()
+          if (
+            matches &&
+            latest.connectionEpoch === before.connectionEpoch &&
+            latest.activeSessionId === sessionId &&
+            latest.backend.kind === 'connected' &&
+            latest.timeline.nodes.some((candidate) => candidate.id === node.id)
+          )
+            observed()
+        })
+      }
+      return pending
+    }
+    const snapshotUris = attachmentSnapshot.map((attachment) => attachment.uri)
+    for (const uri of snapshotUris) inFlightAttachmentUrisRef.current.add(uri)
+    let delivered = false
+    let uncertain = false
     let awaitingVisibility = false
+    let admissionStarted = false
+    let deliveredSessionId: string | undefined
     let submission: Promise<void>
     try {
       submission =
-        active === undefined
+        expectedSessionId === undefined
           ? store.sendPendingPrompt(text, attachmentSnapshot, mode, signal)
-          : store.sendPrompt(active.id, text, attachmentSnapshot, mode, signal)
+          : store.sendPrompt(expectedSessionId, text, attachmentSnapshot, mode, signal)
     } catch (reason) {
       submission = Promise.reject(reason instanceof Error ? reason : new Error(t('app.error.prompt')))
     }
     return submission
-      .then(async () => {
+      .then(() => {
+        delivered = true
         if (!mountedRef.current || Boolean(signal?.aborted)) return
         const admitted = store.getState()
-        if (active !== undefined && admitted.activeSessionId !== active.id) return
+        deliveredSessionId = admitted.activeSessionId
         const directRequests = admitted.directPromptRequestIds?.filter((id) => !beforeRequests.has(id)) ?? []
-        if (directRequests.length > 0 && !signal?.aborted) {
-          awaitingVisibility = true
-          // An RPC receipt can precede the durable user message. Keep the
-          // original draft visible until that message reaches the timeline.
-          const sessionId = admitted.activeSessionId
-          await new Promise<void>((resolve, reject) => {
-            let unsubscribe = (): void => undefined
-            let settled = false
-            const finish = (error?: Error): void => {
-              if (settled) return
-              settled = true
-              clearTimeout(timer)
-              unsubscribe()
-              admissionWaitsRef.current.delete(cancelled)
-              signal?.removeEventListener('abort', cancelled)
-              if (error === undefined) resolve()
-              else reject(error)
-            }
-            const cancelled = (): void => finish(new DOMException('Cancelled', 'AbortError'))
-            const check = (): void => {
-              const current = store.getState()
-              if (current.activeSessionId !== sessionId || current.backend.kind !== 'connected') {
-                cancelled()
-                return
+        try {
+          if (
+            directRequests.length > 0 &&
+            !signal?.aborted &&
+            admitted.activeSessionId !== undefined &&
+            (expectedSessionId === undefined || admitted.activeSessionId === expectedSessionId)
+          ) {
+            awaitingVisibility = true
+            admissionStarted = true
+            // Reconcile the temporary Inbox projection in the background.
+            // The accepted RPC releases the composer immediately; waiting for
+            // the transcript here would add an entire return trip to Send.
+            const sessionId = admitted.activeSessionId
+            void new Promise<void>((resolve, reject) => {
+              let unsubscribe = (): void => undefined
+              let settled = false
+              let retryRead: ReturnType<typeof setTimeout> | undefined
+              const finish = (error?: Error): void => {
+                if (settled) return
+                settled = true
+                clearTimeout(timer)
+                if (retryRead !== undefined) clearTimeout(retryRead)
+                unsubscribe()
+                admissionWaitsRef.current.delete(cancelled)
+                signal?.removeEventListener('abort', cancelled)
+                if (error === undefined) resolve()
+                else reject(error)
               }
-              if (
-                current.timeline.nodes.some(
-                  (node) =>
-                    node.kind === 'user-message' &&
-                    ((node.rpcId !== undefined && directRequests.includes(node.rpcId)) ||
-                      (!beforeIds.has(node.id) && node.markdown === text)),
+              const cancelled = (): void => finish(new DOMException('Cancelled', 'AbortError'))
+              const check = (): void => {
+                const current = store.getState()
+                if (current.activeSessionId !== sessionId || current.backend.kind !== 'connected') {
+                  cancelled()
+                  return
+                }
+                if (
+                  current.timeline.nodes.some(
+                    (node) =>
+                      node.kind === 'user-message' &&
+                      ((node.rpcId !== undefined && directRequests.includes(node.rpcId)) ||
+                        (!beforeIds.has(node.id) && node.markdown === text)),
+                  )
                 )
-              )
-                finish()
-            }
-            const timer = setTimeout(() => finish(new Error(t('app.error.promptTimeout'))), 30_000)
-            unsubscribe = store.subscribe(check)
-            admissionWaitsRef.current.add(cancelled)
-            signal?.addEventListener('abort', cancelled, { once: true })
-            if (signal?.aborted) cancelled()
-            else check()
-          })
+                  finish()
+                else if (
+                  confirmClippedAdmission(sessionId, () => {
+                    if (!settled) finish()
+                  }) &&
+                  retryRead === undefined
+                )
+                  retryRead = setTimeout(() => {
+                    retryRead = undefined
+                    check()
+                  }, 500)
+              }
+              const timer = setTimeout(() => {
+                // A false direct classification used to surface as a hard
+                // failure while the prompt sat in DSH's queue. Read the queue
+                // before reporting a timeout.
+                void store.refreshQueue(sessionId).then(
+                  (queue) => {
+                    if (
+                      queue?.some(
+                        (item) =>
+                          (item.rpcId !== undefined && directRequests.includes(item.rpcId)) ||
+                          (!queueBeforeIds.has(item.id) &&
+                            matchesQueuedPrompt(item, text, mode, attachmentSnapshot)),
+                      )
+                    )
+                      finish()
+                    else finish(new Error(t('app.error.promptTimeout')))
+                  },
+                  () => finish(new Error(t('app.error.promptTimeout'))),
+                )
+              }, 30_000)
+              unsubscribe = store.subscribe(check)
+              admissionWaitsRef.current.add(cancelled)
+              signal?.addEventListener('abort', cancelled, { once: true })
+              if (signal?.aborted) cancelled()
+              else check()
+            })
+              .finally(() => store.forgetDirectPromptRequests(directRequests))
+              .catch(() => undefined)
+          }
+        } finally {
+          // An explicit abort still needs these identities in the late-admission
+          // watcher below, including when the RPC already returned acceptance.
+          if (directRequests.length > 0 && signal?.aborted !== true && !awaitingVisibility)
+            store.forgetDirectPromptRequests(directRequests)
         }
         if (!mountedRef.current || Boolean(signal?.aborted)) return
-        setDraft((current) => (current === text ? '' : current))
+        // The submitted text belongs to the conversation it was typed in. A
+        // switch while the RPC settled must not leave it in the new composer.
+        deps.clearDraftIf(submissionOwner, text)
         // The Extension Host consumes only the handles admitted by this send;
         // keep any draft attachments the user added while it was in flight.
         removeAttachmentDrafts(
@@ -426,8 +570,91 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
         setOpenFilePickerOpen(false)
       })
       .catch((reason: unknown) => {
-        if (Boolean(signal?.aborted) || (reason instanceof DOMException && reason.name === 'AbortError'))
+        // A local timeout or retryable transport error can arrive before the
+        // Host finishes resolving the handles. It is not a definite refusal.
+        uncertain =
+          typeof reason === 'object' && reason !== null && 'retryable' in reason && reason.retryable === true
+        const aborted =
+          Boolean(signal?.aborted) || (reason instanceof DOMException && reason.name === 'AbortError')
+        if (aborted) {
+          // The request may already have reached the Host; its handles must
+          // stay resolvable until the late-acceptance check settles.
+          uncertain = true
+          if (!signal?.aborted && admissionStarted) {
+            // The RPC was accepted and the session left the panel (or the
+            // backend) while we waited for its durable row. Clear the text
+            // from the conversation that owned it instead of watching a
+            // different session.
+            deps.clearDraftIf(submissionOwner, text)
+            removeAttachmentDrafts(
+              attachmentSnapshot.map((attachment) => attachment.uri),
+              false,
+            )
+            return
+          }
+          // Cancelling only stopped the local wait; the Host may already have
+          // admitted the turn. Watch briefly for the durable row so a late
+          // acceptance does not leave the sent text looking unsent.
+          const directRequests = (store.getState().directPromptRequestIds ?? []).filter(
+            (id) => !beforeRequests.has(id),
+          )
+          if (directRequests.length === 0) return
+          const sessionId = deliveredSessionId ?? store.getState().activeSessionId
+          if (sessionId === undefined) {
+            store.forgetDirectPromptRequests(directRequests)
+            return
+          }
+          let settled = false
+          let unsubscribe = (): void => undefined
+          let retryRead: ReturnType<typeof setTimeout> | undefined
+          const finish = (): void => {
+            if (settled) return
+            settled = true
+            clearTimeout(timer)
+            if (retryRead !== undefined) clearTimeout(retryRead)
+            unsubscribe()
+            admissionWaitsRef.current.delete(cancel)
+            store.forgetDirectPromptRequests(directRequests)
+          }
+          const cancel = (): void => finish()
+          const observed = (): void => {
+            if (settled) return
+            if (mountedRef.current) {
+              deps.clearDraftIf(submissionOwner, text)
+              removeAttachmentDrafts(
+                attachmentSnapshot.map((attachment) => attachment.uri),
+                false,
+              )
+              setOpenFilePickerOpen(false)
+            }
+            finish()
+          }
+          const check = (): void => {
+            const current = store.getState()
+            if (current.activeSessionId !== sessionId) return
+            if (
+              !current.timeline.nodes.some(
+                (node) =>
+                  node.kind === 'user-message' &&
+                  ((node.rpcId !== undefined && directRequests.includes(node.rpcId)) ||
+                    (!beforeIds.has(node.id) && node.markdown === text)),
+              )
+            ) {
+              if (confirmClippedAdmission(sessionId, observed) && retryRead === undefined)
+                retryRead = setTimeout(() => {
+                  retryRead = undefined
+                  check()
+                }, 500)
+              return
+            }
+            observed()
+          }
+          const timer = setTimeout(finish, 5_000)
+          unsubscribe = store.subscribe(check)
+          admissionWaitsRef.current.add(cancel)
+          check()
           return
+        }
         if (mountedRef.current)
           setError(
             awaitingVisibility
@@ -435,6 +662,51 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
               : (publicProtocolErrorMessage(reason) ?? t('app.error.prompt')),
           )
       })
+      .finally(() => {
+        for (const uri of snapshotUris) inFlightAttachmentUrisRef.current.delete(uri)
+        if (delivered || uncertain) return
+        // The send definitively failed. If a conversation switch already took
+        // the chips away, their handles have no future consumer.
+        const displayed = new Set(attachmentsRef.current.map((attachment) => attachment.uri))
+        const detached = snapshotUris.filter((uri) => !displayed.has(uri))
+        if (detached.length > 0) void store.releaseAttachments(detached).catch(() => undefined)
+      })
+  }
+
+  const submitPrompt = (mode: 'queue' | 'steer', signal?: AbortSignal): Promise<void> => {
+    if (active === undefined && !hasPendingSession) return Promise.resolve()
+    // Navigation can resolve between the keystroke and this handler. The
+    // composer still reads as the old conversation for one render, but the
+    // store already moved; sending here would target a panel the user left.
+    const expectedSessionId = active?.id
+    const expectedPendingRevision =
+      active === undefined ? store.getState().pendingSession?.revision : undefined
+    const targetIsCurrent = (): boolean =>
+      active === undefined
+        ? store.getState().pendingSession?.revision === expectedPendingRevision
+        : store.getState().activeSessionId === expectedSessionId
+    if (!targetIsCurrent()) return Promise.resolve()
+    const text = deps.readDraft()
+    const submissionOwner = deps.draftOwner
+    const generation = attachmentGenerationRef.current
+    const pending = [...pendingIngestsRef.current]
+      .filter((entry) => entry.generation === generation)
+      .map((entry) => entry.promise)
+    // Keep the ordinary path synchronous: admission and optimistic rendering
+    // must not wait on an extra microtask when no file is being read.
+    if (pending.length === 0) {
+      if (signal?.aborted || !targetIsCurrent()) return Promise.resolve()
+      return deliverPrompt(mode, signal, text, submissionOwner, expectedSessionId, attachmentsRef.current)
+    }
+    return Promise.all(pending).then((results) => {
+      // A failed read already surfaced its error; keep the draft so the user
+      // can retry instead of sending text without the attachment they picked.
+      if (!results.every(Boolean) || signal?.aborted) return
+      // Reading and navigation can both settle during the wait; only send the
+      // conversation's own handles to the conversation still on screen.
+      if (!targetIsCurrent() || generation !== attachmentGenerationRef.current) return
+      return deliverPrompt(mode, signal, text, submissionOwner, expectedSessionId, attachmentsRef.current)
+    })
   }
   /**
    * Loads the open-file snapshot that both the composer menu row and the

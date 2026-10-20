@@ -98,7 +98,8 @@ export type EditorCompanionRequest =
       readonly edits: readonly EditorTextEdit[]
     }
   | { readonly kind: 'proposal'; readonly proposalId: string }
-export type EditorProposalStatus = 'pending' | 'applied' | 'reverted' | 'declined' | 'stale' | 'cancelled'
+export type EditorProposalStatus =
+  'pending' | 'applied' | 'uncertain' | 'reverted' | 'declined' | 'stale' | 'cancelled'
 export interface EditorLocation {
   readonly relativePath: string
   readonly range: EditorRange
@@ -462,7 +463,9 @@ export function isEditorCompanionValue(value: unknown): value is EditorCompanion
         shape(value, ['kind', 'proposalId', 'relativePath', 'status', 'version'], ['saved']) &&
         isEditorBridgeId(value.proposalId) &&
         relative(value.relativePath) &&
-        ['pending', 'applied', 'reverted', 'declined', 'stale', 'cancelled'].includes(String(value.status)) &&
+        ['pending', 'applied', 'uncertain', 'reverted', 'declined', 'stale', 'cancelled'].includes(
+          String(value.status),
+        ) &&
         int(value.version, 1) &&
         optional(value, 'saved', (saved) => typeof saved === 'boolean')
       )
@@ -496,7 +499,8 @@ export function editorValueMatches(request: EditorCompanionRequest, value: Edito
     value.kind === 'proposal' &&
     !(
       (value.status === 'pending' && value.version === request.expectedVersion) ||
-      (['applied', 'stale', 'cancelled'].includes(value.status) && value.version >= request.expectedVersion)
+      (['applied', 'uncertain', 'stale', 'cancelled'].includes(value.status) &&
+        value.version >= request.expectedVersion)
     )
   )
     return false

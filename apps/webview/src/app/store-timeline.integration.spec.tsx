@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { ReactElement } from 'react'
 import type { HostMessage } from '@dsh-vscode/webview-protocol'
@@ -89,6 +89,51 @@ function event(sequence: number, name: string, payload: unknown): HostMessage {
 
 describe('Store to Timeline streamed rendering', () => {
   afterEach(() => cleanup())
+
+  it('automatically completes a large structured tool result inside its conversation disclosure', async () => {
+    const client = new StreamClient()
+    const store = createAppStore(client as unknown as ProtocolClient)
+    const output = 'HEAD\n'.repeat(2_000) + 'CRITICAL_MIDDLE_OUTPUT\n' + 'TAIL\n'.repeat(2_000)
+    try {
+      await store.openSession('session-stream')
+      client.emit(
+        event(1, 'tool.updated', {
+          sessionId: 'session-stream',
+          sequence: 1,
+          tool: {
+            id: 'long-tool',
+            name: 'bash',
+            title: 'Run',
+            category: 'execute',
+            status: 'completed',
+            metadata: {},
+            outputSummary: output,
+            presentation: { phase: 'result', card: 'terminal', output, exitCode: 0 },
+          },
+        }),
+      )
+      expect(store.getState().transcript?.omittedNodeIds).toContain('long-tool')
+      const view = render(
+        <Timeline
+          sessionId="session-stream"
+          streaming={false}
+          nodes={store.timeline.nodes}
+          omittedNodeIds={store.getState().transcript!.omittedNodeIds}
+          loadFullNode={(id, signal) => store.loadTranscriptNode(id, signal)}
+        />,
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Expand Bash details' }))
+      await waitFor(() =>
+        expect(view.container.querySelector('.dsh-tool-terminal-preview__body')?.textContent).toContain(
+          'CRITICAL_MIDDLE_OUTPUT',
+        ),
+      )
+      expect(view.container.querySelectorAll('.dsh-tool-terminal-preview__line')).toHaveLength(4_001)
+      expect(screen.queryByRole('button', { name: 'Open full content' })).toBeNull()
+    } finally {
+      store.dispose()
+    }
+  })
 
   it('shows preparation without tool execution, history or trajectory counts and replaces it on the durable call', async () => {
     const client = new StreamClient()

@@ -229,6 +229,8 @@
 
 .dsh-trajectory-inspector {
   display: grid;
+  grid-auto-rows: max-content;
+  align-content: start;
   gap: var(--dsh-space-2);
   padding: var(--dsh-space-2) var(--dsh-space-3);
   border: var(--dsh-border);
@@ -238,10 +240,14 @@
 }
 
 .dsh-trajectory-inspector__header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--dsh-space-3);
+  background: var(--dsh-surface-raised);
 }
 
 .dsh-trajectory-inspector__header h4 {
@@ -292,12 +298,10 @@
 }
 
 .dsh-trajectory-inspector__block pre {
-  max-height: 8rem;
   margin: var(--dsh-space-1) 0 0;
   padding: var(--dsh-space-1) var(--dsh-space-2);
   border: var(--dsh-border);
   border-radius: var(--dsh-radius-sm);
-  overflow: auto;
   font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
   font-size: var(--dsh-tool-detail-font-size);
   white-space: pre-wrap;
@@ -334,6 +338,7 @@
 
 .dsh-timeline__row {
   display: flex;
+  flex-direction: column;
   width: 100%;
   min-width: 0;
   padding: var(--dsh-space-1) 0;

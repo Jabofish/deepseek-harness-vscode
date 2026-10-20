@@ -176,7 +176,7 @@ export async function startManagedRuntime(options?: {
   }
   // The live spec files run one after another (`vitest.config.ts`), so this
   // lock is the cross-run guard: a second shell starting its own managed DSH
-  // while this one is live would blow the supervisor's 15s readiness budget.
+  // while this one is live would blow the supervisor's readiness budget.
   // The scope acquires the lock before overriding the process-wide DSH_HOME.
   if (Date.now() - lockWaitStart > 1_000) steps.push(`lock wait ${Date.now() - lockWaitStart}ms`)
   steps.push(`launch ${runtimeExecutable} ${launchArguments.join(' ')}`)

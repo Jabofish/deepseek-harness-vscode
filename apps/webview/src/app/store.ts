@@ -1,5 +1,7 @@
 import type { AgentConfiguration, PromptMode, SubagentCatalog, SubagentView } from '@dsh-vscode/domain'
 import type { FeatureRequest } from '@dsh-vscode/webview-protocol'
+import { transcriptNodeSchema } from '@dsh-vscode/webview-protocol'
+import type { TimelineNode } from '@dsh-vscode/timeline'
 import { PluginInstallRecoveryController } from './plugin-install-recovery.js'
 import { createAccountActions } from './store/account-actions.js'
 import { createSettingsActions } from './store/settings-actions.js'
@@ -33,10 +35,16 @@ import { createHistoryActions } from './store/history-actions.js'
 import { installTranscript, parseTranscript } from './store/transcript-state.js'
 import { createSessionCreationActions } from './store/session-creation-actions.js'
 import { createAppLifecycleActions } from './store/app-lifecycle-actions.js'
-import { parseGoalViews } from './store/event-values.js'
+import { parseGoalViews, parseQueuedInputs } from './store/event-values.js'
 import { parseDshSettingsSnapshot } from './store/host-settings.js'
 import { createInitialState } from './store/initial-state.js'
-import { sameGoalList, sameSessionSummaryList, strictListValues } from './store/list-equality.js'
+import {
+  sameGoalList,
+  sameQueuedInputList,
+  sameSessionSummaryList,
+  strictListValues,
+} from './store/list-equality.js'
+import { confirmPendingPrompts } from './store/pending-prompts.js'
 import { normalizedModelSelection } from './store/model-catalog.js'
 import { parsePluginInventory } from './store/plugin-parsers.js'
 import { isSessionSummary, readPersistedWebviewState } from './store/session-guards.js'
@@ -87,6 +95,32 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   }
   const listeners = new Set<() => void>()
   const turnWatchers = createTurnWatchers({ isDisposed: () => disposed })
+  // Acknowledgements are cumulative by revision, so a burst of streaming
+  // patches only needs its newest revision. Send one request per session per
+  // microtask instead of one RPC per patch.
+  let pendingTranscriptAcks = new Map<string, number>()
+  let transcriptAckScheduled = false
+  const flushTranscriptAcks = (): void => {
+    transcriptAckScheduled = false
+    const acks = pendingTranscriptAcks
+    pendingTranscriptAcks = new Map()
+    if (disposed) return
+    for (const [sessionId, revision] of acks)
+      void client
+        .request<unknown>({
+          type: 'session.transcript.ack',
+          requestId: requestId(),
+          payload: { sessionId, revision },
+        })
+        .catch(() => undefined)
+  }
+  const acknowledgeTranscript = (sessionId: string, revision: number): void => {
+    if ((pendingTranscriptAcks.get(sessionId) ?? 0) >= revision) return
+    pendingTranscriptAcks.set(sessionId, revision)
+    if (transcriptAckScheduled) return
+    transcriptAckScheduled = true
+    queueMicrotask(flushTranscriptAcks)
+  }
   const setState: StateSetter = (next): void => {
     if (disposed) return
     const nextState = typeof next === 'function' ? next(state) : next
@@ -108,16 +142,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       ])
         for (const id of index.keys()) if (id !== active) index.delete(id)
     }
-    if (state.transcript !== undefined && state.transcript !== previousTranscript) {
-      const window = state.transcript
-      void client
-        .request<unknown>({
-          type: 'session.transcript.ack',
-          requestId: requestId(),
-          payload: { sessionId: window.sessionId, revision: window.revision },
-        })
-        .catch(() => undefined)
-    }
+    if (state.transcript !== undefined && state.transcript !== previousTranscript)
+      acknowledgeTranscript(state.transcript.sessionId, state.transcript.revision)
     // Publish installed Host state immediately; do not add a timer or frame wait.
     for (const listener of listeners) listener()
   }
@@ -176,24 +202,18 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   const callbacks: { openCreatedSession?: (sessionId: string) => Promise<void> } = {}
   let refreshVersion = 0
   let goalActivationAvailable = false
+  let queueReadGeneration = 0
   let goalReadGeneration = 0
   let openVersion = 0
   let sessionModelDirectoryGeneration = 0
   let pendingSessionRevision = 0
   let pendingSend: { readonly revision: number; readonly promise: Promise<void> } | undefined
   const {
-    capturePresetSessionTarget,
-    synchronizeBlankSessionPreset,
     nextConfigurationGeneration,
     isConfigurationGenerationCurrent,
     nextPresetRosterGeneration,
     isPresetRosterCurrent,
-  } = createSessionConfigurationController({
-    client,
-    getState: () => state,
-    setState,
-    getPendingSendRevision: () => pendingSend?.revision,
-  })
+  } = createSessionConfigurationController()
   const globalCatalogs = createGlobalCatalogController({
     client,
     setState,
@@ -296,7 +316,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       return undefined
     }
   }
-  const refresh = async (): Promise<void> => {
+  const refresh = async (includeCatalogs = true): Promise<void> => {
     if (disposed) return
     const version = ++refreshVersion
     // Session/workspace visibility is enough to choose the startup session.
@@ -305,7 +325,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     await refreshSessions(
       client,
       setState,
-      globalCatalogs.refreshAll,
+      // Directory invalidations cannot invalidate a concurrent global catalog
+      // read. Catalogs have their own connection/generation guards.
+      includeCatalogs ? () => globalCatalogs.refreshAll(() => !disposed) : () => Promise.resolve(),
       () => !disposed && version === refreshVersion,
       false,
     )
@@ -445,6 +467,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     nextSessionModelDirectoryGeneration: () => ++sessionModelDirectoryGeneration,
     getSessionModelDirectoryGeneration: () => sessionModelDirectoryGeneration,
     getGoalReadGeneration: () => goalReadGeneration,
+    nextQueueReadGeneration: () => ++queueReadGeneration,
+    getQueueReadGeneration: () => queueReadGeneration,
     setGoalActivationAvailable: () => {
       goalActivationAvailable = true
     },
@@ -548,6 +572,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     pluginInstallRecovery,
     projectionSequences,
     refresh,
+    refreshSessionDirectory: () => refresh(false),
     refreshModelCatalog: globalCatalogs.refreshModels,
     refreshCommands,
     refreshLiveGoals,
@@ -605,10 +630,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     setState,
     refreshModelCatalog: globalCatalogs.refreshModels,
     applyBusyEnter,
-    capturePresetSessionTarget,
     nextPresetRosterGeneration,
     isPresetRosterCurrent,
-    synchronizeBlankSessionPreset,
   })
   const feedbackActions = createFeedbackActions({ client, setState, getState: () => state, feedbackCache })
   const interactionActions = createInteractionActions(client, setState)
@@ -646,7 +669,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     openSession: openCreatedSession,
     persistWebviewState: () => persistWebviewState(),
     rememberComposerConfiguration,
-    refresh,
+    refresh: () => refresh(false),
     sendUserTurn,
     setPendingSend: (pending) => {
       pendingSend = pending
@@ -739,6 +762,95 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         requestId: requestId(),
         payload: { sessionId: window.sessionId, revision: window.revision, nodeId },
       })
+    },
+    loadTranscriptNode: async (nodeId, signal) => {
+      const window = state.transcript
+      if (window === undefined) throw new Error('Transcript content is unavailable.')
+      const epoch = state.connectionEpoch
+      const result = await client.request<{ readonly node?: unknown }>(
+        {
+          type: 'session.transcript.node',
+          requestId: requestId(),
+          payload: { sessionId: window.sessionId, revision: window.revision, nodeId },
+        },
+        signal,
+      )
+      if (
+        signal?.aborted === true ||
+        state.connectionEpoch !== epoch ||
+        state.transcript?.sessionId !== window.sessionId ||
+        state.transcript.historical !== window.historical ||
+        (window.historical && state.transcript.revision !== window.revision)
+      )
+        throw new Error('Transcript view has changed.')
+      const node = transcriptNodeSchema.parse(result?.node) as TimelineNode
+      if (node.id !== nodeId) throw new Error('Unexpected transcript node.')
+      return node
+    },
+    loadTranscriptContent: async (nodeId) => {
+      const window = state.transcript
+      if (window === undefined) throw new Error('Transcript content is unavailable.')
+      const result = await client.request<{ readonly content?: unknown }>({
+        type: 'session.transcript.content',
+        requestId: requestId(),
+        payload: { sessionId: window.sessionId, revision: window.revision, nodeId },
+      })
+      if (typeof result?.content !== 'string') throw new Error('Transcript content is unavailable.')
+      return result.content
+    },
+    dismissPendingPrompt: (id) => {
+      setState((current) => {
+        const pending = current.pendingPrompts
+        if (pending === undefined || !pending.some((prompt) => prompt.id === id)) return current
+        return { ...current, pendingPrompts: pending.filter((prompt) => prompt.id !== id) }
+      })
+    },
+    forgetDirectPromptRequests: (ids) => {
+      if (ids.length === 0) return
+      const dropped = new Set(ids)
+      setState((current) => ({
+        ...current,
+        directPromptRequestIds: (current.directPromptRequestIds ?? []).filter((id) => !dropped.has(id)),
+        directPromptReceipts: (current.directPromptReceipts ?? []).filter(
+          (entry) => entry.rpcId === undefined || !dropped.has(entry.rpcId),
+        ),
+      }))
+    },
+    refreshQueue: async (sessionId) => {
+      const generation = ++queueReadGeneration
+      const version = openVersion
+      const epoch = state.connectionEpoch
+      const before = state.queue
+      const active = state.activeSessionId
+      const sequence = projectionSequences.queueBySession.get(sessionId)
+      const result = await client.request<unknown>({
+        type: 'session.queue.list',
+        requestId: requestId(),
+        payload: { sessionId },
+      })
+      if (
+        disposed ||
+        generation !== queueReadGeneration ||
+        version !== openVersion ||
+        epoch !== state.connectionEpoch
+      )
+        return undefined
+      // A live Inbox cut received during this read is newer authority, even
+      // when it repeats identical rows. Never replace it with a delayed RPC.
+      if (
+        sequence !== projectionSequences.queueBySession.get(sessionId) ||
+        (active === sessionId && !sameQueuedInputList(state.queue, before))
+      )
+        return state.activeSessionId === sessionId ? state.queue : undefined
+      const queue = parseQueuedInputs(result, sessionId)
+      if (queue === undefined) return undefined
+      setState((current) => {
+        const next =
+          current.activeSessionId === sessionId ? { ...withAvailableList(current, 'queue'), queue } : current
+        const remaining = confirmPendingPrompts(next.pendingPrompts ?? [], queue)
+        return remaining === undefined ? next : { ...next, pendingPrompts: remaining }
+      })
+      return queue
     },
     openSubagent,
     ...sessionActions,

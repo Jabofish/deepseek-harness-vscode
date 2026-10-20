@@ -55,8 +55,10 @@ export function useScheduleSessionActions({
       )
   })
   const onStartSession = useStableCallback(async (prompt: string): Promise<string> => {
-    await store.createSession(workspaceId)
-    const sessionId = store.getState().activeSessionId
+    // The open can be superseded while creation is in flight; the ambient
+    // active session then belongs to whatever the user navigated to, not to
+    // the session this action created.
+    const sessionId = await store.createSession(workspaceId)
     if (sessionId === undefined) throw new Error(t('schedules.createSessionFailed'))
     const turn = store.watchSessionTurnEnd(sessionId)
     try {

@@ -64,6 +64,30 @@
   margin-top: var(--dsh-space-2);
 }
 
+.dsh-message-truncated {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--dsh-space-2);
+  margin-top: var(--dsh-space-2);
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+}
+
+.dsh-message-truncated__open {
+  padding: 0;
+  border: 0;
+  color: var(--dsh-link);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.dsh-message-truncated__open:hover,
+.dsh-message-truncated__open:focus-visible {
+  text-decoration: underline;
+}
+
 @media (hover: hover) and (pointer: fine) {
   .dsh-message-actions {
     opacity: 0;

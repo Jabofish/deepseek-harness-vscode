@@ -4,6 +4,7 @@ import { editorIntegrationStatusSchema, type FeatureRequest } from '@dsh-vscode/
 import { SettingCard, SettingRow } from '../../components/common/SettingCard.js'
 import { useI18n } from '../../i18n.js'
 import type { SettingsDrawerProps } from './settings-drawer-props.js'
+import { failureKey } from '../plugins/optional-bundle-model.js'
 
 /** All operations go through the Host. Status polling stops when the settings tab closes. */
 export function EditorIntegrationSettings({
@@ -15,6 +16,9 @@ export function EditorIntegrationSettings({
   const [status, setStatus] = useState<EditorIntegrationStatus>()
   const [busy, setBusy] = useState(false)
   const [failed, setFailed] = useState(false)
+  const [installing, setInstalling] = useState(false)
+  const [cancelling, setCancelling] = useState(false)
+  const cancellingRef = useRef(false)
   const epoch = useRef(0)
   const mounted = useRef(false)
   const busyRef = useRef(false)
@@ -22,7 +26,7 @@ export function EditorIntegrationSettings({
     mounted.current = true
     let polling = false
     const refresh = async (): Promise<void> => {
-      if (request === undefined || busyRef.current || polling) return
+      if (request === undefined || polling) return
       polling = true
       const current = epoch.current
       try {
@@ -58,6 +62,8 @@ export function EditorIntegrationSettings({
     if (request === undefined || busyRef.current) return
     busyRef.current = true
     setBusy(true)
+    const setup = command.type === 'editor.companion.action' && command.payload.action === 'setup'
+    if (setup) setInstalling(true)
     const current = ++epoch.current
     try {
       const response = editorIntegrationStatusSchema.parse(await request<unknown>(command))
@@ -69,7 +75,10 @@ export function EditorIntegrationSettings({
       if (mounted.current && current === epoch.current) setFailed(true)
     } finally {
       busyRef.current = false
-      if (mounted.current) setBusy(false)
+      if (mounted.current) {
+        setBusy(false)
+        if (setup) setInstalling(false)
+      }
     }
   }
   const configure = (change: Partial<EditorIntegrationPreferences>): void => {
@@ -82,7 +91,40 @@ export function EditorIntegrationSettings({
       payload: { action: name },
     })
   }
+  const cancelInstall = async (): Promise<void> => {
+    if (request === undefined || cancellingRef.current) return
+    cancellingRef.current = true
+    setCancelling(true)
+    const current = epoch.current
+    try {
+      const response = editorIntegrationStatusSchema.parse(
+        await request<unknown>({
+          type: 'editor.companion.action',
+          requestId: crypto.randomUUID(),
+          payload: { action: 'cancel-install' },
+        }),
+      )
+      if (mounted.current && current === epoch.current) {
+        setStatus(response)
+        setFailed(false)
+      }
+    } catch {
+      if (mounted.current && current === epoch.current) setFailed(true)
+    } finally {
+      cancellingRef.current = false
+      if (mounted.current) setCancelling(false)
+    }
+  }
   const phase = status?.phase
+  const installPhase = status?.installation ?? (installing ? 'installing' : undefined)
+  const installLabels = {
+    installing: t('editorIntegration.installing'),
+    cancelling: t('editorIntegration.cancellingInstall'),
+    unknown: t('editorIntegration.installUnknown'),
+    cancelled: t('editorIntegration.installCancelled'),
+    failed: t('editorIntegration.installFailed'),
+    installed: t('editorIntegration.installed'),
+  }
   const phases = {
     off: t('editorIntegration.off'),
     waiting: t('editorIntegration.waiting'),
@@ -141,7 +183,39 @@ export function EditorIntegrationSettings({
         control={toggle('allowEdits', t('editorIntegration.allowEdits'))}
       />
       {failed ? <p role="alert">{t('editorIntegration.requestFailed')}</p> : null}
+      {installPhase === undefined ? null : <p role="status">{installLabels[installPhase]}</p>}
+      {installPhase === 'failed' &&
+      status !== undefined &&
+      (status.installationErrorCode !== undefined || status.installationFailureKind !== undefined) ? (
+        <p role="alert">
+          {t(
+            failureKey({
+              name: '@dsh-vscode/editor-bridge',
+              changed: false,
+              application: 'failed',
+              ...(status.installationErrorCode === undefined
+                ? {}
+                : { errorCode: status.installationErrorCode }),
+              ...(status.installationFailureKind === undefined
+                ? {}
+                : { failureKind: status.installationFailureKind }),
+            }),
+          )}
+        </p>
+      ) : null}
       <div className="dsh-settings__actions">
+        {installing || status?.canCancelInstall ? (
+          <button
+            type="button"
+            className="dsh-button dsh-button--secondary"
+            disabled={cancelling || status?.installation === 'cancelling'}
+            onClick={() => void cancelInstall()}
+          >
+            {cancelling || status?.installation === 'cancelling'
+              ? t('editorIntegration.cancellingInstall')
+              : t('editorIntegration.cancelInstall')}
+          </button>
+        ) : null}
         <button
           type="button"
           className="dsh-button dsh-button--secondary"

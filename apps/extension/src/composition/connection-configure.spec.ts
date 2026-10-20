@@ -34,11 +34,9 @@ const harness = vi.hoisted(() => {
     }>,
     transportListeners: [] as Array<(signal?: AbortSignal) => Promise<unknown>>,
     afterWrite: undefined as ((key: string) => Promise<void>) | undefined,
-    update: vi.fn().mockResolvedValue(false),
   }
   return state
 })
-vi.mock('../editor/companion-update.js', () => ({ companionNeedsUpdate: harness.update }))
 vi.mock('../editor/editor-integration-settings.js', () => ({
   readEditorPreferences: () => ({ enabled: true, autoSetup: true, allowEdits: true }),
 }))
@@ -111,25 +109,15 @@ describe('connection.configure reconnect', () => {
     harness.configuration.connection.serverUrl = ''
     harness.afterWrite = undefined
     harness.configuration.runtime.autoStart = false
-    harness.update.mockReset().mockResolvedValue(false)
   })
 
-  it('automatically switches a stale discovered companion to a fresh owned runtime, falling back to chat on failure', async () => {
+  it('keeps the discovered runtime selected without switching targets to load a companion', async () => {
     harness.configuration.runtime.autoStart = true
-    harness.update.mockResolvedValue(true)
     const result = { backend: { connection: { endpoint: { port: 3080 } } }, state: { kind: 'connected' } }
     const connect = vi.fn().mockResolvedValue(result)
     await lifecycle(connect, vscode.ExtensionMode.Production, true).connect()
-    expect(harness.connects.map((request) => request.mode)).toEqual(['auto', 'new-isolated'])
+    expect(harness.connects.map((request) => request.mode)).toEqual(['auto'])
     expect(harness.configuration.connection.mode).toBe('auto')
-    harness.connects.length = 0
-    connect
-      .mockReset()
-      .mockResolvedValueOnce(result)
-      .mockRejectedValueOnce(new Error('runtime unavailable'))
-      .mockResolvedValueOnce(result)
-    await lifecycle(connect, vscode.ExtensionMode.Production, true).connect()
-    expect(harness.connects.map((request) => request.mode)).toEqual(['auto', 'new-isolated', 'auto'])
   })
 
   it('uses a fresh owned runtime for F5 without changing or attaching to the configured external server', async () => {

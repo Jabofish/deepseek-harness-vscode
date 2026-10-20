@@ -3,6 +3,7 @@ import {
   type AgentConfiguration,
   type BackendEvent,
   type ImageAttachmentLimits,
+  type PermissionPresetCatalog,
   type PromptAttachment,
   type PromptInput,
   type QueuedInput,
@@ -99,7 +100,11 @@ export class Rc6SessionRepository implements SessionRepository {
     this.includesClientTimeZone = options.includeClientTimeZone ?? true
     this.executeSessionConfigurationCommand = options.executeSessionConfigCommand
     this.selectAgentPreset = options.selectAgentPreset
-    this.readPermissionPresets = options.readPermissionPresets
+    const readCatalog = options.readPermissionCatalog
+    this.permissionCatalogReader = readCatalog
+    this.readPermissionPresets =
+      options.readPermissionPresets ??
+      (readCatalog === undefined ? undefined : async (signal) => (await readCatalog(signal)).items)
     this.mapProjectionValues = options.mapProjectionValues
     this.supportsFileUploads = options.supportsFileUploads === true
     this.supportsSessionRestore = options.supportsSessionRestore === true
@@ -113,6 +118,12 @@ export class Rc6SessionRepository implements SessionRepository {
   }
 
   private readonly readPermissionPresets: ((signal?: AbortSignal) => Promise<readonly string[]>) | undefined
+  private readonly permissionCatalogReader:
+    ((signal?: AbortSignal) => Promise<PermissionPresetCatalog>) | undefined
+  public async readPermissionCatalog(signal?: AbortSignal): Promise<PermissionPresetCatalog> {
+    if (this.permissionCatalogReader !== undefined) return this.permissionCatalogReader(signal)
+    return { items: await this.listPermissionPresets(signal) }
+  }
   public listPermissionPresets(signal?: AbortSignal): Promise<readonly string[]> {
     if (this.readPermissionPresets === undefined)
       return Promise.reject(unavailable('permission preset catalog'))

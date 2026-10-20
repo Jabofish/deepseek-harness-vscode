@@ -1,14 +1,12 @@
-import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, writeFile, readFile, copyFile, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
 import { describe, expect, it, vi } from 'vitest'
 import { EditorCompanionService } from '../../packages/application/src/services/editor-companion-service.js'
 import { verifyCompanionHost } from '../../apps/extension/src/editor/companion-host-proof.js'
-import { managedCompanionArguments } from '../../apps/extension/src/editor/managed-companion.js'
 import {
   EDITOR_COMPANION_TOOLS,
   EditorCompanionError,
@@ -17,9 +15,7 @@ import {
 import { LIVE_TIMEOUT_MS, startManagedRuntime, spawnManagedChild } from './harness.js'
 import { AlphaLoopbackApiClient } from '../../packages/dsh-adapter/src/versions/alpha/transport.js'
 
-const enabled =
-  process.env.DSH_LIVE_SMOKE === '1' &&
-  /^(?:0\.2\.0-rc\.2|0\.2\.1-(?:alpha\.[1-5]|rc\.[12]))$/u.test(process.env.DSH_LIVE_RUNTIME_VERSION ?? '')
+const enabled = process.env.DSH_LIVE_SMOKE === '1' && process.env.DSH_LIVE_RUNTIME_VERSION === '0.2.1-rc.2'
 describe.skipIf(!enabled)('DSH rc.2 editor companion (isolated real runtime)', () => {
   it(
     'loads the independently built plugin and enforces binding ownership through actual Remote',
@@ -28,9 +24,6 @@ describe.skipIf(!enabled)('DSH rc.2 editor companion (isolated real runtime)', (
       let runtime: Awaited<ReturnType<typeof startManagedRuntime>> | undefined
       try {
         const patchFile = path.join(home, 'editor-bridge.patch.yml')
-        const entry = fileURLToPath(
-          new URL('../../packages/dsh-editor-bridge/dist/index.js', import.meta.url),
-        )
         const probeFile = path.join(home, 'probe.mjs')
         const runtimeCommand = process.env.DSH_LIVE_RUNTIME
         if (runtimeCommand === undefined)
@@ -68,26 +61,9 @@ export function apply(ctx) {
 }
 `,
         )
-        const managed = process.env.DSH_EDITOR_COMPANION_MANAGED === '1'
-        const bundle = managed ? undefined : process.env.DSH_EDITOR_BRIDGE_BUNDLE
-        let managedPatch = ''
-        if (managed) {
-          const args = await managedCompanionArguments(
-            {
-              executable: runtimeCommand,
-              version: process.env.DSH_LIVE_RUNTIME_VERSION ?? '',
-              supported: true,
-              source: 'path',
-              compatibility: 'known',
-            },
-            path.resolve('apps/extension/resources'),
-            home,
-            new AbortController().signal,
-          )
-          expect(args[0]).toBe('--patch')
-          if (args[1] === undefined) throw new Error('Managed integration did not prepare its overlay.')
-          managedPatch = await readFile(args[1], 'utf8')
-        }
+        const bundle =
+          process.env.DSH_EDITOR_BRIDGE_BUNDLE ??
+          path.resolve('apps/extension/resources/editor-companion.tgz')
         if (bundle !== undefined) {
           let installer = runtimeCommand
           const pnpmEntry = process.env.DSH_EDITOR_BRIDGE_PNPM
@@ -95,7 +71,7 @@ export function apply(ctx) {
             installer = path.join(home, 'install-cli.mjs')
             await writeFile(
               installer,
-              `import { runCli } from ${moduleUrl('@deepseek-ai/dsh/lib/bin.js')}; await runCli({ packageManager: { command: process.execPath, args: [${JSON.stringify(pnpmEntry)}] } });`,
+              `import { runCli } from ${moduleUrl('@deepseek-ai/dsh/lib/bin.js')}; await runCli({ packageManager: { command: process.execPath, args: [${JSON.stringify(pnpmEntry)}], env: { npm_config_offline: 'true' } } });`,
             )
             launchCommand = installer
           }
@@ -133,16 +109,21 @@ export function apply(ctx) {
             clearTimeout(timer)
           }
         }
-        const bridgeEntry =
-          bundle === undefined && !managed
-            ? `    - id: live-editor-bridge\n      name: ${JSON.stringify(entry.replaceAll('\\', '/'))}\n`
-            : ''
         await writeFile(
           patchFile,
-          `${managedPatch}- insert:\n${bridgeEntry}    - id: live-editor-probe\n      name: ${JSON.stringify(probeFile.replaceAll('\\', '/'))}\n`,
+          `- insert:\n    - id: live-editor-probe\n      name: ${JSON.stringify(probeFile.replaceAll('\\', '/'))}\n`,
         )
         runtime = await startManagedRuntime({ dshHome: home, patchFile, requestedRuntime: launchCommand })
         const { backend } = runtime
+        const inventory = await backend.plugins.inventory()
+        const editorEntry = inventory.entries.find(
+          (entry) => entry.moduleName === '@dsh-vscode/editor-bridge',
+        )
+        expect(editorEntry?.meta?.title).toEqual({ en: 'VS Code Editor Companion', zh: 'VS Code 编辑器配套' })
+        expect(editorEntry?.meta?.description).toMatchObject({
+          en: expect.any(String) as unknown,
+          zh: expect.any(String) as unknown,
+        })
         const repository = backend.editorBridge
         if (repository === undefined) throw new Error('The exact adapter did not expose the companion port.')
         const workspace = await backend.workspaces.create({
@@ -209,10 +190,10 @@ export function apply(ctx) {
           if (companion === undefined) throw new Error('Missing negotiated companion repository.')
           expect(await companion.describe()).toMatchObject({
             protocolVersion: 2,
-            packageVersion: '0.2.0',
+            packageVersion: '0.2.1',
             maxGrants: 16,
           })
-          if (managed) {
+          {
             const manifest = JSON.parse(
               await readFile(path.resolve('apps/extension/resources/editor-companion-build.json'), 'utf8'),
             ) as { buildId: string }
@@ -359,31 +340,56 @@ export function apply(ctx) {
           if (plugins === undefined) throw new Error('Missing native bundle manager.')
           expect(
             (await plugins.listBundles()).find((item) => item.name === '@dsh-vscode/editor-bridge'),
-          ).toMatchObject({ installed: true, version: '0.2.0' })
+          ).toMatchObject({ installed: true, version: '0.2.1' })
           expect((await plugins.setBundleEnabled('@dsh-vscode/editor-bridge', false)).application).toMatch(
             /^(?:applied|restart-required)$/u,
           )
           expect((await plugins.setBundleEnabled('@dsh-vscode/editor-bridge', true)).application).toMatch(
             /^(?:applied|restart-required)$/u,
           )
+          const updatedBundle = path.join(home, 'companion-update.tgz')
+          await copyFile(bundle, updatedBundle)
+          const upgraded = await plugins.installBundle(
+            updatedBundle,
+            { requestId: randomUUID(), saveExact: true, approvedBuilds: [] },
+            AbortSignal.timeout(60_000),
+          )
+          expect(upgraded.application, JSON.stringify(upgraded)).toMatch(/^(?:applied|restart-required)$/u)
           const removed = await plugins.removeBundle('@dsh-vscode/editor-bridge')
           expect(removed.application, JSON.stringify(removed)).toMatch(/^(?:applied|restart-required)$/u)
           const installed = await plugins.installBundle(
             bundle,
             { requestId: randomUUID(), saveExact: true, approvedBuilds: [] },
-            AbortSignal.timeout(30_000),
+            AbortSignal.timeout(60_000),
           )
-          expect(installed).toMatchObject({ version: '0.2.0' })
-          expect(installed.application).toMatch(/^(?:applied|restart-required)$/u)
+          expect(installed.application, JSON.stringify(installed)).toMatch(/^(?:applied|restart-required)$/u)
+          expect(
+            (await plugins.listBundles()).find((item) => item.name === '@dsh-vscode/editor-bridge'),
+          ).toMatchObject({ version: '0.2.1', installed: true })
+          const cancelledBundle = path.join(home, 'companion-cancel.tgz')
+          await copyFile(bundle, cancelledBundle)
+          const cancelId = randomUUID()
+          const cancelling = plugins.installBundle(
+            cancelledBundle,
+            { requestId: cancelId, saveExact: true, approvedBuilds: [] },
+            AbortSignal.timeout(60_000),
+          )
+          // Give the real Remote time to register its request before cancelling it.
+          await new Promise((resolve) => setTimeout(resolve, 500))
+          expect(await plugins.cancelInstall(cancelId)).toMatchObject({ status: 'cancelled' })
+          expect(await cancelling).toMatchObject({ application: 'cancelled' })
+          expect(
+            (await plugins.listBundles()).find((item) => item.name === '@dsh-vscode/editor-bridge'),
+          ).toMatchObject({ installed: true, version: '0.2.1' })
         }
         console.log(
-          '[dsh-live-editor-bridge] rc.2 plugin, actual Agent/tool execution pipeline, Remote round trip, binding conflict, cancellation and detach passed; no model invoked',
+          '[dsh-live-editor-bridge] rc.2 native metadata, CLI install, Remote update/remove/reinstall/cancel, Agent/tool execution, binding conflict and detach passed; no model invoked',
         )
       } finally {
         await runtime?.stop()
         await rm(home, { recursive: true, force: true })
       }
     },
-    LIVE_TIMEOUT_MS,
+    Math.max(LIVE_TIMEOUT_MS, 180_000),
   )
 })

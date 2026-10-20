@@ -1,5 +1,5 @@
 import { Composer, type ComposerProps } from './Composer.js'
-import { useDraftValue, setDraft } from '../../app/draft-store.js'
+import { useDraftValue, setDraftFor } from '../../app/draft-store.js'
 import { useCallback, type ReactElement } from 'react'
 import type { AppStore } from '../../app/store.js'
 import {
@@ -26,11 +26,15 @@ type ConnectedComposerProps = Omit<
  * lifecycle inside the composer rather than the page shell.
  */
 export function ConnectedComposer({ store, modelScope, ...props }: ConnectedComposerProps): ReactElement {
-  const draft = useDraftValue()
+  const draft = useDraftValue(props.draftKey)
   const directory = useAppStoreSelector(
     store,
     modelScope === 'session' ? selectSessionComposerModels : selectGlobalComposerModels,
     sameShallowSelection,
+  )
+  const changeDraft = useCallback(
+    (value: string | ((current: string) => string)) => setDraftFor(props.draftKey, value),
+    [props.draftKey],
   )
   const retryModels = useCallback((): void => {
     // The picker already states the failure; a second page banner would repeat it.
@@ -41,7 +45,7 @@ export function ConnectedComposer({ store, modelScope, ...props }: ConnectedComp
       {...props}
       {...directory}
       draft={draft}
-      onDraftChange={setDraft}
+      onDraftChange={changeDraft}
       {...(modelScope === 'session' ? { onModelRetry: retryModels } : {})}
     />
   )

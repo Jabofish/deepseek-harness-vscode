@@ -67,7 +67,9 @@ export const featureRequestSchema = z.discriminatedUnion('type', [
     .object({
       type: z.literal('editor.companion.action'),
       ...featureRequestBase,
-      payload: z.object({ action: z.enum(['retry', 'setup', 'restart', 'undo', 'start-managed']) }).strict(),
+      payload: z
+        .object({ action: z.enum(['retry', 'setup', 'cancel-install', 'restart', 'undo', 'start-managed']) })
+        .strict(),
     })
     .strict(),
   z

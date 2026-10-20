@@ -194,6 +194,15 @@ const flushAsync = async (): Promise<void> => {
 describe('AppStore session gap healing', () => {
   afterEach(() => document.body.replaceChildren())
 
+  it('repeats the ready handshake on resync even when the connected snapshot was missed', async () => {
+    const { store, client } = makeStore()
+    expect(store.getState().backend.kind).toBe('idle')
+    client.emit(hostEvent(1, 'ui.resync', {}))
+    await flushAsync()
+    expect(client.requests.some((request) => request.type === 'app.ready')).toBe(true)
+    store.dispose()
+  })
+
   it('replays every control event delivered before first paint over stale advisory snapshots', async () => {
     const sessionId = activeSession.id
     const queueItem = {
@@ -276,6 +285,48 @@ describe('AppStore session gap healing', () => {
     expect(store.questions).toEqual([question])
     store.dispose()
     createdClient.dispose()
+  })
+
+  it('keeps an approval that arrives during the open instead of clearing it on first paint', async () => {
+    const sessionId = activeSession.id
+    const permission = {
+      id: 'permission-during-open',
+      sessionId,
+      title: 'Allow the command?',
+      description: 'The command needs approval.',
+      risk: 'medium' as const,
+      options: [{ id: 'allow', label: 'Allow once', kind: 'allow-once' as const }],
+    }
+    let resolveOpen: ((value: unknown) => void) | undefined
+    const openResponse = new Promise<unknown>((resolve) => {
+      resolveOpen = resolve
+    })
+    const { store, client } = makeStore({ openResponse })
+    const opening = store.openSession(sessionId)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    // The pinned Host subscribes first and then replays the pending approval.
+    // Both arrive before the critical open response installs first paint.
+    client.emit(hostEvent(1, 'session.subscribed', { sessionId, lastSequence: 0 }))
+    client.emit(hostEvent(2, 'permission.requested', { request: permission }))
+    resolveOpen?.({
+      ...activeSession,
+      history: [],
+      historyHasMore: false,
+      permissionPresets: [],
+      configuration: {
+        preset: 'standard',
+        toolMode: 'native',
+        permissionPreset: 'workspace-write',
+        planMode: false,
+        model: { providerId: 'deepseek', modelId: 'deepseek-chat' },
+      },
+    })
+    await opening
+    await flushAsync()
+
+    expect(store.permissions).toEqual([permission])
+    store.dispose()
+    client.dispose()
   })
 
   it('does not let a non-durable approval frame hide the next durable request', async () => {

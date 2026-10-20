@@ -77,6 +77,8 @@ export interface ComposerProps {
   readonly attachmentsDisabled?: boolean
   readonly running: boolean
   readonly draft: string
+  /** Conversation identity that owns the draft; undo history resets with it. */
+  readonly draftKey?: string | undefined
   readonly attachments: readonly PromptAttachment[]
   readonly editorContext?: readonly EditorContextItem[]
   readonly editorContextAvailableKinds?: readonly EditorContextKind[]
@@ -109,6 +111,7 @@ export interface ComposerProps {
   readonly presetSelectionEnabled?: boolean
   readonly permissionPresets?: readonly string[]
   readonly configurationDraft?: boolean
+  readonly defaultPermissionPreset?: string
   readonly commands?: readonly DynamicCommand[]
   /** Client-owned bare-command popup decorations; host rows remain authoritative. */
   readonly popupSelects?: PopupSelectRegistry
@@ -174,7 +177,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const hintId = useId()
   const pendingCursorRef = useRef<number | undefined>(undefined)
-  const { restoreDraft } = useDraftHistory(props.draft, props.onDraftChange)
+  const { restoreDraft } = useDraftHistory(props.draft, props.onDraftChange, props.draftKey)
   const { railRef: attachmentRailRef, scrollable: attachmentRailScrollable } = useAttachmentRail(
     props.attachments.length,
   )
@@ -326,6 +329,9 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
       presets,
       permissionPresets,
       ...(props.configurationDraft === undefined ? {} : { configurationDraft: props.configurationDraft }),
+      ...(props.defaultPermissionPreset === undefined
+        ? {}
+        : { defaultPermissionPreset: props.defaultPermissionPreset }),
       disabled: props.configurationDisabled ?? props.disabled,
       presetMutable: props.presetMutable === true,
       surface,
@@ -739,6 +745,19 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
           <div className="dsh-composer__toolbar-controls">{renderSessionControls('model')}</div>
         )}
         <span className="dsh-composer__toolbar-balance" aria-hidden="true" />
+        {props.running && sending && !isDirectSubmitting ? (
+          <button
+            className="dsh-button dsh-button--danger"
+            type="button"
+            aria-label={t('composer.stopResponse')}
+            title={t('composer.stopResponse')}
+            onClick={props.onCancel}
+            disabled={props.disabled}
+          >
+            <Icon name="stop" />
+            {t('composer.stopResponse')}
+          </button>
+        ) : null}
         <button
           className={`dsh-button dsh-composer__submit ${stoppable ? 'dsh-button--danger' : 'dsh-button--primary'}`}
           type={stoppable ? 'button' : 'submit'}

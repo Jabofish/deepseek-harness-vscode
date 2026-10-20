@@ -43,6 +43,7 @@ import {
   presentedSourceNodeIds,
   type PresentedTimelineNode,
 } from './focused-timeline-projection.js'
+import { useCompleteTranscriptNodes } from './useCompleteTranscriptNodes.js'
 import { useTranscriptCopyFallback } from './useTranscriptCopyFallback.js'
 import { useConversationLayout } from '../../app/ConversationLayoutProvider.js'
 import type { ConversationLayout } from '../../app/conversation-layout.js'
@@ -80,6 +81,10 @@ export interface TimelineProps {
   readonly onFeedback?: (messageId: string, rating: MessageFeedbackRating) => void
   readonly onFeedbackSubmit?: FeedbackSubmit
   readonly onFeedbackPrepare?: FeedbackPrepare
+  /** Nodes whose wire projection clipped their Markdown. */
+  readonly omittedNodeIds?: readonly string[]
+  readonly loadFullNode?: (nodeId: string, signal?: AbortSignal) => Promise<TimelineNode>
+  readonly loadFullContent?: (nodeId: string) => Promise<string>
   /** Whether an older DSH history window is available. */
   readonly hasMoreHistory?: boolean
   readonly loadingOlderHistory?: boolean
@@ -172,20 +177,29 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
   // continuous run, then attaches it to the following visible answer.
   const displayProjector = useMemo(() => createDisplayNodeProjector(), [])
   const nodeSignatureProjector = useMemo(() => createNodeSignatureProjector(), [])
+  const complete = useCompleteTranscriptNodes(
+    props.sessionId,
+    props.nodes,
+    props.omittedNodeIds,
+    props.loadFullNode,
+  )
+  const sourceNodes = complete.nodes
+  const changeStart = sourceNodes === props.nodes ? props.nodeChangeStart : undefined
+  const changeBase = sourceNodes === props.nodes ? props.nodeChangeBase : undefined
   const displayProjection = useMemo(
     () =>
       displayProjector(
-        props.nodes,
+        sourceNodes,
         showDshEvents,
         conversationLayout === 'focused' ? 'verbose' : transcriptView,
-        props.nodeChangeStart,
-        props.nodeChangeBase,
+        changeStart,
+        changeBase,
       ),
     [
       displayProjector,
-      props.nodeChangeBase,
-      props.nodeChangeStart,
-      props.nodes,
+      changeBase,
+      changeStart,
+      sourceNodes,
       showDshEvents,
       transcriptView,
       conversationLayout,
@@ -198,7 +212,11 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
   )
   // The Webview's own "Copy" copies nothing without a selection; this fills it
   // with the addressed row's Markdown instead of an empty clipboard.
-  const copyFallbackAnnounced = useTranscriptCopyFallback(displayNodes)
+  const copyFallbackAnnounced = useTranscriptCopyFallback(
+    displayNodes,
+    props.omittedNodeIds,
+    props.loadFullContent,
+  )
   const running = props.running ?? props.streaming
   const hasMoreHistory = props.hasMoreHistory
   const loadingOlderHistory = props.loadingOlderHistory
@@ -206,14 +224,14 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
   const displayNodeTextSizeProjector = useMemo(() => createDisplayNodeTextSizeProjector(), [])
   const timelineFactsProjector = useMemo(() => createTimelineFactsProjector(), [])
   const timelineFacts = useMemo(
-    () => timelineFactsProjector(props.nodes, props.nodeChangeStart, props.nodeChangeBase),
-    [timelineFactsProjector, props.nodeChangeBase, props.nodeChangeStart, props.nodes],
+    () => timelineFactsProjector(sourceNodes, changeStart, changeBase),
+    [timelineFactsProjector, changeBase, changeStart, sourceNodes],
   )
   const userTextFactsProjector = useMemo(() => createUserTextFactsProjector(), [])
   // Identity-stable across streaming frames: the facts only change when a
   // user-authored row actually does, so the render context below (and with it
   // every memoized TimelineRow) survives tool/assistant deltas untouched.
-  const userTextFacts = userTextFactsProjector(props.nodes, props.nodeChangeStart, props.nodeChangeBase)
+  const userTextFacts = userTextFactsProjector(sourceNodes, changeStart, changeBase)
   const virtualizationProjector = useMemo(() => createVirtualizationProjector(), [])
 
   const usingTool = timelineFacts.hasActiveTool
@@ -226,6 +244,8 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
   const stableOnFeedback = useStableOptionalCallback(props.onFeedback)
   const stableOnFeedbackSubmit = useStableOptionalCallback(props.onFeedbackSubmit)
   const stableOnFeedbackPrepare = useStableOptionalCallback(props.onFeedbackPrepare)
+  const stableLoadFullContent = useStableOptionalCallback(props.loadFullContent)
+  const truncatedNodeIds = useMemo(() => new Set(props.omittedNodeIds), [props.omittedNodeIds])
   const [openLinkError, setOpenLinkError] = useState<{ readonly href: string; readonly message: string }>()
   const [openLinkBusy, setOpenLinkBusy] = useState(false)
   const requestOpenLink = useCallback(
@@ -462,7 +482,6 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
     )
       return
     prependAnchorRef.current = captureScrollAnchor()
-    if (prependAnchorRef.current === undefined) return
     const request = { sessionId: props.sessionId }
     olderHistoryRequestRef.current = request
     const result = onLoadOlderHistory()
@@ -508,6 +527,8 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
       onFeedback: hasFeedback ? stableOnFeedback : undefined,
       onFeedbackSubmit: props.onFeedbackSubmit === undefined ? undefined : stableOnFeedbackSubmit,
       onFeedbackPrepare: props.onFeedbackPrepare === undefined ? undefined : stableOnFeedbackPrepare,
+      truncatedNodeIds,
+      loadFullContent: props.loadFullContent === undefined ? undefined : stableLoadFullContent,
       requestOpenLink,
       t,
     }),
@@ -527,10 +548,12 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
       props.feedback,
       props.feedbackUnavailable,
       performanceUsage,
+      props.loadFullContent,
       props.onFeedbackSubmit,
       props.onFeedbackPrepare,
       requestOpenLink,
       running,
+      stableLoadFullContent,
       stableOnBranch,
       stableOnFeedback,
       stableOnFeedbackSubmit,
@@ -540,6 +563,7 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
       stableOnShowInFolder,
       transcriptView,
       t,
+      truncatedNodeIds,
       userTextFacts,
     ],
   )
@@ -630,7 +654,17 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
                       className={`dsh-timeline__row${node.id === enteredId ? ' dsh-timeline__row--enter' : ''}`}
                       style={{ transform: `translateY(${item.start}px)` }}
                     >
-                      <TimelineRow node={node} context={nodeRenderContext} />
+                      <TimelineRow
+                        node={node}
+                        context={nodeRenderContext}
+                        contentStatus={
+                          presentedSourceNodeIds(node).some((id) => complete.pendingIds.has(id))
+                            ? complete.failed
+                              ? 'retrying'
+                              : 'loading'
+                            : undefined
+                        }
+                      />
                     </div>
                   )
                 })
@@ -641,7 +675,17 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
                     data-node-id={node.id}
                     className={`dsh-timeline__row${node.id === enteredId ? ' dsh-timeline__row--enter' : ''}`}
                   >
-                    <TimelineRow node={node} context={nodeRenderContext} />
+                    <TimelineRow
+                      node={node}
+                      context={nodeRenderContext}
+                      contentStatus={
+                        presentedSourceNodeIds(node).some((id) => complete.pendingIds.has(id))
+                          ? complete.failed
+                            ? 'retrying'
+                            : 'loading'
+                          : undefined
+                      }
+                    />
                   </div>
                 ))}
           </div>
@@ -661,7 +705,7 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
         {/* Mounted only while an outcome is up, like the per-row copy button. */}
         {copyFallbackAnnounced ? (
           <span className="dsh-sr-only" role="status">
-            {t('message.copied')}
+            {t(copyFallbackAnnounced === 'copied' ? 'message.copied' : 'message.copyFailed')}
           </span>
         ) : null}
       </div>
