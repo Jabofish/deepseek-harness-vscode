@@ -227,7 +227,7 @@ export function createSessionCreationActions(
           : undefined
       if (state.connectedDshVersion === DSH_RC12_VERSION && reusableBlank !== undefined) {
         await openSession(reusableBlank.id)
-        return
+        return reusableBlank.id
       }
       const rc11ReusableBlank = state.connectedDshVersion === DSH_RC11_VERSION ? reusableBlank : undefined
       const result = await client.request<unknown>({
@@ -249,6 +249,7 @@ export function createSessionCreationActions(
       } finally {
         void refresh().catch(() => undefined)
       }
+      return typeof created?.id === 'string' ? created.id : undefined
     },
   }
 }

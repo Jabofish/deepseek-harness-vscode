@@ -297,7 +297,7 @@ export interface AppActions {
   moveWorkspace(workspaceId: string, beforeWorkspaceId?: string): Promise<void>
   moveSession(workspaceId: string, sessionId: string, beforeSessionId?: string): Promise<void>
   forkSession(sessionId: string, atSeq?: number): Promise<void>
-  createSession(workspaceId?: string, presetId?: string): Promise<void>
+  createSession(workspaceId?: string, presetId?: string): Promise<string | undefined>
   stageSession(workspaceId?: string, presetId?: string): Promise<void>
   configurePendingSession(configuration: AgentConfiguration): void
   sendPendingPrompt(
