@@ -27,21 +27,29 @@ const ui = vi.hoisted(() => ({
   execute: vi.fn(),
   command: vi.fn(),
   settings: { enabled: true, autoSetup: true, allowEdits: true },
+  workspaceOpen: true,
+  workspaceFile: false,
+  updateSettings: vi.fn(),
   changeConfiguration: (_event: { affectsConfiguration: (section: string) => boolean }): void => {},
 }))
-vi.mock('./editor-integration-settings.js', () => ({
-  readEditorPreferences: () => ui.settings,
-  saveEditorPreferences: (change: Partial<typeof ui.settings>) => {
-    Object.assign(ui.settings, change)
-    return Promise.resolve()
-  },
-}))
 vi.mock('vscode', () => ({
+  ConfigurationTarget: { Global: 1, Workspace: 2 },
   workspace: {
     get isTrusted() {
       return ui.trusted
     },
-    workspaceFolders: [{ uri: { scheme: 'file', fsPath: path.resolve('editor-bridge-fixture') } }],
+    get workspaceFolders() {
+      return ui.workspaceOpen
+        ? [{ uri: { scheme: 'file', fsPath: path.resolve('editor-bridge-fixture') } }]
+        : undefined
+    },
+    get workspaceFile() {
+      return ui.workspaceFile ? { scheme: 'untitled' } : undefined
+    },
+    getConfiguration: () => ({
+      get: (key: keyof typeof ui.settings) => ui.settings[key],
+      update: ui.updateSettings,
+    }),
     onDidChangeWorkspaceFolders: () => ({ dispose() {} }),
     onDidChangeConfiguration: (listener: typeof ui.changeConfiguration) => {
       ui.changeConfiguration = listener
@@ -102,6 +110,16 @@ function harness(
   ui.hide.mockClear()
   ui.trusted = true
   ui.settings = { enabled: true, autoSetup: true, allowEdits: true }
+  ui.workspaceOpen = true
+  ui.workspaceFile = false
+  ui.updateSettings
+    .mockReset()
+    .mockImplementation((key: keyof typeof ui.settings, value: boolean, target: number) => {
+      if (target === 2 && !ui.workspaceOpen && !ui.workspaceFile)
+        return Promise.reject(new Error('No workspace is open to save workspace settings.'))
+      ui.settings[key] = value
+      return Promise.resolve()
+    })
   ui.pick.mockReset().mockResolvedValue([])
   ui.warning.mockReset().mockResolvedValue('Continue')
   ui.info.mockReset().mockResolvedValue(undefined)
@@ -224,6 +242,45 @@ function harness(
   }
 }
 describe('automatic editor sharing', () => {
+  it.each([
+    { workspaceOpen: false, workspaceFile: false, target: 1 },
+    { workspaceOpen: true, workspaceFile: false, target: 2 },
+    { workspaceOpen: false, workspaceFile: true, target: 2 },
+  ])(
+    'starts installation with the actual preference writer in window $workspaceOpen/$workspaceFile',
+    async (window) => {
+      const install = vi.spyOn(EditorCompanionManagement.prototype, 'installBundled').mockResolvedValue(true)
+      const { host } = harness('managed', true, undefined, undefined, true)
+      ui.workspaceOpen = window.workspaceOpen
+      ui.workspaceFile = window.workspaceFile
+      ui.settings.autoSetup = false
+      try {
+        await host.action('setup')
+        expect(install).toHaveBeenCalledWith({ silent: true })
+        expect(ui.updateSettings).toHaveBeenCalledWith('enabled', true, window.target)
+        expect(ui.updateSettings).toHaveBeenCalledWith('autoSetup', true, window.target)
+        expect(host.snapshot().preferences).toMatchObject({ enabled: true, autoSetup: true })
+      } finally {
+        await host.dispose()
+        install.mockRestore()
+      }
+    },
+  )
+  it('preserves read-only and off controls in an empty window', async () => {
+    const { host } = harness('managed', true)
+    ui.workspaceOpen = false
+    try {
+      expect((await host.configure({ allowEdits: false })).preferences.allowEdits).toBe(false)
+      expect(await host.configure({ enabled: false })).toMatchObject({
+        phase: 'off',
+        preferences: { enabled: false, allowEdits: false },
+      })
+      expect(ui.updateSettings).toHaveBeenCalledWith('allowEdits', false, 1)
+      expect(ui.updateSettings).toHaveBeenCalledWith('enabled', false, 1)
+    } finally {
+      await host.dispose()
+    }
+  })
   it('keeps dependency preparation cancellable and leaves first companion installation explicit', async () => {
     const prepare = vi.mocked(prepareCompanionPackageManager)
     prepare.mockImplementationOnce(

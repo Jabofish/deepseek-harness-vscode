@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.3.8
+
+- 修复空 VS Code 窗口安装编辑器配套时因保存工作区设置失败而立即终止的问题；未打开文件夹时保存到用户设置，安装、关闭与只读控制均可使用。
+- Fixes companion installation and off/read-only controls in empty VS Code windows by saving preferences to user settings when no workspace is open.
+
 ## 0.3.7
 
 - 依赖缺失或损坏时可直接安装／修复 pnpm，验证可运行后重启扩展自有 DSH；准备过程支持取消，配套插件仍由用户明确发起首次安装。
