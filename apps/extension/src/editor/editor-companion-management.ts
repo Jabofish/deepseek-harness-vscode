@@ -67,6 +67,14 @@ export class EditorCompanionManagement {
         this.observedBackend = backend
         this.observedAt = Date.now()
         this.observed = { installed, ...(packageManager === undefined ? {} : { packageManager }) }
+        if (
+          packageManager === 'ready' &&
+          this.failure.installationFailureKind === 'pnpm-missing' &&
+          this.installPhase === 'failed'
+        ) {
+          this.failure = {}
+          this.installPhase = undefined
+        }
       } catch {
         this.observedAt = 0
         this.observed = {}

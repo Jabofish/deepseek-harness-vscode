@@ -31,6 +31,7 @@ import { EditorWorkspaceAccess } from './editor-workspace-access.js'
 import { companionNeedsUpdate } from './companion-update.js'
 import {
   checkCompanionPackageManager,
+  prepareCompanionPackageManager,
   PNPM_INSTALL_COMMAND,
   PNPM_INSTALL_GUIDE,
 } from './companion-prerequisites.js'
@@ -53,6 +54,8 @@ export class EditorBridgeHost {
   private readonly companion: EditorCompanionService
   private readonly management: EditorCompanionManagement
   private readonly checkedUpdates = new WeakSet<DshBackend>()
+  private preparing: AbortController | undefined
+  private prerequisiteOutcome: EditorIntegrationStatus['installation']
   private readonly ledger = new EditLedger()
   private readonly workspaceAccess = new EditorWorkspaceAccess(
     () => !this.disposed && !this.suppressed && readEditorPreferences().enabled,
@@ -324,6 +327,7 @@ export class EditorBridgeHost {
     )
   }
   public async dispose(): Promise<void> {
+    this.preparing?.abort()
     this.disposed = true
     clearTimeout(this.editTimer)
     clearTimeout(this.recovery)
@@ -373,15 +377,21 @@ export class EditorBridgeHost {
         vscode.workspace.isTrusted &&
         this.deps.context !== undefined &&
         this.deps.reconnect !== undefined &&
-        !this.management.busy,
+        !this.management.busy &&
+        this.preparing === undefined,
       canRestart: managed,
       canUndo: this.ledger.lastApplied() !== undefined,
       ...(this.management.installationState === undefined
         ? {}
         : { installation: this.management.installationState }),
-      canCancelInstall: this.management.canCancelInstall,
+      canCancelInstall: this.preparing !== undefined || this.management.canCancelInstall,
       ...this.management.installationFailure,
       ...this.management.installationStatus,
+      ...(this.preparing === undefined
+        ? this.prerequisiteOutcome === undefined
+          ? {}
+          : { installation: this.prerequisiteOutcome }
+        : { installation: 'preparing-dependencies' as const }),
     }
   }
   public async configure(change: Partial<EditorIntegrationPreferences>): Promise<EditorIntegrationStatus> {
@@ -401,8 +411,29 @@ export class EditorBridgeHost {
       | 'start-managed'
       | 'check-dependencies'
       | 'copy-pnpm-command'
-      | 'open-pnpm-guide',
+      | 'open-pnpm-guide'
+      | 'prepare-pnpm',
   ): Promise<EditorIntegrationStatus> {
+    if (action === 'prepare-pnpm') {
+      if (!this.snapshot().canInstall || !vscode.workspace.isTrusted) return this.snapshot()
+      const backend = this.deps.backendService.requireBackend()
+      const controller = new AbortController()
+      this.preparing = controller
+      this.prerequisiteOutcome = undefined
+      try {
+        await prepareCompanionPackageManager(controller.signal)
+        controller.signal.throwIfAborted()
+        if (!this.currentBackend(backend)) throw new DOMException('Connection changed', 'AbortError')
+        await this.deps.reconnect?.(controller.signal)
+        controller.signal.throwIfAborted()
+        await this.management.refreshStatus(true)
+      } catch {
+        this.prerequisiteOutcome = controller.signal.aborted ? 'cancelled' : 'dependencies-failed'
+      } finally {
+        if (this.preparing === controller) this.preparing = undefined
+      }
+      return this.snapshot()
+    }
     if (action === 'copy-pnpm-command') {
       await vscode.env.clipboard.writeText(PNPM_INSTALL_COMMAND)
       return this.snapshot()
@@ -416,6 +447,7 @@ export class EditorBridgeHost {
       return this.snapshot()
     }
     if (action === 'cancel-install') {
+      this.preparing?.abort()
       await this.management.cancelInstallation()
       return this.snapshot()
     }
@@ -438,6 +470,7 @@ export class EditorBridgeHost {
         })
       }
       if (action === 'setup' && this.snapshot().canInstall) {
+        this.prerequisiteOutcome = undefined
         this.phase = 'setup'
         this.reason = undefined
         try {

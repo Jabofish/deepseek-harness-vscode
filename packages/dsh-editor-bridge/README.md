@@ -24,7 +24,9 @@ extension. It requires a working package manager in the connected DSH environmen
 The package exports English/Chinese display metadata so DSH's own plugin inventory
 shows its title and description. Startup injects no local-file plugin or overlay.
 Settings checks pnpm before installation, distinguishes missing and broken commands,
-and provides a copyable setup command, the official guide and a recheck action.
+and provides a cancellable Install / repair pnpm action, a copyable command, the
+official guide and a recheck action. Preparation uses Corepack when available or
+npm otherwise, verifies pnpm, then restarts only the extension-managed DSH.
 Remote users prepare pnpm on the DSH/Extension Host side. Installation consent is
 independent from the native installed state; a missing package always says Install.
 Migration removes recognized legacy loader/overlay files in extension-owned storage,

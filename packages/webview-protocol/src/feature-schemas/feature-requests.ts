@@ -79,6 +79,7 @@ export const featureRequestSchema = z.discriminatedUnion('type', [
             'check-dependencies',
             'copy-pnpm-command',
             'open-pnpm-guide',
+            'prepare-pnpm',
           ]),
         })
         .strict(),

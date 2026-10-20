@@ -12,6 +12,7 @@ import {
 import { EditorCompanionBroker } from '../../../../packages/dsh-editor-bridge/src/companion-broker.js'
 import { EditorBridgeHost } from './editor-bridge-host.js'
 import { EditorCompanionManagement } from './editor-companion-management.js'
+import { prepareCompanionPackageManager } from './companion-prerequisites.js'
 
 const ui = vi.hoisted(() => ({
   errors: vi.fn(),
@@ -61,6 +62,7 @@ vi.mock('vscode', () => ({
 vi.mock('./companion-host-proof.js', () => ({ verifyCompanionHost: ui.proof }))
 vi.mock('./companion-prerequisites.js', () => ({
   checkCompanionPackageManager: () => Promise.resolve('ready'),
+  prepareCompanionPackageManager: vi.fn(() => Promise.resolve()),
   PNPM_INSTALL_COMMAND: 'npm install --global pnpm@11.19.0',
   PNPM_INSTALL_GUIDE: 'https://pnpm.io/installation',
 }))
@@ -222,6 +224,32 @@ function harness(
   }
 }
 describe('automatic editor sharing', () => {
+  it('keeps dependency preparation cancellable and leaves first companion installation explicit', async () => {
+    const prepare = vi.mocked(prepareCompanionPackageManager)
+    prepare.mockImplementationOnce(
+      (signal) =>
+        new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true })
+        }),
+    )
+    const { host, reconnect } = harness('managed', true, undefined, undefined, true)
+    try {
+      const preparing = host.action('prepare-pnpm')
+      expect(host.snapshot()).toMatchObject({
+        installation: 'preparing-dependencies',
+        canCancelInstall: true,
+      })
+      await host.action('cancel-install')
+      await preparing
+      expect(reconnect).not.toHaveBeenCalled()
+      expect(host.snapshot()).toMatchObject({ installation: 'cancelled' })
+      await host.action('prepare-pnpm')
+      expect(reconnect).toHaveBeenCalledOnce()
+      expect(ui.settings.autoSetup).toBe(true)
+    } finally {
+      await host.dispose()
+    }
+  })
   it('does not install a missing plugin package in the background even with automatic updates enabled', async () => {
     const install = vi.spyOn(EditorCompanionManagement.prototype, 'installBundled').mockResolvedValue(false)
     const { host } = harness('managed', false, undefined, undefined, true)

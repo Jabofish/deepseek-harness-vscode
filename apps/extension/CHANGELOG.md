@@ -4,6 +4,9 @@
 
 ## 0.3.7
 
+- 依赖缺失或损坏时可直接安装／修复 pnpm，验证可运行后重启扩展自有 DSH；准备过程支持取消，配套插件仍由用户明确发起首次安装。
+- Adds cancellable pnpm preparation and repair, verifies the executable and reconnects the managed DSH. First companion installation remains an explicit user action.
+
 - 安装前显示并检测 pnpm 依赖，提供安装命令、官方指南与重新检测；安装按钮根据 DSH 原生记录区分首次安装和修复，不再把安装意愿当成安装成功。迁移时仅清理旧 loader/overlay，保留缓存与会话数据。
 - Checks pnpm before installation and provides setup commands, official guidance and rechecking. Native DSH records distinguish first installation from repair; migration removes only retired loader/overlay files while preserving archives and session data.
 

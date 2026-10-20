@@ -62,7 +62,9 @@ export function EditorIntegrationSettings({
     if (request === undefined || busyRef.current) return
     busyRef.current = true
     setBusy(true)
-    const setup = command.type === 'editor.companion.action' && command.payload.action === 'setup'
+    const setup =
+      command.type === 'editor.companion.action' &&
+      (command.payload.action === 'setup' || command.payload.action === 'prepare-pnpm')
     if (setup) setInstalling(true)
     const current = ++epoch.current
     try {
@@ -93,7 +95,8 @@ export function EditorIntegrationSettings({
       | 'start-managed'
       | 'check-dependencies'
       | 'copy-pnpm-command'
-      | 'open-pnpm-guide',
+      | 'open-pnpm-guide'
+      | 'prepare-pnpm',
   ): void => {
     void execute({
       type: 'editor.companion.action',
@@ -128,6 +131,8 @@ export function EditorIntegrationSettings({
   const phase = status?.phase
   const installPhase = status?.installation ?? (installing ? 'installing' : undefined)
   const installLabels = {
+    'preparing-dependencies': t('editorIntegration.preparingPnpm'),
+    'dependencies-failed': t('editorIntegration.preparePnpmFailed'),
     installing: t('editorIntegration.installing'),
     cancelling: t('editorIntegration.cancellingInstall'),
     unknown: t('editorIntegration.installUnknown'),
@@ -212,6 +217,16 @@ export function EditorIntegrationSettings({
               <code>npm install --global pnpm@11.19.0</code>
               <p>{t('editorIntegration.pnpmInstructions')}</p>
               <div className="dsh-settings__actions">
+                {status.canInstall ? (
+                  <button
+                    type="button"
+                    className="dsh-button dsh-button--secondary"
+                    disabled={busy}
+                    onClick={() => action('prepare-pnpm')}
+                  >
+                    {t('editorIntegration.preparePnpm')}
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   className="dsh-button dsh-button--secondary"
@@ -288,7 +303,7 @@ export function EditorIntegrationSettings({
                 ? t('editorIntegration.chooseFolder')
                 : t('editorIntegration.retry')}
         </button>
-        {status?.canInstall && phase !== 'ready' ? (
+        {status?.canInstall && (status.installed === false || phase !== 'ready') ? (
           <button
             type="button"
             className="dsh-button dsh-button--secondary"
