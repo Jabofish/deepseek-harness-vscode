@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 修复 Windows 冷启动超过 15 秒即被误判失败的问题；启动和连接请求使用匹配的有界等待，取消仍立即生效。
+- Allows slow Windows cold starts to finish with aligned startup and connection deadlines while retaining immediate cancellation.
+
 - 长提示词的回显被省略且缺少请求标识时，重读全文确认投递，避免已发送内容卡在输入框；右键复制补齐长回复，并防止迟到的读取覆盖较新的复制操作。
 - Confirms delivery of clipped long prompts without request identities by rereading their full content. Context-menu copying retrieves complete replies and ignores reads superseded by a newer copy gesture.
 
