@@ -728,7 +728,9 @@ export class TranscriptWindowService {
       if (size > remaining) break
       remaining -= size
       nodes.unshift(node)
-      if (clipped.omitted || (resident.omitted.has(node.id) && isLiveText(node)))
+      // Ending a turn changes metadata, not the clipped resident body. Keep
+      // its full-content route available until an authoritative reread rebuilds it.
+      if (clipped.omitted || (resident.omitted.has(node.id) && isMessageNode(node)))
         resident.omitted.add(node.id)
       else resident.omitted.delete(node.id)
     }
@@ -1178,13 +1180,6 @@ function isMessageNode(node: TimelineNode): boolean {
 }
 
 /** Bound every body and nested collection; omission is explicit and reversible through DSH. */
-function isLiveText(node: TimelineNode): boolean {
-  return (
-    (node.kind === 'assistant-message' || node.kind === 'reasoning') &&
-    (node.streaming || (node.kind === 'assistant-message' && node.reasoning?.streaming === true))
-  )
-}
-
 function preview(value: TimelineNode, budget: number): { value: TimelineNode; omitted: boolean } {
   let remaining = budget
   let omitted = false

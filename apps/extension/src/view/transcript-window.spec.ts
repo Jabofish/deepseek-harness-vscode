@@ -58,6 +58,28 @@ function fixture(
 afterEach(() => vi.useRealTimers())
 
 describe('Host transcript windows', () => {
+  it('retains full-content access when a clipped live answer ends without a replacement body', async () => {
+    const full = 'a'.repeat(140 * 1024)
+    const client = fixture(vi.fn().mockResolvedValue({ events: [message(2, full)], hasMore: false }))
+    client.open()
+    client.service.accept({ type: 'turn.started', sessionId, turn: 1, sequence: 1 })
+    client.service.accept({
+      type: 'message.delta',
+      sessionId,
+      messageId: 'm-2',
+      turn: 1,
+      delta: full,
+      sequence: 2,
+    })
+    client.service.accept({ type: 'turn.ended', sessionId, turn: 1, reason: 'completed', sequence: 3 })
+    const window = client.service['snapshot']()
+    expect(window.omittedNodeIds).toContain('m-2')
+    expect(
+      await client.service.content(sessionId, 'm-2', window.revision, new AbortController().signal),
+    ).toBe(full)
+    client.service.dispose()
+  })
+
   it('keeps compacted history stable when follow replays native rows below the read cut', async () => {
     const invalidated = vi.fn()
     const posted: TranscriptWindow[] = []
