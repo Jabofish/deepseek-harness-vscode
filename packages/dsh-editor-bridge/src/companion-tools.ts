@@ -47,13 +47,15 @@ const proposalOutput = object(
     relativePath: string,
     status: {
       type: 'string',
-      enum: ['pending', 'applied', 'reverted', 'declined', 'stale', 'cancelled'],
+      enum: ['pending', 'applied', 'uncertain', 'reverted', 'declined', 'stale', 'cancelled'],
+      description:
+        'uncertain means the native reply failed after dispatch. Read the file before any retry; the undo record is retained.',
     },
     version: integer,
     saved: {
       type: 'boolean',
       description:
-        'For applied/reverted: true = saved; false = buffer changed, save incomplete. Do not repeat an applied edit.',
+        'For applied/reverted: true = saved; false = buffer changed but retained unsaved or save failed. Do not repeat an applied edit.',
     },
   },
   ['kind', 'proposalId', 'relativePath', 'status', 'version'],
@@ -161,7 +163,7 @@ const tools: readonly Tool[] = [
     name: 'vscode_propose_edit',
     kind: 'propose',
     description:
-      'Apply edits and save the whole buffer, including earlier unsaved changes. First read the file; use its relativePath and version as path and expectedVersion. Ranges are 1-based UTF-16, end exclusive. Edits remain undoable. applied means changed; saved=false means save incomplete, not edit failure. For uncertain outcomes, read the file before retrying.',
+      'Apply undoable edits to a document of at most 262,144 UTF-16 units before and after editing. Up to 64 edits / 65,536 replacement UTF-16 units per call. Initially clean buffers are saved; existing unsaved user changes remain unsaved. First read the file; use its relativePath and version as path and expectedVersion. Ranges are 1-based UTF-16, end exclusive. applied means changed; saved=false means retained unsaved or save failed, not edit failure. For uncertain outcomes, read the file before retrying.',
     parameters: object(
       {
         path: {

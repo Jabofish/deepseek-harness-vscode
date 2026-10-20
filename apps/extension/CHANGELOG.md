@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- 编辑器写入回执异常时核对实际缓冲区，保留已应用或结果不明的撤回快照；工具预先声明编辑容量与批次数量上限。
+- Retains undo snapshots for applied or uncertain native edit outcomes and declares edit size and batch limits before execution.
+
+- 编辑器配套修改和撤销不再连带保存用户的未保存内容；应用或路径校验期间新增的缓冲区修改也不会被自动保存，回执明确保留 saved:false。
+- Editor companion edits and reverts preserve unsaved user buffers, including changes made while applying or validating an edit, and report saved:false explicitly.
+
 - 预设失效时明确拒绝发送，不再静默换成其他模式；刷新目录不改写已有会话或草稿的选择，空目录不再补造 standard 预设。
 - Rejects unavailable preset choices without substituting another mode. Catalog refreshes preserve session and draft choices, and empty catalogs no longer invent a standard preset.
 

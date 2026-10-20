@@ -4,8 +4,8 @@ The editor integration is bundled with the VS Code extension. It uses DSH's
 existing authenticated Remote connection and adds no listening port. Editor
 access follows the selected session after the user chooses to install the companion
 in Settings. It is not automatically installed, including during F5 launches. The
-agent edits save automatically and remain undoable. Saving includes any
-earlier unsaved content in the same buffer.
+agent edits remain undoable. Initially clean buffers save automatically;
+existing unsaved user changes remain unsaved when edits are applied or undone.
 
 ## Start and configure
 
@@ -79,7 +79,7 @@ An edit is written as one undoable editor group the moment the agent asks for it
 user is not asked to review a diff, no notification pops up and no editor tab is opened
 or focused. The touched lines get a two-second highlight when the file is already on
 screen. The Host rechecks trust, root, version and original
-text first, then saves the whole buffer through VS Code. The receipt carries `saved: true` on success or `saved: false` if the edit applied but saving failed; do not resend that edit. Saving includes pre-existing unsaved content and honors VS Code save participants. A transient status bar entry offers **Undo**, and
+text first, then saves through VS Code only when the buffer was initially clean and still matches the applied edit. The receipt carries `saved: true` on save success or `saved: false` when user changes are retained unsaved or saving failed; do not resend that edit. Undo also preserves unsaved user changes. Saving honors VS Code save participants. A transient status bar entry offers **Undo**, and
 **DSH: Undo Last Editor Edit** reverts the most recent applied edit while the buffer
 still matches what the agent produced. The undo record lives in the extension rather than
 in the grant, so it survives a reconnect, a session switch and a stopped grant; reverting

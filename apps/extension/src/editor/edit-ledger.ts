@@ -39,12 +39,14 @@ export class EditLedger {
     return this.entries.get(id)
   }
   public lastApplied(): EditEntry | undefined {
-    return [...this.entries.values()].filter((entry) => entry.status === 'applied').at(-1)
+    return [...this.entries.values()]
+      .filter((entry) => entry.status === 'applied' || entry.status === 'uncertain')
+      .at(-1)
   }
   public settle(entry: EditEntry, status: EditorProposalStatus): void {
     entry.status = status
     // Keep the original text only while the edit can still be reverted.
-    if (status !== 'applied') {
+    if (status !== 'applied' && status !== 'uncertain') {
       entry.before = ''
       entry.after = ''
     }
@@ -71,7 +73,7 @@ export class EditLedger {
  * span can still be located, so one stray keystroke no longer discards the safety net.
  */
 export async function revertEdit(entry: EditEntry, guard: () => void): Promise<RevertOutcome> {
-  if (entry.status !== 'applied') return 'changed'
+  if (entry.status !== 'applied' && entry.status !== 'uncertain') return 'changed'
   try {
     guard()
   } catch {
@@ -91,24 +93,37 @@ export async function revertEdit(entry: EditEntry, guard: () => void): Promise<R
     return 'unavailable'
   }
   const text = document.getText()
+  if (entry.status === 'uncertain' && text === entry.before) {
+    entry.version = document.version
+    return 'reverted'
+  }
   const edit = new vscode.WorkspaceEdit()
+  let expected: string
   if (text === entry.after) {
     const last = document.lineAt(document.lineCount - 1)
     edit.replace(entry.uri, new vscode.Range(0, 0, document.lineCount - 1, last.text.length), entry.before)
+    expected = entry.before
   } else {
     const span = locate(entry, text)
     if (span === undefined) return 'changed'
     edit.replace(entry.uri, span, entry.region.before)
+    expected =
+      text.slice(0, document.offsetAt(span.start)) +
+      entry.region.before +
+      text.slice(document.offsetAt(span.end))
   }
+  const maySave = !document.isDirty
   try {
     if (!(await vscode.workspace.applyEdit(edit))) return 'changed'
     entry.saved = false
     try {
       guard()
-      const [root, file] = await Promise.all([realpath(entry.folderPath), realpath(document.uri.fsPath)])
-      if (!isPathWithin(root, file)) throw new Error('Revert target changed')
-      guard()
-      entry.saved = (await document.save()) && !document.isDirty
+      if (maySave) {
+        const [root, file] = await Promise.all([realpath(entry.folderPath), realpath(document.uri.fsPath)])
+        if (!isPathWithin(root, file)) throw new Error('Revert target changed')
+        guard()
+        if (document.getText() === expected) entry.saved = (await document.save()) && !document.isDirty
+      }
     } catch {
       /* The revert succeeded in the buffer; its save outcome stays explicit. */
     }
