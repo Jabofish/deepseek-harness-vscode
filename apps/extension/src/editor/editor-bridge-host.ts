@@ -29,6 +29,12 @@ import { EditLedger, revertEdit } from './edit-ledger.js'
 import { readEditorPreferences, saveEditorPreferences } from './editor-integration-settings.js'
 import { EditorWorkspaceAccess } from './editor-workspace-access.js'
 import { companionNeedsUpdate } from './companion-update.js'
+import {
+  checkCompanionPackageManager,
+  PNPM_INSTALL_COMMAND,
+  PNPM_INSTALL_GUIDE,
+} from './companion-prerequisites.js'
+import { cleanupLegacyCompanion } from './legacy-companion-cleanup.js'
 
 interface Dependencies {
   readonly backendService: BackendService
@@ -98,7 +104,10 @@ export class EditorBridgeHost {
       halt: () => this.stop(),
       active: () => this.service.active || this.companion.active,
       undo: () => this.undoLastEdit(),
+      checkPackageManager: checkCompanionPackageManager,
     })
+    if (deps.context?.globalStorageUri !== undefined)
+      void cleanupLegacyCompanion(deps.context.globalStorageUri.fsPath).catch(() => undefined)
     this.subscriptions = [
       {
         dispose: deps.coordinator.subscribe((state) => {
@@ -372,6 +381,7 @@ export class EditorBridgeHost {
         : { installation: this.management.installationState }),
       canCancelInstall: this.management.canCancelInstall,
       ...this.management.installationFailure,
+      ...this.management.installationStatus,
     }
   }
   public async configure(change: Partial<EditorIntegrationPreferences>): Promise<EditorIntegrationStatus> {
@@ -382,8 +392,29 @@ export class EditorBridgeHost {
     return this.snapshot()
   }
   public async action(
-    action: 'retry' | 'setup' | 'cancel-install' | 'restart' | 'undo' | 'start-managed',
+    action:
+      | 'retry'
+      | 'setup'
+      | 'cancel-install'
+      | 'restart'
+      | 'undo'
+      | 'start-managed'
+      | 'check-dependencies'
+      | 'copy-pnpm-command'
+      | 'open-pnpm-guide',
   ): Promise<EditorIntegrationStatus> {
+    if (action === 'copy-pnpm-command') {
+      await vscode.env.clipboard.writeText(PNPM_INSTALL_COMMAND)
+      return this.snapshot()
+    }
+    if (action === 'open-pnpm-guide') {
+      await vscode.env.openExternal(vscode.Uri.parse(PNPM_INSTALL_GUIDE))
+      return this.snapshot()
+    }
+    if (action === 'check-dependencies') {
+      await this.management.refreshStatus(true)
+      return this.snapshot()
+    }
     if (action === 'cancel-install') {
       await this.management.cancelInstallation()
       return this.snapshot()
@@ -427,6 +458,10 @@ export class EditorBridgeHost {
       }
       await this.reconcile()
     }
+    return this.snapshot()
+  }
+  public async readStatus(): Promise<EditorIntegrationStatus> {
+    await this.management.refreshStatus()
     return this.snapshot()
   }
   /** Serialize teardown/start across rapid selection changes and late installation acknowledgements. */
@@ -497,6 +532,7 @@ export class EditorBridgeHost {
         if (!(await this.management.installBundled({ silent: true }))) {
           this.phase = this.management.installationState === 'installed' ? 'needs-restart' : 'limited'
           this.reason = this.management.installationState === 'installed' ? 'restart' : 'setup-failed'
+          if (this.management.installationState !== 'installed') await this.enable({ silent: true })
           return
         }
       }

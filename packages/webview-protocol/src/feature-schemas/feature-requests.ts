@@ -68,7 +68,19 @@ export const featureRequestSchema = z.discriminatedUnion('type', [
       type: z.literal('editor.companion.action'),
       ...featureRequestBase,
       payload: z
-        .object({ action: z.enum(['retry', 'setup', 'cancel-install', 'restart', 'undo', 'start-managed']) })
+        .object({
+          action: z.enum([
+            'retry',
+            'setup',
+            'cancel-install',
+            'restart',
+            'undo',
+            'start-managed',
+            'check-dependencies',
+            'copy-pnpm-command',
+            'open-pnpm-guide',
+          ]),
+        })
         .strict(),
     })
     .strict(),

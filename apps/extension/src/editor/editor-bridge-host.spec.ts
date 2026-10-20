@@ -59,6 +59,11 @@ vi.mock('vscode', () => ({
   commands: { executeCommand: ui.command },
 }))
 vi.mock('./companion-host-proof.js', () => ({ verifyCompanionHost: ui.proof }))
+vi.mock('./companion-prerequisites.js', () => ({
+  checkCompanionPackageManager: () => Promise.resolve('ready'),
+  PNPM_INSTALL_COMMAND: 'npm install --global pnpm@11.19.0',
+  PNPM_INSTALL_GUIDE: 'https://pnpm.io/installation',
+}))
 vi.mock('./editor-companion-provider.js', () => ({
   EditorCompanionProvider: class {
     readonly execute = ui.execute

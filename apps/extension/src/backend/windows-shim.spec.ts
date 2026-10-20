@@ -40,6 +40,15 @@ IF EXIST "%NPM_PREFIX_NPM_CLI_JS%" (
 `
 
 describe('Windows npm shim resolution', () => {
+  it('resolves the pnpm CommonJS entry without a shell', () => {
+    const resolved = resolveWindowsShim(
+      'C:\\npm\\pnpm.cmd',
+      'windows',
+      () => 'node "%~dp0\\node_modules\\pnpm\\bin\\pnpm.cjs" %*',
+      { nodeExecutable: 'C:\\node\\node.exe' },
+    )
+    expect(resolved?.prefixArgs).toEqual(['C:\\npm\\node_modules\\pnpm\\bin\\pnpm.cjs'])
+  })
   it('uses an explicitly supplied Node executable instead of the shim', () => {
     const resolved = resolveWindowsShim('C:\\npm\\dsh.cmd', 'windows', () => shim, {
       nodeExecutable: 'C:\\node\\node.exe',

@@ -56,7 +56,7 @@ export function extractCmdShimTarget(content: string, shimDir: string): string |
       const rawTarget = matches[matchIndex]?.[1]
       if (rawTarget === undefined) continue
       const target = expandCmdValue(rawTarget, assignments, shimDir)
-      if (!/\.js$/iu.test(target) || target.includes('%')) continue
+      if (!/\.(?:c|m)?js$/iu.test(target) || target.includes('%')) continue
       return windowsPath.resolve(target)
     }
   }

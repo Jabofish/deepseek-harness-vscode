@@ -39,4 +39,6 @@ export interface EditorIntegrationStatus {
   readonly canCancelInstall?: boolean | undefined
   readonly installationErrorCode?: PluginBundleFailureCode | undefined
   readonly installationFailureKind?: PluginInstallFailureKind | undefined
+  readonly installed?: boolean | undefined
+  readonly packageManager?: 'ready' | 'missing' | 'broken' | undefined
 }

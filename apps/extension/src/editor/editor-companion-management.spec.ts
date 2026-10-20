@@ -47,6 +47,7 @@ interface Fixture {
   setBundleEnabled: Mock<PluginBundleRepository['setBundleEnabled']>
   stop: Mock<() => Promise<void>>
   enable: Mock<() => Promise<boolean>>
+  checkPackageManager: Mock<() => Promise<'ready' | 'missing' | 'broken'>>
 }
 function fixture(ownership: 'managed' | 'external' = 'managed'): Fixture {
   const listBundles = vi.fn<PluginBundleRepository['listBundles']>().mockResolvedValue([])
@@ -72,6 +73,9 @@ function fixture(ownership: 'managed' | 'external' = 'managed'): Fixture {
   } as unknown as DshBackend
   const stop = vi.fn().mockResolvedValue(undefined)
   const enable = vi.fn().mockResolvedValue(true)
+  const checkPackageManager = vi
+    .fn<() => Promise<'ready' | 'missing' | 'broken'>>()
+    .mockResolvedValue('ready')
   const manager = new EditorCompanionManagement({
     backend: () => backend,
     current: (candidate) => candidate === backend,
@@ -83,6 +87,7 @@ function fixture(ownership: 'managed' | 'external' = 'managed'): Fixture {
     stop,
     halt: stop,
     undo: vi.fn().mockResolvedValue(undefined),
+    checkPackageManager,
   })
   return {
     manager,
@@ -95,9 +100,22 @@ function fixture(ownership: 'managed' | 'external' = 'managed'): Fixture {
     setBundleEnabled,
     stop,
     enable,
+    checkPackageManager,
   }
 }
 describe('native editor companion installation and recovery', () => {
+  it('reads native installed state independently from consent and blocks missing prerequisites before mutation', async () => {
+    const { manager, checkPackageManager, installBundle, listBundles } = fixture()
+    checkPackageManager.mockResolvedValue('missing')
+    await manager.refreshStatus()
+    expect(manager.installationStatus).toEqual({ installed: false, packageManager: 'missing' })
+    expect(await manager.installBundled({ silent: true })).toBe(false)
+    expect(installBundle).not.toHaveBeenCalled()
+    checkPackageManager.mockResolvedValue('ready')
+    listBundles.mockResolvedValue([old])
+    await manager.refreshStatus(true)
+    expect(manager.installationStatus).toEqual({ installed: true, packageManager: 'ready' })
+  })
   it('retains the safe native installation failure for the settings panel', async () => {
     const { manager, installBundle } = fixture()
     installBundle.mockResolvedValue({

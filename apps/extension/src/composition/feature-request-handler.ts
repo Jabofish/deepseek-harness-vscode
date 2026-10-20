@@ -56,7 +56,7 @@ import type { TaskFocusState } from './change-checkpoint-task-assembly.js'
 import { inspectorClientUrl } from './inspector-client-url.js'
 
 export interface FeatureRequestHandlerDependencies {
-  readonly editorCompanion?: () => Pick<EditorBridgeHost, 'snapshot' | 'configure' | 'action'>
+  readonly editorCompanion?: () => Pick<EditorBridgeHost, 'snapshot' | 'readStatus' | 'configure' | 'action'>
   readonly getAccountLifecycleHost: () => AccountLifecycleHost | undefined
   readonly backendService: BackendService
   readonly pluginInstallRequests: PluginInstallRequestCoordinator
@@ -132,7 +132,7 @@ export function createFeatureRequestHandler(deps: FeatureRequestHandlerDependenc
           ...(request.payload.allowEdits === undefined ? {} : { allowEdits: request.payload.allowEdits }),
         })
       if (request.type === 'editor.companion.action') return editor.action(request.payload.action)
-      return editor.snapshot()
+      return editor.readStatus()
     }
     if (
       request.type === 'inspector.devtools.status' ||

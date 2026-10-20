@@ -23,6 +23,12 @@ Installation uses DSH's standard plugin manager and the archive shipped with the
 extension. It requires a working package manager in the connected DSH environment.
 The package exports English/Chinese display metadata so DSH's own plugin inventory
 shows its title and description. Startup injects no local-file plugin or overlay.
+Settings checks pnpm before installation, distinguishes missing and broken commands,
+and provides a copyable setup command, the official guide and a recheck action.
+Remote users prepare pnpm on the DSH/Extension Host side. Installation consent is
+independent from the native installed state; a missing package always says Install.
+Migration removes recognized legacy loader/overlay files in extension-owned storage,
+retaining cached archives, unrelated files and all session data.
 Already installed companions can update through the same manager after consent;
 missing packages always retain the explicit Install action. External processes are
 never modified or replaced automatically. Turning editor tools off revokes access.
