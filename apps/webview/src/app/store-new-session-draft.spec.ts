@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
+import { activateDraftOwner, clearDraftIf, readDraft, resetDraft, setDraft } from './draft-store.js'
 import type { ProtocolClient } from './protocol-client.js'
 import {
   createHostBackedAppStore as createAppStore,
@@ -94,6 +95,28 @@ function fixture(
 }
 
 describe('New Session draft', () => {
+  it('transfers first-message text only after opening the created session', async () => {
+    resetDraft()
+    const { store } = fixture(true)
+    try {
+      await store.refreshSessions()
+      await store.stageSession('w1')
+      const owner = `pending:${store.getState().pendingSession!.revision}`
+      activateDraftOwner(owner)
+      setDraft('Hello')
+      await expect(store.sendPendingPrompt('Hello', [], 'queue')).rejects.toThrow('Open failed')
+      expect(readDraft()).toBe('Hello')
+      await store.sendPendingPrompt('Hello', [], 'queue')
+      activateDraftOwner('created')
+      expect(readDraft()).toBe('Hello')
+      clearDraftIf(owner, 'Hello')
+      expect(readDraft()).toBe('')
+    } finally {
+      store.dispose()
+      resetDraft()
+    }
+  })
+
   it('keeps New local until the first ordinary message is submitted', async () => {
     const { store, requests } = fixture()
     try {

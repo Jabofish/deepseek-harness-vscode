@@ -858,6 +858,62 @@ describe('App connected rendering', () => {
     }
   })
 
+  it('clears a late accepted draft when cancellation happened after the RPC receipt', async () => {
+    let state = connectedState(true)
+    const listeners = new Set<() => void>()
+    const publish = (next: AppState): void => {
+      state = next
+      for (const listener of listeners) listener()
+    }
+    const sendPrompt = vi.fn(() => {
+      publish({ ...state, directPromptRequestIds: ['accepted-request'] })
+      return Promise.resolve()
+    })
+    currentStore = {
+      ...storeFor(state),
+      getState: () => state,
+      subscribe: (listener) => {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
+      forgetDirectPromptRequests: (ids) =>
+        publish({
+          ...state,
+          directPromptRequestIds: (state.directPromptRequestIds ?? []).filter((id) => !ids.includes(id)),
+        }),
+      sendPrompt,
+    }
+    render(<App />)
+    const input = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+    fireEvent.change(input, { target: { value: 'accepted before cancel' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(sendPrompt).toHaveBeenCalledTimes(1))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel sending' }))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    act(() =>
+      publish({
+        ...state,
+        timeline: {
+          ...state.timeline,
+          nodes: [
+            {
+              kind: 'user-message',
+              id: 'accepted-message',
+              rpcId: 'accepted-request',
+              markdown: 'accepted before cancel',
+            },
+          ],
+        },
+      }),
+    )
+    await waitFor(() => expect(input.value).toBe(''))
+  })
+
   it('clears the cancelled draft when the accepted direct turn arrives late', async () => {
     let state = connectedState(true)
     const listeners = new Set<() => void>()
@@ -2124,6 +2180,78 @@ describe('App connected rendering', () => {
     expect(await screen.findByText('Prompt failed.')).toBeDefined()
   })
 
+  it('abandons a waiting attachment send after navigating away and back', async () => {
+    const initial = connectedState(true)
+    let resolveIngest: ((value: { uri: string; name: string; mimeType: string }) => void) | undefined
+    const ingestAttachment = vi.fn(
+      () =>
+        new Promise<{ uri: string; name: string; mimeType: string }>((resolve) => {
+          resolveIngest = resolve
+        }),
+    )
+    const sendPrompt = vi.fn().mockResolvedValue(undefined)
+    const releaseAttachments = vi.fn().mockResolvedValue(undefined)
+    const { updateState } = renderWithMutableState(initial)
+    Object.assign(currentStore, { ingestAttachment, sendPrompt, releaseAttachments })
+    const input = screen.getByRole('textbox', { name: 'Prompt' })
+    fireEvent.change(input, { target: { value: 'needs the file' } })
+    fireEvent.paste(input, {
+      clipboardData: { files: [new File(['data'], 'slow.txt', { type: 'text/plain' })] },
+    })
+    await waitFor(() => expect(ingestAttachment).toHaveBeenCalledTimes(1))
+    fireEvent.submit(input.closest('form')!)
+    updateState({
+      ...initial,
+      pendingSession: { revision: 99, workspaceId: 'w1', configuration: initial.configuration! },
+    })
+    updateState(initial)
+    const uri = 'dsh-attachment:00000000-0000-4000-8000-000000000018'
+    await act(async () => {
+      resolveIngest?.({ uri, name: 'slow.txt', mimeType: 'text/plain' })
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(releaseAttachments).toHaveBeenCalledWith([uri]))
+    expect(sendPrompt).not.toHaveBeenCalled()
+    expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' }).value).toBe('needs the file')
+  })
+
+  it('does not release a detached handle after an unconfirmed send timeout', async () => {
+    const initial = connectedState(true)
+    let rejectSend: ((reason: unknown) => void) | undefined
+    const sendPrompt = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectSend = reject
+        }),
+    )
+    const releaseAttachments = vi.fn().mockResolvedValue(undefined)
+    const uri = 'dsh-attachment:00000000-0000-4000-8000-000000000019'
+    const { updateState } = renderWithMutableState(initial)
+    Object.assign(currentStore, {
+      sendPrompt,
+      releaseAttachments,
+      ingestAttachment: vi.fn().mockResolvedValue({ uri, name: 'slow.txt', mimeType: 'text/plain' }),
+    })
+    const input = screen.getByRole('textbox', { name: 'Prompt' })
+    fireEvent.change(input, { target: { value: 'slow send' } })
+    fireEvent.paste(input, {
+      clipboardData: { files: [new File(['data'], 'slow.txt', { type: 'text/plain' })] },
+    })
+    await screen.findByRole('button', { name: 'Remove slow.txt' })
+    fireEvent.submit(input.closest('form')!)
+    await waitFor(() => expect(sendPrompt).toHaveBeenCalledTimes(1))
+    updateState({
+      ...initial,
+      pendingSession: { revision: 99, workspaceId: 'w1', configuration: initial.configuration! },
+    })
+    await act(async () => {
+      rejectSend?.(Object.assign(new Error('Delivery unconfirmed'), { retryable: true }))
+      await Promise.resolve()
+    })
+    await screen.findByRole('alert')
+    expect(releaseAttachments).not.toHaveBeenCalled()
+  })
+
   it('keeps the draft when an attachment read fails before sending', async () => {
     const state = connectedState(true)
     let rejectIngest: ((reason: unknown) => void) | undefined
@@ -2154,6 +2282,41 @@ describe('App connected rendering', () => {
     )
     expect(sendPrompt).not.toHaveBeenCalled()
     expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' }).value).toBe('keep this draft')
+  })
+
+  it('keeps a removed chip handle alive while the Host still resolves its submission', async () => {
+    const state = connectedState(true)
+    const uri = 'dsh-attachment:00000000-0000-4000-8000-000000000017'
+    let rejectSend: ((reason: unknown) => void) | undefined
+    const sendPrompt = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectSend = reject
+        }),
+    )
+    const releaseAttachments = vi.fn().mockResolvedValue(undefined)
+    currentStore = {
+      ...storeFor(state),
+      sendPrompt,
+      releaseAttachments,
+      ingestAttachment: vi.fn().mockResolvedValue({ uri, name: 'retained.txt', mimeType: 'text/plain' }),
+    }
+    render(<App />)
+    const input = screen.getByRole('textbox', { name: 'Prompt' })
+    fireEvent.change(input, { target: { value: 'with attachment' } })
+    fireEvent.paste(input, {
+      clipboardData: { files: [new File(['data'], 'retained.txt', { type: 'text/plain' })] },
+    })
+    const remove = await screen.findByRole('button', { name: 'Remove retained.txt' })
+    fireEvent.submit(input.closest('form')!)
+    await waitFor(() => expect(sendPrompt).toHaveBeenCalledTimes(1))
+    fireEvent.click(remove)
+    expect(releaseAttachments).not.toHaveBeenCalled()
+    await act(async () => {
+      rejectSend?.(new Error('Host rejected the prompt'))
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(releaseAttachments).toHaveBeenCalledWith([uri]))
   })
 
   it('releases an opaque Host attachment handle when its draft chip is removed', async () => {
@@ -2546,7 +2709,7 @@ describe('App connected rendering', () => {
     // The user navigates to an existing session while the send is still
     // working: the switch hides the pending composition's own attachment, but
     // its handle must stay resolvable until the Host answers, and the draft
-    // text survives the navigation by design.
+    // text stays with its pending owner rather than entering the existing chat.
     updateState({
       ...state,
       activeSessionId: 's2',
@@ -2567,6 +2730,8 @@ describe('App connected rendering', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove notes.txt' })).toBeNull())
     expect(releaseAttachments).not.toHaveBeenCalled()
     const sessionPrompt = await screen.findByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+    expect(sessionPrompt.value).toBe('')
+    fireEvent.change(sessionPrompt, { target: { value: 'draft for the existing chat' } })
     fireEvent.paste(sessionPrompt, {
       clipboardData: { files: [new File(['later'], 'later.txt', { type: 'text/plain' })] },
     })
@@ -2582,7 +2747,7 @@ describe('App connected rendering', () => {
     // Nothing was delivered, so the hidden pending handle is now released.
     await waitFor(() => expect(releaseAttachments).toHaveBeenCalledWith([uri]))
     expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' }).value).toBe(
-      'a prompt I do not want to retype',
+      'draft for the existing chat',
     )
     expect(screen.getByRole('button', { name: 'Remove later.txt' })).toBeDefined()
   })

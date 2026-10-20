@@ -279,9 +279,10 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
     setOpenFileAttachmentIds((current) =>
       Object.fromEntries(Object.entries(current).filter(([uri]) => !removed.has(uri))),
     )
-    if (release)
+    const releasable = uris.filter((uri) => !inFlightAttachmentUrisRef.current.has(uri))
+    if (release && releasable.length > 0)
       void store
-        .releaseAttachments(uris)
+        .releaseAttachments(releasable)
         .catch((reason: unknown) =>
           setError(reason instanceof Error ? reason.message : t('app.error.releaseAttachment')),
         )
@@ -487,7 +488,10 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
             })
           }
         } finally {
-          if (directRequests.length > 0) store.forgetDirectPromptRequests(directRequests)
+          // An explicit abort still needs these identities in the late-admission
+          // watcher below, including when the RPC already returned acceptance.
+          if (directRequests.length > 0 && signal?.aborted !== true)
+            store.forgetDirectPromptRequests(directRequests)
         }
         if (!mountedRef.current || Boolean(signal?.aborted)) return
         // The submitted text belongs to the conversation it was typed in. A
@@ -502,6 +506,10 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
         setOpenFilePickerOpen(false)
       })
       .catch((reason: unknown) => {
+        // A local timeout or retryable transport error can arrive before the
+        // Host finishes resolving the handles. It is not a definite refusal.
+        uncertain =
+          typeof reason === 'object' && reason !== null && 'retryable' in reason && reason.retryable === true
         const aborted =
           Boolean(signal?.aborted) || (reason instanceof DOMException && reason.name === 'AbortError')
         if (aborted) {
@@ -620,7 +628,7 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
       if (!results.every(Boolean) || signal?.aborted) return
       // Reading and navigation can both settle during the wait; only send the
       // conversation's own handles to the conversation still on screen.
-      if (!targetIsCurrent()) return
+      if (!targetIsCurrent() || generation !== attachmentGenerationRef.current) return
       return deliverPrompt(mode, signal, text, submissionOwner, expectedSessionId, attachmentsRef.current)
     })
   }

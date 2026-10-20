@@ -10,6 +10,7 @@ import { findReusableBlankSession } from './session-registry.js'
 import type { createPromptActions } from './prompt-actions.js'
 import type { AppActions, AppState, StateSetter } from './types.js'
 import { object } from './unknown-record.js'
+import { transferDraftOwner } from '../draft-store.js'
 
 const DSH_RC11_VERSION = '0.1.1-rc.1'
 const DSH_RC12_VERSION = '0.1.1-rc.2'
@@ -198,6 +199,7 @@ export function createSessionCreationActions(
         try {
           await openSession(sessionId)
           if (getState().activeSessionId !== sessionId) throw supersededSend()
+          transferDraftOwner(`pending:${pending.revision}`, sessionId)
           await sendUserTurn(sessionId, text, attachments, mode, undefined, signal)
         } finally {
           // Reconcile the directory after attempting to open/admit this session.

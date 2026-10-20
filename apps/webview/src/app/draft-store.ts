@@ -26,6 +26,7 @@ export interface DraftStore {
   readonly set: (action: SetStateAction<string>) => void
   readonly subscribe: (listener: () => void) => () => void
   readonly activate: (owner: string | undefined) => void
+  readonly transfer: (from: string, to: string) => void
   readonly getFor: (owner: string | undefined) => string
   readonly setFor: (owner: string | undefined, action: SetStateAction<string>) => void
   readonly clearIf: (owner: string | undefined, text: string) => void
@@ -90,22 +91,21 @@ function createDraftStore(): DraftStore {
     },
     activate: (owner) => {
       if (owner === activeOwner) return
-      const previous = activeOwner
       activeOwner = owner
-      // The new-session composition is replaced by the session it opens; keep
-      // its text with the visible composer until that send settles.
-      if (previous?.startsWith('pending:') === true) {
-        const text = drafts.get(previous)
-        const destination = keyFor(owner)
-        if (text !== undefined && text !== '' && !drafts.has(destination)) {
-          drafts.delete(previous)
-          carried.set(previous, destination)
-          drafts.set(destination, text)
-        }
-      }
       const next = drafts.get(keyFor(owner)) ?? ''
       if (next === current) return
       current = next
+      announce()
+    },
+    transfer: (from, to) => {
+      // Only the successful first-message open identifies the destination.
+      // Navigation alone cannot prove that the next chat belongs to this draft.
+      const text = drafts.get(from)
+      if (from === to || carried.has(from) || text === undefined || drafts.has(to)) return
+      drafts.delete(from)
+      carried.set(from, to)
+      drafts.set(to, text)
+      if (activeOwner === to) current = text
       announce()
     },
     clearIf: (owner, text) => {
@@ -153,6 +153,11 @@ export function readDraft(): string {
 /** Point edits and reads at the conversation currently shown in the composer. */
 export function activateDraftOwner(owner: string | undefined): void {
   store.activate(owner)
+}
+
+/** Move a pending draft only to the session its first-message open confirmed. */
+export function transferDraftOwner(from: string, to: string): void {
+  store.transfer(from, to)
 }
 
 /** Drop the submitted text only while it still matches, even after a switch. */

@@ -6,6 +6,7 @@ import {
   resetDraft,
   setDraft,
   setDraftFor,
+  transferDraftOwner,
 } from './draft-store.js'
 
 describe('composer draft ownership', () => {
@@ -39,11 +40,24 @@ describe('composer draft ownership', () => {
   it('moves a pending composition draft into the session it opens', () => {
     activateDraftOwner('pending:1')
     setDraft('first message')
+    transferDraftOwner('pending:1', 's3')
     activateDraftOwner('s3')
     expect(readDraft()).toBe('first message')
     clearDraftIf('pending:1', 'first message')
     expect(readDraft()).toBe('')
     activateDraftOwner('s3')
+    expect(readDraft()).toBe('')
+  })
+
+  it('keeps a pending draft out of unrelated existing and new conversations', () => {
+    activateDraftOwner('existing')
+    activateDraftOwner('pending:100')
+    setDraft('belongs to the first new chat')
+    activateDraftOwner('existing')
+    expect(readDraft()).toBe('')
+    activateDraftOwner('pending:100')
+    expect(readDraft()).toBe('belongs to the first new chat')
+    activateDraftOwner('pending:101')
     expect(readDraft()).toBe('')
   })
 
