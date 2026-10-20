@@ -259,7 +259,7 @@ function presentationTargets(
     targets.push({ href: value, label: labelText })
   }
   for (const location of locations ?? []) add(location.path, location.path)
-  if (view === undefined) return targets.slice(0, 16)
+  if (view === undefined) return targets
   switch (view.card) {
     case 'generic':
       if (view.phase === 'call')
@@ -282,7 +282,7 @@ function presentationTargets(
     default:
       break
   }
-  return targets.slice(0, 16)
+  return targets
 }
 
 /**

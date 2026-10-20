@@ -2,11 +2,17 @@
 
 ## Unreleased
 
-- 修复超长思考与正文导致整条回复变成省略号的问题；长回复持续显示最新输出并明确提示省略，合并回复保留逐段全文入口及完整复制，纯思考回复也能查看全文。
-- Keeps oversized thinking and answers readable, continues showing recent streaming output with an explicit preview notice, and preserves per-message full-content access and complete copying in grouped replies, including reasoning-only messages.
+- 长提示词的回显被省略且缺少请求标识时，重读全文确认投递，避免已发送内容卡在输入框；右键复制补齐长回复，并防止迟到的读取覆盖较新的复制操作。
+- Confirms delivery of clipped long prompts without request identities by rereading their full content. Context-menu copying retrieves complete replies and ignores reads superseded by a newer copy gesture.
 
-- 修复长回复结束后全文入口消失、待建草稿串入已有会话、取消发送后迟到消息仍保留草稿，以及附件读取、移除和超时期间的投递竞态。
-- Preserves full-content access after long replies finish, keeps new-chat drafts with their intended conversation, clears late accepted drafts after cancellation, and protects attachments across ingestion, removal and send timeouts.
+- 工具对象不再误用日志采样限制，完整保留参数、返回字段、换行、数组和深层内容；脱敏后不适合专用卡片的安全正文仍在会话内显示。畸形全量时间线触发自动重读恢复。
+- Separates complete tool content from diagnostic sampling, preserving arguments, result fields, whitespace, arrays and nested data. Keeps safe output readable when redaction prevents a specialized card, and recovers malformed full transcript windows automatically.
+
+- 正文、思考和工具结果在主会话内自动补齐；取消“查看全文”和菜单补取入口，保留会话内折叠，展开即显示全部已收到内容。长数组、工具分组及代码、终端和搜索结果不再因展示限制缺项。发送排队输入期间仍可独立停止当前回复。
+- Automatically completes prose, reasoning and tool results inside the conversation, with inline disclosures and no full-content menu. Removes display limits on arrays, grouped tools, code, terminal and search output. Keeps Stop response available during a pending queued send.
+
+- 修复待建草稿串入已有会话、取消发送后迟到消息仍保留草稿，以及附件读取、移除和超时期间的投递竞态。
+- Keeps new-chat drafts with their intended conversation, clears late accepted drafts after cancellation, and protects attachments across ingestion, removal and send timeouts.
 
 - 控制消息部分投递失败时恢复漏收的聊天面板；恢复会重读连接和交互状态，不因此启动或重连 DSH。
 - Recovers chats that missed control messages, including partial broadcasts across multiple views, by rereading connection and interaction state without starting or reconnecting DSH.

@@ -195,7 +195,6 @@ function toolLocations(
     seen.add(path)
     const line = zeroBasedLine(record?.line)
     locations.push({ path, ...(line === undefined ? {} : { line }) })
-    if (locations.length >= 32) break
   }
   return locations.length === 0 ? undefined : locations
 }

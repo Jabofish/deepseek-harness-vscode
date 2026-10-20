@@ -14,6 +14,33 @@ function mapped(
 }
 
 describe('DSH tool presentation contract', () => {
+  it('keeps whole object arguments, generic presentations and result bodies before Host windowing', () => {
+    const text = '  first line\n    indented line\n'.repeat(100)
+    const entries = Array.from({ length: 100 }, (_, index) => ({ index, text }))
+    const args = {
+      command: 'run checks',
+      input: entries,
+      response: { body: text },
+      deep: { a: { b: { c: { d: text } } } },
+    }
+    const call = mapped(rc6Mapper, 'tool/call', {
+      callId: 'c',
+      name: 'plugin-tool',
+      arguments: args,
+      view: { for: 'call', view: { card: 'generic', rawInput: args } },
+    })
+    expect(JSON.parse(call.inputSummary!)).toEqual(args)
+    if (call.presentation?.card !== 'generic' || call.presentation.phase !== 'call')
+      throw new Error('Missing generic presentation')
+    expect(JSON.parse(call.presentation.rawInput!)).toEqual(args)
+    const result = mapped(rc6Mapper, 'tool/result', {
+      callId: 'c',
+      name: 'plugin-tool',
+      outputSummary: { response: { body: text }, rows: entries },
+    })
+    expect(JSON.parse(result.outputSummary!)).toEqual({ response: { body: text }, rows: entries })
+  })
+
   it('maps rc.8 terminal calls and read results into bounded domain views', () => {
     const call = mapped(rc6Mapper, 'tool/call', {
       callId: 'call-terminal',

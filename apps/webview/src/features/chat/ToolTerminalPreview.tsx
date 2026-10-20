@@ -1,9 +1,7 @@
-import { useMemo, useState, type ReactElement } from 'react'
+import { useMemo, type ReactElement } from 'react'
 import type { ToolTerminalRenderProps } from '@dsh-vscode/ui'
 import { CopyButton } from './CopyButton.js'
 import { useI18n } from '../../i18n.js'
-
-const DEFAULT_MAX_LINES = 16
 
 /**
  * Webview renderer for the structured terminal result contract. The raw
@@ -16,11 +14,6 @@ export function ToolTerminalPreview(props: ToolTerminalRenderProps): ReactElemen
   const translate = props.translate ?? defaultTranslate
   const output = props.view.output ?? ''
   const lines = useMemo(() => outputLines(output), [output])
-  const [expanded, setExpanded] = useState(false)
-  const hidden = Math.max(0, lines.length - DEFAULT_MAX_LINES)
-  const capped = hidden > 0 && !expanded
-  const headLines = Math.ceil(DEFAULT_MAX_LINES / 2)
-  const tailLines = DEFAULT_MAX_LINES - headLines
   const status = terminalStatus(props.view, translate)
   const empty = output.trim() === ''
 
@@ -41,38 +34,11 @@ export function ToolTerminalPreview(props: ToolTerminalRenderProps): ReactElemen
         <div className="dsh-tool-terminal-preview__empty">{translate('toolrow.presentation.noOutput')}</div>
       ) : (
         <pre className="dsh-tool-terminal-preview__body" tabIndex={0}>
-          {(capped ? lines.slice(0, headLines) : lines).map((line, index) => (
+          {lines.map((line, index) => (
             <span className="dsh-tool-terminal-preview__line" key={`${index}:${line}`}>
               {line}
             </span>
           ))}
-          {hidden > 0 ? (
-            <button
-              type="button"
-              className="dsh-tool-terminal-preview__fold"
-              aria-expanded={expanded}
-              aria-label={
-                expanded
-                  ? translate('toolrow.presentation.collapseTerminalLines')
-                  : translate('toolrow.presentation.expandTerminalLines', { count: hidden })
-              }
-              onClick={() => setExpanded((value) => !value)}
-            >
-              {expanded
-                ? translate('toolrow.presentation.collapseTerminalLines')
-                : translate('toolrow.presentation.expandTerminalLines', { count: hidden })}
-            </button>
-          ) : null}
-          {capped
-            ? lines.slice(lines.length - tailLines).map((line, index) => (
-                <span
-                  className="dsh-tool-terminal-preview__line"
-                  key={`${lines.length - tailLines + index}:${line}`}
-                >
-                  {line}
-                </span>
-              ))
-            : null}
         </pre>
       )}
     </div>

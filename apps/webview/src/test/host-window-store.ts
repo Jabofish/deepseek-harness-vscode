@@ -168,6 +168,25 @@ export function createHostBackedAppStore(
         host.acknowledge(request.payload.sessionId, request.payload.revision)
         return {} as T
       }
+      if (request.type === 'session.transcript.node')
+        return {
+          node: host.fullNode(
+            request.payload.sessionId,
+            request.payload.nodeId,
+            request.payload.revision,
+            signal ?? new AbortController().signal,
+          ),
+        } as T
+      if (request.type === 'session.transcript.content')
+        return {
+          content: await host.content(
+            request.payload.sessionId,
+            request.payload.nodeId,
+            request.payload.revision,
+            signal ?? new AbortController().signal,
+            false,
+          ),
+        } as T
       if (request.type === 'session.transcript.openContent') {
         const content = await host.content(
           request.payload.sessionId,

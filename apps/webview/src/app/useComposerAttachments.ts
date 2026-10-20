@@ -394,6 +394,48 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
     // A content fallback must not claim a row that was already queued before
     // this submission: rc.6 rows carry no request identity.
     const queueBeforeIds = new Set(expectedSessionId === undefined ? [] : before.queue.map((item) => item.id))
+    const admissionReads = new WeakMap<object, Promise<boolean>>()
+    const confirmClippedAdmission = (sessionId: string, observed: () => void): void => {
+      const current = store.getState()
+      if (current.activeSessionId !== sessionId || current.backend.kind !== 'connected') return
+      const omitted = new Set(current.transcript?.omittedNodeIds)
+      for (const node of current.timeline.nodes) {
+        if (
+          node.kind !== 'user-message' ||
+          beforeIds.has(node.id) ||
+          !omitted.has(node.id) ||
+          node.markdown.length >= text.length ||
+          !text.startsWith(node.markdown)
+        )
+          continue
+        let read = admissionReads.get(node)
+        if (read === undefined) {
+          read = Promise.resolve()
+            .then(() =>
+              store.getState().activeSessionId === sessionId &&
+              store.getState().connectionEpoch === before.connectionEpoch
+                ? store.loadTranscriptContent(node.id)
+                : undefined,
+            )
+            .then(
+              (full) => full === text,
+              () => false,
+            )
+          admissionReads.set(node, read)
+        }
+        void read.then((matches) => {
+          const latest = store.getState()
+          if (
+            matches &&
+            latest.connectionEpoch === before.connectionEpoch &&
+            latest.activeSessionId === sessionId &&
+            latest.backend.kind === 'connected' &&
+            latest.timeline.nodes.some((candidate) => candidate.id === node.id)
+          )
+            observed()
+        })
+      }
+    }
     const snapshotUris = attachmentSnapshot.map((attachment) => attachment.uri)
     for (const uri of snapshotUris) inFlightAttachmentUrisRef.current.add(uri)
     let delivered = false
@@ -459,6 +501,10 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
                   )
                 )
                   finish()
+                else
+                  confirmClippedAdmission(sessionId, () => {
+                    if (!settled) finish()
+                  })
               }
               const timer = setTimeout(() => {
                 // A false direct classification used to surface as a hard
@@ -551,6 +597,18 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
             store.forgetDirectPromptRequests(directRequests)
           }
           const cancel = (): void => finish()
+          const observed = (): void => {
+            if (settled) return
+            if (mountedRef.current) {
+              deps.clearDraftIf(submissionOwner, text)
+              removeAttachmentDrafts(
+                attachmentSnapshot.map((attachment) => attachment.uri),
+                false,
+              )
+              setOpenFilePickerOpen(false)
+            }
+            finish()
+          }
           const check = (): void => {
             const current = store.getState()
             if (current.activeSessionId !== sessionId) return
@@ -561,17 +619,11 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
                   ((node.rpcId !== undefined && directRequests.includes(node.rpcId)) ||
                     (!beforeIds.has(node.id) && node.markdown === text)),
               )
-            )
+            ) {
+              confirmClippedAdmission(sessionId, observed)
               return
-            if (mountedRef.current) {
-              deps.clearDraftIf(submissionOwner, text)
-              removeAttachmentDrafts(
-                attachmentSnapshot.map((attachment) => attachment.uri),
-                false,
-              )
-              setOpenFilePickerOpen(false)
             }
-            finish()
+            observed()
           }
           const timer = setTimeout(finish, 5_000)
           unsubscribe = store.subscribe(check)

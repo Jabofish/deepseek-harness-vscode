@@ -637,6 +637,29 @@ describe('Composer', () => {
     expect(onCancel).not.toHaveBeenCalled()
   })
 
+  it('keeps Stop response independent of cancelling a pending queued send', async () => {
+    let resolve!: () => void
+    const pending = new Promise<void>((done) => {
+      resolve = done
+    })
+    const onSubmit = vi.fn((_mode: string, _signal?: AbortSignal) => pending)
+    const onCancel = vi.fn()
+    render(<Composer {...baseProps()} draft="follow-up" running onSubmit={onSubmit} onCancel={onCancel} />)
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Prompt' }), { key: 'Enter' })
+    const signal = onSubmit.mock.calls[0]?.[1]
+    expect(screen.getByRole('button', { name: 'Cancel sending' })).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Stop response' }))
+    expect(onCancel).toHaveBeenCalledOnce()
+    expect(signal?.aborted).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel sending' }))
+    expect(signal?.aborted).toBe(true)
+    expect(onCancel).toHaveBeenCalledOnce()
+    await act(async () => {
+      resolve()
+      await pending
+    })
+  })
+
   it('steers a running draft with the accelerated chord by default', () => {
     const onSubmit = vi.fn()
     render(<Composer {...baseProps()} draft="follow-up" running onSubmit={onSubmit} />)

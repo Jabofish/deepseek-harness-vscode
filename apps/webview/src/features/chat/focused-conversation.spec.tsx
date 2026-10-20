@@ -330,7 +330,7 @@ describe('focused conversation interactions', () => {
     expect(screen.queryByText('Tool calls: 1')).toBeNull()
   })
 
-  it('limits mounted details to one tool page and makes every call reachable', () => {
+  it('keeps every tool call in the main conversation group without manual pages', () => {
     const tools = Array.from({ length: 55 }, (_, index) => ({
       kind: 'tool' as const,
       id: `tool-${index}`,
@@ -354,11 +354,8 @@ describe('focused conversation interactions', () => {
     )
     expect(view.container.querySelectorAll('[data-tool-call-id]').length).toBe(0)
     fireEvent.click(screen.getByRole('button', { name: /timeline.focused.tools/ }))
-    expect(view.container.querySelectorAll('[data-tool-call-id]').length).toBe(20)
-    fireEvent.click(screen.getByRole('button', { name: 'timeline.focused.next' }))
-    expect(view.container.querySelector('[data-tool-call-id="tool-20"]')).not.toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'timeline.focused.next' }))
-    expect(view.container.querySelectorAll('[data-tool-call-id]').length).toBe(15)
+    expect(view.container.querySelectorAll('[data-tool-call-id]').length).toBe(55)
     expect(view.container.querySelector('[data-tool-call-id="tool-54"]')).not.toBeNull()
+    expect(screen.queryByRole('button', { name: 'timeline.focused.next' })).toBeNull()
   })
 })

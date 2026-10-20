@@ -14,6 +14,7 @@ export async function writeClipboard(text: string): Promise<boolean> {
   }
 
   const textarea = document.createElement('textarea')
+  textarea.setAttribute('data-dsh-clipboard-fallback', '')
   textarea.value = text
   textarea.setAttribute('readonly', '')
   textarea.style.position = 'fixed'

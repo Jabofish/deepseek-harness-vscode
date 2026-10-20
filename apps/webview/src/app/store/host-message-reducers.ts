@@ -64,7 +64,8 @@ export function applyHostMessage(
     try {
       setState(installTranscript(state, parseTranscript(message.payload)))
     } catch {
-      /* Invalid windows cannot replace the current transcript. */
+      // A malformed full window needs the same authoritative recovery as a bad patch.
+      if (object(message.payload)?.sessionId === state.activeSessionId) onConnectionEpoch?.()
     }
     return
   }

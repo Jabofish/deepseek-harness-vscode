@@ -163,8 +163,20 @@ export function createSessionRequestHandler(
         request.payload.nodeId,
         request.payload.revision,
         signal,
+        false,
       )
       return { content }
+    }
+    if (request.type === 'session.transcript.node') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      return {
+        node: deps.transcript.fullNode(
+          request.payload.sessionId,
+          request.payload.nodeId,
+          request.payload.revision,
+          signal,
+        ),
+      }
     }
 
     if (request.type === 'session.create') {

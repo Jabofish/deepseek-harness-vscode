@@ -87,6 +87,7 @@ type Sent = {
 }
 
 interface Harness {
+  readonly transcript: ReturnType<typeof transcriptWindowFixture>
   readonly gateway: ReturnType<typeof createRequestGateway>
   readonly sent: Sent[]
   readonly events: Sent[]
@@ -121,8 +122,9 @@ function buildGateway(): Harness {
       type: parsed.message?.type ?? entry.type ?? 'unknown',
     })
   }
+  const transcript = transcriptWindowFixture()
   const gateway = createRequestGateway({
-    transcript: transcriptWindowFixture(),
+    transcript,
     post: (message: unknown) => {
       record(sent, undefined, message)
       return Promise.resolve(true)
@@ -184,6 +186,7 @@ function buildGateway(): Harness {
     }
   }
   return {
+    transcript,
     gateway,
     sent,
     events,
@@ -219,6 +222,46 @@ describe('request gateway editor surface routes', () => {
       kind: 'idle',
     })
     expect(harness.sent).toContainEqual(expect.objectContaining({ requestId: 'recover-state', ok: true }))
+  })
+
+  it('serves complete live nodes only through the owning surface and scoped session', async () => {
+    const window = harness.transcript.forSurface('sidebar')
+    const snapshot = window.installPage(
+      's',
+      {
+        events: [
+          {
+            sequence: 1,
+            time: '2026-10-20T00:00:00Z',
+            event: { type: 'message.delta', sessionId: 's', messageId: 'm', delta: 'Whole live body' },
+          },
+        ],
+        hasMore: false,
+      },
+      window.begin('s'),
+    )
+    const payload = { sessionId: 's', nodeId: 'm', revision: snapshot.revision }
+    await harness.gateway.router.handle(request('session.transcript.node', 'full-node', payload), 'sidebar')
+    expect(harness.sent).toContainEqual(
+      expect.objectContaining({
+        requestId: 'full-node',
+        ok: true,
+      }),
+    )
+    expect(harness.sent.find((item) => item.requestId === 'full-node')?.payload).toMatchObject({
+      node: { id: 'm', markdown: 'Whole live body' },
+    })
+    await harness.gateway.router.handle(
+      request('session.transcript.node', 'other-surface', payload),
+      'editor-1',
+    )
+    expect(harness.sent).toContainEqual(expect.objectContaining({ requestId: 'other-surface', ok: false }))
+    harness.rejectSession('s')
+    await harness.gateway.router.handle(
+      request('session.transcript.node', 'foreign-node', payload),
+      'sidebar',
+    )
+    expect(harness.sent).toContainEqual(expect.objectContaining({ requestId: 'foreign-node', ok: false }))
   })
 
   it('updates title-bar layout only from the sidebar, independently of connection and trust', async () => {

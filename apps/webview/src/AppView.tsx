@@ -512,45 +512,6 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                           >
                             {t('inspector.title')}
                           </button>
-                          {state.transcript === undefined ||
-                          state.transcript.omittedNodeIds.length === 0 ? null : (
-                            <details className="dsh-conversation__content-menu">
-                              <summary>{t('transcript.fullContent')}</summary>
-                              <div className="dsh-conversation__content-list">
-                                {state.transcript.omittedNodeIds.map((id) => {
-                                  const node = state.timeline.nodes.find((candidate) => candidate.id === id)
-                                  const label =
-                                    node?.kind === 'tool'
-                                      ? node.tool.title
-                                      : node !== undefined && 'markdown' in node
-                                        ? node.markdown.slice(0, 64)
-                                        : t('transcript.fullContent')
-                                  return (
-                                    <button
-                                      key={id}
-                                      type="button"
-                                      disabled={
-                                        (node?.kind === 'assistant-message' &&
-                                          (node.streaming || node.reasoning?.streaming === true)) ||
-                                        (node?.kind === 'reasoning' && node.streaming) ||
-                                        (node?.kind === 'tool' &&
-                                          (node.tool.status === 'running' || node.tool.status === 'queued'))
-                                      }
-                                      className="dsh-button dsh-button--secondary dsh-button--compact"
-                                      onClick={() => {
-                                        closeMenu()
-                                        void store
-                                          .openTranscriptContent(id)
-                                          .catch((reason) => setError(String(reason)))
-                                      }}
-                                    >
-                                      {label}
-                                    </button>
-                                  )
-                                })}
-                              </div>
-                            </details>
-                          )}
                         </>
                       )}
                     </ConversationActionsMenu>
@@ -657,7 +618,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                       {...(state.transcript === undefined
                         ? {}
                         : { omittedNodeIds: state.transcript.omittedNodeIds })}
-                      onOpenFullContent={(nodeId) => store.openTranscriptContent(nodeId)}
+                      loadFullNode={(nodeId, signal) => store.loadTranscriptNode(nodeId, signal)}
                       loadFullContent={(nodeId) => store.loadTranscriptContent(nodeId)}
                     />
                   ) : (

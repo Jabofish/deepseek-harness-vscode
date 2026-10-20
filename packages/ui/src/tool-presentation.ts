@@ -290,21 +290,26 @@ function visibleContent(value: unknown): readonly string[] {
     const formatted = formatToolText(value)
     return formatted === undefined ? [] : [formatted]
   }
-  if (Array.isArray(value)) return unique(value.flatMap(visibleContent))
+  if (Array.isArray(value)) return value.flatMap(visibleContent)
   const record = object(value)
   if (record === undefined) return []
-  if (typeof record.text === 'string') {
-    // A `{type:'text', text}` block carries the tool's own output, which for a
-    // structured tool is the JSON payload itself; it needs the same formatting
-    // as every other text boundary instead of being shown raw.
-    const formatted = formatToolText(record.text)
-    return formatted === undefined ? [] : [formatted]
+  const contentKeys = new Set(['text', 'content', 'message', 'result', 'output'])
+  const parts: string[] = []
+  for (const key of contentKeys) {
+    if (key === 'text' && typeof record.text === 'string') {
+      const text = formatToolText(record.text)
+      if (text !== undefined) parts.push(text)
+    } else parts.push(...visibleContent(record[key]))
   }
-  for (const key of ['content', 'message', 'result', 'output'] as const) {
-    const nested = visibleContent(record[key])
-    if (nested.length > 0) return nested
+  if (parts.length === 0) return []
+  // A content envelope can also carry warnings, exit details or other public
+  // result fields. Keep those siblings instead of accepting only its first body.
+  for (const [key, entry] of Object.entries(record)) {
+    if (contentKeys.has(key) || isInternalField(key)) continue
+    const rendered = displayValue({ [key]: entry })
+    if (rendered !== undefined) parts.push(rendered)
   }
-  return []
+  return parts
 }
 
 function cleanAcknowledgement(value: string, subagent: boolean, t?: PresentationTranslate): string {
@@ -368,22 +373,16 @@ function displayValue(value: unknown, depth = 0, t?: PresentationTranslate): str
   if (typeof value === 'number' || typeof value === 'boolean') return String(value)
   if (value === null) return 'null'
   if (Array.isArray(value)) {
-    if (depth > 5) return '…'
-    const shown = value.slice(0, 64)
-    const items = shown
+    if (depth > 64)
+      return JSON.stringify(value, (key, entry: unknown) => (isInternalField(key) ? undefined : entry), 2)
+    const lines = value
       .map((entry) => displayValue(entry, depth + 1, t))
       .filter((entry): entry is string => entry !== undefined)
-    // A truncated list says so: silently dropping the tail would look like the
-    // tool returned exactly these rows.
-    const omitted =
-      value.length > shown.length
-        ? [localize(t, 'presentation.moreItems', '… ({count} more)', { count: value.length - shown.length })]
-        : []
-    const lines = [...items, ...omitted]
     return lines.length === 0 ? undefined : lines.map((entry) => `• ${indent(entry)}`).join('\n')
   }
   if (value !== null && typeof value === 'object') {
-    if (depth > 5) return '…'
+    if (depth > 64)
+      return JSON.stringify(value, (key, entry: unknown) => (isInternalField(key) ? undefined : entry), 2)
     const lines: string[] = []
     for (const [key, entry] of Object.entries(value)) {
       if (isInternalField(key)) continue
@@ -623,8 +622,4 @@ function firstString(...values: readonly unknown[]): string | undefined {
 function oneLine(value: string): string {
   const collapsed = value.replace(/\s+/gu, ' ').trim()
   return collapsed.length > 160 ? `${collapsed.slice(0, 159)}…` : collapsed
-}
-
-function unique(values: readonly string[]): readonly string[] {
-  return [...new Set(values)]
 }

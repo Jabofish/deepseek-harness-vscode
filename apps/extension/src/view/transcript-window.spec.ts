@@ -59,7 +59,7 @@ afterEach(() => vi.useRealTimers())
 
 describe('Host transcript windows', () => {
   it.each(['message.delta', 'reasoning.delta'] as const)(
-    'keeps the latest %s visible after the live body exceeds its preview budget',
+    'keeps all %s content intact above the former preview budget',
     async (type) => {
       const client = fixture()
       client.open()
@@ -83,7 +83,7 @@ describe('Host transcript windows', () => {
       if (node?.kind !== 'assistant-message') throw new Error('Missing live answer')
       const body = type === 'message.delta' ? node.markdown : node.reasoning?.markdown
       expect(body?.includes('LATEST_PROGRESS')).toBe(true)
-      expect(window?.omittedNodeIds).toContain('live')
+      expect(window?.omittedNodeIds).not.toContain('live')
       expect(transcriptWindowSchema.safeParse(window).success).toBe(true)
       client.service.dispose()
     },
@@ -93,7 +93,7 @@ describe('Host transcript windows', () => {
     { markdown: '\\\n'.repeat(60_000), reasoning: undefined },
     { markdown: 'answer '.repeat(18_000), reasoning: 'thinking '.repeat(15_000) },
   ])(
-    'preserves an answer and full-content access when its serialized preview exceeds the budget',
+    'publishes complete prose and reasoning above the former serialized budget',
     async ({ markdown, reasoning }) => {
       const event: BackendEvent = {
         type: 'message.completed',
@@ -110,7 +110,8 @@ describe('Host transcript windows', () => {
       if (node?.kind !== 'assistant-message') throw new Error('Answer was discarded')
       expect(node.markdown.length).toBeGreaterThan(1_000)
       expect(markdown.startsWith(node.markdown)).toBe(true)
-      expect(window.omittedNodeIds).toContain('large-answer')
+      expect(node.markdown).toBe(markdown)
+      expect(window.omittedNodeIds).not.toContain('large-answer')
       expect(transcriptWindowSchema.safeParse(window).success).toBe(true)
       expect(
         await client.service.content(sessionId, node.id, window.revision, new AbortController().signal),
@@ -120,7 +121,7 @@ describe('Host transcript windows', () => {
   )
 
   it('retains full-content access when a clipped live answer ends without a replacement body', async () => {
-    const full = 'a'.repeat(140 * 1024)
+    const full = 'a'.repeat(TRANSCRIPT_MAX_CHARS + 1024)
     const client = fixture(vi.fn().mockResolvedValue({ events: [message(2, full)], hasMore: false }))
     client.open()
     client.service.accept({ type: 'turn.started', sessionId, turn: 1, sequence: 1 })
@@ -138,6 +139,51 @@ describe('Host transcript windows', () => {
     expect(
       await client.service.content(sessionId, 'm-2', window.revision, new AbortController().signal),
     ).toBe(full)
+    client.service.dispose()
+  })
+
+  it('preserves the whole live body through viewport eviction and later deltas', async () => {
+    const client = fixture()
+    client.open()
+    const full = 'ORIGINAL_START ' + 'x'.repeat(TRANSCRIPT_MAX_CHARS + 1024)
+    client.service.accept({
+      type: 'message.delta',
+      sessionId,
+      messageId: 'live',
+      delta: full,
+      turn: 1,
+      sequence: 1,
+    })
+    // Force the live node out of the visible node window.
+    for (let index = 0; index < 260; index++) client.service.accept(message(index + 2).event)
+    client.service.accept({
+      type: 'message.delta',
+      sessionId,
+      messageId: 'live',
+      delta: ' COMPLETE_TAIL',
+      turn: 1,
+      sequence: 300,
+    })
+    const resident = client.service['tail']!
+    const restored = resident.liveBodies.get('live')
+    expect(restored).toMatchObject({ markdown: full + ' COMPLETE_TAIL' })
+    await Promise.resolve()
+    client.service.dispose()
+  })
+
+  it('returns complete live nodes, rejects stale session/revision reads, and honors cancellation', () => {
+    const client = fixture()
+    const window = client.open([message(1, 'Whole body')])
+    const signal = new AbortController().signal
+    expect(client.service.fullNode(sessionId, 'm-1', window.revision, signal)).toMatchObject({
+      markdown: 'Whole body',
+    })
+    expect(() => client.service.fullNode('other', 'm-1', window.revision, signal)).toThrow()
+    expect(() => client.service.fullNode(sessionId, 'm-1', window.revision + 1, signal)).toThrow()
+    expect(() => client.service.fullNode(sessionId, 'missing', window.revision, signal)).toThrow()
+    const aborted = new AbortController()
+    aborted.abort()
+    expect(() => client.service.fullNode(sessionId, 'm-1', window.revision, aborted.signal)).toThrow()
     client.service.dispose()
   })
 
@@ -757,7 +803,16 @@ describe('Host transcript windows', () => {
     expect(window.nodes[0]).toMatchObject({ kind: 'tool', tool: { presentation: { card: 'terminal' } } })
     expect(JSON.stringify(window)).not.toContain('private')
     expect(window.nodes[1]).toMatchObject({ kind: 'tool', tool: { status: 'completed' } })
-    expect(window.omittedNodeIds).toEqual([])
+    expect(window.omittedNodeIds).toEqual(['outside'])
+    const complete = client.service.fullNode(
+      sessionId,
+      'outside',
+      window.revision,
+      new AbortController().signal,
+    )
+    expect(complete).toMatchObject({ kind: 'tool', tool: { presentation: { card: 'generic' } } })
+    expect(JSON.stringify(complete)).toContain('Visible result')
+    expect(JSON.stringify(complete)).not.toContain('private.txt')
     client.service.dispose()
   })
 
@@ -773,9 +828,9 @@ describe('Host transcript windows', () => {
     service.dispose()
   })
 
-  it('clips an oversized message from the front and marks it omitted', () => {
+  it('bounds only transport and retains an oversized message in full', () => {
     const { service, open } = fixture()
-    const text = `BEGIN-${'b'.repeat(129 * 1024)}`
+    const text = `BEGIN-${'b'.repeat(TRANSCRIPT_MAX_CHARS + 1024)}-END`
     const window = open([message(1, text)])
     const node = window.nodes[0]
     if (node?.kind !== 'assistant-message') throw new Error('Expected an assistant message.')
@@ -783,6 +838,9 @@ describe('Host transcript windows', () => {
     expect(node.markdown.length).toBeLessThan(text.length)
     expect(node.markdown.startsWith('BEGIN-')).toBe(true)
     expect(window.omittedNodeIds).toEqual(['m-1'])
+    expect(service.fullNode(sessionId, 'm-1', window.revision, new AbortController().signal)).toMatchObject({
+      markdown: text,
+    })
     service.dispose()
   })
 
@@ -870,7 +928,7 @@ describe('Host transcript windows', () => {
         )
         expect(full).toContain(text)
         expect(full).not.toContain('fixture-secret')
-        expect(client.read).toHaveBeenCalledWith(sessionId, 10, expect.any(AbortSignal), false)
+        expect(client.read).not.toHaveBeenCalled()
         client.service.dispose()
       },
     )

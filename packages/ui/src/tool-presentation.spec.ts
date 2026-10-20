@@ -51,6 +51,25 @@ describe('toolPresentation', () => {
     expect(JSON.stringify(presentation)).not.toContain('message-secret-id')
   })
 
+  it('keeps public response siblings alongside a content envelope', () => {
+    const presentation = toolPresentation(
+      tool({
+        outputSummary: JSON.stringify({
+          content: [{ type: 'text', text: 'Tool output' }],
+          warnings: ['Important warning'],
+          response: { status: 200, body: 'Complete body' },
+          requestId: 'internal-id',
+        }),
+      }),
+    )
+    const output = presentation.response.map((block) => block.content).join('\n')
+    expect(output).toContain('Tool output')
+    expect(output).toContain('Important warning')
+    expect(output).toContain('200')
+    expect(output).toContain('Complete body')
+    expect(output).not.toContain('internal-id')
+  })
+
   it('formats unknown tool objects without exposing protocol identifiers or raw JSON', () => {
     const presentation = toolPresentation(
       tool({
@@ -214,7 +233,7 @@ describe('formatToolText', () => {
     expect(formatToolText(failure)).toBe(failure)
   })
 
-  it('marks a list the formatter capped instead of dropping its tail silently', () => {
+  it('retains every entry of a long structured output list', () => {
     const presentation = toolPresentation(
       tool({
         name: 'workspace_search',
@@ -225,7 +244,24 @@ describe('formatToolText', () => {
 
     const content = presentation.response[0]?.content ?? ''
     expect(content).toContain('• Index: 63')
-    expect(content).not.toContain('• Index: 64')
-    expect(content).toContain('… (36 more)')
+    expect(content).toContain('• Index: 64')
+    expect(content).toContain('• Index: 99')
+    expect(content).not.toContain('more)')
+  })
+  it('retains repeated output lines and deeply nested public fields', () => {
+    const repeated = toolPresentation(
+      tool({
+        outputSummary: JSON.stringify([
+          { type: 'text', text: 'repeat' },
+          { type: 'text', text: 'repeat' },
+        ]),
+      }),
+    )
+    expect(repeated.response[0]?.content).toBe('repeat\n\nrepeat')
+    let value: unknown = { detail: 'DEEPEST_OUTPUT', secret: 'fixture-secret' }
+    for (let index = 0; index < 70; index++) value = { child: value }
+    const text = formatToolText(JSON.stringify(value))
+    expect(text).toContain('DEEPEST_OUTPUT')
+    expect(text).not.toContain('fixture-secret')
   })
 })

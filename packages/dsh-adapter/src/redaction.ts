@@ -169,6 +169,57 @@ export function safePayload(value: unknown, depth = 0): unknown {
   return result
 }
 
+/** Tool content is a user-visible body, not a bounded diagnostic sample.
+ * Preserve JSON shape, whitespace and every entry while removing credentials
+ * and Host-only state. In particular body/response/input/output are content. */
+export function serializeToolContent(value: unknown): string {
+  if (typeof value === 'string') return value
+  return (
+    JSON.stringify(value, (key, entry: unknown) => {
+      const normalized = key.replace(/[_-]/gu, '').toLocaleLowerCase()
+      if (TOOL_PRIVATE_FIELDS.has(normalized)) return undefined
+      if (typeof entry !== 'string') return entry
+      return entry
+        .replace(QUOTED_ABSOLUTE_PATH_PATTERN, PATH_REDACTION)
+        .replace(FILE_URI_PATTERN, PATH_REDACTION)
+        .replace(ABSOLUTE_PATH_PATTERN, PATH_REDACTION)
+        .replace(/(https?:\/\/)([^/\s:@]+(?::[^/\s@]*)?@)/giu, '$1[redacted]@')
+        .replace(LABELLED_AUTH_SCHEME_PATTERN, LABELLED_AUTH_SCHEME_REDACTION)
+        .replace(AUTH_SCHEME_PATTERN, AUTH_SCHEME_REDACTION)
+        .replace(QUERY_CREDENTIAL_PATTERN, '$1[redacted]')
+        .replace(TOOL_CREDENTIAL_TEXT_PATTERN, '$1[redacted]')
+    }) ?? ''
+  )
+}
+
+const TOOL_PRIVATE_FIELDS = new Set([
+  'apikey',
+  'authorization',
+  'accesstoken',
+  'refreshtoken',
+  'authtoken',
+  'token',
+  'secret',
+  'secretkey',
+  'privatekey',
+  'password',
+  'endpoint',
+  'baseurl',
+  'cwd',
+  'workingdirectory',
+  'home',
+  'executable',
+  'executablepath',
+  'pid',
+  'processid',
+  'managedport',
+  'attachports',
+  'serverurl',
+  'stack',
+])
+const TOOL_CREDENTIAL_TEXT_PATTERN =
+  /\b((?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|auth[_ -]?token|authorization|password|secret(?:[_ -]?key)?|private[_ -]?key|token)\b["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;&]+)/giu
+
 export function isSensitiveField(key: string): boolean {
   return SENSITIVE_FIELDS.has(key.toLocaleLowerCase())
 }

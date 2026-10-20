@@ -188,7 +188,7 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
           pending.version === lifecycle.getOpenVersion() &&
           getState().activeSessionId === pending.sessionId
         )
-          applyHostMessage(message, getState(), setState, parsedEvent, projectionSequences)
+          applyHostMessage(message, getState(), setState, parsedEvent, projectionSequences, reopenActiveView)
       }
     }
     // Buffer session-scoped view/control updates during the opening barrier.

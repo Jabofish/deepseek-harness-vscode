@@ -1,8 +1,38 @@
 import { describe, expect, it } from 'vitest'
 
-import { redactMultilineText, redactText, safePayload } from '../src/redaction.js'
+import { redactMultilineText, redactText, safePayload, serializeToolContent } from '../src/redaction.js'
 
 describe('shared redaction', () => {
+  it('preserves full tool objects independently of diagnostic budgets', () => {
+    const body = '  first line\n    indented line\n'.repeat(100)
+    const rows = Array.from({ length: 100 }, (_, index) => ({ index, text: body }))
+    const fields = Object.fromEntries(Array.from({ length: 100 }, (_, index) => [`field${index}`, body]))
+    const value = {
+      arguments: { prompt: body, command: 'echo output', input: rows },
+      response: { body, output: fields },
+      deep: { a: { b: { c: { d: { e: body } } } } },
+    }
+    expect(JSON.parse(serializeToolContent(value))).toEqual(value)
+  })
+
+  it('redacts tool credentials and Host state without erasing public response/body fields', () => {
+    const text = serializeToolContent({
+      response: {
+        body: 'normal body: visible',
+        api_key: 'fixture-key',
+        nested: { accessToken: 'fixture-token' },
+      },
+      cwd: 'C:\\private',
+      pid: 123,
+      text: 'authorization: Bearer fixture-auth\n  keep indentation',
+    })
+    expect(text).toContain('normal body: visible')
+    expect(text).toContain('keep indentation')
+    expect(text).not.toContain('fixture-')
+    expect(text).not.toContain('private')
+    expect(text).not.toContain('pid')
+  })
+
   it('takes the union of sensitive text and URL credential rules', () => {
     const value = redactText(
       'https://alice:secret@example.invalid failed prompt=private body=payload response=result token=abc',

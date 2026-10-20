@@ -154,7 +154,6 @@ function toolLocationTargets(locations: readonly ToolLocationView[] | undefined)
     if (href === '' || seen.has(href)) continue
     seen.add(href)
     targets.push({ href, label: location.line === undefined ? href : `${href}:${location.line + 1}` })
-    if (targets.length >= 16) break
   }
   return targets
 }

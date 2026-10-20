@@ -1,4 +1,4 @@
-import { safePayload } from '../../redaction.js'
+import { serializeToolContent } from '../../redaction.js'
 import { recordOrUndefined as objectOrUndefined } from '../../repositories/shared/guards.js'
 
 export function object(value: unknown, label: string): Record<string, unknown> {
@@ -93,8 +93,7 @@ export function enumValue<const T extends readonly string[]>(
  * the same reason. Callers own presentation and may fold or scroll it.
  */
 export function fullText(value: unknown): string {
-  const text = typeof value === 'string' ? value : JSON.stringify(safePayload(value))
-  return text ?? ''
+  return serializeToolContent(value)
 }
 
 /** Non-blank host-authored text kept whole, for a surface that renders it as sent. */

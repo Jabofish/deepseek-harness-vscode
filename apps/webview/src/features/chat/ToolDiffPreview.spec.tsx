@@ -47,7 +47,7 @@ describe('ToolDiffPreview', () => {
     )
   })
 
-  it('folds the middle while keeping all diff rows available after expansion', () => {
+  it('renders every diff row after the tool disclosure is opened', () => {
     const diffs = Array.from({ length: 10 }, (_, index) => ({
       path: `src/${index}.ts`,
       oldText: null,
@@ -55,16 +55,11 @@ describe('ToolDiffPreview', () => {
     }))
     const { container } = render(<ToolDiffPreview {...diffProps({ diffs })} />)
 
-    expect(container.querySelectorAll('.dsh-tool-diff-preview__line')).toHaveLength(16)
+    expect(container.querySelectorAll('.dsh-tool-diff-preview__line')).toHaveLength(20)
     expect(container.textContent).toContain('src/0.ts')
     expect(container.textContent).toContain('src/9.ts')
-    expect(container.textContent).not.toContain('src/5.ts')
-    expect(screen.getByRole('button', { name: 'Show 4 more diff lines' })).toBeDefined()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Show 4 more diff lines' }))
-    expect(container.querySelectorAll('.dsh-tool-diff-preview__line')).toHaveLength(20)
     expect(container.textContent).toContain('src/5.ts')
-    expect(screen.getByRole('button', { name: 'Show fewer diff lines' })).toBeDefined()
+    expect(screen.queryByRole('button', { name: 'Show 4 more diff lines' })).toBeNull()
   })
 
   it('renders no empty card when the validated diff list is empty', () => {

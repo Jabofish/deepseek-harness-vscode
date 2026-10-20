@@ -6,6 +6,8 @@ import type {
   SubagentView,
 } from '@dsh-vscode/domain'
 import type { FeatureRequest } from '@dsh-vscode/webview-protocol'
+import { transcriptNodeSchema } from '@dsh-vscode/webview-protocol'
+import type { TimelineNode } from '@dsh-vscode/timeline'
 import { PluginInstallRecoveryController } from './plugin-install-recovery.js'
 import { createAccountActions } from './store/account-actions.js'
 import { createSettingsActions } from './store/settings-actions.js'
@@ -764,6 +766,30 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         requestId: requestId(),
         payload: { sessionId: window.sessionId, revision: window.revision, nodeId },
       })
+    },
+    loadTranscriptNode: async (nodeId, signal) => {
+      const window = state.transcript
+      if (window === undefined) throw new Error('Transcript content is unavailable.')
+      const epoch = state.connectionEpoch
+      const result = await client.request<{ readonly node?: unknown }>(
+        {
+          type: 'session.transcript.node',
+          requestId: requestId(),
+          payload: { sessionId: window.sessionId, revision: window.revision, nodeId },
+        },
+        signal,
+      )
+      if (
+        signal?.aborted === true ||
+        state.connectionEpoch !== epoch ||
+        state.transcript?.sessionId !== window.sessionId ||
+        state.transcript.historical !== window.historical ||
+        (window.historical && state.transcript.revision !== window.revision)
+      )
+        throw new Error('Transcript view has changed.')
+      const node = transcriptNodeSchema.parse(result?.node) as TimelineNode
+      if (node.id !== nodeId) throw new Error('Unexpected transcript node.')
+      return node
     },
     loadTranscriptContent: async (nodeId) => {
       const window = state.transcript

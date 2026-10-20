@@ -52,21 +52,36 @@ describe('Timeline', () => {
     expect(screen.queryByRole('button', { name: 'Jump to latest' })).toBeNull()
   })
 
-  it('marks a clipped message and opens its complete content', () => {
-    const onOpenFullContent = vi.fn()
+  it('loads a transport-limited input automatically without a full-content button', async () => {
+    const loadFullNode = vi
+      .fn()
+      .mockResolvedValue({ kind: 'user-message', id: 'user-1', markdown: 'complete input' })
     render(
       <Timeline
         sessionId="session-1"
-        nodes={[{ kind: 'user-message', id: 'user-1', markdown: 'visible prefix' }]}
         streaming={false}
         omittedNodeIds={['user-1']}
-        onOpenFullContent={onOpenFullContent}
+        loadFullNode={loadFullNode}
+        nodes={[{ kind: 'user-message', id: 'user-1', markdown: 'visible prefix' }]}
       />,
     )
+    await screen.findByText('complete input')
+    expect(screen.queryByRole('button', { name: 'Open full content' })).toBeNull()
+  })
 
-    expect(screen.getByRole('note').textContent).toContain('Long content')
-    fireEvent.click(screen.getByRole('button', { name: 'Open full content' }))
-    expect(onOpenFullContent).toHaveBeenCalledWith('user-1')
+  it('can load earlier history when the current window has no visible anchor', () => {
+    const onLoadOlderHistory = vi.fn()
+    render(
+      <Timeline
+        sessionId="s"
+        streaming={false}
+        nodes={[]}
+        hasMoreHistory
+        onLoadOlderHistory={onLoadOlderHistory}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Load earlier' }))
+    expect(onLoadOlderHistory).toHaveBeenCalledOnce()
   })
 
   it('shows tool activity when a live tool is present in the transcript tail', () => {

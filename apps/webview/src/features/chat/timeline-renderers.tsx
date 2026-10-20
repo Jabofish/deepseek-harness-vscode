@@ -9,7 +9,7 @@ import type {
 import { MarkdownContent } from './MarkdownContent.js'
 import { MessageImages } from './MessageImages.js'
 import { MessageActions } from './MessageActions.js'
-import { ContentTruncationNotice } from './ContentTruncationNotice.js'
+import { loadRowCopyMarkdown } from './transcript-copy.js'
 import { containsUserTextReferences, projectUserText } from './UserText.js'
 import { ReasoningDisclosure } from './ReasoningDisclosure.js'
 import { ToolCallCollection, type ToolTimelineNode } from './ToolCallCollection.js'
@@ -65,7 +65,6 @@ function renderNode(
   performanceUsage: PerformanceUsageMode = 'detailed',
   focused = false,
   truncatedNodeIds: ReadonlySet<string> = new Set(),
-  onOpenFullContent?: (nodeId: string) => void | Promise<void>,
   loadFullContent?: (nodeId: string) => Promise<string>,
 ): ReactElement {
   switch (node.kind) {
@@ -116,7 +115,6 @@ function renderNode(
         performanceUsage,
         focused,
         truncatedNodeIds,
-        onOpenFullContent,
         loadFullContent,
       )
     case 'goal':
@@ -359,9 +357,6 @@ function renderNode(
             <MessageActions
               text={node.markdown}
               truncated={truncatedNodeIds.has(node.id)}
-              {...(onOpenFullContent === undefined
-                ? {}
-                : { onOpenFullContent: () => onOpenFullContent(node.id) })}
               {...(loadFullContent === undefined ? {} : { loadFullText: () => loadFullContent(node.id) })}
               translate={t}
             />
@@ -391,11 +386,9 @@ function renderNode(
         performanceUsage,
         focused,
         truncatedNodeIds,
-        onOpenFullContent,
         loadFullContent,
       )
     case 'reasoning':
-      if (transcriptView === 'compact') return <></>
       return renderAssistantTurn(
         {
           kind: 'assistant-turn',
@@ -432,7 +425,6 @@ function renderNode(
         performanceUsage,
         focused,
         truncatedNodeIds,
-        onOpenFullContent,
         loadFullContent,
       )
   }
@@ -465,7 +457,6 @@ export function renderTimelineNode(
     context.performanceUsage,
     context.conversationLayout === 'focused',
     context.truncatedNodeIds,
-    context.onOpenFullContent,
     context.loadFullContent,
   )
 }
@@ -565,7 +556,6 @@ function renderAssistantTurn(
   performanceUsage: PerformanceUsageMode = 'detailed',
   focused = false,
   truncatedNodeIds: ReadonlySet<string> = new Set(),
-  onOpenFullContent?: (nodeId: string) => void | Promise<void>,
   loadFullContent?: (nodeId: string) => Promise<string>,
 ): ReactElement {
   const inProgress = assistantNodeInProgress(node)
@@ -607,8 +597,6 @@ function renderAssistantTurn(
           producedFiles,
           transcriptView,
           focused,
-          truncatedNodeIds,
-          onOpenFullContent,
         )}
         {renderProducedFiles(producedFiles, onOpenLink, onShowInFolder, t)}
       </article>
@@ -617,16 +605,12 @@ function renderAssistantTurn(
         <MessageActions
           text={node.markdown}
           truncated={truncated}
-          showTruncationNotice={false}
           {...(truncated && loadFullContent !== undefined
             ? {
                 loadFullText: async () => {
-                  const parts: string[] = []
-                  for (const block of messageBlocks)
-                    parts.push(
-                      truncatedNodeIds.has(block.id) ? await loadFullContent(block.id) : block.markdown,
-                    )
-                  return parts.join('\n\n')
+                  const text = await loadRowCopyMarkdown(node, truncatedNodeIds, loadFullContent)
+                  if (text === undefined) throw new Error('No readable message content.')
+                  return text
                 },
               }
             : {})}
@@ -670,7 +654,6 @@ function renderAssistantMessage(
   performanceUsage: PerformanceUsageMode = 'detailed',
   focused = false,
   truncatedNodeIds: ReadonlySet<string> = new Set(),
-  onOpenFullContent?: (nodeId: string) => void | Promise<void>,
   loadFullContent?: (nodeId: string) => Promise<string>,
 ): ReactElement {
   const inProgress = assistantNodeInProgress(node)
@@ -699,13 +682,6 @@ function renderAssistantMessage(
             </span>
           )}
         </header>
-        {truncated ? (
-          <ContentTruncationNotice
-            streaming={inProgress}
-            onOpen={onOpenFullContent === undefined ? undefined : () => onOpenFullContent(node.id)}
-            translate={t}
-          />
-        ) : null}
         {node.reasoning === undefined ? null : (
           <ReasoningDisclosure
             id={`reasoning:${node.id}`}
@@ -736,7 +712,6 @@ function renderAssistantMessage(
         <MessageActions
           text={node.markdown}
           truncated={truncated}
-          showTruncationNotice={false}
           {...(truncated && loadFullContent !== undefined
             ? { loadFullText: () => loadFullContent(node.id) }
             : {})}
@@ -769,11 +744,8 @@ function renderAssistantBlocks(
   producedFiles: readonly string[],
   transcriptView: TranscriptViewMode,
   focused = false,
-  truncatedNodeIds: ReadonlySet<string> = new Set(),
-  onOpenFullContent?: (nodeId: string) => void | Promise<void>,
 ): ReactElement[] {
   const blocks = node.blocks.length === 0 ? assistantBlocksFromAggregates(node) : node.blocks
-  const messageIds = new Set(blocks.filter((block) => block.kind === 'message').map((block) => block.id))
   const lastMessageIndex = blocks.reduce(
     (last, block, index) => (block.kind === 'message' ? index : last),
     -1,
@@ -786,16 +758,6 @@ function renderAssistantBlocks(
     if (block.kind === 'reasoning') {
       rendered.push(
         <Fragment key={`reasoning:${block.id}:${index}`}>
-          {(block.sourceNodeIds ?? [block.id])
-            .filter((id) => truncatedNodeIds.has(id) && !messageIds.has(id))
-            .map((id) => (
-              <ContentTruncationNotice
-                key={id}
-                streaming={block.streaming}
-                onOpen={onOpenFullContent === undefined ? undefined : () => onOpenFullContent(id)}
-                translate={t}
-              />
-            ))}
           <ReasoningDisclosure
             id={`reasoning:${node.id}:${block.id}`}
             markdown={block.markdown}
@@ -817,13 +779,6 @@ function renderAssistantBlocks(
     if (block.kind === 'message') {
       rendered.push(
         <Fragment key={`message:${block.id}:${index}`}>
-          {truncatedNodeIds.has(block.id) ? (
-            <ContentTruncationNotice
-              streaming={block.streaming}
-              onOpen={onOpenFullContent === undefined ? undefined : () => onOpenFullContent(block.id)}
-              translate={t}
-            />
-          ) : null}
           <MessageImages
             images={block.images ?? []}
             {...(onLoadImage === undefined ? {} : { loadImage: onLoadImage })}

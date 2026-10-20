@@ -741,6 +741,19 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
           <div className="dsh-composer__toolbar-controls">{renderSessionControls('model')}</div>
         )}
         <span className="dsh-composer__toolbar-balance" aria-hidden="true" />
+        {props.running && sending && !isDirectSubmitting ? (
+          <button
+            className="dsh-button dsh-button--danger"
+            type="button"
+            aria-label={t('composer.stopResponse')}
+            title={t('composer.stopResponse')}
+            onClick={props.onCancel}
+            disabled={props.disabled}
+          >
+            <Icon name="stop" />
+            {t('composer.stopResponse')}
+          </button>
+        ) : null}
         <button
           className={`dsh-button dsh-composer__submit ${stoppable ? 'dsh-button--danger' : 'dsh-button--primary'}`}
           type={stoppable ? 'button' : 'submit'}

@@ -288,6 +288,7 @@ function storeFor(state: AppState): AppStore {
     navigateTranscript: vi.fn().mockResolvedValue(undefined),
     openTranscriptContent: vi.fn().mockResolvedValue(undefined),
     loadTranscriptContent: vi.fn().mockResolvedValue(''),
+    loadTranscriptNode: vi.fn().mockRejectedValue(new Error('Unavailable')),
     dismissPendingPrompt: vi.fn(),
     forgetDirectPromptRequests: vi.fn(),
     refreshQueue: vi.fn().mockResolvedValue([]),
@@ -801,6 +802,75 @@ describe('App connected rendering', () => {
     })
     expect(screen.queryByRole('region', { name: 'Queued prompts' })).toBeNull()
   })
+
+  it.each([
+    { cancelled: false, receipt: 'matching' },
+    { cancelled: true, receipt: 'matching' },
+    { cancelled: false, receipt: 'different' },
+    { cancelled: false, receipt: 'failed' },
+  ])(
+    'checks a long admitted prompt against full content: $receipt, cancelled=$cancelled',
+    async ({ cancelled, receipt }) => {
+      let state = connectedState(true)
+      const listeners = new Set<() => void>()
+      const publish = (next: AppState): void => {
+        state = next
+        for (const listener of listeners) listener()
+      }
+      const text = 'Long prompt '.repeat(12_000)
+      const loadTranscriptContent =
+        receipt === 'failed'
+          ? vi.fn().mockRejectedValue(new Error('History unavailable'))
+          : vi.fn().mockResolvedValue(receipt === 'matching' ? text : `${text}different suffix`)
+      currentStore = {
+        ...storeFor(state),
+        getState: () => state,
+        subscribe: (listener) => {
+          listeners.add(listener)
+          return () => listeners.delete(listener)
+        },
+        sendPrompt: vi.fn(() => {
+          publish({ ...state, directPromptRequestIds: ['request'] })
+          return Promise.resolve()
+        }),
+        loadTranscriptContent,
+      }
+      render(<App />)
+      const input = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+      fireEvent.change(input, { target: { value: text } })
+      await act(async () => {
+        fireEvent.keyDown(input, { key: 'Enter' })
+        await Promise.resolve()
+      })
+      if (cancelled)
+        await act(async () => {
+          fireEvent.click(screen.getByRole('button', { name: 'Cancel sending' }))
+          await Promise.resolve()
+        })
+      const nodes: AppState['timeline']['nodes'] = [
+        { kind: 'user-message', id: 'admitted', markdown: text.slice(0, 128 * 1024) },
+      ]
+      act(() =>
+        publish({
+          ...state,
+          timeline: { ...state.timeline, nodes },
+          transcript: {
+            sessionId: 's1',
+            revision: 1,
+            nodes,
+            lastSequence: 1,
+            hasMore: false,
+            historical: false,
+            omittedNodeIds: ['admitted'],
+            eventFacts: [],
+          },
+        }),
+      )
+      await waitFor(() => expect(loadTranscriptContent).toHaveBeenCalledWith('admitted'))
+      if (receipt === 'matching') await waitFor(() => expect(input.value.length).toBe(0))
+      else expect(input.value).toBe(text)
+    },
+  )
 
   it('accepts a direct send that DSH actually queued when the row has no request identity', async () => {
     vi.useFakeTimers()

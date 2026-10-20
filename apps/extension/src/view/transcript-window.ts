@@ -32,12 +32,9 @@ type ReadPage = (
   signal: AbortSignal,
   child: boolean,
 ) => Promise<SessionHistoryPage>
-// Conversation prose is the primary product surface, so it keeps a much larger
-// prefix than tool cards. The whole view still obeys TRANSCRIPT_MAX_CHARS;
-// anything past this limit is marked omitted and can be read in full through
-// the content route.
-const MESSAGE_NODE_CHARS = 192 * 1024
-const MESSAGE_MARKDOWN_CHARS = 128 * 1024
+// Ordinary conversation bodies travel intact. The bounded transport window is
+// independent of full content, which visible rows obtain automatically.
+const MESSAGE_NODE_CHARS = TRANSCRIPT_MAX_CHARS - 192 * 1024
 /** Bounded backoff for a window the renderer never acknowledged receiving. */
 const DELIVERY_RETRY_DELAYS_MS = [250, 1_000, 4_000] as const
 interface PendingOpen {
@@ -57,6 +54,7 @@ interface Resident {
   readonly child: boolean
   readonly baselineSequence: number
   timeline: TimelineState
+  liveBodies: Map<string, TimelineNode>
   hasMore: boolean
   before?: number
   upper?: number
@@ -121,7 +119,14 @@ export class TranscriptWindowService {
   >()
   private readonly previews = new WeakMap<
     TimelineNode,
-    { value: TimelineNode; omitted: boolean; size: number }
+    {
+      value: TimelineNode
+      omitted: boolean
+      size: number
+      rawSize: number
+      contentOmitted: boolean
+      publicCwd: string | undefined
+    }
   >()
 
   public constructor(
@@ -394,60 +399,73 @@ export class TranscriptWindowService {
     return this.snapshot()
   }
 
-  /** Full content is reread from DSH, never retained as a second renderer/Host body cache. */
+  /** Complete current content, including live bodies outside the transport window. */
+  public fullNode(sessionId: string, nodeId: string, revision: number, signal: AbortSignal): TimelineNode {
+    const displayed = this.displayed
+    if (
+      signal.aborted ||
+      displayed?.sessionId !== sessionId ||
+      revision > this.revision ||
+      (displayed !== this.tail && revision !== this.revision)
+    )
+      throw stale()
+    const node = displayed.timeline.nodes.find((candidate) => candidate.id === nodeId)
+    if (node === undefined) throw stale()
+    const safe = this.deps.publicValue(node, displayed.cwd)
+    const parsed = transcriptNodeSchema.safeParse(safe)
+    if (parsed.success) return parsed.data as TimelineNode
+    if (
+      typeof safe === 'object' &&
+      safe !== null &&
+      'kind' in safe &&
+      safe.kind === 'tool' &&
+      'tool' in safe &&
+      typeof safe.tool === 'object' &&
+      safe.tool !== null
+    ) {
+      const { presentation, ...tool } = safe.tool as Record<string, unknown>
+      // A required file path can be removed by the Host scope boundary. Keep
+      // all remaining safe output on a generic card instead of discarding it.
+      return transcriptNodeSchema.parse({
+        ...safe,
+        tool: {
+          ...tool,
+          ...(presentation === undefined
+            ? {}
+            : {
+                presentation: { phase: 'result', card: 'generic', content: [JSON.stringify(presentation)] },
+              }),
+        },
+      }) as TimelineNode
+    }
+    return transcriptNodeSchema.parse(safe) as TimelineNode
+  }
+
+  /** Copy and export share the complete canonical content used for display. */
   public async content(
     sessionId: string,
     nodeId: string,
     revision: number,
     signal: AbortSignal,
+    includeReasoning = true,
   ): Promise<string> {
-    const displayed = this.displayed
-    if (
-      displayed?.sessionId !== sessionId ||
-      revision > this.revision ||
-      (displayed !== this.tail && revision !== this.revision) ||
-      !displayed.timeline.nodes.some((node) => node.id === nodeId)
-    )
-      throw stale()
-    const generation = this.generation
-    const remembered = this.notices.get(sessionId)?.find((entry) => entry.node.id === nodeId)
-    if (remembered !== undefined) {
-      const safe = this.deps.publicValue(remembered.node, displayed.cwd)
-      return typeof safe === 'object' && safe !== null && 'text' in safe && typeof safe.text === 'string'
-        ? safe.text
-        : JSON.stringify(safe, null, 2)
-    }
-    const source = displayed.sources.get(nodeId)
-    const page = await this.deps.read(
-      sessionId,
-      source === undefined ? displayed.upper : source.to + 1,
-      signal,
-      displayed.child,
-    )
-    if (signal.aborted || generation !== this.generation) throw stale()
-    let timeline = empty(sessionId)
-    for (const entry of page.events)
-      timeline = reduceTimeline(timeline, {
-        event: entry.event,
-        sequence: entry.sequence,
-        ...timelineSequenceOptions(entry.event),
-        ...(entry.sequence === timeline.lastSequence ? { advanceSequence: false as const } : {}),
-      })
-    const node = timeline.nodes.find((candidate) => candidate.id === nodeId)
-    if (node === undefined) throw stale()
-    const safe = this.deps.publicValue(node, displayed.cwd)
+    await Promise.resolve()
+    const safe = this.fullNode(sessionId, nodeId, revision, signal)
     return typeof safe === 'object' &&
       safe !== null &&
       'markdown' in safe &&
       typeof safe.markdown === 'string'
-      ? 'reasoning' in safe &&
+      ? includeReasoning &&
+        'reasoning' in safe &&
         typeof safe.reasoning === 'object' &&
         safe.reasoning !== null &&
         'markdown' in safe.reasoning &&
         typeof safe.reasoning.markdown === 'string'
         ? `${safe.reasoning.markdown}\n\n${safe.markdown}`
         : safe.markdown
-      : JSON.stringify(safe, null, 2)
+      : 'text' in safe && typeof safe.text === 'string'
+        ? safe.text
+        : JSON.stringify(safe, null, 2)
   }
 
   public setVisible(visible: boolean): void {
@@ -520,6 +538,7 @@ export class TranscriptWindowService {
       hasMore: page.hasMore,
       omitted: new Set(),
       sources: new Map(),
+      liveBodies: new Map(),
       facts: [],
       factCounter: 0,
       contextIds: new Set(),
@@ -536,6 +555,7 @@ export class TranscriptWindowService {
       }
     for (const entry of page.events) {
       this.rememberFact(resident, entry.event, entry.sequence, entry.coveredSequences?.length ?? 1)
+      this.restoreLiveBody(resident, entry.event)
       const previous = resident.timeline.nodes
       resident.timeline = reduceTimeline(resident.timeline, {
         event: entry.event,
@@ -543,6 +563,7 @@ export class TranscriptWindowService {
         ...timelineSequenceOptions(entry.event),
         ...(entry.sequence === resident.timeline.lastSequence ? { advanceSequence: false as const } : {}),
       })
+      this.rememberLiveBodies(resident, entry.event)
       this.rememberSources(resident, previous, entry.sequence, entry.coveredSequences?.[0])
       this.bound(resident)
       this.updateCurrentTodos(resident, entry.event)
@@ -600,6 +621,7 @@ export class TranscriptWindowService {
       if (this.sameSequence.size < 64) this.sameSequence.add(key)
       this.rememberIdentity(event, sequence)
     }
+    this.restoreLiveBody(resident, event)
     const previous = resident.timeline.nodes
     if (event.sequence !== undefined) this.rememberFact(resident, event, event.sequence, 1)
     resident.timeline = reduceTimeline(resident.timeline, {
@@ -610,6 +632,7 @@ export class TranscriptWindowService {
         ? { advanceSequence: false as const }
         : {}),
     })
+    this.rememberLiveBodies(resident, event)
     if (event.type === 'notice' || event.type === 'session.gap')
       this.rememberNotices(
         resident.sessionId,
@@ -623,6 +646,37 @@ export class TranscriptWindowService {
     if (event.sequence !== undefined) this.rememberSources(resident, previous, event.sequence)
     this.bound(resident)
     this.updateCurrentTodos(resident, event)
+  }
+
+  /** A viewport eviction must never turn the next delta into a new partial body. */
+  private restoreLiveBody(resident: Resident, event: BackendEvent): void {
+    const id =
+      event.type === 'tool.updated'
+        ? event.tool.id
+        : 'messageId' in event && typeof event.messageId === 'string'
+          ? event.messageId
+          : undefined
+    if (id === undefined) return
+    const node = resident.liveBodies.get(id)
+    if (node !== undefined && !resident.timeline.nodes.some((candidate) => candidate.id === node.id))
+      resident.timeline = { ...resident.timeline, nodes: [node, ...resident.timeline.nodes] }
+  }
+
+  private rememberLiveBodies(resident: Resident, event: BackendEvent): void {
+    if (event.type === 'turn.ended' || event.type === 'session.removed') {
+      resident.liveBodies.clear()
+      return
+    }
+    for (const node of resident.timeline.nodes)
+      if (node.kind === 'tool') {
+        if (node.tool.status === 'running' || node.tool.status === 'queued')
+          resident.liveBodies.set(node.id, node)
+        else resident.liveBodies.delete(node.id)
+      } else if (node.kind === 'assistant-message' || node.kind === 'reasoning') {
+        if (node.streaming || (node.kind === 'assistant-message' && node.reasoning?.streaming === true))
+          resident.liveBodies.set(node.id, node)
+        else resident.liveBodies.delete(node.id)
+      }
   }
 
   private updateCurrentTodos(resident: Resident, event: BackendEvent): void {
@@ -700,23 +754,56 @@ export class TranscriptWindowService {
   }
 
   private bound(resident: Resident, preferOlder = false): void {
-    let remaining = (resident.expanded === true ? TRANSCRIPT_MAX_CHARS : 512 * 1024) - 128 * 1024
+    let remaining = TRANSCRIPT_MAX_CHARS - 128 * 1024
     const nodeBudget = resident.expanded === true ? TRANSCRIPT_MAX_NODES : 256
     const nodes: TimelineNode[] = []
     const source = resident.timeline.nodes
     const candidates = source.filter((node) => !resident.contextIds.has(node.id))
     if (preferOlder) candidates.reverse()
-    const projectNode = (original: TimelineNode): { value: TimelineNode; omitted: boolean; size: number } => {
+    const projectNode = (
+      original: TimelineNode,
+    ): {
+      value: TimelineNode
+      omitted: boolean
+      size: number
+      rawSize: number
+      contentOmitted: boolean
+      publicCwd: string | undefined
+    } => {
       let clipped = this.previews.get(original)
       if (clipped === undefined) {
+        const rawSize = JSON.stringify(original).length
         const projected = preview(
           original,
-          isMessageNode(original) ? MESSAGE_NODE_CHARS : TRANSCRIPT_NODE_CHARS,
+          isMessageNode(original)
+            ? rawSize > MESSAGE_NODE_CHARS
+              ? 64 * 1024
+              : MESSAGE_NODE_CHARS
+            : TRANSCRIPT_NODE_CHARS,
         )
         const node = projected.value
-        clipped = { value: node, omitted: projected.omitted, size: JSON.stringify(node).length }
+        clipped = {
+          value: node,
+          omitted: projected.omitted,
+          contentOmitted: projected.omitted,
+          publicCwd: resident.cwd,
+          size: JSON.stringify(node).length,
+          rawSize,
+        }
+        if (
+          original.kind === 'tool' &&
+          !transcriptNodeSchema.safeParse(this.deps.publicValue(node, resident.cwd)).success
+        )
+          clipped.omitted = true
         this.previews.set(original, clipped)
         this.previews.set(node, clipped)
+      }
+      if (clipped.publicCwd !== resident.cwd) {
+        clipped.publicCwd = resident.cwd
+        clipped.omitted =
+          clipped.contentOmitted ||
+          (original.kind === 'tool' &&
+            !transcriptNodeSchema.safeParse(this.deps.publicValue(clipped.value, resident.cwd)).success)
       }
       return clipped
     }
@@ -725,13 +812,16 @@ export class TranscriptWindowService {
       const clipped = projectNode(original)
       const node = clipped.value
       const size = clipped.size
-      if (size > remaining) break
-      remaining -= size
-      nodes.unshift(node)
-      // Ending a turn changes metadata, not the clipped resident body. Keep
-      // its full-content route available until an authoritative reread rebuilds it.
-      if (clipped.omitted || (resident.omitted.has(node.id) && isMessageNode(node)))
-        resident.omitted.add(node.id)
+      if (
+        size > remaining ||
+        (clipped.rawSize > remaining && nodes.length > 0 && !resident.liveBodies.has(original.id))
+      )
+        break
+      remaining = Math.max(0, remaining - (resident.liveBodies.has(original.id) ? size : clipped.rawSize))
+      // Keep the single canonical body. Only publication projects a bounded
+      // transport representation, so later deltas can never append to lost text.
+      nodes.unshift(original)
+      if (clipped.omitted) resident.omitted.add(node.id)
       else resident.omitted.delete(node.id)
     }
     // Context parents preserve supplied call identities and pairing, while
@@ -750,10 +840,10 @@ export class TranscriptWindowService {
         if (parent?.kind !== 'tool') break
         if (!normalIds.has(parentId) && !contextIds.has(parentId)) {
           const clipped = projectNode(parent)
-          if (contextIds.size >= 32 || clipped.size > contextChars) break
-          contextChars -= clipped.size
+          if (contextIds.size >= 32 || clipped.rawSize > contextChars) break
+          contextChars -= clipped.rawSize
           contextIds.add(parentId)
-          nodes.push(clipped.value)
+          nodes.push(parent)
           if (clipped.omitted) resident.omitted.add(parentId)
         }
         parentId = parent.tool.parentCallId
@@ -802,8 +892,10 @@ export class TranscriptWindowService {
         revision: this.revision,
         nodes:
           nodeIds === undefined
-            ? resident.timeline.nodes
-            : resident.timeline.nodes.filter((node) => nodeIds.has(node.id)),
+            ? resident.timeline.nodes.map((node) => this.previews.get(node)?.value ?? node)
+            : resident.timeline.nodes
+                .filter((node) => nodeIds.has(node.id))
+                .map((node) => this.previews.get(node)?.value ?? node),
         eventFacts: resident.facts,
         ...(this.tail?.currentTodos === undefined ? {} : { currentTodos: this.tail.currentTodos }),
         ...(this.tail?.currentTodosOmitted === true ? { currentTodosOmitted: true } : {}),
@@ -1030,7 +1122,11 @@ export class TranscriptWindowService {
 
   private publicNodes(resident: Resident, ids: ReadonlySet<string>): TimelineNode[] {
     const safe = this.deps.publicValue(
-      { nodes: resident.timeline.nodes.filter((node) => ids.has(node.id)) },
+      {
+        nodes: resident.timeline.nodes
+          .filter((node) => ids.has(node.id))
+          .map((node) => this.previews.get(node)?.value ?? node),
+      },
       resident.cwd,
     )
     if (typeof safe !== 'object' || safe === null || !('nodes' in safe) || !Array.isArray(safe.nodes))
@@ -1183,8 +1279,9 @@ function isMessageNode(node: TimelineNode): boolean {
 function preview(
   value: TimelineNode,
   budget: number,
-  markdownLimit = MESSAGE_MARKDOWN_CHARS,
+  markdownLimit = budget,
 ): { value: TimelineNode; omitted: boolean } {
+  if (isMessageNode(value) && JSON.stringify(value).length <= budget) return { value, omitted: false }
   let remaining = budget
   let omitted = false
   let visited = 0

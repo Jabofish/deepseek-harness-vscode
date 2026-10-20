@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useStableCallback } from '../../app/useStableCallback.js'
-import { rowCopyMarkdown } from './transcript-copy.js'
+import { loadRowCopyMarkdown, rowCopyMarkdown, rowCopyNeedsFullContent } from './transcript-copy.js'
+import { writeClipboard } from './clipboard.js'
 import type { PresentedTimelineNode } from './focused-timeline-projection.js'
 
 /** Transcript rows publish their projection id here, which is the semantic target. */
@@ -28,12 +29,17 @@ const ANNOUNCEMENT_MS = 1_000
  * Returns whether the fallback just answered a copy, for a live-region
  * announcement.
  */
-export function useTranscriptCopyFallback(rows: readonly PresentedTimelineNode[]): boolean {
+export function useTranscriptCopyFallback(
+  rows: readonly PresentedTimelineNode[],
+  omittedNodeIds: readonly string[] = [],
+  loadFullContent?: (id: string) => Promise<string>,
+): 'copied' | 'failed' | undefined {
   const rowsRef = useRef(rows)
   /** Row the most recent `contextmenu` addressed, until the user moves on. */
   const contextRowRef = useRef<string | undefined>(undefined)
   const timerRef = useRef<number | undefined>(undefined)
-  const [announced, setAnnounced] = useState(false)
+  const [announced, setAnnounced] = useState<'copied' | 'failed'>()
+  const copyEpoch = useRef(0)
 
   useEffect(() => {
     rowsRef.current = rows
@@ -41,6 +47,7 @@ export function useTranscriptCopyFallback(rows: readonly PresentedTimelineNode[]
 
   useEffect(
     () => () => {
+      copyEpoch.current += 1
       if (timerRef.current !== undefined) window.clearTimeout(timerRef.current)
     },
     [],
@@ -49,6 +56,10 @@ export function useTranscriptCopyFallback(rows: readonly PresentedTimelineNode[]
   const handleCopy = useStableCallback((event: ClipboardEvent): void => {
     // Another listener already answered this copy.
     if (event.defaultPrevented) return
+    // A DOM clipboard fallback raises its own copy event. Let the browser copy
+    // that textarea and keep this user gesture's in-flight full-content read.
+    if (document.activeElement?.hasAttribute('data-dsh-clipboard-fallback')) return
+    const epoch = ++copyEpoch.current
     const clipboard = event.clipboardData
     if (clipboard === null) return
     // A real selection keeps its meaning: the user asked for exactly that text.
@@ -75,14 +86,34 @@ export function useTranscriptCopyFallback(rows: readonly PresentedTimelineNode[]
     // alone is what keeps an untouched clipboard untouched.
     if (markdown === undefined) return
 
+    const announce = (success: boolean): void => {
+      if (epoch !== copyEpoch.current) return
+      setAnnounced(success ? 'copied' : 'failed')
+      if (timerRef.current !== undefined) window.clearTimeout(timerRef.current)
+      timerRef.current = window.setTimeout(() => {
+        timerRef.current = undefined
+        setAnnounced(undefined)
+      }, ANNOUNCEMENT_MS)
+    }
+    const omitted = new Set(omittedNodeIds)
+    if (row !== undefined && rowCopyNeedsFullContent(row, omitted)) {
+      event.preventDefault()
+      if (loadFullContent === undefined) {
+        announce(false)
+        return
+      }
+      void loadRowCopyMarkdown(row, omitted, loadFullContent)
+        .then(async (content) => {
+          if (epoch !== copyEpoch.current) return false
+          return content === undefined ? false : writeClipboard(content)
+        })
+        .then(announce, () => announce(false))
+      return
+    }
+
     clipboard.setData('text/plain', markdown)
     event.preventDefault()
-    setAnnounced(true)
-    if (timerRef.current !== undefined) window.clearTimeout(timerRef.current)
-    timerRef.current = window.setTimeout(() => {
-      timerRef.current = undefined
-      setAnnounced(false)
-    }, ANNOUNCEMENT_MS)
+    announce(true)
   })
 
   const recordTarget = useCallback((event: Event): void => {

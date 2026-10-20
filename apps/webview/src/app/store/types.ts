@@ -70,7 +70,7 @@ import type {
   UserQuestion,
   WorkspaceSummary,
 } from '@dsh-vscode/domain'
-import type { TimelineState } from '@dsh-vscode/timeline'
+import type { TimelineState, TimelineNode } from '@dsh-vscode/timeline'
 import type { JobFollowState } from './job-follow.js'
 import type { PluginInstallInput, PluginInstallRecoveryState } from '../plugin-install-recovery.js'
 import type { SessionModelDirectoryState } from './model-directory-state.js'
@@ -287,6 +287,7 @@ export interface AppActions {
   navigateTranscript(direction: 'newer' | 'latest'): Promise<void>
   openTranscriptContent(nodeId: string): Promise<void>
   loadTranscriptContent(nodeId: string): Promise<string>
+  loadTranscriptNode(nodeId: string, signal?: AbortSignal): Promise<TimelineNode>
   dismissPendingPrompt(id: string): void
   forgetDirectPromptRequests(ids: readonly string[]): void
   refreshQueue(sessionId: string): Promise<readonly QueuedInput[] | undefined>
