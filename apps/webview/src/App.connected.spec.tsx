@@ -747,6 +747,19 @@ describe('App connected rendering', () => {
         publish({
           ...state,
           directPromptRequestIds: ['direct-request'],
+          directPromptReceipts: [
+            {
+              id: 'pending:direct-request',
+              rpcId: 'direct-request',
+              sessionId: 's1',
+              text: 'Hello',
+              attachments: [],
+              textOnly: true,
+              mode: 'queue',
+              createdAt: '2026-01-01T00:00:00.000Z',
+              queueIdsBefore: [],
+            },
+          ],
           queue: [
             {
               id: 'direct-message',
@@ -768,9 +781,10 @@ describe('App connected rendering', () => {
     fireEvent.change(input, { target: { value: 'Hello' } })
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(input.value).toBe('Hello')
-    // A queue projection is authoritative: if DSH names this request there, the
-    // row stays visible and adjustable even though the client expected a direct turn.
-    expect(screen.getByRole('region', { name: 'Queued prompts' })).toBeTruthy()
+    // The direct send remains in the composer even when native inbox admission
+    // briefly projects a queue row. It must never flash in the queue dock.
+    expect(state.queue).toHaveLength(1)
+    expect(screen.queryByRole('region', { name: 'Queued prompts' })).toBeNull()
     expect(screen.getByRole('button', { name: 'Cancel sending' }).getAttribute('aria-busy')).toBe('true')
     await act(async () => {
       acknowledge()

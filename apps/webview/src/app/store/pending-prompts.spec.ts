@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { QueuedInput } from '@dsh-vscode/domain'
-import { confirmPendingPrompts, matchesQueuedPrompt, type PendingPromptReceipt } from './pending-prompts.js'
+import {
+  confirmPendingPrompts,
+  matchesQueuedPrompt,
+  withoutDirectPromptRows,
+  type PendingPromptReceipt,
+} from './pending-prompts.js'
 
 function receipt(overrides: Partial<PendingPromptReceipt> = {}): PendingPromptReceipt {
   return {
@@ -31,6 +36,36 @@ function row(overrides: Partial<QueuedInput> = {}): QueuedInput {
 }
 
 describe('pending prompt receipts', () => {
+  it('keeps an idle direct-send projection out of the queue while retaining other queued input', () => {
+    const other = row({ id: 'other', rpcId: 'other-request' })
+    expect(withoutDirectPromptRows([other, row({ rpcId: 'request-one' })], [receipt()])).toEqual([other])
+  })
+
+  it('matches an id-less transient row once without hiding older or repeated queued input', () => {
+    const old = row({ id: 'old' })
+    const extra = row({ id: 'extra' })
+    expect(withoutDirectPromptRows([old, row(), extra], [receipt({ queueIdsBefore: ['old'] })])).toEqual([
+      old,
+      extra,
+    ])
+  })
+
+  it('reserves an exact request match before matching identical id-less content', () => {
+    const other = row({ id: 'other' })
+    expect(withoutDirectPromptRows([other, row({ rpcId: 'request-one' })], [receipt()])).toEqual([other])
+  })
+
+  it('reveals a genuinely parked queue row after the direct admission wait ends', () => {
+    const rows = [row({ rpcId: 'request-one' })]
+    expect(withoutDirectPromptRows(rows, [receipt()])).toEqual([])
+    expect(withoutDirectPromptRows(rows, [])).toBe(rows)
+  })
+
+  it('does not hide another session or another identified request with the same text', () => {
+    const rows = [row({ sessionId: 'other', rpcId: 'request-one' }), row({ rpcId: 'other-request' })]
+    expect(withoutDirectPromptRows(rows, [receipt()])).toBe(rows)
+  })
+
   it('confirms a receipt by content when the queue row carries no request id', () => {
     const projected = row()
     expect(confirmPendingPrompts([receipt()], [projected])).toEqual([])

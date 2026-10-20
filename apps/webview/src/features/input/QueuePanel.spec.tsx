@@ -79,6 +79,40 @@ function renderQueue(
 describe('QueuePanel', () => {
   afterEach(() => cleanup())
 
+  it('does not turn an idle direct-send projection into a queue row or a handoff receipt', () => {
+    const item = { ...queuedInput('direct-message', 'Hello'), rpcId: 'direct-request' }
+    const directEntries = [{ ...item, id: 'pending:direct-request', queueIdsBefore: [] }]
+    const props = {
+      running: false,
+      onEdit: vi.fn(),
+      onRemove: vi.fn(),
+      onModeChange: vi.fn(),
+      onDismissPending: vi.fn(),
+    }
+    const transcript: TranscriptWindow = {
+      sessionId: 'session-1',
+      revision: 1,
+      nodes: [],
+      eventFacts: [],
+      lastSequence: 1,
+      hasMore: false,
+      historical: false,
+      omittedNodeIds: [],
+    }
+    const view = render(
+      <I18nProvider>
+        <QueuePanel {...props} items={[item]} directEntries={directEntries} transcript={transcript} />
+      </I18nProvider>,
+    )
+    expect(screen.queryByRole('region', { name: 'Queued prompts' })).toBeNull()
+    view.rerender(
+      <I18nProvider>
+        <QueuePanel {...props} items={[]} directEntries={directEntries} transcript={transcript} />
+      </I18nProvider>,
+    )
+    expect(screen.queryByRole('region', { name: 'Queued prompts' })).toBeNull()
+  })
+
   it('keeps a real queue row visible even when it carries a direct request id', () => {
     const direct = { ...queuedInput('direct-message', 'same text'), rpcId: 'direct-request' }
     render(
