@@ -13,6 +13,7 @@ import type {
 } from '@dsh-vscode/domain'
 
 import type { BackendService } from '../services/backend-service.js'
+import { cancelSessionTree } from './cancel-session-tree.js'
 
 export class SessionUseCases {
   public constructor(private readonly backendService: BackendService) {}
@@ -60,7 +61,19 @@ export class SessionUseCases {
   }
 
   public cancel(sessionId: string, signal?: AbortSignal): Promise<void> {
-    return this.backendService.requireBackend().sessions.cancel(sessionId, signal)
+    const backend = this.backendService.requireBackend()
+    return cancelSessionTree(
+      backend,
+      sessionId,
+      () => {
+        try {
+          return this.backendService.requireBackend() === backend
+        } catch {
+          return false
+        }
+      },
+      signal,
+    )
   }
 
   public fork(sessionId: string, atSeq?: number, signal?: AbortSignal): Promise<SessionDetail> {
