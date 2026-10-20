@@ -1180,26 +1180,33 @@ function isMessageNode(node: TimelineNode): boolean {
 }
 
 /** Bound every body and nested collection; omission is explicit and reversible through DSH. */
-function preview(value: TimelineNode, budget: number): { value: TimelineNode; omitted: boolean } {
+function preview(
+  value: TimelineNode,
+  budget: number,
+  markdownLimit = MESSAGE_MARKDOWN_CHARS,
+): { value: TimelineNode; omitted: boolean } {
   let remaining = budget
   let omitted = false
   let visited = 0
-  const visit = (input: unknown, depth: number, field?: string): unknown => {
+  const visit = (input: unknown, depth: number, field?: string, streaming = false): unknown => {
     if (++visited > 1024) {
       omitted = true
       return null
     }
     if (typeof input === 'string') {
       const messageMarkdown = isMessageNode(value) && field === 'markdown'
-      const limit = Math.max(0, Math.min(messageMarkdown ? MESSAGE_MARKDOWN_CHARS : 4096, remaining))
-      // Conversation text is always clipped from the front so the installed
-      // view stays monotonic: a later suffix append remains a prefix match.
-      // Keep upstream recovery/overflow text at the end of tool summaries.
-      // This is presentation clipping, without parsing or inventing a locator.
+      const limit = Math.max(0, Math.min(messageMarkdown ? markdownLimit : 4096, remaining))
+      // Leave room for further suffix appends after advancing a long live
+      // window. Keeping only the prefix would hide every later token until
+      // completion. Settled history keeps its opening and a full-content route.
       const output =
-        field === 'outputSummary' && input.length > limit && limit > 16
-          ? `${input.slice(0, Math.floor((limit - 3) / 2))}\n…\n${input.slice(-Math.ceil((limit - 3) / 2))}`
-          : input.slice(0, limit)
+        limit === 0
+          ? ''
+          : messageMarkdown && streaming && input.length > limit
+            ? input.slice(-Math.min(limit, 64 * 1024))
+            : field === 'outputSummary' && input.length > limit && limit > 16
+              ? `${input.slice(0, Math.floor((limit - 3) / 2))}\n…\n${input.slice(-Math.ceil((limit - 3) / 2))}`
+              : input.slice(0, limit)
       remaining -= output.length
       if (output.length < input.length) omitted = true
       return output
@@ -1215,7 +1222,8 @@ function preview(value: TimelineNode, budget: number): { value: TimelineNode; om
       return output
     }
     const output = Object.create(null) as Record<string, unknown>
-    for (const [key, entry] of Object.entries(input).slice(0, 64)) output[key] = visit(entry, depth + 1, key)
+    for (const [key, entry] of Object.entries(input).slice(0, 64))
+      output[key] = visit(entry, depth + 1, key, 'streaming' in input && input.streaming === true)
     if (Object.keys(input).length > 64) omitted = true
     return output
   }
@@ -1223,6 +1231,10 @@ function preview(value: TimelineNode, budget: number): { value: TimelineNode; om
   const parsed = transcriptNodeSchema.safeParse(withoutHostCwd(candidate))
   if (parsed.success && JSON.stringify(candidate).length <= budget)
     return { value: omitted ? (parsed.data as TimelineNode) : value, omitted }
+  // Raw characters do not account for JSON escaping or combined thinking and
+  // answer bodies. Reduce the prose allowance before degrading a valid message
+  // into a notice, which would also remove its full-content controls.
+  if (isMessageNode(value) && markdownLimit > 0) return preview(value, budget, Math.floor(markdownLimit / 2))
   if (value.kind === 'tool')
     return {
       value: {

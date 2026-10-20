@@ -5,6 +5,7 @@ import { useI18n, type Translate } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
 import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 import { CopyButton } from './CopyButton.js'
+import { ContentTruncationNotice } from './ContentTruncationNotice.js'
 
 const FEEDBACK_CATEGORIES = [
   'task-result',
@@ -39,6 +40,8 @@ export interface MessageActionsProps {
   readonly feedbackUnavailable?: boolean | undefined
   /** The Host projected only a prefix of this message. */
   readonly truncated?: boolean | undefined
+  /** Per-block notices already provide access for combined assistant turns. */
+  readonly showTruncationNotice?: boolean | undefined
   readonly onOpenFullContent?: (() => void | Promise<void>) | undefined
   /** Resolves the complete message text for copying a clipped row. */
   readonly loadFullText?: (() => Promise<string>) | undefined
@@ -205,19 +208,8 @@ export function MessageActions(props: MessageActionsProps): ReactElement {
 
   return (
     <>
-      {props.truncated === true ? (
-        <div className="dsh-message-truncated" role="note">
-          <span>{translate('message.contentTruncated')}</span>
-          {props.onOpenFullContent === undefined ? null : (
-            <button
-              className="dsh-message-truncated__open"
-              type="button"
-              onClick={() => void props.onOpenFullContent?.()}
-            >
-              {translate('message.openFullContent')}
-            </button>
-          )}
-        </div>
+      {props.truncated === true && props.showTruncationNotice !== false ? (
+        <ContentTruncationNotice onOpen={props.onOpenFullContent} translate={translate} />
       ) : null}
       <div className="dsh-message-actions" role="toolbar" aria-label={translate('message.actions')}>
         <CopyButton

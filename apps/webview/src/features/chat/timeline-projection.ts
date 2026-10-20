@@ -641,7 +641,12 @@ function appendReasoningContent(
   if (current?.kind !== 'reasoning') return
   const merged = appendReasoning(current, reasoning)
   if (merged === undefined) return
-  blocks[index] = { kind: 'reasoning', id: current.id, ...merged }
+  blocks[index] = {
+    kind: 'reasoning',
+    id: current.id,
+    ...merged,
+    sourceNodeIds: [...new Set([...(current.sourceNodeIds ?? [current.id]), id])],
+  }
   if (index !== 0) {
     const [reasoningBlock] = blocks.splice(index, 1)
     if (reasoningBlock !== undefined) blocks.unshift(reasoningBlock)

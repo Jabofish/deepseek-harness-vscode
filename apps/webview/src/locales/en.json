@@ -2,6 +2,8 @@
   "transcript.newer": "Newer page",
   "transcript.latest": "Return to latest",
   "transcript.fullContent": "Open full content",
+  "message.streamingContentTruncated": "Long reply: showing the latest output. Full content will be available when this message finishes.",
+  "message.fullContentFailed": "Could not open full content. Please try again.",
   "composer.focusedPlaceholder": "Message or describe a task…",
   "settings.conversationLayout.label": "Conversation layout",
   "settings.conversationLayout.focused": "Focused",

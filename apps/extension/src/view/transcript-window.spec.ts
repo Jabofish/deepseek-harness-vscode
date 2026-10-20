@@ -58,6 +58,67 @@ function fixture(
 afterEach(() => vi.useRealTimers())
 
 describe('Host transcript windows', () => {
+  it.each(['message.delta', 'reasoning.delta'] as const)(
+    'keeps the latest %s visible after the live body exceeds its preview budget',
+    async (type) => {
+      const client = fixture()
+      client.open()
+      client.service.accept({ type, sessionId, messageId: 'live', delta: 'old '.repeat(40_000), turn: 1 })
+      await Promise.resolve()
+      client.service.acknowledge(sessionId, client.posted.at(-1)!.revision)
+      client.service.accept({ type, sessionId, messageId: 'live', delta: 'LATEST_PROGRESS', turn: 1 })
+      await Promise.resolve()
+      await vi.waitFor(() => {
+        const latest = client.posted.at(-1)?.nodes.find((item) => item.id === 'live')
+        const body =
+          latest?.kind === 'assistant-message'
+            ? type === 'message.delta'
+              ? latest.markdown
+              : latest.reasoning?.markdown
+            : undefined
+        expect(body?.includes('LATEST_PROGRESS')).toBe(true)
+      })
+      const window = client.posted.at(-1)
+      const node = window?.nodes.find((item) => item.id === 'live')
+      if (node?.kind !== 'assistant-message') throw new Error('Missing live answer')
+      const body = type === 'message.delta' ? node.markdown : node.reasoning?.markdown
+      expect(body?.includes('LATEST_PROGRESS')).toBe(true)
+      expect(window?.omittedNodeIds).toContain('live')
+      expect(transcriptWindowSchema.safeParse(window).success).toBe(true)
+      client.service.dispose()
+    },
+  )
+
+  it.each([
+    { markdown: '\\\n'.repeat(60_000), reasoning: undefined },
+    { markdown: 'answer '.repeat(18_000), reasoning: 'thinking '.repeat(15_000) },
+  ])(
+    'preserves an answer and full-content access when its serialized preview exceeds the budget',
+    async ({ markdown, reasoning }) => {
+      const event: BackendEvent = {
+        type: 'message.completed',
+        sessionId,
+        messageId: 'large-answer',
+        markdown,
+        ...(reasoning === undefined ? {} : { reasoning }),
+        sequence: 1,
+      }
+      const client = fixture(vi.fn().mockResolvedValue({ events: [row(1, event)], hasMore: false }))
+      const window = client.open([row(1, event)])
+      expect(window.nodes[0]).toMatchObject({ kind: 'assistant-message', id: 'large-answer' })
+      const node = window.nodes[0]
+      if (node?.kind !== 'assistant-message') throw new Error('Answer was discarded')
+      expect(node.markdown.length).toBeGreaterThan(1_000)
+      expect(markdown.startsWith(node.markdown)).toBe(true)
+      expect(window.omittedNodeIds).toContain('large-answer')
+      expect(transcriptWindowSchema.safeParse(window).success).toBe(true)
+      expect(
+        await client.service.content(sessionId, node.id, window.revision, new AbortController().signal),
+      ).toBe(reasoning === undefined ? markdown : `${reasoning}\n\n${markdown}`)
+      client.service.dispose()
+    },
+  )
+
   it('retains full-content access when a clipped live answer ends without a replacement body', async () => {
     const full = 'a'.repeat(140 * 1024)
     const client = fixture(vi.fn().mockResolvedValue({ events: [message(2, full)], hasMore: false }))

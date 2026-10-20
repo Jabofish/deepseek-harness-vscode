@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 修复超长思考与正文导致整条回复变成省略号的问题；长回复持续显示最新输出并明确提示省略，合并回复保留逐段全文入口及完整复制，纯思考回复也能查看全文。
+- Keeps oversized thinking and answers readable, continues showing recent streaming output with an explicit preview notice, and preserves per-message full-content access and complete copying in grouped replies, including reasoning-only messages.
+
 - 修复长回复结束后全文入口消失、待建草稿串入已有会话、取消发送后迟到消息仍保留草稿，以及附件读取、移除和超时期间的投递竞态。
 - Preserves full-content access after long replies finish, keeps new-chat drafts with their intended conversation, clears late accepted drafts after cancellation, and protects attachments across ingestion, removal and send timeouts.
 

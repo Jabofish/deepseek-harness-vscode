@@ -35,6 +35,8 @@ export interface ReasoningBlock {
   readonly id: string
   readonly markdown: string
   readonly streaming: boolean
+  /** Retain every source when several steps share one reasoning disclosure. */
+  readonly sourceNodeIds?: readonly string[]
 }
 
 export interface MessageBlock {
