@@ -169,6 +169,47 @@ describe('Host transcript windows', () => {
     expect(terminal.metadata).not.toHaveProperty('activeTurn')
     service.dispose()
   })
+  it('carries completion state for a long streamed node in an empty text update', async () => {
+    const sent: (TranscriptWindow | TranscriptPatch)[] = []
+    const service = new TranscriptWindowService({
+      read: () => Promise.resolve({ events: [], hasMore: false }),
+      publicValue: (value) => value,
+      post: (value) => {
+        sent.push(value)
+        return Promise.resolve(true)
+      },
+      postPatch: (value) => {
+        sent.push(value)
+        return Promise.resolve(true)
+      },
+    })
+    service.installPage(sessionId, { events: [message(0)], hasMore: false }, service.begin(sessionId))
+    const text = 'x'.repeat(300)
+    service.accept({ type: 'message.delta', sessionId, messageId: 'live', delta: text, turn: 1, step: 1 })
+    await Promise.resolve()
+    expect(sent[0]).toHaveProperty('eventFacts')
+
+    service.accept({
+      type: 'message.completed',
+      sessionId,
+      messageId: 'live',
+      markdown: text,
+      turn: 1,
+      step: 1,
+      sequence: 2,
+    })
+    await Promise.resolve()
+    const patch = sent.at(-1) as TranscriptPatch
+    const update = patch.textUpdates?.find((entry) => entry.node.id === 'live')
+    expect(update).toBeDefined()
+    // The markdown did not grow, so the node travels as an empty append. Every
+    // other field is still a complete replacement; the Webview merges the
+    // acknowledged prefix with this suffix, which is how `streaming` clears.
+    expect(update?.markdownLength).toBe(text.length)
+    expect(update?.node).toMatchObject({ streaming: false, markdown: '' })
+    service.dispose()
+  })
+
   it('retries the newest window after a failed delivery instead of dropping it', async () => {
     vi.useFakeTimers()
     const sent: (TranscriptWindow | TranscriptPatch)[] = []
