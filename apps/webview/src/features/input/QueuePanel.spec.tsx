@@ -156,6 +156,28 @@ describe('QueuePanel', () => {
     expect(screen.getByDisplayValue('same prompt')).toBeTruthy()
   })
 
+  it('keeps a second identical receipt until its own row is projected', () => {
+    const first = { ...queuedInput('pending:one', 'same prompt'), rpcId: 'request-one' }
+    const second = { ...queuedInput('pending:two', 'same prompt'), rpcId: 'request-two' }
+    render(
+      <I18nProvider>
+        <QueuePanel
+          items={[queuedInput('projected', 'same prompt')]}
+          pendingEntries={[first, second]}
+          running
+          onEdit={vi.fn()}
+          onRemove={vi.fn()}
+          onModeChange={vi.fn()}
+          onDismissPending={vi.fn()}
+        />
+      </I18nProvider>,
+    )
+    // Only one projected row exists, so only one of the two local receipts may
+    // disappear; the other send is still unconfirmed and must stay visible.
+    expect(screen.getByText('Sending…')).toBeTruthy()
+    expect(screen.getByDisplayValue('same prompt')).toBeTruthy()
+  })
+
   it('keeps removed queue text visible until the matching durable message renders, without duplication or resending', () => {
     const item = queuedInput('queued-message', 'First line\nSecond line')
     const remove = vi.fn()

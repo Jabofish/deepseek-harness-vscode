@@ -43,6 +43,7 @@ import { parseGoalViews } from './store/event-values.js'
 import { parseDshSettingsSnapshot } from './store/host-settings.js'
 import { createInitialState } from './store/initial-state.js'
 import { sameGoalList, sameSessionSummaryList, strictListValues } from './store/list-equality.js'
+import { confirmPendingPrompts } from './store/pending-prompts.js'
 import { normalizedModelSelection } from './store/model-catalog.js'
 import { parsePluginInventory } from './store/plugin-parsers.js'
 import { isSessionSummary, readPersistedWebviewState } from './store/session-guards.js'
@@ -798,7 +799,11 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       })
       if (!Array.isArray(result)) return undefined
       const queue = result as readonly QueuedInput[]
-      setState((current) => (current.activeSessionId === sessionId ? { ...current, queue } : current))
+      setState((current) => {
+        const next = current.activeSessionId === sessionId ? { ...current, queue } : current
+        const remaining = confirmPendingPrompts(next.pendingPrompts ?? [], queue)
+        return remaining === undefined ? next : { ...next, pendingPrompts: remaining }
+      })
       return queue
     },
     openSubagent,

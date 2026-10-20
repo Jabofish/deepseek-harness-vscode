@@ -8,6 +8,7 @@ import type {
 } from '@dsh-vscode/domain'
 import type { AppStore, OpenFileCandidate, ReferenceCandidate } from './store.js'
 import { publicProtocolErrorMessage } from './protocol-client.js'
+import { matchesQueuedPrompt } from './store/pending-prompts.js'
 import { useStableCallback } from './useStableCallback.js'
 import { readFileAsBase64, formatByteSize } from './attachment-reader.js'
 import {
@@ -389,6 +390,9 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
     const before = store.getState()
     const beforeIds = new Set(before.timeline.nodes.map((node) => node.id))
     const beforeRequests = new Set(before.directPromptRequestIds)
+    // A content fallback must not claim a row that was already queued before
+    // this submission: rc.6 rows carry no request identity.
+    const queueBeforeIds = new Set(expectedSessionId === undefined ? [] : before.queue.map((item) => item.id))
     const snapshotUris = attachmentSnapshot.map((attachment) => attachment.uri)
     for (const uri of snapshotUris) inFlightAttachmentUrisRef.current.add(uri)
     let delivered = false
@@ -462,7 +466,12 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
                 void store.refreshQueue(sessionId).then(
                   (queue) => {
                     if (
-                      queue?.some((item) => item.rpcId !== undefined && directRequests.includes(item.rpcId))
+                      queue?.some(
+                        (item) =>
+                          (item.rpcId !== undefined && directRequests.includes(item.rpcId)) ||
+                          (!queueBeforeIds.has(item.id) &&
+                            matchesQueuedPrompt(item, text, mode, attachmentSnapshot)),
+                      )
                     )
                       finish()
                     else finish(new Error(t('app.error.promptTimeout')))

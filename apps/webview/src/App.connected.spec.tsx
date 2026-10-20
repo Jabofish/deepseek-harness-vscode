@@ -802,6 +802,62 @@ describe('App connected rendering', () => {
     expect(screen.queryByRole('region', { name: 'Queued prompts' })).toBeNull()
   })
 
+  it('accepts a direct send that DSH actually queued when the row has no request identity', async () => {
+    vi.useFakeTimers()
+    try {
+      let state = connectedState(true)
+      const listeners = new Set<() => void>()
+      const publish = (next: AppState): void => {
+        state = next
+        for (const listener of listeners) listener()
+      }
+      const queuedRow = {
+        id: 'queued-behind-direct',
+        sessionId: 's1',
+        text: 'Hello',
+        attachments: [],
+        textOnly: true,
+        mode: 'queue' as const,
+        createdAt: '2026-01-01T00:00:00.000Z',
+      }
+      const refreshQueue = vi.fn(() => {
+        publish({ ...state, queue: [queuedRow] })
+        return Promise.resolve([queuedRow])
+      })
+      currentStore = {
+        ...storeFor(state),
+        getState: () => state,
+        subscribe: (listener) => {
+          listeners.add(listener)
+          return () => listeners.delete(listener)
+        },
+        sendPrompt: vi.fn(() => {
+          publish({ ...state, directPromptRequestIds: ['direct-request'] })
+          return Promise.resolve()
+        }),
+        refreshQueue,
+      }
+      render(<App />)
+      const input = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+      fireEvent.change(input, { target: { value: 'Hello' } })
+      fireEvent.keyDown(input, { key: 'Enter' })
+      await act(async () => {
+        await Promise.resolve()
+      })
+      expect(input.value).toBe('Hello')
+
+      // rc.6 queue rows cannot name the request, so the timeout check must
+      // recognize this new row by its content instead of failing the send.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000)
+      })
+      expect(refreshQueue).toHaveBeenCalledWith('s1')
+      expect(input.value).toBe('')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('clears the cancelled draft when the accepted direct turn arrives late', async () => {
     let state = connectedState(true)
     const listeners = new Set<() => void>()

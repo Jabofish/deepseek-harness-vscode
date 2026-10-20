@@ -16,6 +16,7 @@ import { parseHostDomainEvent, isSurfaceEventName } from './event-parser.js'
 import { parseDshUpdateProgress } from './host-settings.js'
 import { EMPTY_SUBAGENT_CATALOG } from './initial-state.js'
 import { reduceJobFollow } from './job-follow.js'
+import { confirmPendingPrompts } from './pending-prompts.js'
 import {
   removeMatching,
   sameGoalList,
@@ -460,6 +461,10 @@ export function applyHostMessage(
       if (event.sessionId === next.activeSessionId) {
         next = withAvailableList(next, 'queue')
         if (!sameQueuedInputList(next.queue, event.items)) next = { ...next, queue: event.items }
+      }
+      if (next.pendingPrompts !== undefined) {
+        const remaining = confirmPendingPrompts(next.pendingPrompts, event.items)
+        if (remaining !== undefined) next = { ...next, pendingPrompts: remaining }
       }
     }
   } else if (event.type === 'goal.updated' && event.sessionId === next.activeSessionId) {

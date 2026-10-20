@@ -4,6 +4,7 @@ import type { ProtocolClient } from '../protocol-client.js'
 import { requestId } from './ids.js'
 import { applyKnownCommand, promptModeAfterCommand } from './agent-config.js'
 import type { ActiveSubagent, AppState, StateSetter } from './types.js'
+import type { PendingPromptReceipt } from './pending-prompts.js'
 import { object } from './unknown-record.js'
 
 type CommandPromptMode = NonNullable<ReturnType<typeof promptModeAfterCommand>>
@@ -96,8 +97,10 @@ export function createPromptActions(deps: PromptActionDependencies): {
         ...current,
         directPromptRequestIds: [...(current.directPromptRequestIds ?? []), rpcRequestId].slice(-64),
       }))
-    if (!direct && subagent === undefined && mode === 'queue') {
-      const pendingEntry: QueuedInput = {
+    // Only the panel that shows this session's queue can consume a local
+    // receipt; a background send has no dock to reconcile it against.
+    if (!direct && subagent === undefined && mode === 'queue' && state.activeSessionId === sessionId) {
+      const pendingEntry: PendingPromptReceipt = {
         id: pendingId,
         sessionId,
         text,
@@ -106,6 +109,7 @@ export function createPromptActions(deps: PromptActionDependencies): {
         mode,
         createdAt: new Date().toISOString(),
         rpcId: rpcRequestId,
+        queueIdsBefore: state.queue.map((item) => item.id),
       }
       setState((current) => ({
         ...current,

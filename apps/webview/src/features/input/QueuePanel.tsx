@@ -6,6 +6,7 @@ import { Icon } from '../../ui/Icon.js'
 import { SelectMenu } from '../../components/common/SelectMenu.js'
 import { MessageImages } from '../chat/MessageImages.js'
 import { useQueueHandoff } from './useQueueHandoff.js'
+import { confirmPendingPrompts } from '../../app/store/pending-prompts.js'
 
 export interface QueuePanelProps {
   readonly items: readonly QueuedInput[]
@@ -37,19 +38,13 @@ export const QueuePanel = memo(function QueuePanel(props: QueuePanelProps): Reac
         node.kind === 'user-message' && node.rpcId !== undefined ? [node.rpcId] : [],
       ) ?? [],
     )
-    return (props.pendingEntries ?? []).filter((entry) => {
+    const unconfirmed = (props.pendingEntries ?? []).filter((entry) => {
       if (entry.rpcId !== undefined && confirmedRpcIds.has(entry.rpcId)) return false
-      if (
-        queueItems.some(
-          (item) =>
-            (entry.rpcId !== undefined && item.rpcId === entry.rpcId) || samePendingContent(item, entry),
-        )
-      )
-        return false
       if (entry.rpcId === undefined)
         return !transcript?.nodes.some((node) => node.kind === 'user-message' && node.markdown === entry.text)
       return true
     })
+    return confirmPendingPrompts(unconfirmed, queueItems) ?? unconfirmed
   }, [props.pendingEntries, queueItems, transcript])
   const handoff = useQueueHandoff(queueItems, transcript, props.connected ?? true)
   const items = [
@@ -220,15 +215,6 @@ export const QueuePanel = memo(function QueuePanel(props: QueuePanelProps): Reac
     </section>
   )
 })
-
-function samePendingContent(left: QueuedInput, right: QueuedInput): boolean {
-  if (left.text !== right.text || left.mode !== right.mode) return false
-  if (left.attachments.length !== right.attachments.length) return false
-  return left.attachments.every((attachment, index) => {
-    const other = right.attachments[index]
-    return other?.name === attachment.name && other.mimeType === attachment.mimeType
-  })
-}
 
 function isThenable(value: void | Promise<void>): value is Promise<void> {
   return typeof value === 'object' && value !== null && typeof value.then === 'function'

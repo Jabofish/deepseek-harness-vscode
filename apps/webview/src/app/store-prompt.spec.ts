@@ -131,6 +131,131 @@ describe('AppStore prompt admission', () => {
     store.dispose()
   })
 
+  it('retires a local queue receipt once DSH projects its row and never surfaces it again', async () => {
+    const client = new FakeClient(response)
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.openSession(session.id)
+    await store.sendPrompt(session.id, 'queued prompt', [], 'queue')
+    expect(store.getState().pendingPrompts).toHaveLength(1)
+
+    const projected = {
+      id: 'queue-1',
+      sessionId: session.id,
+      text: 'queued prompt',
+      attachments: [],
+      textOnly: true,
+      mode: 'queue' as const,
+      createdAt: '2026-08-31T00:00:01.000Z',
+    }
+    client.emit({
+      type: 'event',
+      name: 'queue.updated',
+      sequence: 1,
+      payload: { sessionId: session.id, items: [projected] },
+    })
+    await Promise.resolve()
+    expect(store.getState().pendingPrompts).toEqual([])
+
+    // Admission removes the queue row and publishes the durable message. The
+    // already-projected receipt must not come back as a phantom "Sending" row.
+    client.emit({
+      type: 'event',
+      name: 'queue.updated',
+      sequence: 2,
+      payload: { sessionId: session.id, items: [] },
+    })
+    client.emit({
+      type: 'event',
+      name: 'message.user',
+      sequence: 3,
+      payload: { sessionId: session.id, messageId: 'message-1', markdown: 'queued prompt', source: 'user' },
+    })
+    await Promise.resolve()
+    expect(store.getState().pendingPrompts).toEqual([])
+    store.dispose()
+  })
+
+  it('keeps one receipt per identical send until each queue row is projected', async () => {
+    const client = new FakeClient(response)
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.openSession(session.id)
+    await store.sendPrompt(session.id, 'same prompt', [], 'queue')
+    await store.sendPrompt(session.id, 'same prompt', [], 'queue')
+    expect(store.getState().pendingPrompts).toHaveLength(2)
+
+    const first = {
+      id: 'queue-1',
+      sessionId: session.id,
+      text: 'same prompt',
+      attachments: [],
+      textOnly: true,
+      mode: 'queue' as const,
+      createdAt: '2026-08-31T00:00:01.000Z',
+    }
+    client.emit({
+      type: 'event',
+      name: 'queue.updated',
+      sequence: 1,
+      payload: { sessionId: session.id, items: [first] },
+    })
+    await Promise.resolve()
+    expect(store.getState().pendingPrompts).toHaveLength(1)
+
+    client.emit({
+      type: 'event',
+      name: 'queue.updated',
+      sequence: 2,
+      payload: { sessionId: session.id, items: [first, { ...first, id: 'queue-2' }] },
+    })
+    await Promise.resolve()
+    expect(store.getState().pendingPrompts).toEqual([])
+    store.dispose()
+  })
+
+  it('does not confirm a new identical send with a queue row that predated it', async () => {
+    const client = new FakeClient(response)
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.openSession(session.id)
+    const older = {
+      id: 'queue-older',
+      sessionId: session.id,
+      text: 'same prompt',
+      attachments: [],
+      textOnly: true,
+      mode: 'queue' as const,
+      createdAt: '2026-08-31T00:00:01.000Z',
+    }
+    client.emit({
+      type: 'event',
+      name: 'queue.updated',
+      sequence: 1,
+      payload: { sessionId: session.id, items: [older] },
+    })
+    await Promise.resolve()
+
+    await store.sendPrompt(session.id, 'same prompt', [], 'queue')
+    expect(store.getState().pendingPrompts).toHaveLength(1)
+    // Repeating the same snapshot proves nothing about the new submission.
+    client.emit({
+      type: 'event',
+      name: 'queue.updated',
+      sequence: 2,
+      payload: { sessionId: session.id, items: [older] },
+    })
+    await Promise.resolve()
+    expect(store.getState().pendingPrompts).toHaveLength(1)
+
+    client.emit({
+      type: 'event',
+      name: 'queue.updated',
+      sequence: 3,
+      payload: { sessionId: session.id, items: [older, { ...older, id: 'queue-newer' }] },
+    })
+    await Promise.resolve()
+    expect(store.getState().pendingPrompts).toEqual([])
+    store.dispose()
+  })
+
   it('reads the authoritative queue and removes an accepted prompt when cancelled', async () => {
     const removed = deferred<void>()
     let rpcId: string | undefined

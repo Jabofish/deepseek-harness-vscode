@@ -1,4 +1,5 @@
 import type { MovetoOutcome } from '../client-commands.js'
+import type { PendingPromptReceipt } from './pending-prompts.js'
 import type {
   FeatureHostEvent,
   FeatureRequest,
@@ -147,7 +148,7 @@ export interface AppState extends SessionModelDirectoryState {
   /** Recent direct sends, correlated with DSH inbox rows by request identity. */
   readonly directPromptRequestIds?: readonly string[]
   /** Queue-mode prompts accepted by the Host but not yet projected by DSH. */
-  readonly pendingPrompts?: readonly QueuedInput[]
+  readonly pendingPrompts?: readonly PendingPromptReceipt[]
   readonly backend: WebviewBackendState
   readonly connectionOutput?: readonly ConnectionLogEntry[]
   /** Monotonic opaque counter for a newly observed connected backend epoch. */
