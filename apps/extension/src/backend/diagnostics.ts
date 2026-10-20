@@ -138,6 +138,7 @@ const DIAGNOSTIC_EVENTS = new Set([
   'assistant-preview',
   'request-unexpected',
   'webview-message-unhandled',
+  'transcript-delivery-failed',
 ])
 const ERROR_CATEGORIES = new Set([
   'Error',

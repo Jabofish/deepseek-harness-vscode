@@ -208,6 +208,11 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
         invalidate: (sessionId) => {
           void postEventTo(surfaceId, 'session.transcript.invalidated', { sessionId }, isCurrent)
         },
+        report: ({ attempt, retrying }) =>
+          diagnostics.log('warn', 'transcript-delivery-failed', {
+            attempt,
+            retrying,
+          }),
       }),
     (surfaceId) => {
       const surface = surfaces.get(surfaceId)

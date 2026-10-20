@@ -38,6 +38,8 @@ type ReadPage = (
 // the content route.
 const MESSAGE_NODE_CHARS = 192 * 1024
 const MESSAGE_MARKDOWN_CHARS = 128 * 1024
+/** Bounded backoff for a window the renderer never acknowledged receiving. */
+const DELIVERY_RETRY_DELAYS_MS = [250, 1_000, 4_000] as const
 interface PendingOpen {
   readonly sessionId: string
   readonly generation: number
@@ -109,6 +111,8 @@ export class TranscriptWindowService {
       }
     | undefined
   private invalidated = false
+  private retryAttempt = 0
+  private retryTimer: ReturnType<typeof setTimeout> | undefined
   private readonly recentEvents = new Map<string, true>()
   private hostSequence = 0
   private readonly notices = new Map<
@@ -127,11 +131,13 @@ export class TranscriptWindowService {
       readonly post: (window: TranscriptWindow) => Promise<boolean>
       readonly postPatch?: (patch: TranscriptPatch) => Promise<boolean>
       readonly invalidate?: (sessionId: string) => void
+      readonly report?: (failure: { readonly attempt: number; readonly retrying: boolean }) => void
     },
   ) {}
 
   public begin(sessionId: string, child = false): number {
     const generation = ++this.generation
+    this.clearRetry()
     this.published = undefined
     this.pending = { sessionId, generation, child, events: [], chars: 0, overflow: false }
     return generation
@@ -215,6 +221,7 @@ export class TranscriptWindowService {
     this.pendingAcks.clear()
     this.pendingChars = 0
     this.budgetBlocked = false
+    this.clearRetry()
     return this.snapshot()
   }
 
@@ -488,6 +495,7 @@ export class TranscriptWindowService {
     this.budgetBlocked = false
     this.published = undefined
     this.invalidated = false
+    this.clearRetry()
     this.recentEvents.clear()
     this.notices.clear()
   }
@@ -860,6 +868,39 @@ export class TranscriptWindowService {
     void this.publish()
   }
 
+  private clearRetry(): void {
+    this.retryAttempt = 0
+    if (this.retryTimer === undefined) return
+    clearTimeout(this.retryTimer)
+    this.retryTimer = undefined
+  }
+
+  /**
+   * A failed post leaves the newest window untouched in the renderer. Retry a
+   * bounded number of times, then ask for the same reread a sequence gap uses:
+   * without this the final frame of a stream could be lost until the next
+   * navigation or readiness handshake.
+   */
+  private retryDelivery(): void {
+    this.dirty = true
+    if (this.retryTimer !== undefined) return
+    const retrying = this.retryAttempt < DELIVERY_RETRY_DELAYS_MS.length
+    this.deps.report?.({ attempt: this.retryAttempt + 1, retrying })
+    if (!retrying) {
+      const sessionId = this.displayed?.sessionId
+      if (this.invalidated || sessionId === undefined) return
+      this.invalidated = true
+      this.deps.invalidate?.(sessionId)
+      return
+    }
+    const delay = DELIVERY_RETRY_DELAYS_MS[this.retryAttempt]!
+    this.retryAttempt += 1
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = undefined
+      if (this.visible && this.displayed !== undefined) this.schedule()
+    }, delay)
+  }
+
   private async publish(): Promise<void> {
     if (!this.visible || this.displayed === undefined) return
     this.dirty = false
@@ -959,14 +1000,18 @@ export class TranscriptWindowService {
         this.pendingChars = 0
         this.budgetBlocked = false
         this.published = undefined
-      } else if (this.generation === generation && this.displayed === resident) {
-        this.published = {
-          sessionId: window.sessionId,
-          revision: sentRevision,
-          cwd: resident.cwd,
-          nodes: sources,
-          publicNodes,
-          metadataSource,
+        this.retryDelivery()
+      } else {
+        this.clearRetry()
+        if (this.generation === generation && this.displayed === resident) {
+          this.published = {
+            sessionId: window.sessionId,
+            revision: sentRevision,
+            cwd: resident.cwd,
+            nodes: sources,
+            publicNodes,
+            metadataSource,
+          }
         }
       }
     } catch {
@@ -974,6 +1019,7 @@ export class TranscriptWindowService {
       this.pendingChars = 0
       this.budgetBlocked = false
       this.published = undefined
+      this.retryDelivery()
     } finally {
       this.posting = false
     }

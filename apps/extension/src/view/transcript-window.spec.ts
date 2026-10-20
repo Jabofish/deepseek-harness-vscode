@@ -169,6 +169,100 @@ describe('Host transcript windows', () => {
     expect(terminal.metadata).not.toHaveProperty('activeTurn')
     service.dispose()
   })
+  it('retries the newest window after a failed delivery instead of dropping it', async () => {
+    vi.useFakeTimers()
+    const sent: (TranscriptWindow | TranscriptPatch)[] = []
+    const report = vi.fn()
+    const invalidate = vi.fn()
+    let failNextPatch = false
+    const service = new TranscriptWindowService({
+      read: () => Promise.resolve({ events: [], hasMore: false }),
+      publicValue: (value) => value,
+      post: (value) => {
+        sent.push(value)
+        return Promise.resolve(true)
+      },
+      postPatch: (value) => {
+        sent.push(value)
+        if (failNextPatch) {
+          failNextPatch = false
+          return Promise.resolve(false)
+        }
+        return Promise.resolve(true)
+      },
+      report,
+      invalidate,
+    })
+    service.installPage(sessionId, { events: [message(0)], hasMore: false }, service.begin(sessionId))
+    service.accept({ type: 'turn.started', sessionId, turn: 1, sequence: 1 })
+    await Promise.resolve()
+    expect(sent).toHaveLength(1)
+    expect(sent[0]).toHaveProperty('eventFacts')
+
+    failNextPatch = true
+    service.accept({ type: 'message.delta', sessionId, messageId: 'live', delta: 'x', turn: 1, step: 1 })
+    await Promise.resolve()
+    expect(sent).toHaveLength(2)
+    expect(sent[1]).toHaveProperty('baseRevision')
+    expect(report).toHaveBeenCalledWith({ attempt: 1, retrying: true })
+
+    await vi.advanceTimersByTimeAsync(250)
+    await Promise.resolve()
+    expect(sent).toHaveLength(3)
+    // The failed patch invalidated the renderer baseline, so the retry must be
+    // a full window that carries the newest text.
+    expect(sent[2]).toHaveProperty('eventFacts')
+    expect((sent[2] as TranscriptWindow).nodes.at(-1)).toMatchObject({ markdown: 'x' })
+    expect(invalidate).not.toHaveBeenCalled()
+    service.dispose()
+  })
+
+  it('reports a permanently lost delivery and asks for a reread after bounded retries', async () => {
+    vi.useFakeTimers()
+    const sent: (TranscriptWindow | TranscriptPatch)[] = []
+    const report = vi.fn()
+    const invalidate = vi.fn()
+    let fullPosts = 0
+    const service = new TranscriptWindowService({
+      read: () => Promise.resolve({ events: [], hasMore: false }),
+      publicValue: (value) => value,
+      post: (value) => {
+        sent.push(value)
+        fullPosts += 1
+        return Promise.resolve(fullPosts === 1)
+      },
+      postPatch: (value) => {
+        sent.push(value)
+        return Promise.resolve(false)
+      },
+      report,
+      invalidate,
+    })
+    service.installPage(sessionId, { events: [message(0)], hasMore: false }, service.begin(sessionId))
+    service.accept({ type: 'turn.started', sessionId, turn: 1, sequence: 1 })
+    await Promise.resolve()
+    service.accept({ type: 'message.delta', sessionId, messageId: 'live', delta: 'x', turn: 1, step: 1 })
+    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(250)
+    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(1_000)
+    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(4_000)
+    await Promise.resolve()
+
+    expect(report.mock.calls).toEqual([
+      [{ attempt: 1, retrying: true }],
+      [{ attempt: 2, retrying: true }],
+      [{ attempt: 3, retrying: true }],
+      [{ attempt: 4, retrying: false }],
+    ])
+    expect(invalidate).toHaveBeenCalledExactlyOnceWith(sessionId)
+    const delivered = sent.length
+    await vi.advanceTimersByTimeAsync(4_000)
+    expect(sent).toHaveLength(delivered)
+    service.dispose()
+  })
+
   it('sends immediately without advancing time and coalesces only after bounded credits are exhausted', async () => {
     vi.useFakeTimers()
     const sent: (TranscriptWindow | TranscriptPatch)[] = []
