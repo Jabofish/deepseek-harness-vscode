@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { TimelineNode } from '@dsh-vscode/timeline'
 import { TrajectoryView } from './TrajectoryView.js'
 
@@ -68,6 +68,31 @@ function renderView(
 
 describe('TrajectoryView', () => {
   afterEach(() => cleanup())
+
+  it('automatically replaces a clipped selected tool result with its complete inline output', async () => {
+    const tool = nodes.find((node) => node.kind === 'tool' && node.id === 't1')
+    if (tool?.kind !== 'tool') throw new Error('tool fixture missing')
+    const fullOutput = 'Complete tool output\n'.repeat(600) + 'LAST_OUTPUT_LINE'
+    let finish!: (node: TimelineNode) => void
+    const loadFullNode = vi.fn(
+      () =>
+        new Promise<TimelineNode>((resolve) => {
+          finish = resolve
+        }),
+    )
+    renderView({ nodes: [tool], omittedNodeIds: ['t1'], loadFullNode })
+    fireEvent.click(screen.getByText('shell: pnpm test'))
+    const region = screen.getByRole('region', { name: 'Record #1 details' })
+    expect(within(region).getByRole('status').textContent).toContain('still incomplete')
+    await waitFor(() => expect(loadFullNode).toHaveBeenCalledWith('t1', expect.any(AbortSignal)))
+    await act(async () => {
+      finish({ ...tool, tool: { ...tool.tool, outputSummary: fullOutput } })
+      await Promise.resolve()
+    })
+    expect(region.querySelectorAll('pre')[1]?.textContent).toBe(fullOutput)
+    expect(within(region).queryByRole('status')).toBeNull()
+    expect(within(region).getAllByRole('button')).toHaveLength(1)
+  })
 
   it('renders turn sections with a standalone between-turns compaction section', () => {
     renderView()

@@ -627,6 +627,11 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                   ) : (
                     <TrajectoryView
                       sessionId={active.id}
+                      contentScope={`${state.connectionEpoch}:${state.timeline.sessionId ?? active.id}`}
+                      {...(state.transcript === undefined
+                        ? {}
+                        : { omittedNodeIds: state.transcript.omittedNodeIds })}
+                      loadFullNode={(nodeId, signal) => store.loadTranscriptNode(nodeId, signal)}
                       panelId={CONVERSATION_VIEW_IDS.trajectory.panel}
                       panelLabelledBy={CONVERSATION_VIEW_IDS.trajectory.tab}
                       nodes={state.timeline.nodes}

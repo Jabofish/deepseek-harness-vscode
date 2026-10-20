@@ -12,6 +12,30 @@ const usage: TokenUsage = {
   reasoningTokens: 12,
 }
 
+it('retains complete tool failure and denial information in trajectory output', () => {
+  const error = 'Failure context\n'.repeat(600) + 'ERROR_END'
+  const projection = buildTrajectory([
+    {
+      kind: 'tool',
+      id: 'failed',
+      tool: {
+        id: 'failed',
+        name: 'shell',
+        title: 'shell',
+        category: 'execution',
+        status: 'failed',
+        outputSummary: 'Partial stdout',
+        error,
+        autoReviewDenial: { reason: 'The requested target is outside the allowed scope.' },
+        metadata: {},
+      },
+    },
+  ])
+  expect(projection.sections[0]?.records[0]?.outputDetail).toBe(
+    'Partial stdout\n\n' + error + '\n\nThe requested target is outside the allowed scope.',
+  )
+})
+
 const nodes: readonly TimelineNode[] = [
   {
     kind: 'user-message',

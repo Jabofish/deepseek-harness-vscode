@@ -8,6 +8,7 @@ import {
 import { ScrollToLatestButton, useScrollFollow } from '../../components/common/index.js'
 import { useI18n, type Translate } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
+import { useCompleteTranscriptNodes } from '../chat/useCompleteTranscriptNodes.js'
 
 export interface TrajectoryViewProps {
   readonly sessionId: string | undefined
@@ -18,6 +19,9 @@ export interface TrajectoryViewProps {
   readonly nodeChangeStart?: number
   readonly nodeChangeBase?: readonly TimelineNode[]
   readonly streaming: boolean
+  readonly contentScope?: string
+  readonly omittedNodeIds?: readonly string[]
+  readonly loadFullNode?: (nodeId: string, signal?: AbortSignal) => Promise<TimelineNode>
 }
 
 /**
@@ -44,9 +48,19 @@ export const TrajectoryView = memo(function TrajectoryView(props: TrajectoryView
     [props.sessionId],
   )
 
+  const complete = useCompleteTranscriptNodes(
+    props.contentScope ?? props.sessionId ?? '',
+    props.nodes,
+    props.omittedNodeIds,
+    props.loadFullNode,
+  )
+  const sourceNodes = complete.nodes
+  const changeStart = sourceNodes === props.nodes ? props.nodeChangeStart : undefined
+  const changeBase = sourceNodes === props.nodes ? props.nodeChangeBase : undefined
+
   const projection = useMemo(
-    () => trajectoryProjectorState.project(props.nodes, props.nodeChangeStart, props.nodeChangeBase),
-    [props.nodeChangeBase, props.nodeChangeStart, props.nodes, trajectoryProjectorState],
+    () => trajectoryProjectorState.project(sourceNodes, changeStart, changeBase),
+    [changeBase, changeStart, sourceNodes, trajectoryProjectorState],
   )
   const matches = useMemo(() => searchTrajectoryRecords(projection, query), [projection, query])
   const searching = query.trim() !== ''
@@ -58,6 +72,9 @@ export const TrajectoryView = memo(function TrajectoryView(props: TrajectoryView
     }
     return undefined
   }, [projection, selectedId])
+  // Record identities are minted by the local projector as kind + NUL + node id.
+  const selectedSourceId = selectedId?.slice(selectedId.indexOf('\u0000') + 1)
+  const selectedPending = selectedSourceId !== undefined && complete.pendingIds.has(selectedSourceId)
 
   const lastRecord = projection.sections.at(-1)?.records.at(-1)
   const tailSignature = lastRecord === undefined ? '' : `${lastRecord.id}:${lastRecord.text.length}`
@@ -180,6 +197,9 @@ export const TrajectoryView = memo(function TrajectoryView(props: TrajectoryView
         {selected === undefined ? null : (
           <TrajectoryInspector
             record={selected}
+            {...(selectedPending
+              ? { contentStatus: complete.failed ? ('retrying' as const) : ('loading' as const) }
+              : {})}
             onClose={() => {
               setSelectedId(undefined)
               // The keyboard returns to the row that asked for the details.
@@ -232,6 +252,7 @@ const TrajectoryRow = memo(function TrajectoryRow(props: {
 
 function TrajectoryInspector(props: {
   readonly record: TrajectoryRecord
+  readonly contentStatus?: 'loading' | 'retrying'
   readonly onClose: () => void
   readonly t: Translate
 }): ReactElement {
@@ -272,6 +293,11 @@ function TrajectoryInspector(props: {
           <Icon name="close" />
         </button>
       </header>
+      {props.contentStatus === undefined ? null : (
+        <p role={props.contentStatus === 'retrying' ? 'alert' : 'status'}>
+          {t(props.contentStatus === 'retrying' ? 'transcript.syncRetrying' : 'transcript.syncLoading')}
+        </p>
+      )}
       <dl className="dsh-trajectory-inspector__facts">
         <dt>{t('trajectory.duration')}</dt>
         <dd>{record.streaming ? t('trajectory.running') : formatDuration(record.timeSeconds)}</dd>
