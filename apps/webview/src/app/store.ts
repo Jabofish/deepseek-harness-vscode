@@ -93,6 +93,32 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   }
   const listeners = new Set<() => void>()
   const turnWatchers = createTurnWatchers({ isDisposed: () => disposed })
+  // Acknowledgements are cumulative by revision, so a burst of streaming
+  // patches only needs its newest revision. Send one request per session per
+  // microtask instead of one RPC per patch.
+  let pendingTranscriptAcks = new Map<string, number>()
+  let transcriptAckScheduled = false
+  const flushTranscriptAcks = (): void => {
+    transcriptAckScheduled = false
+    const acks = pendingTranscriptAcks
+    pendingTranscriptAcks = new Map()
+    if (disposed) return
+    for (const [sessionId, revision] of acks)
+      void client
+        .request<unknown>({
+          type: 'session.transcript.ack',
+          requestId: requestId(),
+          payload: { sessionId, revision },
+        })
+        .catch(() => undefined)
+  }
+  const acknowledgeTranscript = (sessionId: string, revision: number): void => {
+    if ((pendingTranscriptAcks.get(sessionId) ?? 0) >= revision) return
+    pendingTranscriptAcks.set(sessionId, revision)
+    if (transcriptAckScheduled) return
+    transcriptAckScheduled = true
+    queueMicrotask(flushTranscriptAcks)
+  }
   const setState: StateSetter = (next): void => {
     if (disposed) return
     const nextState = typeof next === 'function' ? next(state) : next
@@ -114,16 +140,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       ])
         for (const id of index.keys()) if (id !== active) index.delete(id)
     }
-    if (state.transcript !== undefined && state.transcript !== previousTranscript) {
-      const window = state.transcript
-      void client
-        .request<unknown>({
-          type: 'session.transcript.ack',
-          requestId: requestId(),
-          payload: { sessionId: window.sessionId, revision: window.revision },
-        })
-        .catch(() => undefined)
-    }
+    if (state.transcript !== undefined && state.transcript !== previousTranscript)
+      acknowledgeTranscript(state.transcript.sessionId, state.transcript.revision)
     // Publish installed Host state immediately; do not add a timer or frame wait.
     for (const listener of listeners) listener()
   }

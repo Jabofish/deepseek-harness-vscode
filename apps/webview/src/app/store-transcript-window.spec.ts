@@ -207,6 +207,24 @@ describe('Webview installs Host windows', () => {
     }
   })
 
+  it('coalesces streaming acknowledgements to the newest revision in one microtask', async () => {
+    const client = new Client()
+    const store = createAppStore(client as unknown as ProtocolClient)
+    try {
+      await store.openSession('s')
+      client.requests.length = 0
+      client.emit(window('s', 2, 'a'))
+      client.emit(window('s', 3, 'b'))
+      client.emit(window('s', 4, 'c'))
+      await Promise.resolve()
+      const acks = client.requests.filter((request) => request.type === 'session.transcript.ack')
+      expect(acks).toHaveLength(1)
+      expect(acks[0]).toMatchObject({ payload: { sessionId: 's', revision: 4 } })
+    } finally {
+      store.dispose()
+    }
+  })
+
   it('coalesces snapshots arriving across the opening barrier and accepts only the latest complete view', async () => {
     const client = new Client()
     let resolve: ((detail: unknown) => void) | undefined
