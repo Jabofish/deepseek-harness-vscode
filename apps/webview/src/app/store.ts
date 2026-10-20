@@ -209,18 +209,11 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   let pendingSessionRevision = 0
   let pendingSend: { readonly revision: number; readonly promise: Promise<void> } | undefined
   const {
-    capturePresetSessionTarget,
-    synchronizeBlankSessionPreset,
     nextConfigurationGeneration,
     isConfigurationGenerationCurrent,
     nextPresetRosterGeneration,
     isPresetRosterCurrent,
-  } = createSessionConfigurationController({
-    client,
-    getState: () => state,
-    setState,
-    getPendingSendRevision: () => pendingSend?.revision,
-  })
+  } = createSessionConfigurationController()
   const globalCatalogs = createGlobalCatalogController({
     client,
     setState,
@@ -632,10 +625,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     setState,
     refreshModelCatalog: globalCatalogs.refreshModels,
     applyBusyEnter,
-    capturePresetSessionTarget,
     nextPresetRosterGeneration,
     isPresetRosterCurrent,
-    synchronizeBlankSessionPreset,
   })
   const feedbackActions = createFeedbackActions({ client, setState, getState: () => state, feedbackCache })
   const interactionActions = createInteractionActions(client, setState)

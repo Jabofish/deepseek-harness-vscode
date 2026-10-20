@@ -188,7 +188,8 @@ export function createDefaultConfiguration(
   state: Pick<AppState, 'presets' | 'models'>,
   preferences: ComposerPreferences,
 ): AgentConfiguration {
-  const preset = state.presets.find((entry) => entry.isDefault)?.id ?? state.presets[0]?.id ?? 'standard'
+  const usablePresets = state.presets.filter((entry) => entry.broken === undefined)
+  const preset = usablePresets.find((entry) => entry.isDefault)?.id ?? usablePresets[0]?.id ?? ''
   const model =
     preferences.model !== undefined &&
     (state.models.length === 0 ||

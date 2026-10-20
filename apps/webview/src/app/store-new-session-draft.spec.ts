@@ -128,6 +128,7 @@ describe('New Session draft', () => {
       await store.stageSession('w1')
       expect(requests).toHaveLength(before)
       expect(store.getState().pendingSession?.workspaceId).toBe('w1')
+      expect(store.getState().pendingSession?.configuration.preset).toBe('')
       expect(store.activeSessionId).toBeUndefined()
 
       await store.sendPendingPrompt('Hello', [], 'queue')

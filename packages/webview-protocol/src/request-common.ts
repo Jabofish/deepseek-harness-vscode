@@ -79,7 +79,8 @@ export const diagnosticsSnapshotSchema = z
   .strict()
 export const agentConfigurationSchema = z
   .object({
-    preset: id,
+    // Empty means no explicit choice; DSH owns the deployment default.
+    preset: z.string().max(256),
     toolMode: z.enum(['native', 'ptc', 'code', 'both']),
     permissionPreset: id,
     planMode: z.boolean(),

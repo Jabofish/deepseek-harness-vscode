@@ -152,7 +152,7 @@ describe('preset selection lifecycle', () => {
     }
   })
 
-  it('applies a changed Host default to the same active blank session', async () => {
+  it('keeps the active blank session configuration when the Host default changes', async () => {
     const client = new PresetLifecycleClient()
     const store = await loadedStore(client)
 
@@ -165,18 +165,14 @@ describe('preset selection lifecycle', () => {
         (request): request is Extract<WebviewRequest, { type: 'session.configure' }> =>
           request.type === 'session.configure',
       )
-      expect(configure?.payload.sessionId).toBe('blank')
-      expect(configure?.payload.configuration).toMatchObject({
-        preset: 'alternate',
-        permissionPreset: 'workspace-write',
-      })
-      expect(store.getState().configuration?.preset).toBe('alternate')
+      expect(configure).toBeUndefined()
+      expect(store.getState().configuration?.preset).toBe('standard')
     } finally {
       store.dispose()
     }
   })
 
-  it('updates a local pending session when the Host default changes', async () => {
+  it('keeps a pending draft choice when the Host default changes', async () => {
     const client = new PresetLifecycleClient()
     const store = await loadedStore(client)
 
@@ -185,12 +181,40 @@ describe('preset selection lifecycle', () => {
       client.roster = presetRoster('alternate')
       await store.loadPresetRoster()
 
-      expect(store.getState().pendingSession?.configuration.preset).toBe('alternate')
+      expect(store.getState().pendingSession?.configuration.preset).toBe('standard')
       expect(client.requests.some((request) => request.type === 'session.configure')).toBe(false)
     } finally {
       store.dispose()
     }
   })
+
+  it.each(['active', 'pending'] as const)(
+    'does not replace an explicit %s choice during a catalog refresh',
+    async (target) => {
+      const client = new PresetLifecycleClient()
+      const store = await loadedStore(client)
+      try {
+        const chosen = { ...STANDARD_CONFIGURATION, preset: 'alternate' }
+        if (target === 'pending') {
+          await store.stageSession('w1')
+          store.configurePendingSession(chosen)
+        } else {
+          await store.openSession('blank')
+          await store.configureSession('blank', chosen)
+        }
+        client.requests.length = 0
+        await store.loadPresetRoster()
+        expect(client.requests.some((request) => request.type === 'session.configure')).toBe(false)
+        expect(
+          target === 'pending'
+            ? store.getState().pendingSession?.configuration.preset
+            : store.getState().configuration?.preset,
+        ).toBe('alternate')
+      } finally {
+        store.dispose()
+      }
+    },
+  )
 
   it('does not change a nonblank active session when the Host default changes', async () => {
     const client = new PresetLifecycleClient()

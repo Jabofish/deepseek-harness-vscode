@@ -21,7 +21,7 @@ import {
 import { WebviewSurfaceRegistry } from '../view/webview-surface-registry.js'
 
 const configuration: AgentConfiguration = {
-  preset: 'missing',
+  preset: 'deployed-default',
   toolMode: 'native',
   permissionPreset: 'workspace-write',
   planMode: false,
@@ -124,7 +124,7 @@ describe('session configuration routes', () => {
 
       const signal = list.mock.calls[0]?.[0]
       expect(signal).toBeInstanceOf(AbortSignal)
-      const resolved = { ...configuration, preset: 'deployed-default' }
+      const resolved = configuration
       if (type === 'session.create') {
         expect(create).toHaveBeenCalledExactlyOnceWith(
           { workspaceId: 'workspace', configuration: resolved },
@@ -154,6 +154,21 @@ describe('session configuration routes', () => {
     expect(list).not.toHaveBeenCalled()
     expect(setConfiguration).not.toHaveBeenCalled()
   })
+
+  it.each(['session.create', 'session.configure'] as const)(
+    'rejects a stale preset in %s before mutation',
+    async (type) => {
+      const { gateway, sent, create, setConfiguration, list } = harness()
+      list.mockResolvedValue({
+        presets: [{ id: 'different', trust: 'system', isDefault: true }],
+        authorable: false,
+      })
+      await gateway.router.handle(request(type))
+      expect(sent[0]).toMatchObject({ ok: false, error: { code: 'INVALID_CONFIGURATION' } })
+      expect(create).not.toHaveBeenCalled()
+      expect(setConfiguration).not.toHaveBeenCalled()
+    },
+  )
 
   it('refuses an untrusted workspace before resolving or creating a session', async () => {
     const { gateway, sent, list, create } = harness()

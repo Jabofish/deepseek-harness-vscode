@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 预设失效时明确拒绝发送，不再静默换成其他模式；刷新目录不改写已有会话或草稿的选择，空目录不再补造 standard 预设。
+- Rejects unavailable preset choices without substituting another mode. Catalog refreshes preserve session and draft choices, and empty catalogs no longer invent a standard preset.
+
 - 保留 Windows 负数退出码；退出码为 null 或无法可靠表示时展示原始结果，不再误报为退出成功。
 - Preserves negative Windows exit codes and keeps unknown exit markers in the result instead of reporting a clean exit.
 

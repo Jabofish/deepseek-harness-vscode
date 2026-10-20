@@ -1,4 +1,4 @@
-import type { AgentConfiguration, AgentPresetDescriptor } from '@dsh-vscode/domain'
+import { AppError, type AgentConfiguration, type AgentPresetDescriptor } from '@dsh-vscode/domain'
 
 /** Optional transport fields are normalized before producing a Domain configuration. */
 export interface SessionConfigurationInput extends Pick<
@@ -20,11 +20,17 @@ export function resolveSessionConfigurationForRoster(
   presets: readonly AgentPresetDescriptor[],
 ): AgentConfiguration {
   const usable = presets.filter((preset) => preset.broken === undefined)
-  const candidates = usable.length > 0 ? usable : presets
+  const requestedId = requested.preset.trim()
   const selected =
-    candidates.find((preset) => preset.id === requested.preset) ??
-    candidates.find((preset) => preset.isDefault) ??
-    candidates[0]
+    requestedId === ''
+      ? (usable.find((preset) => preset.isDefault) ?? usable[0])
+      : usable.find((preset) => preset.id === requestedId)
+  if ((requestedId !== '' && selected === undefined) || (presets.length > 0 && usable.length === 0))
+    throw new AppError({
+      code: 'INVALID_CONFIGURATION',
+      message: 'The selected agent preset is unavailable. Choose an available preset before sending.',
+      retryable: false,
+    })
 
   return {
     // An empty optional roster leaves composition to DSH. The adapter omits
