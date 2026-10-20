@@ -44,6 +44,15 @@ export class BoundedEventQueue {
     this.chars = 0
   }
 
+  /** Ask for the same resync a rejected frame triggers, keeping the queue. */
+  public invalidate(): void {
+    if (this.disposed) return
+    this.invalidated = true
+    if (this.running) return
+    this.running = true
+    void this.drain()
+  }
+
   private async drain(): Promise<void> {
     try {
       while (!this.disposed && (this.pending.length > 0 || this.invalidated)) {

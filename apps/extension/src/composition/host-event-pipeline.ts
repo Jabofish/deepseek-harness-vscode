@@ -258,6 +258,13 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
         // another surface's kind, session or count.
         const delivered = surfaceId === undefined ? await post(message) : await postTo(surfaceId, message)
         if (delivered) sequence = nextSequence
+        else if (priority && surfaceId === undefined) {
+          // A control frame the Webview never received must not be followed by
+          // a contiguously numbered stream: consume its sequence and ask for
+          // the reread a rejected frame already triggers.
+          sequence = nextSequence
+          eventPostQueue.invalidate()
+        }
         return delivered
       },
       chars,
