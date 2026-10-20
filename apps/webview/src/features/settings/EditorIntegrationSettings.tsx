@@ -4,6 +4,7 @@ import { editorIntegrationStatusSchema, type FeatureRequest } from '@dsh-vscode/
 import { SettingCard, SettingRow } from '../../components/common/SettingCard.js'
 import { useI18n } from '../../i18n.js'
 import type { SettingsDrawerProps } from './settings-drawer-props.js'
+import { failureKey } from '../plugins/optional-bundle-model.js'
 
 /** All operations go through the Host. Status polling stops when the settings tab closes. */
 export function EditorIntegrationSettings({
@@ -183,6 +184,25 @@ export function EditorIntegrationSettings({
       />
       {failed ? <p role="alert">{t('editorIntegration.requestFailed')}</p> : null}
       {installPhase === undefined ? null : <p role="status">{installLabels[installPhase]}</p>}
+      {installPhase === 'failed' &&
+      status !== undefined &&
+      (status.installationErrorCode !== undefined || status.installationFailureKind !== undefined) ? (
+        <p role="alert">
+          {t(
+            failureKey({
+              name: '@dsh-vscode/editor-bridge',
+              changed: false,
+              application: 'failed',
+              ...(status.installationErrorCode === undefined
+                ? {}
+                : { errorCode: status.installationErrorCode }),
+              ...(status.installationFailureKind === undefined
+                ? {}
+                : { failureKind: status.installationFailureKind }),
+            }),
+          )}
+        </p>
+      ) : null}
       <div className="dsh-settings__actions">
         {installing || status?.canCancelInstall ? (
           <button

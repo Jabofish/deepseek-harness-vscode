@@ -25,6 +25,20 @@ function mount(handle: (request: FeatureRequest) => Promise<unknown>): void {
   )
 }
 describe('editor integration in Webview settings', () => {
+  it('shows the native installation cause and preserves the retry action', async () => {
+    mount(() =>
+      Promise.resolve({
+        ...ready,
+        phase: 'limited',
+        reason: 'setup-failed',
+        installation: 'failed',
+        installationFailureKind: 'pnpm-missing',
+      }),
+    )
+    await screen.findByText(/DSH cannot run pnpm/)
+    expect(screen.queryByText(/Restart to use the bundled integration/)).toBeNull()
+    expect(screen.getByRole('button', { name: 'Retry installation' })).toBeDefined()
+  })
   it('sends a separate native cancellation while Install is pending and waits for the actual result', async () => {
     const missing = {
       ...ready,
@@ -154,7 +168,7 @@ describe('editor integration in Webview settings', () => {
     })
     mount(handle)
     await screen.findByText('Connect to DSH to use editor tools. Settings are saved for this workspace.')
-    expect(screen.queryByRole('button', { name: 'Repair setup' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Retry installation' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Restart DSH' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Retry connection' }))
     await waitFor(() =>

@@ -54,6 +54,12 @@ export function runtimePathEntries(
     const programFilesX86 = environment['ProgramFiles(x86)']
     if (programFilesX86 !== undefined) add(pathApi.join(programFilesX86, 'nodejs'))
     add(environment.FNM_MULTISHELL_PATH)
+    add(environment.PNPM_HOME)
+    if (environment.LOCALAPPDATA !== undefined) add(pathApi.join(environment.LOCALAPPDATA, 'pnpm'))
+    // Desktop launches can retain a deleted fnm shell directory. Its default
+    // alias survives terminal sessions and also contains Corepack's pnpm shim.
+    if (environment.FNM_DIR !== undefined) add(pathApi.join(environment.FNM_DIR, 'aliases', 'default'))
+    if (environment.APPDATA !== undefined) add(pathApi.join(environment.APPDATA, 'fnm', 'aliases', 'default'))
     add(environment.NVM_HOME)
     if (environment.VOLTA_HOME !== undefined) add(pathApi.join(environment.VOLTA_HOME, 'bin'))
     return entries
@@ -61,12 +67,14 @@ export function runtimePathEntries(
 
   const home = environment.HOME ?? environment.USERPROFILE
   add(environment.NVM_BIN)
+  add(environment.PNPM_HOME)
   add(environment.FNM_MULTISHELL_PATH)
   if (environment.VOLTA_HOME !== undefined) add(pathApi.join(environment.VOLTA_HOME, 'bin'))
   if (environment.NODENV_ROOT !== undefined) add(pathApi.join(environment.NODENV_ROOT, 'shims'))
   if (environment.ASDF_DATA_DIR !== undefined) add(pathApi.join(environment.ASDF_DATA_DIR, 'shims'))
   if (home !== undefined) {
     add(pathApi.join(home, '.local', 'bin'))
+    add(pathApi.join(home, '.local', 'share', 'pnpm'))
     add(pathApi.join(home, '.npm-global', 'bin'))
     add(pathApi.join(home, '.local', 'share', 'fnm', 'aliases', 'default', 'bin'))
     add(pathApi.join(home, '.fnm', 'aliases', 'default', 'bin'))

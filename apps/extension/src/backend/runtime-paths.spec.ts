@@ -21,6 +21,7 @@ describe('runtime path resolution', () => {
       '/home/alice/.nvm/versions/node/v22.19.0/bin',
       '/home/alice/.local/share/fnm_multishells/123',
       '/home/alice/.local/bin',
+      '/home/alice/.local/share/pnpm',
       '/home/alice/.npm-global/bin',
       '/home/alice/.local/share/fnm/aliases/default/bin',
       '/home/alice/.fnm/aliases/default/bin',
@@ -46,11 +47,24 @@ describe('runtime path resolution', () => {
       'C:\\Windows\\System32',
       'C:\\Users\\alice\\AppData\\Roaming\\npm',
       'C:\\Program Files\\nodejs',
+      'C:\\Users\\alice\\AppData\\Roaming\\fnm\\aliases\\default',
     ])
   })
 
   it('uses the Windows npm shim name when no inspected path exists', () => {
     expect(resolveNpmExecutable('windows', [], () => false)).toBe('npm.cmd')
+  })
+
+  it('keeps pnpm and the persistent fnm alias available without a terminal shell', () => {
+    const entries = runtimePathEntries('windows', {
+      PATH: 'C:\\expired-fnm-shell',
+      PNPM_HOME: 'C:\\tools\\pnpm',
+      LOCALAPPDATA: 'C:\\Users\\alice\\AppData\\Local',
+      FNM_DIR: 'D:\\fnm',
+    })
+    expect(entries).toContain('C:\\tools\\pnpm')
+    expect(entries).toContain('C:\\Users\\alice\\AppData\\Local\\pnpm')
+    expect(entries).toContain('D:\\fnm\\aliases\\default')
   })
 
   it('keeps USERPROFILE discovery stable when HOME is overridden by a launcher', () => {

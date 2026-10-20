@@ -371,6 +371,7 @@ export class EditorBridgeHost {
         ? {}
         : { installation: this.management.installationState }),
       canCancelInstall: this.management.canCancelInstall,
+      ...this.management.installationFailure,
     }
   }
   public async configure(change: Partial<EditorIntegrationPreferences>): Promise<EditorIntegrationStatus> {

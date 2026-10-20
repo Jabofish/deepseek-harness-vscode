@@ -34,6 +34,10 @@ interface RecoveryArchive extends CompanionArchive {
 export class EditorCompanionManagement {
   private installPhase: EditorIntegrationStatus['installation']
   private installBackend: DshBackend | undefined
+  private failure: Pick<EditorIntegrationStatus, 'installationErrorCode' | 'installationFailureKind'> = {}
+  public get installationFailure(): typeof this.failure {
+    return this.installBackend !== undefined && !this.deps.current(this.installBackend) ? {} : this.failure
+  }
   public get installationState(): EditorIntegrationStatus['installation'] {
     if (this.installBackend !== undefined && !this.deps.current(this.installBackend)) return undefined
     return this.installPhase
@@ -244,6 +248,7 @@ export class EditorCompanionManagement {
   }
   private async runInstall(file: string, silent: boolean): Promise<boolean> {
     this.installPhase = 'installing'
+    this.failure = {}
     const controller = new AbortController()
     this.controller = controller
     try {
@@ -458,6 +463,10 @@ export class EditorCompanionManagement {
   }
   private async result(backend: DshBackend, result: PluginBundleChangeResult, silent = false): Promise<void> {
     if (!this.deps.current(backend)) return
+    this.failure = {
+      ...(result.errorCode === undefined ? {} : { installationErrorCode: result.errorCode }),
+      ...(result.failureKind === undefined ? {} : { installationFailureKind: result.failureKind }),
+    }
     this.installPhase =
       result.application === 'applied' || result.application === 'restart-required'
         ? 'installed'

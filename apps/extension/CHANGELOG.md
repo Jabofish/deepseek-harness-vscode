@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 补齐桌面启动时的 pnpm/fnm 路径，安装失败在设置中保留 DSH 安全错误分类；修正重启可代替安装及强制保存原有未保存内容的旧提示。
+- Restores pnpm/fnm paths for desktop launches and retains native installation failure categories in settings; corrects stale restart and unsaved-buffer descriptions.
+
 - 编辑器配套通过 DSH 标准插件管理器安装、升级和取消，不再注入本地文件 overlay；配套包提供原生中英文标题和描述。安装面板保留进度、取消及未知结果恢复，取消过晚时按 DSH 实际结果显示。
 - Installs, updates and cancels the editor companion through DSH's standard plugin manager instead of a local-file overlay. The package exports native English/Chinese metadata; settings show progress, cancellation and recovery without claiming a late cancellation succeeded.
 

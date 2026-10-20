@@ -98,6 +98,20 @@ function fixture(ownership: 'managed' | 'external' = 'managed'): Fixture {
   }
 }
 describe('native editor companion installation and recovery', () => {
+  it('retains the safe native installation failure for the settings panel', async () => {
+    const { manager, installBundle } = fixture()
+    installBundle.mockResolvedValue({
+      ...applied,
+      application: 'failed',
+      errorCode: 'operation-error',
+      failureKind: 'pnpm-missing',
+    })
+    expect(await manager.installBundled({ silent: true })).toBe(false)
+    expect(manager.installationFailure).toEqual({
+      installationErrorCode: 'operation-error',
+      installationFailureKind: 'pnpm-missing',
+    })
+  })
   it.each(['cancelled', 'applied'] as const)(
     'reports the native %s outcome after cancellation',
     async (application) => {
