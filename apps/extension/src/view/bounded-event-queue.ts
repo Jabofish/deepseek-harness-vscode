@@ -2,6 +2,7 @@ interface PendingPost {
   readonly run: () => Promise<boolean>
   readonly chars: number
   readonly finish: (delivered: boolean) => void
+  readonly priority: boolean
 }
 
 /** Serial transport work with explicit invalidation instead of an unbounded Promise chain. */
@@ -18,7 +19,7 @@ export class BoundedEventQueue {
     private readonly maxChars = 512 * 1024,
   ) {}
 
-  public enqueue(run: () => Promise<boolean>, chars: number): Promise<boolean> {
+  public enqueue(run: () => Promise<boolean>, chars: number, priority = false): Promise<boolean> {
     if (this.disposed) return Promise.resolve(false)
     if (this.pending.length >= this.maxPending || (this.running && this.chars + chars > this.maxChars)) {
       for (const entry of this.pending.splice(0)) entry.finish(false)
@@ -27,7 +28,7 @@ export class BoundedEventQueue {
       return Promise.resolve(false)
     }
     return new Promise((resolve) => {
-      this.pending.push({ run, chars, finish: resolve })
+      this.pending.push({ run, chars, finish: resolve, priority })
       this.chars += chars
       if (!this.running) {
         this.running = true
@@ -54,7 +55,10 @@ export class BoundedEventQueue {
             /* The next ready handshake rereads authority. */
           }
         }
-        const entry = this.pending.shift()
+        // Control frames must not wait behind a burst of transcript patches.
+        // FIFO is preserved inside each priority lane.
+        const priorityIndex = this.pending.findIndex((entry) => entry.priority)
+        const entry = priorityIndex < 0 ? this.pending.shift() : this.pending.splice(priorityIndex, 1)[0]
         if (entry === undefined) continue
         this.chars -= entry.chars
         try {

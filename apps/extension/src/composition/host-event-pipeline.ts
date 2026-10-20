@@ -19,6 +19,20 @@ import { featureContextKinds, type FeatureContextKind } from './editor-files.js'
 import type { TranscriptWindowService } from '../view/transcript-window.js'
 import { BoundedEventQueue, eventPayloadCharacters } from '../view/bounded-event-queue.js'
 
+/**
+ * High-volume state frames that may wait behind each other. Every other
+ * Host event (interactions, queue/status updates, connection changes) is
+ * control traffic and must not queue behind a streaming burst.
+ */
+const BULK_EVENT_NAMES = new Set([
+  'session.transcript',
+  'session.transcript.patch',
+  'runtime.update.progress',
+])
+function isBulkEvent(name: string): boolean {
+  return BULK_EVENT_NAMES.has(name)
+}
+
 export type PostHostMessage = (message: HostMessage | FeatureHostMessage) => Thenable<boolean>
 /** Deliver an event to exactly one surface (surface-owned state, not broadcasts). */
 export type PostHostMessageTo = (
@@ -227,33 +241,44 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
     resolve: () => Promise<{ readonly name: string; readonly payload: unknown } | undefined>,
     chars: number,
     surfaceId?: string,
+    priority = false,
   ): Promise<boolean> => {
-    return eventPostQueue.enqueue(async () => {
-      const nextEvent = await resolve()
-      if (nextEvent === undefined) return true
-      const nextSequence = sequence + 1
-      const message = {
-        type: 'event' as const,
-        name: nextEvent.name,
-        sequence: nextSequence,
-        payload: nextEvent.payload,
-      }
-      // A surface-directed event is that surface's own state; it must not leak
-      // another surface's kind, session or count.
-      const delivered = surfaceId === undefined ? await post(message) : await postTo(surfaceId, message)
-      if (delivered) sequence = nextSequence
-      return delivered
-    }, chars)
+    return eventPostQueue.enqueue(
+      async () => {
+        const nextEvent = await resolve()
+        if (nextEvent === undefined) return true
+        const nextSequence = sequence + 1
+        const message = {
+          type: 'event' as const,
+          name: nextEvent.name,
+          sequence: nextSequence,
+          payload: nextEvent.payload,
+        }
+        // A surface-directed event is that surface's own state; it must not leak
+        // another surface's kind, session or count.
+        const delivered = surfaceId === undefined ? await post(message) : await postTo(surfaceId, message)
+        if (delivered) sequence = nextSequence
+        return delivered
+      },
+      chars,
+      priority,
+    )
   }
   const postEvent = (name: string, payload: unknown): Promise<boolean> => {
     deps.onEvent?.(name, payload)
-    return enqueueEvent(() => Promise.resolve({ name, payload }), eventPayloadCharacters(payload))
+    return enqueueEvent(
+      () => Promise.resolve({ name, payload }),
+      eventPayloadCharacters(payload),
+      undefined,
+      !isBulkEvent(name),
+    )
   }
   const postEventTo: PostSurfaceEvent = (surfaceId, name, payload, isCurrent) =>
     enqueueEvent(
       () => Promise.resolve(isCurrent?.() === false ? undefined : { name, payload }),
       eventPayloadCharacters(payload),
       surfaceId,
+      !isBulkEvent(name),
     )
   const publicControlEvent = (event: BackendEvent): unknown =>
     sanitizePublicValue(event, undefined, [
@@ -274,15 +299,20 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
     }
     deps.onEvent?.(event.type, event)
     if (deps.transcript.accept(event)) return Promise.resolve(true)
-    return enqueueEvent(() => {
-      try {
-        if (backendService.requireBackend() !== backend) return Promise.resolve(undefined)
-      } catch {
-        return Promise.resolve(undefined)
-      }
-      const payload = publicControlEvent(event)
-      return Promise.resolve(payload === undefined ? undefined : { name: event.type, payload })
-    }, eventPayloadCharacters(event))
+    return enqueueEvent(
+      () => {
+        try {
+          if (backendService.requireBackend() !== backend) return Promise.resolve(undefined)
+        } catch {
+          return Promise.resolve(undefined)
+        }
+        const payload = publicControlEvent(event)
+        return Promise.resolve(payload === undefined ? undefined : { name: event.type, payload })
+      },
+      eventPayloadCharacters(event),
+      undefined,
+      !isBulkEvent(event.type),
+    )
   }
   runtimeUpdateProgress.current = (progress) => {
     void postEvent('runtime.update.progress', progress)
