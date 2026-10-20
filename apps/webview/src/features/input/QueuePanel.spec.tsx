@@ -214,14 +214,41 @@ describe('QueuePanel', () => {
     expect(screen.queryByText('Syncing with conversation…')).toBeNull()
   })
 
+  it('marks a removal in progress until the authoritative queue drops the row', async () => {
+    let resolveRemove: (() => void) | undefined
+    const remove = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveRemove = resolve
+        }),
+    )
+    const item = queuedInput('queued', 'Remove me')
+    const view = render(handoffView([item], [], remove))
+    fireEvent.click(screen.getByRole('button', { name: 'Remove queued prompt 1' }))
+
+    expect(screen.getByText('Removing…')).toBeTruthy()
+    expect(screen.queryByRole('textbox')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Remove queued prompt 1' }).hasAttribute('disabled')).toBe(true)
+    await act(async () => {
+      resolveRemove?.()
+      await Promise.resolve()
+    })
+    // The Host accepted it, but the row stays busy until the queue confirms.
+    expect(screen.getByText('Removing…')).toBeTruthy()
+    view.rerender(handoffView([], [], remove))
+    expect(screen.queryByRole('region', { name: 'Queued prompts' })).toBeNull()
+  })
+
   it('keeps a rejected removal eligible for normal transcript handoff', async () => {
     const item = queuedInput('pending', 'Keep after failed removal')
     const remove = vi.fn().mockRejectedValue(new Error('Removal failed'))
     const view = render(handoffView([item], [], remove))
     fireEvent.click(screen.getByRole('button', { name: 'Remove queued prompt 1' }))
+    expect(screen.getByText('Removing…')).toBeTruthy()
     await act(async () => {
       await Promise.resolve()
     })
+    expect(screen.queryByText('Removing…')).toBeNull()
     expect(screen.getByDisplayValue(item.text)).toBeTruthy()
     view.rerender(handoffView([], [], remove))
     expect(screen.getByText(item.text)).toBeTruthy()
@@ -348,6 +375,52 @@ describe('QueuePanel', () => {
     expect(screen.getByDisplayValue('changed elsewhere')).toBe(editor)
     fireEvent.blur(editor)
     expect(onEdit).not.toHaveBeenCalled()
+  })
+
+  it('keeps a draft typed while a newer queue projection arrives and submits it', () => {
+    const onEdit = vi.fn()
+    const view = renderQueue([queuedInput('q1', 'first')], true, vi.fn(), onEdit)
+    const editor = screen.getByRole('textbox', { name: 'Edit queued prompt 1' })
+    fireEvent.change(editor, { target: { value: 'typed while another client updated' } })
+
+    view.rerender(
+      <I18nProvider>
+        <QueuePanel
+          items={[queuedInput('q1', 'changed elsewhere')]}
+          running
+          onEdit={onEdit}
+          onRemove={vi.fn()}
+          onModeChange={vi.fn()}
+          onDismissPending={vi.fn()}
+        />
+      </I18nProvider>,
+    )
+
+    expect(screen.getByDisplayValue('typed while another client updated')).toBe(editor)
+    fireEvent.blur(editor)
+    expect(onEdit).toHaveBeenCalledWith('q1', 'typed while another client updated')
+  })
+
+  it('reverts a preserved draft to the newest projection on Escape', () => {
+    const view = renderQueue([queuedInput('q1', 'first')], true)
+    const editor = screen.getByRole('textbox', { name: 'Edit queued prompt 1' })
+    fireEvent.change(editor, { target: { value: 'my draft' } })
+
+    view.rerender(
+      <I18nProvider>
+        <QueuePanel
+          items={[queuedInput('q1', 'changed elsewhere')]}
+          running
+          onEdit={vi.fn()}
+          onRemove={vi.fn()}
+          onModeChange={vi.fn()}
+          onDismissPending={vi.fn()}
+        />
+      </I18nProvider>,
+    )
+    fireEvent.keyDown(editor, { key: 'Escape' })
+
+    expect(screen.getByDisplayValue('changed elsewhere')).toBe(editor)
   })
 
   it('promotes a queued prompt to steer', () => {

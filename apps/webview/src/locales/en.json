@@ -343,6 +343,7 @@
   "queue.editHint": "Enter for a new line. Ctrl/Cmd+Enter or leave the field to save.",
   "queue.sending": "Sending…",
   "queue.syncing": "Syncing with conversation…",
+  "queue.removing": "Removing…",
   "queue.dismiss": "Dismiss syncing prompt {position}",
   "queue.mode": "Mode for queued prompt {position}",
   "queue.mode.queue": "Queue",

@@ -27,6 +27,8 @@ export const QueuePanel = memo(function QueuePanel(props: QueuePanelProps): Reac
   const { t } = useI18n()
   const listId = useId()
   const [collapsed, setCollapsed] = useState(false)
+  const removingRef = useRef<Set<string>>(new Set())
+  const [removingIds, setRemovingIds] = useState<ReadonlySet<string>>(() => new Set())
   const queueItems = props.items
   const transcript = props.transcript
   const pendingEntries = useMemo(() => {
@@ -58,15 +60,42 @@ export const QueuePanel = memo(function QueuePanel(props: QueuePanelProps): Reac
   const pendingIds = new Set([...pendingEntries, ...handoff.pending].map((item) => item.id))
   const pendingEntryIds = new Set(pendingEntries.map((item) => item.id))
   const multiple = items.length > 1
-  const remove = (id: string): void => {
-    handoff.markRemoval(id)
-    try {
-      const result = props.onRemove(id)
-      if (isThenable(result)) void result.catch(() => handoff.rejectRemoval(id))
-    } catch {
-      handoff.rejectRemoval(id)
-    }
+  const setRemoving = (id: string, removing: boolean): void => {
+    if (removing) removingRef.current.add(id)
+    else removingRef.current.delete(id)
+    setRemovingIds(new Set(removingRef.current))
   }
+  const remove = (id: string): void => {
+    if (removingRef.current.has(id)) return
+    setRemoving(id, true)
+    handoff.markRemoval(id)
+    let result: void | Promise<void>
+    try {
+      result = props.onRemove(id)
+    } catch {
+      setRemoving(id, false)
+      handoff.rejectRemoval(id)
+      return
+    }
+    if (isThenable(result))
+      void result.catch(() => {
+        setRemoving(id, false)
+        handoff.rejectRemoval(id)
+      })
+    else setRemoving(id, false)
+  }
+  useLayoutEffect(() => {
+    // Keep a confirmed row busy until the authoritative queue drops it; a
+    // rejected removal clears the marker through the promise above.
+    if (removingRef.current.size === 0) return
+    let changed = false
+    for (const id of removingRef.current)
+      if (!props.items.some((item) => item.id === id)) {
+        removingRef.current.delete(id)
+        changed = true
+      }
+    if (changed) setRemovingIds(new Set(removingRef.current))
+  }, [props.items])
   // Queue snapshots own pending input. A transient idle/awaiting-input status
   // does not mean that DSH consumed it, so never hide a still-pending row.
   if (items.length === 0) return null
@@ -92,91 +121,100 @@ export const QueuePanel = memo(function QueuePanel(props: QueuePanelProps): Reac
       ) : null}
       <ol id={listId} className="dsh-queue__list" hidden={!listVisible}>
         {listVisible
-          ? items.map((item, index) => (
-              <li key={item.id}>
-                <div className="dsh-queue__item-main">
-                  <span className="dsh-queue__index" aria-hidden="true">
-                    {index + 1}
-                  </span>
-                  {item.images !== undefined && item.images.length > 0 ? (
-                    <MessageImages
-                      images={item.images}
-                      translate={t}
-                      {...(props.onLoadImage === undefined ? {} : { loadImage: props.onLoadImage })}
-                    />
-                  ) : null}
-                  {item.files === undefined || item.files.length === 0 ? null : (
-                    <span className="dsh-queue__files" aria-label={t('timeline.attachedFiles')}>
-                      {item.files.map((name, fileIndex) => (
-                        <span className="dsh-queue__file" key={`${name}:${fileIndex}`} title={name}>
-                          <Icon name="file" />
-                          <span>{name}</span>
-                        </span>
-                      ))}
+          ? items.map((item, index) => {
+              const removing = removingIds.has(item.id)
+              const busy = removing || pendingIds.has(item.id)
+              return (
+                <li key={item.id} aria-busy={removing ? true : undefined}>
+                  <div className="dsh-queue__item-main">
+                    <span className="dsh-queue__index" aria-hidden="true">
+                      {index + 1}
                     </span>
-                  )}
-                  {pendingIds.has(item.id) ? (
-                    <div className="dsh-queue__handoff">
-                      <span className="dsh-queue__handoff-status">
-                        {pendingEntryIds.has(item.id) ? t('queue.sending') : t('queue.syncing')}
+                    {item.images !== undefined && item.images.length > 0 ? (
+                      <MessageImages
+                        images={item.images}
+                        translate={t}
+                        {...(props.onLoadImage === undefined ? {} : { loadImage: props.onLoadImage })}
+                      />
+                    ) : null}
+                    {item.files === undefined || item.files.length === 0 ? null : (
+                      <span className="dsh-queue__files" aria-label={t('timeline.attachedFiles')}>
+                        {item.files.map((name, fileIndex) => (
+                          <span className="dsh-queue__file" key={`${name}:${fileIndex}`} title={name}>
+                            <Icon name="file" />
+                            <span>{name}</span>
+                          </span>
+                        ))}
                       </span>
-                      <div className="dsh-queue__handoff-text">{item.text}</div>
-                    </div>
-                  ) : (
-                    <QueueItemEditor item={item} position={index + 1} onEdit={props.onEdit} />
-                  )}
-                </div>
-                <div className="dsh-queue__item-actions">
-                  {pendingIds.has(item.id) ? null : (
-                    <SelectMenu
-                      className="dsh-queue__mode"
-                      icon="arrow-down"
-                      density="compact"
-                      displayLabel
-                      label={item.mode === 'queue' ? t('queue.mode.queue') : t('queue.mode.steer')}
-                      ariaLabel={t('queue.mode', { position: index + 1 })}
-                      title={
-                        item.mode === 'queue'
-                          ? t('queue.mode', { position: index + 1 })
-                          : t('queue.mode.fixed', { position: index + 1 })
-                      }
-                      value={item.mode}
-                      // The pinned Host only turns a queued prompt into a steer
-                      // request; nothing moves it back. A steering row therefore
-                      // reports its mode instead of offering a switch that would
-                      // silently do nothing.
-                      options={
-                        item.mode === 'queue'
-                          ? [
-                              { value: 'queue', label: t('queue.mode.queue') },
-                              { value: 'steer', label: t('queue.mode.steer') },
-                            ]
-                          : [{ value: 'steer', label: t('queue.mode.steer') }]
-                      }
-                      disabled={item.mode !== 'queue' || !props.running}
-                      placement="below"
-                      onChange={(mode) => {
-                        if (mode === 'steer' && props.running) props.onModeChange(item.id, mode)
+                    )}
+                    {busy ? (
+                      <div className="dsh-queue__handoff">
+                        <span className="dsh-queue__handoff-status">
+                          {removing
+                            ? t('queue.removing')
+                            : pendingEntryIds.has(item.id)
+                              ? t('queue.sending')
+                              : t('queue.syncing')}
+                        </span>
+                        <div className="dsh-queue__handoff-text">{item.text}</div>
+                      </div>
+                    ) : (
+                      <QueueItemEditor item={item} position={index + 1} onEdit={props.onEdit} />
+                    )}
+                  </div>
+                  <div className="dsh-queue__item-actions">
+                    {busy ? null : (
+                      <SelectMenu
+                        className="dsh-queue__mode"
+                        icon="arrow-down"
+                        density="compact"
+                        displayLabel
+                        label={item.mode === 'queue' ? t('queue.mode.queue') : t('queue.mode.steer')}
+                        ariaLabel={t('queue.mode', { position: index + 1 })}
+                        title={
+                          item.mode === 'queue'
+                            ? t('queue.mode', { position: index + 1 })
+                            : t('queue.mode.fixed', { position: index + 1 })
+                        }
+                        value={item.mode}
+                        // The pinned Host only turns a queued prompt into a steer
+                        // request; nothing moves it back. A steering row therefore
+                        // reports its mode instead of offering a switch that would
+                        // silently do nothing.
+                        options={
+                          item.mode === 'queue'
+                            ? [
+                                { value: 'queue', label: t('queue.mode.queue') },
+                                { value: 'steer', label: t('queue.mode.steer') },
+                              ]
+                            : [{ value: 'steer', label: t('queue.mode.steer') }]
+                        }
+                        disabled={item.mode !== 'queue' || !props.running}
+                        placement="below"
+                        onChange={(mode) => {
+                          if (mode === 'steer' && props.running) props.onModeChange(item.id, mode)
+                        }}
+                      />
+                    )}
+                    <button
+                      className="dsh-icon-button"
+                      type="button"
+                      aria-label={t(pendingIds.has(item.id) ? 'queue.dismiss' : 'queue.remove', {
+                        position: index + 1,
+                      })}
+                      disabled={removing}
+                      onClick={() => {
+                        if (pendingEntryIds.has(item.id)) props.onDismissPending(item.id)
+                        else if (pendingIds.has(item.id)) handoff.dismiss(item.id)
+                        else remove(item.id)
                       }}
-                    />
-                  )}
-                  <button
-                    className="dsh-icon-button"
-                    type="button"
-                    aria-label={t(pendingIds.has(item.id) ? 'queue.dismiss' : 'queue.remove', {
-                      position: index + 1,
-                    })}
-                    onClick={() => {
-                      if (pendingEntryIds.has(item.id)) props.onDismissPending(item.id)
-                      else if (pendingIds.has(item.id)) handoff.dismiss(item.id)
-                      else remove(item.id)
-                    }}
-                  >
-                    <Icon name="close" />
-                  </button>
-                </div>
-              </li>
-            ))
+                    >
+                      <Icon name="close" />
+                    </button>
+                  </div>
+                </li>
+              )
+            })
           : null}
       </ol>
     </section>
@@ -208,12 +246,13 @@ function QueueItemEditor(props: {
   const [committedText, setCommittedText] = useState(props.item.text)
   const commitGenerationRef = useRef(0)
   if (previousText !== props.item.text) {
-    // Queue projections are authoritative. Refresh a mounted editor whenever
-    // DSH reports a newer value so an old uncontrolled default cannot be
-    // submitted later and overwrite that update.
+    // Queue projections are authoritative for a row nobody is editing. When
+    // the user has typed since the last commit, keep that draft: replacing it
+    // would silently lose work typed while another surface updated the row.
+    // Escape still reverts to the newest projection.
     setPreviousText(props.item.text)
-    setValue(props.item.text)
     setCommittedText(props.item.text)
+    setValue((current) => (current === committedText ? props.item.text : current))
   }
   /** Latest projected text, read by the rejection handler after awaits. The
    * mirror updates in a layout effect so it never trails a committed
