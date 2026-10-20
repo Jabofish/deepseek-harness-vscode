@@ -372,48 +372,68 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
         const admitted = store.getState()
         if (active !== undefined && admitted.activeSessionId !== active.id) return
         const directRequests = admitted.directPromptRequestIds?.filter((id) => !beforeRequests.has(id)) ?? []
-        if (directRequests.length > 0 && !signal?.aborted) {
-          awaitingVisibility = true
-          // An RPC receipt can precede the durable user message. Keep the
-          // original draft visible until that message reaches the timeline.
-          const sessionId = admitted.activeSessionId
-          await new Promise<void>((resolve, reject) => {
-            let unsubscribe = (): void => undefined
-            let settled = false
-            const finish = (error?: Error): void => {
-              if (settled) return
-              settled = true
-              clearTimeout(timer)
-              unsubscribe()
-              admissionWaitsRef.current.delete(cancelled)
-              signal?.removeEventListener('abort', cancelled)
-              if (error === undefined) resolve()
-              else reject(error)
-            }
-            const cancelled = (): void => finish(new DOMException('Cancelled', 'AbortError'))
-            const check = (): void => {
-              const current = store.getState()
-              if (current.activeSessionId !== sessionId || current.backend.kind !== 'connected') {
-                cancelled()
-                return
+        try {
+          if (directRequests.length > 0 && !signal?.aborted) {
+            awaitingVisibility = true
+            // An RPC receipt can precede the durable user message. Keep the
+            // original draft visible until that message reaches the timeline
+            // or the authoritative queue proves the prompt was actually queued.
+            const sessionId = admitted.activeSessionId
+            if (sessionId === undefined) return
+            await new Promise<void>((resolve, reject) => {
+              let unsubscribe = (): void => undefined
+              let settled = false
+              const finish = (error?: Error): void => {
+                if (settled) return
+                settled = true
+                clearTimeout(timer)
+                unsubscribe()
+                admissionWaitsRef.current.delete(cancelled)
+                signal?.removeEventListener('abort', cancelled)
+                if (error === undefined) resolve()
+                else reject(error)
               }
-              if (
-                current.timeline.nodes.some(
-                  (node) =>
-                    node.kind === 'user-message' &&
-                    ((node.rpcId !== undefined && directRequests.includes(node.rpcId)) ||
-                      (!beforeIds.has(node.id) && node.markdown === text)),
+              const cancelled = (): void => finish(new DOMException('Cancelled', 'AbortError'))
+              const check = (): void => {
+                const current = store.getState()
+                if (current.activeSessionId !== sessionId || current.backend.kind !== 'connected') {
+                  cancelled()
+                  return
+                }
+                if (
+                  current.timeline.nodes.some(
+                    (node) =>
+                      node.kind === 'user-message' &&
+                      ((node.rpcId !== undefined && directRequests.includes(node.rpcId)) ||
+                        (!beforeIds.has(node.id) && node.markdown === text)),
+                  )
                 )
-              )
-                finish()
-            }
-            const timer = setTimeout(() => finish(new Error(t('app.error.promptTimeout'))), 30_000)
-            unsubscribe = store.subscribe(check)
-            admissionWaitsRef.current.add(cancelled)
-            signal?.addEventListener('abort', cancelled, { once: true })
-            if (signal?.aborted) cancelled()
-            else check()
-          })
+                  finish()
+              }
+              const timer = setTimeout(() => {
+                // A false direct classification used to surface as a hard
+                // failure while the prompt sat in DSH's queue. Read the queue
+                // before reporting a timeout.
+                void store.refreshQueue(sessionId).then(
+                  (queue) => {
+                    if (
+                      queue?.some((item) => item.rpcId !== undefined && directRequests.includes(item.rpcId))
+                    )
+                      finish()
+                    else finish(new Error(t('app.error.promptTimeout')))
+                  },
+                  () => finish(new Error(t('app.error.promptTimeout'))),
+                )
+              }, 30_000)
+              unsubscribe = store.subscribe(check)
+              admissionWaitsRef.current.add(cancelled)
+              signal?.addEventListener('abort', cancelled, { once: true })
+              if (signal?.aborted) cancelled()
+              else check()
+            })
+          }
+        } finally {
+          if (directRequests.length > 0) store.forgetDirectPromptRequests(directRequests)
         }
         if (!mountedRef.current || Boolean(signal?.aborted)) return
         setDraft((current) => (current === text ? '' : current))

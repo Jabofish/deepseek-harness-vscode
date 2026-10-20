@@ -146,6 +146,8 @@ export interface SurfaceAssignment {
 export interface AppState extends SessionModelDirectoryState {
   /** Recent direct sends, correlated with DSH inbox rows by request identity. */
   readonly directPromptRequestIds?: readonly string[]
+  /** Queue-mode prompts accepted by the Host but not yet projected by DSH. */
+  readonly pendingPrompts?: readonly QueuedInput[]
   readonly backend: WebviewBackendState
   readonly connectionOutput?: readonly ConnectionLogEntry[]
   /** Monotonic opaque counter for a newly observed connected backend epoch. */
@@ -284,6 +286,9 @@ export interface AppActions {
   navigateTranscript(direction: 'newer' | 'latest'): Promise<void>
   openTranscriptContent(nodeId: string): Promise<void>
   loadTranscriptContent(nodeId: string): Promise<string>
+  dismissPendingPrompt(id: string): void
+  forgetDirectPromptRequests(ids: readonly string[]): void
+  refreshQueue(sessionId: string): Promise<readonly QueuedInput[] | undefined>
   openSubagent(entry: SubagentView, parentAvailable: boolean): Promise<void>
   renameSession(sessionId: string, title: string): Promise<void>
   renameWorkspace(workspaceId: string, name: string): Promise<void>

@@ -341,6 +341,7 @@
   "queue.empty": "No queued prompts.",
   "queue.edit": "Edit queued prompt {position}",
   "queue.editHint": "Enter for a new line. Ctrl/Cmd+Enter or leave the field to save.",
+  "queue.sending": "Sending…",
   "queue.syncing": "Syncing with conversation…",
   "queue.dismiss": "Dismiss syncing prompt {position}",
   "queue.mode": "Mode for queued prompt {position}",

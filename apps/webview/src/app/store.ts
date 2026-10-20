@@ -1,4 +1,10 @@
-import type { AgentConfiguration, PromptMode, SubagentCatalog, SubagentView } from '@dsh-vscode/domain'
+import type {
+  AgentConfiguration,
+  PromptMode,
+  QueuedInput,
+  SubagentCatalog,
+  SubagentView,
+} from '@dsh-vscode/domain'
 import type { FeatureRequest } from '@dsh-vscode/webview-protocol'
 import { PluginInstallRecoveryController } from './plugin-install-recovery.js'
 import { createAccountActions } from './store/account-actions.js'
@@ -750,6 +756,32 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       })
       if (typeof result?.content !== 'string') throw new Error('Transcript content is unavailable.')
       return result.content
+    },
+    dismissPendingPrompt: (id) => {
+      setState((current) => {
+        const pending = current.pendingPrompts
+        if (pending === undefined || !pending.some((prompt) => prompt.id === id)) return current
+        return { ...current, pendingPrompts: pending.filter((prompt) => prompt.id !== id) }
+      })
+    },
+    forgetDirectPromptRequests: (ids) => {
+      if (ids.length === 0) return
+      const dropped = new Set(ids)
+      setState((current) => ({
+        ...current,
+        directPromptRequestIds: (current.directPromptRequestIds ?? []).filter((id) => !dropped.has(id)),
+      }))
+    },
+    refreshQueue: async (sessionId) => {
+      const result = await client.request<unknown>({
+        type: 'session.queue.list',
+        requestId: requestId(),
+        payload: { sessionId },
+      })
+      if (!Array.isArray(result)) return undefined
+      const queue = result as readonly QueuedInput[]
+      setState((current) => (current.activeSessionId === sessionId ? { ...current, queue } : current))
+      return queue
     },
     openSubagent,
     ...sessionActions,

@@ -38,6 +38,7 @@ function handoffView(
         onEdit={vi.fn()}
         onRemove={onRemove}
         onModeChange={vi.fn()}
+        onDismissPending={vi.fn()}
       />
     </I18nProvider>
   )
@@ -69,6 +70,7 @@ function renderQueue(
         onEdit={onEdit}
         onRemove={vi.fn()}
         onModeChange={onModeChange}
+        onDismissPending={vi.fn()}
       />
     </I18nProvider>,
   )
@@ -77,44 +79,81 @@ function renderQueue(
 describe('QueuePanel', () => {
   afterEach(() => cleanup())
 
-  it('hides only the correlated direct send, preserving an identical queued message and its handoff', () => {
+  it('keeps a real queue row visible even when it carries a direct request id', () => {
     const direct = { ...queuedInput('direct-message', 'same text'), rpcId: 'direct-request' }
-    const queued = { ...queuedInput('queued-message', 'same text'), rpcId: 'other-request' }
-    const props = {
-      running: false,
-      directRequestIds: ['direct-request'],
-      transcript: {
-        sessionId: 'session-1',
-        revision: 1,
-        nodes: [],
-        eventFacts: [],
-        lastSequence: 1,
-        hasMore: false,
-        historical: false,
-        omittedNodeIds: [],
-      },
-      onEdit: vi.fn(),
-      onRemove: vi.fn(),
-      onModeChange: vi.fn(),
-    }
+    render(
+      <I18nProvider>
+        <QueuePanel
+          items={[direct]}
+          running={false}
+          onEdit={vi.fn()}
+          onRemove={vi.fn()}
+          onModeChange={vi.fn()}
+          onDismissPending={vi.fn()}
+        />
+      </I18nProvider>,
+    )
+    // A row that DSH actually queued must stay editable even if the client
+    // originally classified the send as a direct turn.
+    expect(screen.getByRole('region', { name: 'Queued prompts' })).toBeTruthy()
+    expect(screen.getByDisplayValue('same text')).toBeTruthy()
+  })
+
+  it('shows an accepted queue send before the authoritative projection arrives', () => {
+    const dismiss = vi.fn()
+    const pending = { ...queuedInput('pending:request', 'waiting prompt'), rpcId: 'request' }
+    render(
+      <I18nProvider>
+        <QueuePanel
+          items={[]}
+          pendingEntries={[pending]}
+          running
+          onEdit={vi.fn()}
+          onRemove={vi.fn()}
+          onModeChange={vi.fn()}
+          onDismissPending={dismiss}
+        />
+      </I18nProvider>,
+    )
+    expect(screen.getByText('Sending…')).toBeTruthy()
+    expect(screen.getByText('waiting prompt')).toBeTruthy()
+    expect(screen.queryByRole('textbox')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss syncing prompt 1' }))
+    expect(dismiss).toHaveBeenCalledWith('pending:request')
+  })
+
+  it('drops the local sending receipt when the queue projects the same content without an rpc id', () => {
+    const pending = { ...queuedInput('pending:request', 'same prompt'), rpcId: 'request' }
+    const projected = queuedInput('projected', 'same prompt')
     const view = render(
       <I18nProvider>
-        <QueuePanel {...props} items={[direct]} />
+        <QueuePanel
+          items={[]}
+          pendingEntries={[pending]}
+          running
+          onEdit={vi.fn()}
+          onRemove={vi.fn()}
+          onModeChange={vi.fn()}
+          onDismissPending={vi.fn()}
+        />
       </I18nProvider>,
     )
-    expect(screen.queryByRole('region', { name: 'Queued prompts' })).toBeNull()
+    expect(screen.getByText('Sending…')).toBeTruthy()
     view.rerender(
       <I18nProvider>
-        <QueuePanel {...props} items={[direct, queued]} />
+        <QueuePanel
+          items={[projected]}
+          pendingEntries={[pending]}
+          running
+          onEdit={vi.fn()}
+          onRemove={vi.fn()}
+          onModeChange={vi.fn()}
+          onDismissPending={vi.fn()}
+        />
       </I18nProvider>,
     )
-    expect(screen.getAllByRole('textbox')).toHaveLength(1)
-    view.rerender(
-      <I18nProvider>
-        <QueuePanel {...props} items={[]} />
-      </I18nProvider>,
-    )
-    expect(screen.getAllByText('same text')).toHaveLength(1)
+    expect(screen.queryByText('Sending…')).toBeNull()
+    expect(screen.getByDisplayValue('same prompt')).toBeTruthy()
   })
 
   it('keeps removed queue text visible until the matching durable message renders, without duplication or resending', () => {
@@ -218,6 +257,7 @@ describe('QueuePanel', () => {
           onEdit={vi.fn()}
           onRemove={vi.fn()}
           onModeChange={vi.fn()}
+          onDismissPending={vi.fn()}
         />
       </I18nProvider>
     )
@@ -300,6 +340,7 @@ describe('QueuePanel', () => {
           onEdit={onEdit}
           onRemove={vi.fn()}
           onModeChange={vi.fn()}
+          onDismissPending={vi.fn()}
         />
       </I18nProvider>,
     )

@@ -1,4 +1,4 @@
-import type { MessageAttachment, PromptAttachment, RunningInputMode } from '@dsh-vscode/domain'
+import type { MessageAttachment, PromptAttachment, QueuedInput, RunningInputMode } from '@dsh-vscode/domain'
 import { translate } from '../../i18n.js'
 import type { ProtocolClient } from '../protocol-client.js'
 import { requestId } from './ids.js'
@@ -82,17 +82,36 @@ export function createPromptActions(deps: PromptActionDependencies): {
   ): Promise<void> => {
     const rpcRequestId = requestId()
     const optimisticId = `optimistic:user:${rpcRequestId}`
+    const pendingId = `pending:${rpcRequestId}`
     const state = getState()
     signal?.throwIfAborted()
-    const direct =
-      subagent === undefined &&
-      state.sessions.find((session) => session.id === sessionId)?.status !== 'running' &&
-      state.queue.length === 0
+    const status = state.sessions.find((session) => session.id === sessionId)?.status
+    // Only an idle Agent admits a follow-up immediately. A missing status and
+    // awaiting-input both mean the prompt may be queued upstream, so they must
+    // not be treated as a direct turn.
+    const idle = status === 'idle' || status === 'completed' || status === 'failed'
+    const direct = subagent === undefined && idle && state.queue.length === 0
     if (direct)
       setState((current) => ({
         ...current,
         directPromptRequestIds: [...(current.directPromptRequestIds ?? []), rpcRequestId].slice(-64),
       }))
+    if (!direct && subagent === undefined && mode === 'queue') {
+      const pendingEntry: QueuedInput = {
+        id: pendingId,
+        sessionId,
+        text,
+        attachments: [...attachments],
+        textOnly: attachments.length === 0,
+        mode,
+        createdAt: new Date().toISOString(),
+        rpcId: rpcRequestId,
+      }
+      setState((current) => ({
+        ...current,
+        pendingPrompts: [...(current.pendingPrompts ?? []), pendingEntry].slice(-32),
+      }))
+    }
     const contextRefs = state.editorContext.map((item) => item.ref.contextRef)
     const contextWorkspaceIds = new Set(
       state.editorContext
@@ -185,7 +204,17 @@ export function createPromptActions(deps: PromptActionDependencies): {
         }))
       }
     } catch (reason) {
-      if (Boolean(signal?.aborted) && !direct && subagent === undefined) {
+      if (direct)
+        setState((current) => ({
+          ...current,
+          directPromptRequestIds: (current.directPromptRequestIds ?? []).filter((id) => id !== rpcRequestId),
+        }))
+      if (signal?.aborted !== true && subagent === undefined && mode === 'queue' && !direct)
+        setState((current) => ({
+          ...current,
+          pendingPrompts: (current.pendingPrompts ?? []).filter((prompt) => prompt.id !== pendingId),
+        }))
+      if (signal?.aborted === true && !direct && subagent === undefined) {
         const queued = getState().queue.find((item) => item.rpcId === rpcRequestId)
         if (queued !== undefined)
           void client

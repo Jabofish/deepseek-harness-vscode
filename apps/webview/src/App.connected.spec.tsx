@@ -288,6 +288,9 @@ function storeFor(state: AppState): AppStore {
     navigateTranscript: vi.fn().mockResolvedValue(undefined),
     openTranscriptContent: vi.fn().mockResolvedValue(undefined),
     loadTranscriptContent: vi.fn().mockResolvedValue(''),
+    dismissPendingPrompt: vi.fn(),
+    forgetDirectPromptRequests: vi.fn(),
+    refreshQueue: vi.fn().mockResolvedValue([]),
     openSubagent: vi.fn().mockResolvedValue(undefined),
     renameSession: vi.fn().mockResolvedValue(undefined),
     renameWorkspace: vi.fn().mockResolvedValue(undefined),
@@ -764,7 +767,9 @@ describe('App connected rendering', () => {
     fireEvent.change(input, { target: { value: 'Hello' } })
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(input.value).toBe('Hello')
-    expect(screen.queryByRole('region', { name: 'Queued prompts' })).toBeNull()
+    // A queue projection is authoritative: if DSH names this request there, the
+    // row stays visible and adjustable even though the client expected a direct turn.
+    expect(screen.getByRole('region', { name: 'Queued prompts' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Cancel sending' }).getAttribute('aria-busy')).toBe('true')
     await act(async () => {
       acknowledge()

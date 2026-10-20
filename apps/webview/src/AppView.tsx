@@ -677,13 +677,20 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                   <QueuePanel
                     key={state.activeSessionId}
                     items={state.queue}
-                    directRequestIds={state.directPromptRequestIds}
+                    {...(state.pendingPrompts === undefined
+                      ? {}
+                      : {
+                          pendingEntries: state.pendingPrompts.filter(
+                            (prompt) => prompt.sessionId === state.activeSessionId,
+                          ),
+                        })}
                     transcript={state.transcript}
                     connected={backend.kind === 'connected'}
                     running={activeRunning}
                     onEdit={queueOnEdit}
                     onRemove={queueOnRemove}
                     onModeChange={queueOnModeChange}
+                    onDismissPending={(id) => store.dismissPendingPrompt(id)}
                     onLoadImage={timelineOnLoadImage}
                   />
                   {pendingPermissions.length > 0 || pendingQuestions.length > 0 ? (

@@ -110,6 +110,27 @@ describe('AppStore prompt admission', () => {
     expect(store.timeline.nodes).toEqual([])
     store.dispose()
   })
+  it('treats an awaiting-input send as queueable instead of a direct turn', async () => {
+    const client = new FakeClient((request) =>
+      request.type === 'session.open'
+        ? { ...(response(request) as object), status: 'awaiting-input' }
+        : response(request),
+    )
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.openSession(session.id)
+    await store.sendPrompt(session.id, 'queued while waiting', [], 'queue')
+    expect(store.getState().directPromptRequestIds).toBeUndefined()
+    const pending = store.getState().pendingPrompts ?? []
+    expect(pending).toHaveLength(1)
+    expect(pending[0]).toMatchObject({
+      sessionId: session.id,
+      text: 'queued while waiting',
+      mode: 'queue',
+    })
+    expect(typeof pending[0]?.rpcId).toBe('string')
+    store.dispose()
+  })
+
   it('preserves the host session-reference workspace relation and ignores malformed rows', async () => {
     const client = new FakeClient((request) =>
       request.type === 'reference.list'

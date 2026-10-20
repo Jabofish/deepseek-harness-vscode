@@ -9,15 +9,17 @@ import { useQueueHandoff } from './useQueueHandoff.js'
 
 export interface QueuePanelProps {
   readonly items: readonly QueuedInput[]
+  /** Accepted queue-mode sends that the Host has not projected yet. */
+  readonly pendingEntries?: readonly QueuedInput[] | undefined
   readonly running: boolean
   readonly transcript?: TranscriptWindow | undefined
   readonly connected?: boolean
-  readonly directRequestIds?: readonly string[] | undefined
   /** Returning a promise reports the Host's acceptance; a rejection must not
    * leave the row showing text DSH never accepted. */
   readonly onEdit: (id: string, text: string) => void | Promise<void>
   readonly onRemove: (id: string) => void | Promise<void>
   readonly onModeChange: (id: string, mode: RunningInputMode) => void
+  readonly onDismissPending: (id: string) => void
   readonly onLoadImage?: (image: MessageImageReference) => Promise<string | undefined>
 }
 
@@ -25,14 +27,36 @@ export const QueuePanel = memo(function QueuePanel(props: QueuePanelProps): Reac
   const { t } = useI18n()
   const listId = useId()
   const [collapsed, setCollapsed] = useState(false)
-  const queueItems = useMemo(
-    () =>
-      props.items.filter((item) => item.rpcId === undefined || !props.directRequestIds?.includes(item.rpcId)),
-    [props.items, props.directRequestIds],
-  )
-  const handoff = useQueueHandoff(queueItems, props.transcript, props.connected ?? true)
-  const items = [...handoff.pending, ...queueItems.filter((item) => !handoff.confirmed.has(item.id))]
-  const pendingIds = new Set(handoff.pending.map((item) => item.id))
+  const queueItems = props.items
+  const transcript = props.transcript
+  const pendingEntries = useMemo(() => {
+    const confirmedRpcIds = new Set(
+      transcript?.nodes.flatMap((node) =>
+        node.kind === 'user-message' && node.rpcId !== undefined ? [node.rpcId] : [],
+      ) ?? [],
+    )
+    return (props.pendingEntries ?? []).filter((entry) => {
+      if (entry.rpcId !== undefined && confirmedRpcIds.has(entry.rpcId)) return false
+      if (
+        queueItems.some(
+          (item) =>
+            (entry.rpcId !== undefined && item.rpcId === entry.rpcId) || samePendingContent(item, entry),
+        )
+      )
+        return false
+      if (entry.rpcId === undefined)
+        return !transcript?.nodes.some((node) => node.kind === 'user-message' && node.markdown === entry.text)
+      return true
+    })
+  }, [props.pendingEntries, queueItems, transcript])
+  const handoff = useQueueHandoff(queueItems, transcript, props.connected ?? true)
+  const items = [
+    ...pendingEntries,
+    ...handoff.pending,
+    ...queueItems.filter((item) => !handoff.confirmed.has(item.id)),
+  ]
+  const pendingIds = new Set([...pendingEntries, ...handoff.pending].map((item) => item.id))
+  const pendingEntryIds = new Set(pendingEntries.map((item) => item.id))
   const multiple = items.length > 1
   const remove = (id: string): void => {
     handoff.markRemoval(id)
@@ -93,7 +117,9 @@ export const QueuePanel = memo(function QueuePanel(props: QueuePanelProps): Reac
                   )}
                   {pendingIds.has(item.id) ? (
                     <div className="dsh-queue__handoff">
-                      <span className="dsh-queue__handoff-status">{t('queue.syncing')}</span>
+                      <span className="dsh-queue__handoff-status">
+                        {pendingEntryIds.has(item.id) ? t('queue.sending') : t('queue.syncing')}
+                      </span>
                       <div className="dsh-queue__handoff-text">{item.text}</div>
                     </div>
                   ) : (
@@ -140,7 +166,11 @@ export const QueuePanel = memo(function QueuePanel(props: QueuePanelProps): Reac
                     aria-label={t(pendingIds.has(item.id) ? 'queue.dismiss' : 'queue.remove', {
                       position: index + 1,
                     })}
-                    onClick={() => (pendingIds.has(item.id) ? handoff.dismiss(item.id) : remove(item.id))}
+                    onClick={() => {
+                      if (pendingEntryIds.has(item.id)) props.onDismissPending(item.id)
+                      else if (pendingIds.has(item.id)) handoff.dismiss(item.id)
+                      else remove(item.id)
+                    }}
                   >
                     <Icon name="close" />
                   </button>
@@ -152,6 +182,15 @@ export const QueuePanel = memo(function QueuePanel(props: QueuePanelProps): Reac
     </section>
   )
 })
+
+function samePendingContent(left: QueuedInput, right: QueuedInput): boolean {
+  if (left.text !== right.text || left.mode !== right.mode) return false
+  if (left.attachments.length !== right.attachments.length) return false
+  return left.attachments.every((attachment, index) => {
+    const other = right.attachments[index]
+    return other?.name === attachment.name && other.mimeType === attachment.mimeType
+  })
+}
 
 function isThenable(value: void | Promise<void>): value is Promise<void> {
   return typeof value === 'object' && value !== null && typeof value.then === 'function'

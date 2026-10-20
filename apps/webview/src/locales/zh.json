@@ -341,6 +341,7 @@
   "queue.empty": "没有排队中的提示。",
   "queue.edit": "编辑第 {position} 条排队提示",
   "queue.editHint": "Enter 换行；Ctrl/Cmd+Enter 或离开输入框保存。",
+  "queue.sending": "正在发送…",
   "queue.syncing": "正在同步到对话…",
   "queue.dismiss": "隐藏第 {position} 条同步中的提示",
   "queue.mode": "第 {position} 条排队提示的模式",
