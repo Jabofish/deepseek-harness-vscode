@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.7
+
 - 补齐桌面启动时的 pnpm/fnm 路径，安装失败在设置中保留 DSH 安全错误分类；修正重启可代替安装及强制保存原有未保存内容的旧提示。
 - Restores pnpm/fnm paths for desktop launches and retains native installation failure categories in settings; corrects stale restart and unsaved-buffer descriptions.
 
