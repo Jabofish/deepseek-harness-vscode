@@ -32,4 +32,7 @@ export interface EditorIntegrationStatus {
   readonly canInstall: boolean
   readonly canRestart: boolean
   readonly canUndo: boolean
+  readonly installation?:
+    'installing' | 'cancelling' | 'unknown' | 'cancelled' | 'failed' | 'installed' | undefined
+  readonly canCancelInstall?: boolean | undefined
 }

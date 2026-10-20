@@ -98,6 +98,38 @@ function fixture(ownership: 'managed' | 'external' = 'managed'): Fixture {
   }
 }
 describe('native editor companion installation and recovery', () => {
+  it.each(['cancelled', 'applied'] as const)(
+    'reports the native %s outcome after cancellation',
+    async (application) => {
+      const { manager, installBundle, cancelInstall, waitForInstall } = fixture()
+      let finish: (result: PluginBundleChangeResult) => void = () => {}
+      installBundle.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve
+          }),
+      )
+      cancelInstall.mockImplementation(() => {
+        finish({ ...applied, application })
+        return Promise.resolve({ status: application === 'applied' ? 'too-late' : 'cancelled' })
+      })
+      const installing = manager.installBundled({ silent: true })
+      await vi.waitFor(() => expect(installBundle).toHaveBeenCalledOnce())
+      expect(manager.installationState).toBe('installing')
+      expect(manager.canCancelInstall).toBe(true)
+      await manager.cancelInstallation()
+      await installing
+      expect(cancelInstall).toHaveBeenCalledWith(
+        installBundle.mock.calls[0]?.[1].requestId,
+        expect.any(AbortSignal),
+      )
+      expect(manager.installationState).toBe(application === 'applied' ? 'installed' : 'cancelled')
+      expect(manager.canCancelInstall).toBe(false)
+      expect(manager.busy).toBe(false)
+      expect(installBundle.mock.calls[0]?.[2]?.aborted).toBe(false)
+      expect(waitForInstall).not.toHaveBeenCalled()
+    },
+  )
   it('restores the disabled state of the previous bundle after a failed upgrade', async () => {
     const { manager, listBundles, installBundle, setBundleEnabled } = fixture()
     archives.list.mockResolvedValue([{ version: '0.1.0', file: oldFile }])
@@ -148,6 +180,8 @@ describe('native editor companion installation and recovery', () => {
     installBundle.mockRejectedValue(new Error('private transport failure'))
     await manager.installBundled()
     expect(manager.busy).toBe(true)
+    expect(manager.installationState).toBe('unknown')
+    expect(manager.canCancelInstall).toBe(true)
     const id = installBundle.mock.calls[0]?.[1]?.requestId
     expect(waitForInstall).toHaveBeenCalledWith(id, expect.any(AbortSignal))
     await manager.installBundled()
@@ -156,6 +190,7 @@ describe('native editor companion installation and recovery', () => {
     await manager.manage()
     expect(waitForInstall).toHaveBeenLastCalledWith(id, expect.any(AbortSignal))
     expect(manager.busy).toBe(false)
+    expect(manager.installationState).toBe('installed')
     expect(JSON.stringify(native.error.mock.calls)).not.toContain('private transport failure')
   })
   it('keeps a verified previous archive and restores it after a confirmed replacement failure', async () => {
@@ -166,7 +201,7 @@ describe('native editor companion installation and recovery', () => {
       .mockResolvedValueOnce({ ...applied, application: 'failed', errorCode: 'operation-error' })
       .mockResolvedValueOnce(applied)
     await manager.installBundled()
-    expect(removeBundle).toHaveBeenCalledWith('@dsh-vscode/editor-bridge', expect.any(AbortSignal))
+    expect(removeBundle).not.toHaveBeenCalled()
     expect(installBundle.mock.calls.map((call) => call[0])).toEqual([nextFile, oldFile])
     expect(installBundle.mock.calls[0]?.[1]?.requestId).not.toBe(installBundle.mock.calls[1]?.[1]?.requestId)
     expect(enable).not.toHaveBeenCalled()

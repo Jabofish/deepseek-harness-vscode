@@ -25,6 +25,57 @@ function mount(handle: (request: FeatureRequest) => Promise<unknown>): void {
   )
 }
 describe('editor integration in Webview settings', () => {
+  it('sends a separate native cancellation while Install is pending and waits for the actual result', async () => {
+    const missing = {
+      ...ready,
+      phase: 'limited',
+      reason: 'missing',
+      preferences: { ...ready.preferences, autoSetup: false },
+    }
+    let finish!: (value: unknown) => void
+    const handle = vi.fn<(request: FeatureRequest) => Promise<unknown>>().mockImplementation((request) => {
+      if (request.type === 'editor.companion.action' && request.payload.action === 'setup')
+        return new Promise((resolve) => {
+          finish = resolve
+        })
+      if (request.type === 'editor.companion.action' && request.payload.action === 'cancel-install')
+        return Promise.resolve({ ...missing, installation: 'cancelling', canCancelInstall: false })
+      return Promise.resolve(missing)
+    })
+    mount(handle)
+    fireEvent.click(await screen.findByRole('button', { name: 'Install and enable companion' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel installation' }))
+    await waitFor(() =>
+      expect(handle).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'editor.companion.action', payload: { action: 'cancel-install' } }),
+      ),
+    )
+    expect(screen.queryByText('Companion installation cancelled.')).toBeNull()
+    finish({ ...missing, installation: 'cancelled', canCancelInstall: false })
+    await screen.findByText('Companion installation cancelled.')
+    expect(screen.queryByRole('button', { name: 'Cancel installation' })).toBeNull()
+  })
+  it('offers cancellation for an unknown install after the settings panel is reopened', async () => {
+    const handle = vi.fn<(request: FeatureRequest) => Promise<unknown>>().mockResolvedValue({
+      ...ready,
+      phase: 'setup',
+      installation: 'unknown',
+      canInstall: false,
+      canCancelInstall: true,
+    })
+    mount(handle)
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel installation' }))
+    await waitFor(() =>
+      expect(handle).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'editor.companion.action', payload: { action: 'cancel-install' } }),
+      ),
+    )
+    expect(
+      handle.mock.calls.some(
+        ([request]) => request.type === 'editor.companion.action' && request.payload.action === 'setup',
+      ),
+    ).toBe(false)
+  })
   it('requests installation only after the user clicks Install and enable companion', async () => {
     const handle = vi.fn<(request: FeatureRequest) => Promise<unknown>>().mockResolvedValue({
       ...ready,

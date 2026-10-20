@@ -229,7 +229,8 @@ describe('automatic editor sharing', () => {
       install.mockRestore()
     }
   })
-  it('remembers installation consent and reconnects only after an explicit setup action', async () => {
+  it('installs the standard bundle only after an explicit setup action', async () => {
+    const install = vi.spyOn(EditorCompanionManagement.prototype, 'installBundled').mockResolvedValue(true)
     const { host, reconnect } = harness('managed', true, undefined, undefined, true)
     ui.settings.autoSetup = false
     try {
@@ -239,8 +240,9 @@ describe('automatic editor sharing', () => {
       expect(host.snapshot().canInstall).toBe(true)
       await host.action('setup')
       expect(ui.settings).toMatchObject({ autoSetup: true, enabled: true })
-      expect(reconnect).toHaveBeenCalledOnce()
-      reconnect.mockRejectedValue(new Error('Start failed'))
+      expect(install).toHaveBeenCalledWith({ silent: true })
+      expect(reconnect).not.toHaveBeenCalled()
+      install.mockResolvedValue(false)
       expect(await host.action('setup')).toMatchObject({ phase: 'limited', reason: 'setup-failed' })
     } finally {
       await host.dispose()
@@ -254,6 +256,32 @@ describe('automatic editor sharing', () => {
       expect(ui.settings.autoSetup).toBe(false)
     } finally {
       await external.host.dispose()
+      install.mockRestore()
+    }
+  })
+  it('keeps cancel installation callable while setup is still in flight', async () => {
+    let finish!: (value: boolean) => void
+    const install = vi.spyOn(EditorCompanionManagement.prototype, 'installBundled').mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        }),
+    )
+    const cancel = vi
+      .spyOn(EditorCompanionManagement.prototype, 'cancelInstallation')
+      .mockResolvedValue(undefined)
+    const { host } = harness('managed', true, undefined, undefined, true)
+    try {
+      const settingUp = host.action('setup')
+      await vi.waitFor(() => expect(install).toHaveBeenCalled())
+      await host.action('cancel-install')
+      expect(cancel).toHaveBeenCalledOnce()
+      finish(false)
+      await settingUp
+    } finally {
+      await host.dispose()
+      install.mockRestore()
+      cancel.mockRestore()
     }
   })
   it('executes selection tools across a new-session switch with an unrelated cwd through the real broker and service', async () => {

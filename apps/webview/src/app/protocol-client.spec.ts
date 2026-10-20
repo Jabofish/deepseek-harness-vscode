@@ -415,6 +415,51 @@ describe('ProtocolClient', () => {
     }
   })
 
+  it('keeps companion installation pending while cancellation uses a separate request', async () => {
+    const timers = vi.spyOn(window, 'setTimeout')
+    const client = new ProtocolClient({
+      postMessage: () => undefined,
+      getState: () => undefined,
+      setState: () => undefined,
+    })
+    try {
+      const setup = client.featureRequest({
+        type: 'editor.companion.action',
+        requestId: 'companion-install',
+        payload: { action: 'setup' },
+      })
+      const cancel = client.featureRequest({
+        type: 'editor.companion.action',
+        requestId: 'companion-cancel',
+        payload: { action: 'cancel-install' },
+      })
+      expect(timers.mock.calls.some(([, timeout]) => timeout === 600_000)).toBe(true)
+      client.handle({
+        protocolVersion: PROTOCOL_VERSION,
+        message: {
+          type: 'feature.response',
+          requestId: 'companion-cancel',
+          ok: true,
+          payload: { kind: 'empty' },
+        },
+      })
+      await cancel
+      client.handle({
+        protocolVersion: PROTOCOL_VERSION,
+        message: {
+          type: 'feature.response',
+          requestId: 'companion-install',
+          ok: true,
+          payload: { kind: 'empty' },
+        },
+      })
+      await expect(setup).resolves.toEqual({ kind: 'empty' })
+    } finally {
+      timers.mockRestore()
+      client.dispose()
+    }
+  })
+
   it('outlasts the two npm calls a host update check runs in sequence', async () => {
     const setTimeoutSpy = vi.spyOn(window, 'setTimeout')
     const client = new ProtocolClient({

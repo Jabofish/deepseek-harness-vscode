@@ -68,6 +68,7 @@ const EXTENDED_TIMEOUT_MS: Readonly<Record<string, number>> = {
   'plugin.credential.configure': NATIVE_DIALOG_TIMEOUT_MS,
   'plugin.bundle.install': PLUGIN_INSTALL_TIMEOUT_MS,
   'plugin.bundle.waitForInstall': PLUGIN_INSTALL_TIMEOUT_MS,
+  'editor.companion.action': PLUGIN_INSTALL_TIMEOUT_MS,
   'mods.band.read': 30_000,
   'runtime.action': RUNTIME_UPDATE_INSTALL_TIMEOUT_MS,
   'runtime.update.check': RUNTIME_UPDATE_CHECK_TIMEOUT_MS,

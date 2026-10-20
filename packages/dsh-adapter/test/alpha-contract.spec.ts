@@ -119,6 +119,44 @@ function response(init: RequestInit | undefined, value: unknown): Response {
 }
 
 describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
+  it('keeps native package operations alive beyond the ordinary RPC timeout and preserves explicit cancellation', async () => {
+    const signals: AbortSignal[] = []
+    const transport = client(async (_input, init) => {
+      const signal = init?.signal
+      if (signal == null) throw new Error('Missing request signal')
+      signals.push(signal)
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, 25)
+        signal.addEventListener(
+          'abort',
+          () => {
+            clearTimeout(timer)
+            reject(signal.reason instanceof Error ? signal.reason : new Error('Request aborted'))
+          },
+          { once: true },
+        )
+      })
+      return response(init, true)
+    }, 5)
+    try {
+      await expect(transport.remoteRequest('pluginManager/installBundle', {})).resolves.toEqual({
+        ok: true,
+        value: true,
+      })
+      const controller = new AbortController()
+      const cancelled = expect(
+        transport.remoteRequest('pluginManager/waitForInstall', {}, controller.signal),
+      ).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
+      controller.abort()
+      await cancelled
+      expect(signals[1]?.aborted).toBe(true)
+      await expect(transport.remoteRequest('pluginManager/listBundles', {})).rejects.toMatchObject({
+        code: 'BACKEND_UNREACHABLE',
+      })
+    } finally {
+      await transport.close()
+    }
+  })
   it('posts the alpha Connection envelope, `{args}` Remote payload, and Cookie only in the Host', async () => {
     const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
       Promise.resolve(response(init, { items: [] })),

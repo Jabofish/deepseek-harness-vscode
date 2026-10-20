@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 编辑器配套通过 DSH 标准插件管理器安装、升级和取消，不再注入本地文件 overlay；配套包提供原生中英文标题和描述。安装面板保留进度、取消及未知结果恢复，取消过晚时按 DSH 实际结果显示。
+- Installs, updates and cancels the editor companion through DSH's standard plugin manager instead of a local-file overlay. The package exports native English/Chinese metadata; settings show progress, cancellation and recovery without claiming a late cancellation succeeded.
+
 - 重复排队相同内容时，一个无请求标识的队列项只确认一次发送，重复快照不再提前隐藏其他待发送回执。
 - Keeps identical queued submissions distinct when runtime rows lack request identities, including across repeated snapshots.
 

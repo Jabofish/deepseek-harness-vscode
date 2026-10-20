@@ -27,5 +27,9 @@ export const editorIntegrationStatusSchema = z
     canInstall: z.boolean(),
     canRestart: z.boolean(),
     canUndo: z.boolean(),
+    installation: z
+      .enum(['installing', 'cancelling', 'unknown', 'cancelled', 'failed', 'installed'])
+      .optional(),
+    canCancelInstall: z.boolean().optional(),
   })
   .strict()

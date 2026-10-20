@@ -28,6 +28,7 @@ import { verifyCompanionHost } from './companion-host-proof.js'
 import { EditLedger, revertEdit } from './edit-ledger.js'
 import { readEditorPreferences, saveEditorPreferences } from './editor-integration-settings.js'
 import { EditorWorkspaceAccess } from './editor-workspace-access.js'
+import { companionNeedsUpdate } from './companion-update.js'
 
 interface Dependencies {
   readonly backendService: BackendService
@@ -45,6 +46,7 @@ export class EditorBridgeHost {
   private readonly service: EditorBridgeService
   private readonly companion: EditorCompanionService
   private readonly management: EditorCompanionManagement
+  private readonly checkedUpdates = new WeakSet<DshBackend>()
   private readonly ledger = new EditLedger()
   private readonly workspaceAccess = new EditorWorkspaceAccess(
     () => !this.disposed && !this.suppressed && readEditorPreferences().enabled,
@@ -365,6 +367,10 @@ export class EditorBridgeHost {
         !this.management.busy,
       canRestart: managed,
       canUndo: this.ledger.lastApplied() !== undefined,
+      ...(this.management.installationState === undefined
+        ? {}
+        : { installation: this.management.installationState }),
+      canCancelInstall: this.management.canCancelInstall,
     }
   }
   public async configure(change: Partial<EditorIntegrationPreferences>): Promise<EditorIntegrationStatus> {
@@ -375,8 +381,12 @@ export class EditorBridgeHost {
     return this.snapshot()
   }
   public async action(
-    action: 'retry' | 'setup' | 'restart' | 'undo' | 'start-managed',
+    action: 'retry' | 'setup' | 'cancel-install' | 'restart' | 'undo' | 'start-managed',
   ): Promise<EditorIntegrationStatus> {
+    if (action === 'cancel-install') {
+      await this.management.cancelInstallation()
+      return this.snapshot()
+    }
     if (action === 'undo') await this.undoLastEdit()
     else if (action === 'start-managed') {
       if (vscode.workspace.isTrusted) {
@@ -388,6 +398,7 @@ export class EditorBridgeHost {
     } else if (action === 'restart') {
       if (this.snapshot().canRestart) await this.deps.reconnect?.()
     } else {
+      if (action === 'retry') await this.management.recoverInstallation()
       if (action === 'retry' && this.workspaceAccess.reason() !== undefined) {
         this.workspaceAccess.reset()
         await this.workspaceAccess.request(AbortSignal.timeout(60_000)).catch((error: unknown) => {
@@ -398,11 +409,15 @@ export class EditorBridgeHost {
         this.phase = 'setup'
         this.reason = undefined
         try {
-          // This explicit user action is the consent for bundled loading and later updates.
+          // Explicit consent installs the shipped package through DSH's standard manager.
           await saveEditorPreferences({ autoSetup: true, enabled: true })
           this.suppressed = false
           await this.stop()
-          await this.deps.reconnect?.()
+          if (!(await this.management.installBundled({ silent: true }))) {
+            this.phase = this.management.installationState === 'installed' ? 'needs-restart' : 'limited'
+            this.reason = this.management.installationState === 'installed' ? 'restart' : 'setup-failed'
+            return this.snapshot()
+          }
         } catch {
           this.phase = 'limited'
           this.reason = 'setup-failed'
@@ -448,12 +463,42 @@ export class EditorBridgeHost {
     }
     if (this.starting !== undefined || this.management.busy || this.service.active || this.companion.active)
       return
+    let backend: DshBackend
     try {
-      this.deps.backendService.requireBackend()
+      backend = this.deps.backendService.requireBackend()
     } catch {
       this.phase = 'waiting'
       this.reason = 'disconnected'
       return
+    }
+    if (
+      preferences.autoSetup &&
+      backend.connection.ownership === 'managed' &&
+      vscode.workspace.isTrusted &&
+      this.deps.context?.extensionUri !== undefined &&
+      !this.checkedUpdates.has(backend) &&
+      typeof backend.pluginBundles?.listBundles === 'function'
+    ) {
+      this.checkedUpdates.add(backend)
+      // Only an already installed bundle is updated automatically. Missing packages
+      // retain the explicit Install action, including migration from old --patch loading.
+      const bundles = await backend.pluginBundles.listBundles(AbortSignal.timeout(10_000))
+      if (!this.currentBackend(backend)) return
+      if (
+        bundles.some((bundle) => bundle.name === '@dsh-vscode/editor-bridge' && bundle.installed) &&
+        (await companionNeedsUpdate(
+          backend,
+          vscode.Uri.joinPath(this.deps.context.extensionUri, 'resources').fsPath,
+        ))
+      ) {
+        if (!this.currentBackend(backend)) return
+        this.phase = 'setup'
+        if (!(await this.management.installBundled({ silent: true }))) {
+          this.phase = this.management.installationState === 'installed' ? 'needs-restart' : 'limited'
+          this.reason = this.management.installationState === 'installed' ? 'restart' : 'setup-failed'
+          return
+        }
+      }
     }
     if (this.deps.sessionNavigation.activeSessionId === undefined) {
       this.phase = 'waiting'
