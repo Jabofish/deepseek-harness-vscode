@@ -2378,6 +2378,100 @@ describe('App connected rendering', () => {
     expect(screen.getByRole('button', { name: 'Remove later.txt' })).toBeDefined()
   })
 
+  it('keeps each conversation draft with its own conversation', async () => {
+    const state = connectedState(true)
+    const withSecond: AppState = {
+      ...state,
+      sessions: [
+        ...state.sessions,
+        {
+          id: 's2',
+          title: 'Another',
+          workspaceId: 'w1',
+          blank: false,
+          status: 'idle' as const,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      workspaces: [{ ...state.workspaces[0]!, sessionIds: ['s1', 's2'], sessionCount: 2 }],
+    }
+    const { updateState } = renderWithMutableState(withSecond)
+    const input = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+    fireEvent.change(input, { target: { value: 'draft for one' } })
+
+    updateState({ ...withSecond, activeSessionId: 's2' })
+    expect(await screen.findByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })).toHaveProperty(
+      'value',
+      '',
+    )
+    fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), {
+      target: { value: 'draft for two' },
+    })
+
+    updateState(withSecond)
+    expect(await screen.findByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })).toHaveProperty(
+      'value',
+      'draft for one',
+    )
+    updateState({ ...withSecond, activeSessionId: 's2' })
+    expect(await screen.findByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })).toHaveProperty(
+      'value',
+      'draft for two',
+    )
+  })
+
+  it('clears a submitted draft from the conversation that sent it after a switch', async () => {
+    const state = connectedState(true)
+    const withSecond: AppState = {
+      ...state,
+      sessions: [
+        ...state.sessions,
+        {
+          id: 's2',
+          title: 'Another',
+          workspaceId: 'w1',
+          blank: false,
+          status: 'idle' as const,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      workspaces: [{ ...state.workspaces[0]!, sessionIds: ['s1', 's2'], sessionCount: 2 }],
+    }
+    const { updateState } = renderWithMutableState(withSecond)
+    let resolveSend: () => void = () => undefined
+    Object.assign(currentStore, {
+      sendPrompt: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveSend = resolve
+          }),
+      ),
+    })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), {
+      target: { value: 'sent from one' },
+    })
+    fireEvent.submit(screen.getByRole('textbox', { name: 'Prompt' }).closest('form')!)
+
+    // The conversation changes while the RPC settles; the submitted text must
+    // not reappear in the new conversation or linger in the old one.
+    updateState({ ...withSecond, activeSessionId: 's2' })
+    expect(await screen.findByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })).toHaveProperty(
+      'value',
+      '',
+    )
+    await act(async () => {
+      resolveSend()
+      await Promise.resolve()
+    })
+    updateState(withSecond)
+    expect(await screen.findByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })).toHaveProperty(
+      'value',
+      '',
+    )
+  })
+
   it('releases the previous attachment handles only when the displayed draft changes', async () => {
     const state = connectedState(true)
     const { updateState } = renderWithMutableState(state)

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type {
   ImageAttachmentLimits,
   EditorContextItem,
@@ -43,7 +43,8 @@ export interface ComposerAttachmentDependencies {
    * re-renders only the composer binding. The hook never reads the draft at
    * render time; submit reads it once at event time through `readDraft`.
    */
-  readonly setDraft: Dispatch<SetStateAction<string>>
+  readonly draftOwner: string | undefined
+  readonly clearDraftIf: (owner: string | undefined, text: string) => void
   readonly readDraft: () => string
 }
 
@@ -80,7 +81,6 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
   const { store, t, setError, active, activeSessionId, imageLimits, hasPendingSession, subagentEntries } =
     deps
   const mountedRef = deps.mountedRef
-  const setDraft = deps.setDraft
   const [attachments, setAttachments] = useState<PromptAttachment[]>([])
   const [attachmentPreviews, setAttachmentPreviews] = useState<Record<string, string>>({})
   const [attachmentPreviewFailures, setAttachmentPreviewFailures] = useState<readonly string[]>([])
@@ -351,12 +351,27 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
   }
   const submitPrompt = (mode: 'queue' | 'steer', signal?: AbortSignal): Promise<void> => {
     if (active === undefined && !hasPendingSession) return Promise.resolve()
+    // Navigation can resolve between the keystroke and this handler. The
+    // composer still reads as the old conversation for one render, but the
+    // store already moved; sending here would target a panel the user left.
+    const expectedSessionId = active?.id
+    const expectedPendingRevision =
+      active === undefined ? store.getState().pendingSession?.revision : undefined
+    if (
+      active === undefined
+        ? store.getState().pendingSession?.revision !== expectedPendingRevision
+        : store.getState().activeSessionId !== expectedSessionId
+    )
+      return Promise.resolve()
     const text = deps.readDraft()
+    const submissionOwner = deps.draftOwner
     const attachmentSnapshot = attachments
     const before = store.getState()
     const beforeIds = new Set(before.timeline.nodes.map((node) => node.id))
     const beforeRequests = new Set(before.directPromptRequestIds)
     let awaitingVisibility = false
+    let admissionStarted = false
+    let deliveredSessionId: string | undefined
     let submission: Promise<void>
     try {
       submission =
@@ -370,16 +385,21 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
       .then(async () => {
         if (!mountedRef.current || Boolean(signal?.aborted)) return
         const admitted = store.getState()
-        if (active !== undefined && admitted.activeSessionId !== active.id) return
+        deliveredSessionId = admitted.activeSessionId
         const directRequests = admitted.directPromptRequestIds?.filter((id) => !beforeRequests.has(id)) ?? []
         try {
-          if (directRequests.length > 0 && !signal?.aborted) {
+          if (
+            directRequests.length > 0 &&
+            !signal?.aborted &&
+            expectedSessionId !== undefined &&
+            admitted.activeSessionId === expectedSessionId
+          ) {
             awaitingVisibility = true
+            admissionStarted = true
             // An RPC receipt can precede the durable user message. Keep the
             // original draft visible until that message reaches the timeline
             // or the authoritative queue proves the prompt was actually queued.
             const sessionId = admitted.activeSessionId
-            if (sessionId === undefined) return
             await new Promise<void>((resolve, reject) => {
               let unsubscribe = (): void => undefined
               let settled = false
@@ -436,7 +456,9 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
           if (directRequests.length > 0) store.forgetDirectPromptRequests(directRequests)
         }
         if (!mountedRef.current || Boolean(signal?.aborted)) return
-        setDraft((current) => (current === text ? '' : current))
+        // The submitted text belongs to the conversation it was typed in. A
+        // switch while the RPC settled must not leave it in the new composer.
+        deps.clearDraftIf(submissionOwner, text)
         // The Extension Host consumes only the handles admitted by this send;
         // keep any draft attachments the user added while it was in flight.
         removeAttachmentDrafts(
@@ -449,6 +471,18 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
         const aborted =
           Boolean(signal?.aborted) || (reason instanceof DOMException && reason.name === 'AbortError')
         if (aborted) {
+          if (!signal?.aborted && admissionStarted) {
+            // The RPC was accepted and the session left the panel (or the
+            // backend) while we waited for its durable row. Clear the text
+            // from the conversation that owned it instead of watching a
+            // different session.
+            deps.clearDraftIf(submissionOwner, text)
+            removeAttachmentDrafts(
+              attachmentSnapshot.map((attachment) => attachment.uri),
+              false,
+            )
+            return
+          }
           // Cancelling only stopped the local wait; the Host may already have
           // admitted the turn. Watch briefly for the durable row so a late
           // acceptance does not leave the sent text looking unsent.
@@ -456,7 +490,7 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
             (id) => !beforeRequests.has(id),
           )
           if (directRequests.length === 0) return
-          const sessionId = store.getState().activeSessionId
+          const sessionId = deliveredSessionId ?? store.getState().activeSessionId
           if (sessionId === undefined) {
             store.forgetDirectPromptRequests(directRequests)
             return
@@ -485,7 +519,7 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
             )
               return
             if (mountedRef.current) {
-              setDraft((current) => (current === text ? '' : current))
+              deps.clearDraftIf(submissionOwner, text)
               removeAttachmentDrafts(
                 attachmentSnapshot.map((attachment) => attachment.uri),
                 false,
