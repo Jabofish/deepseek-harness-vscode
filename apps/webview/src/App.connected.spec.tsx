@@ -802,6 +802,68 @@ describe('App connected rendering', () => {
     expect(screen.queryByRole('region', { name: 'Queued prompts' })).toBeNull()
   })
 
+  it('clears the cancelled draft when the accepted direct turn arrives late', async () => {
+    let state = connectedState(true)
+    const listeners = new Set<() => void>()
+    const publish = (next: AppState): void => {
+      state = next
+      for (const listener of listeners) listener()
+    }
+    const sendPrompt = vi.fn(
+      (
+        _sessionId: string,
+        _text: string,
+        _attachments: Parameters<AppStore['sendPrompt']>[2],
+        _mode: Parameters<AppStore['sendPrompt']>[3],
+        signal?: AbortSignal,
+      ) => {
+        publish({ ...state, directPromptRequestIds: ['direct-request'] })
+        return new Promise<void>((_resolve, reject) => {
+          const abort = (): void => reject(new DOMException('Cancelled', 'AbortError'))
+          if (signal?.aborted === true) abort()
+          else signal?.addEventListener('abort', abort, { once: true })
+        })
+      },
+    )
+    currentStore = {
+      ...storeFor(state),
+      getState: () => state,
+      subscribe: (listener) => {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
+      sendPrompt,
+    }
+    render(<App />)
+    const input = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+    fireEvent.change(input, { target: { value: 'late delivery' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel sending' })).toBeDefined())
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel sending' }))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    // The RPC was already accepted; the durable row proves the cancellation
+    // stopped only the local wait and must release the sent draft.
+    act(() => {
+      publish({
+        ...state,
+        timeline: {
+          ...state.timeline,
+          nodes: [
+            {
+              kind: 'user-message',
+              id: 'late-message',
+              rpcId: 'direct-request',
+              markdown: 'late delivery',
+            },
+          ],
+        },
+      })
+    })
+    await waitFor(() => expect(input.value).toBe(''))
+  })
+
   it('renders a local draft and routes its first message through deferred creation', async () => {
     const state = connectedState(false)
     const sendPendingPrompt = vi.fn().mockResolvedValue(undefined)

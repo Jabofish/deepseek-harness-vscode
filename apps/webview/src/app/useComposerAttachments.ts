@@ -446,8 +446,60 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
         setOpenFilePickerOpen(false)
       })
       .catch((reason: unknown) => {
-        if (Boolean(signal?.aborted) || (reason instanceof DOMException && reason.name === 'AbortError'))
+        const aborted =
+          Boolean(signal?.aborted) || (reason instanceof DOMException && reason.name === 'AbortError')
+        if (aborted) {
+          // Cancelling only stopped the local wait; the Host may already have
+          // admitted the turn. Watch briefly for the durable row so a late
+          // acceptance does not leave the sent text looking unsent.
+          const directRequests = (store.getState().directPromptRequestIds ?? []).filter(
+            (id) => !beforeRequests.has(id),
+          )
+          if (directRequests.length === 0) return
+          const sessionId = store.getState().activeSessionId
+          if (sessionId === undefined) {
+            store.forgetDirectPromptRequests(directRequests)
+            return
+          }
+          let settled = false
+          let unsubscribe = (): void => undefined
+          const finish = (): void => {
+            if (settled) return
+            settled = true
+            clearTimeout(timer)
+            unsubscribe()
+            admissionWaitsRef.current.delete(cancel)
+            store.forgetDirectPromptRequests(directRequests)
+          }
+          const cancel = (): void => finish()
+          const check = (): void => {
+            const current = store.getState()
+            if (current.activeSessionId !== sessionId) return
+            if (
+              !current.timeline.nodes.some(
+                (node) =>
+                  node.kind === 'user-message' &&
+                  ((node.rpcId !== undefined && directRequests.includes(node.rpcId)) ||
+                    (!beforeIds.has(node.id) && node.markdown === text)),
+              )
+            )
+              return
+            if (mountedRef.current) {
+              setDraft((current) => (current === text ? '' : current))
+              removeAttachmentDrafts(
+                attachmentSnapshot.map((attachment) => attachment.uri),
+                false,
+              )
+              setOpenFilePickerOpen(false)
+            }
+            finish()
+          }
+          const timer = setTimeout(finish, 5_000)
+          unsubscribe = store.subscribe(check)
+          admissionWaitsRef.current.add(cancel)
+          check()
           return
+        }
         if (mountedRef.current)
           setError(
             awaitingVisibility

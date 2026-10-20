@@ -204,7 +204,9 @@ export function createPromptActions(deps: PromptActionDependencies): {
         }))
       }
     } catch (reason) {
-      if (direct)
+      // Keep the identity after an abort: the RPC may already have committed,
+      // and the caller uses it to watch for a late durable message.
+      if (direct && signal?.aborted !== true)
         setState((current) => ({
           ...current,
           directPromptRequestIds: (current.directPromptRequestIds ?? []).filter((id) => id !== rpcRequestId),
@@ -215,15 +217,31 @@ export function createPromptActions(deps: PromptActionDependencies): {
           pendingPrompts: (current.pendingPrompts ?? []).filter((prompt) => prompt.id !== pendingId),
         }))
       if (signal?.aborted === true && !direct && subagent === undefined) {
-        const queued = getState().queue.find((item) => item.rpcId === rpcRequestId)
-        if (queued !== undefined)
-          void client
+        // The local projection may predate this prompt. Read the authoritative
+        // queue before deciding there is nothing to revoke.
+        void (async () => {
+          const listed = await client
+            .request<unknown>({
+              type: 'session.queue.list',
+              requestId: requestId(),
+              payload: { sessionId },
+            })
+            .catch(() => undefined)
+          if (!Array.isArray(listed)) return
+          const queued = (listed as readonly QueuedInput[]).find((item) => item.rpcId === rpcRequestId)
+          if (queued === undefined) return
+          await client
             .request({
               type: 'session.queue.remove',
               requestId: requestId(),
               payload: { inputId: queued.id },
             })
             .catch(() => undefined)
+          setState((current) => ({
+            ...current,
+            pendingPrompts: (current.pendingPrompts ?? []).filter((prompt) => prompt.id !== pendingId),
+          }))
+        })()
       }
       if (showOptimisticPreview)
         setState((current) => ({

@@ -12,11 +12,11 @@ class FakeClient {
   public readonly requests: WebviewRequest[] = []
   private readonly listeners = new Set<(message: HostMessage) => void>()
 
-  public constructor(private readonly answer: (request: WebviewRequest) => unknown) {}
+  public constructor(private readonly answer: (request: WebviewRequest, signal?: AbortSignal) => unknown) {}
 
-  public request<T>(request: WebviewRequest): Promise<T> {
+  public request<T>(request: WebviewRequest, signal?: AbortSignal): Promise<T> {
     this.requests.push(request)
-    return Promise.resolve(this.answer(request) as T)
+    return Promise.resolve(this.answer(request, signal) as T)
   }
 
   public subscribe(listener: (message: HostMessage) => void): () => void {
@@ -128,6 +128,60 @@ describe('AppStore prompt admission', () => {
       mode: 'queue',
     })
     expect(typeof pending[0]?.rpcId).toBe('string')
+    store.dispose()
+  })
+
+  it('reads the authoritative queue and removes an accepted prompt when cancelled', async () => {
+    const removed = deferred<void>()
+    let rpcId: string | undefined
+    const client = new FakeClient((request, signal) => {
+      if (request.type === 'session.sendPrompt') {
+        rpcId = request.requestId
+        return new Promise((_resolve, reject) => {
+          const abort = (): void => reject(new DOMException('Cancelled', 'AbortError'))
+          if (signal?.aborted === true) abort()
+          else signal?.addEventListener('abort', abort, { once: true })
+        })
+      }
+      if (request.type === 'session.queue.list')
+        return [
+          {
+            id: 'queued-row',
+            sessionId: session.id,
+            text: 'queued abort',
+            attachments: [],
+            textOnly: true,
+            mode: 'queue',
+            createdAt: '2026-08-31T00:00:00.000Z',
+            ...(rpcId === undefined ? {} : { rpcId }),
+          },
+        ]
+      if (request.type === 'session.queue.remove') {
+        removed.resolve()
+        return undefined
+      }
+      return response(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.openSession(session.id)
+    const controller = new AbortController()
+    const sending = store.sendPrompt(session.id, 'queued abort', [], 'queue', controller.signal)
+    for (let index = 0; index < 50 && rpcId === undefined; index++) await Promise.resolve()
+    expect(rpcId).toBeDefined()
+    controller.abort()
+    await expect(sending).rejects.toMatchObject({ name: 'AbortError' })
+    await removed.promise
+    await Promise.resolve()
+    expect(client.requests).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'session.queue.list' }),
+        expect.objectContaining({
+          type: 'session.queue.remove',
+          payload: { inputId: 'queued-row' },
+        }),
+      ]),
+    )
+    expect(store.getState().pendingPrompts).toEqual([])
     store.dispose()
   })
 
