@@ -822,6 +822,8 @@ describe('App connected rendering', () => {
     { cancelled: true, receipt: 'matching' },
     { cancelled: false, receipt: 'different' },
     { cancelled: false, receipt: 'failed' },
+    { cancelled: false, receipt: 'recovered' },
+    { cancelled: true, receipt: 'recovered' },
   ])(
     'checks a long admitted prompt against full content: $receipt, cancelled=$cancelled',
     async ({ cancelled, receipt }) => {
@@ -833,9 +835,11 @@ describe('App connected rendering', () => {
       }
       const text = 'Long prompt '.repeat(12_000)
       const loadTranscriptContent =
-        receipt === 'failed'
-          ? vi.fn().mockRejectedValue(new Error('History unavailable'))
-          : vi.fn().mockResolvedValue(receipt === 'matching' ? text : `${text}different suffix`)
+        receipt === 'recovered'
+          ? vi.fn().mockRejectedValueOnce(new Error('Transient history failure')).mockResolvedValue(text)
+          : receipt === 'failed'
+            ? vi.fn().mockRejectedValue(new Error('History unavailable'))
+            : vi.fn().mockResolvedValue(receipt === 'matching' ? text : `${text}different suffix`)
       currentStore = {
         ...storeFor(state),
         getState: () => state,
@@ -881,7 +885,8 @@ describe('App connected rendering', () => {
         }),
       )
       await waitFor(() => expect(loadTranscriptContent).toHaveBeenCalledWith('admitted'))
-      if (receipt === 'matching') await waitFor(() => expect(input.value.length).toBe(0))
+      if (receipt === 'matching' || receipt === 'recovered')
+        await waitFor(() => expect(input.value.length).toBe(0))
       else expect(input.value).toBe(text)
     },
   )

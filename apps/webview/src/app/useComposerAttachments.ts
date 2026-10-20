@@ -395,10 +395,11 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
     // this submission: rc.6 rows carry no request identity.
     const queueBeforeIds = new Set(expectedSessionId === undefined ? [] : before.queue.map((item) => item.id))
     const admissionReads = new WeakMap<object, Promise<boolean>>()
-    const confirmClippedAdmission = (sessionId: string, observed: () => void): void => {
+    const confirmClippedAdmission = (sessionId: string, observed: () => void): boolean => {
       const current = store.getState()
-      if (current.activeSessionId !== sessionId || current.backend.kind !== 'connected') return
+      if (current.activeSessionId !== sessionId || current.backend.kind !== 'connected') return false
       const omitted = new Set(current.transcript?.omittedNodeIds)
+      let pending = false
       for (const node of current.timeline.nodes) {
         if (
           node.kind !== 'user-message' ||
@@ -408,6 +409,7 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
           !text.startsWith(node.markdown)
         )
           continue
+        pending = true
         let read = admissionReads.get(node)
         if (read === undefined) {
           read = Promise.resolve()
@@ -419,7 +421,12 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
             )
             .then(
               (full) => full === text,
-              () => false,
+              () => {
+                // A failed read is not evidence that the accepted message
+                // differs. Allow the admission wait to retry this same node.
+                admissionReads.delete(node)
+                return false
+              },
             )
           admissionReads.set(node, read)
         }
@@ -435,6 +442,7 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
             observed()
         })
       }
+      return pending
     }
     const snapshotUris = attachmentSnapshot.map((attachment) => attachment.uri)
     for (const uri of snapshotUris) inFlightAttachmentUrisRef.current.add(uri)
@@ -475,10 +483,12 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
             await new Promise<void>((resolve, reject) => {
               let unsubscribe = (): void => undefined
               let settled = false
+              let retryRead: ReturnType<typeof setTimeout> | undefined
               const finish = (error?: Error): void => {
                 if (settled) return
                 settled = true
                 clearTimeout(timer)
+                if (retryRead !== undefined) clearTimeout(retryRead)
                 unsubscribe()
                 admissionWaitsRef.current.delete(cancelled)
                 signal?.removeEventListener('abort', cancelled)
@@ -501,10 +511,16 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
                   )
                 )
                   finish()
-                else
+                else if (
                   confirmClippedAdmission(sessionId, () => {
                     if (!settled) finish()
-                  })
+                  }) &&
+                  retryRead === undefined
+                )
+                  retryRead = setTimeout(() => {
+                    retryRead = undefined
+                    check()
+                  }, 500)
               }
               const timer = setTimeout(() => {
                 // A false direct classification used to surface as a hard
@@ -588,10 +604,12 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
           }
           let settled = false
           let unsubscribe = (): void => undefined
+          let retryRead: ReturnType<typeof setTimeout> | undefined
           const finish = (): void => {
             if (settled) return
             settled = true
             clearTimeout(timer)
+            if (retryRead !== undefined) clearTimeout(retryRead)
             unsubscribe()
             admissionWaitsRef.current.delete(cancel)
             store.forgetDirectPromptRequests(directRequests)
@@ -620,7 +638,11 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
                     (!beforeIds.has(node.id) && node.markdown === text)),
               )
             ) {
-              confirmClippedAdmission(sessionId, observed)
+              if (confirmClippedAdmission(sessionId, observed) && retryRead === undefined)
+                retryRead = setTimeout(() => {
+                  retryRead = undefined
+                  check()
+                }, 500)
               return
             }
             observed()
