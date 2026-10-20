@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 保留 Windows 负数退出码；退出码为 null 或无法可靠表示时展示原始结果，不再误报为退出成功。
+- Preserves negative Windows exit codes and keeps unknown exit markers in the result instead of reporting a clean exit.
+
 - 首条消息发送前先应用草稿中选择的权限、Plan 和会话配置；配置失败或取消时保留草稿与已创建的会话，不继续投递。
 - Applies staged permission, Plan and session choices before the first message. Configuration failures or cancellation retain the draft and created session without admitting the prompt.
 

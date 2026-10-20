@@ -64,6 +64,9 @@ export function settledToolPresentation(
   // claiming a clean exit would invent the status.
   if (output === '') return undefined
   const status = parseShellExitStatus(output)
+  // The native client also accepts a null code. Keep that marker in the
+  // generic result rather than promoting an unknown exit to a clean one.
+  if (status.exitCode === undefined && status.signal === undefined) return undefined
   return {
     phase: 'result',
     card: 'terminal',
@@ -100,8 +103,12 @@ export function terminalPresentationFailed(view: ToolPresentationView | undefine
 export function parseShellExitStatus(text: string): ShellExitStatus {
   const signal = /\n\[killed by signal: ([^\]\n]+)\]$/u.exec(text)
   if (signal?.[1] !== undefined) return { output: text.slice(0, signal.index), signal: signal[1] }
-  const exit = /\n\[exit code: (\d+)\]$/u.exec(text)
-  if (exit?.[1] !== undefined) return { output: text.slice(0, exit.index), exitCode: Number(exit[1]) }
+  const exit = /\n\[exit code: (-?\d+|null)\]$/u.exec(text)
+  if (exit?.[1] !== undefined) {
+    const code = exit[1] === 'null' ? undefined : Number(exit[1])
+    if (code === undefined || !Number.isSafeInteger(code)) return { output: text }
+    return { output: text.slice(0, exit.index), exitCode: code }
+  }
   return { output: text, exitCode: 0 }
 }
 
