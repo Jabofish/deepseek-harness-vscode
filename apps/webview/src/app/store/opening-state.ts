@@ -63,6 +63,11 @@ export function createPendingOpenBuffer(onOverflow: () => void): PendingOpenBuff
     capture: (sessionId, message) => {
       const pending = active
       if (pending?.sessionId !== sessionId || message.type !== 'event') return undefined
+      // A subscription baseline clears process-local interactions. Apply it as
+      // it arrives; if it were replayed at first paint it would erase any
+      // permission/question that arrived live after it (those are intentionally
+      // not buffered) and the agent would wait forever for an answer.
+      if (message.name === 'session.subscribed') return undefined
       // Interactions have no advisory list read to race. Apply them immediately
       // to the global pending-interaction map, including during failed opens.
       if (message.name.startsWith('permission.') || message.name.startsWith('question.')) return undefined

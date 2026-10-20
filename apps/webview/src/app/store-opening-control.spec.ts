@@ -278,6 +278,48 @@ describe('AppStore session gap healing', () => {
     createdClient.dispose()
   })
 
+  it('keeps an approval that arrives during the open instead of clearing it on first paint', async () => {
+    const sessionId = activeSession.id
+    const permission = {
+      id: 'permission-during-open',
+      sessionId,
+      title: 'Allow the command?',
+      description: 'The command needs approval.',
+      risk: 'medium' as const,
+      options: [{ id: 'allow', label: 'Allow once', kind: 'allow-once' as const }],
+    }
+    let resolveOpen: ((value: unknown) => void) | undefined
+    const openResponse = new Promise<unknown>((resolve) => {
+      resolveOpen = resolve
+    })
+    const { store, client } = makeStore({ openResponse })
+    const opening = store.openSession(sessionId)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    // The pinned Host subscribes first and then replays the pending approval.
+    // Both arrive before the critical open response installs first paint.
+    client.emit(hostEvent(1, 'session.subscribed', { sessionId, lastSequence: 0 }))
+    client.emit(hostEvent(2, 'permission.requested', { request: permission }))
+    resolveOpen?.({
+      ...activeSession,
+      history: [],
+      historyHasMore: false,
+      permissionPresets: [],
+      configuration: {
+        preset: 'standard',
+        toolMode: 'native',
+        permissionPreset: 'workspace-write',
+        planMode: false,
+        model: { providerId: 'deepseek', modelId: 'deepseek-chat' },
+      },
+    })
+    await opening
+    await flushAsync()
+
+    expect(store.permissions).toEqual([permission])
+    store.dispose()
+    client.dispose()
+  })
+
   it('does not let a non-durable approval frame hide the next durable request', async () => {
     const { store, client } = makeStore()
     await store.openSession(activeSession.id)
