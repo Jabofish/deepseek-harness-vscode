@@ -4,6 +4,7 @@ import type {
   ModelDescriptor,
   ModelDiscoveryInput,
   ModelProvider,
+  PermissionPresetCatalog,
   SessionModelCatalog,
 } from '@dsh-vscode/domain'
 import { AppError } from '@dsh-vscode/domain'
@@ -32,6 +33,12 @@ export class ModelSettingsUseCases {
         }),
       )
     return sessions.listPermissionPresets(signal)
+  }
+
+  public async readPermissionCatalog(signal?: AbortSignal): Promise<PermissionPresetCatalog> {
+    const sessions = this.backendService.requireBackend().sessions
+    if (sessions.readPermissionCatalog !== undefined) return sessions.readPermissionCatalog(signal)
+    return { items: await this.listPermissionPresets(signal) }
   }
 
   public listModels(providerId?: string, signal?: AbortSignal): Promise<readonly ModelDescriptor[]> {

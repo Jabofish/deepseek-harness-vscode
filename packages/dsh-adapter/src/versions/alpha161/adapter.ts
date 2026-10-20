@@ -1,5 +1,6 @@
 import type { DshTransport } from '../../contracts.js'
-import { readPermissionCatalog } from './permission-catalog.js'
+import type { PermissionPresetCatalog } from '@dsh-vscode/domain'
+import { readPermissionCatalogSnapshot } from './permission-catalog.js'
 import type { VersionAdapterIdentity } from '../../adapter-base.js'
 import { Rc152VersionAdapter, type Rc152AdapterOptions } from '../rc152/adapter.js'
 
@@ -23,8 +24,8 @@ export class Alpha161VersionAdapter extends Rc152VersionAdapter {
 
   protected override permissionCatalogReader(
     transport: DshTransport,
-  ): (signal?: AbortSignal) => Promise<readonly string[]> {
-    return (signal) => readPermissionCatalog(transport, signal)
+  ): (signal?: AbortSignal) => Promise<PermissionPresetCatalog> {
+    return (signal) => readPermissionCatalogSnapshot(transport, signal)
   }
 
   protected override readonly identity: VersionAdapterIdentity = {

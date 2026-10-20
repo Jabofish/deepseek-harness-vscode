@@ -12,6 +12,12 @@ export type ToolMode = 'native' | 'ptc' | 'code' | 'both'
 // making the Webview or extension reject a valid host value.
 export type PermissionPreset = string
 
+/** Runtime-owned choices and the default applied to a fresh session. */
+export interface PermissionPresetCatalog {
+  readonly items: readonly string[]
+  readonly defaultPreset?: string
+}
+
 export interface ModelProvider {
   readonly id: string
   readonly name: string

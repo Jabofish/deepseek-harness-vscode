@@ -602,6 +602,8 @@
   "controls.accessChange": "更改当前会话的权限预设",
   "controls.accessUnavailable": "当前 DSH 会话不支持切换权限",
   "controls.unknown": "权限状态未知",
+  "controls.defaultPermission": "默认权限",
+  "controls.defaultPermissionHint": "使用 DSH 的新会话默认权限，也可以在发送前直接选择其他权限预设。",
   "controls.planUnknown": "计划状态未知；开启计划模式",
   "controls.planOn": "开启计划模式",
   "controls.planOff": "关闭计划模式",

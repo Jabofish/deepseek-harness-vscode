@@ -14,7 +14,7 @@ import type { createSurfaceActions } from './surface-actions.js'
 import { parseHostDomainEvent } from './event-parser.js'
 import { backendEventSessionId, applyHostMessage } from './host-message-reducers.js'
 import { object } from './unknown-record.js'
-import { stringList } from './list-equality.js'
+import { parsePermissionCatalog } from './permission-catalog.js'
 
 type AccountEventActions = Pick<
   ReturnType<typeof createAccountActions>,
@@ -253,7 +253,12 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
       const generation = ++permissionCatalogGeneration
       // Clear the stale allowlist immediately; a failed read must not keep Auto
       // selectable after its live integration has been removed.
-      setState((current) => ({ ...current, permissionPresets: [], newSessionPermissionPresets: [] }))
+      setState((current) => ({
+        ...current,
+        permissionPresets: [],
+        newSessionPermissionPresets: [],
+        newSessionPermissionDefault: undefined,
+      }))
       void client
         .request<unknown>({
           type: 'permissions.presets.list',
@@ -261,13 +266,14 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
         })
         .then((value) => {
           if (lifecycle.isDisposed() || generation !== permissionCatalogGeneration) return
-          const permissionPresets = stringList(value)
-          if (permissionPresets !== undefined)
+          const catalog = parsePermissionCatalog(value)
+          if (catalog !== undefined)
             setState((current) => ({
               ...current,
-              newSessionPermissionPresets: permissionPresets,
+              newSessionPermissionPresets: catalog.items,
+              newSessionPermissionDefault: catalog.defaultPreset,
               ...(version === lifecycle.getOpenVersion() && current.activeSessionId === sessionId
-                ? { permissionPresets }
+                ? { permissionPresets: catalog.items }
                 : {}),
             }))
         })

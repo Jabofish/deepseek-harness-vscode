@@ -1046,6 +1046,25 @@ describe('App connected rendering', () => {
     await waitFor(() => expect(input.value).toBe(''))
   })
 
+  it('shows the native permission default through the main new-session composer', async () => {
+    const configuration = { ...connectedState(true).configuration!, permissionPresetKnown: false }
+    const state = {
+      ...connectedState(false),
+      pendingSession: { revision: 1, workspaceId: 'w1', configuration },
+      newSessionPermissionPresets: ['read-only', 'organization-safe'],
+      newSessionPermissionDefault: 'read-only',
+    }
+    const choose = vi.fn()
+    currentStore = { ...storeFor(state), configurePendingSession: choose }
+    render(<App />)
+    expect(screen.queryByRole('button', { name: 'Access: Unknown permission' })).toBeNull()
+    fireEvent.click(await screen.findByRole('button', { name: 'Access: Read Only' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Organization Safe' }))
+    expect(choose).toHaveBeenCalledWith(
+      expect.objectContaining({ permissionPreset: 'organization-safe', permissionPresetKnown: true }),
+    )
+  })
+
   it('renders a local draft and routes its first message through deferred creation', async () => {
     const state = connectedState(false)
     const sendPendingPrompt = vi.fn().mockResolvedValue(undefined)

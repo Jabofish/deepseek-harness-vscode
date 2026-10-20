@@ -32,6 +32,7 @@ export const STATE_VIEW_KEYS_B = [
   'presetSelectionEnabled',
   'permissionPresets',
   'newSessionPermissionPresets',
+  'newSessionPermissionDefault',
   'commands',
   'pluginInventoryRevision',
   'pluginInstallProgress',

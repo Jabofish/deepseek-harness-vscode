@@ -602,6 +602,8 @@
   "controls.accessChange": "Change the current session permission preset",
   "controls.accessUnavailable": "Permission switching is unavailable in this DSH session",
   "controls.unknown": "Unknown permission",
+  "controls.defaultPermission": "Default permissions",
+  "controls.defaultPermissionHint": "Uses the DSH default for new sessions. You can choose another permission preset here before sending.",
   "controls.planUnknown": "Plan state unknown; enable plan mode",
   "controls.planOn": "Turn on plan mode",
   "controls.planOff": "Turn off plan mode",

@@ -510,6 +510,87 @@ it('requires explicit acknowledgement before selecting experimental Auto permiss
 describe('permission catalog lifecycle', () => {
   afterEach(() => cleanup())
 
+  it('shows the native default in an unchosen new draft, including a late directory response', () => {
+    const onChange = vi.fn()
+    const onCommand = vi.fn()
+    const seat = {
+      configuration: { ...configuration({ providerId: '', modelId: '' }), permissionPresetKnown: false },
+      configurationDraft: true,
+      models: [],
+      presets: [],
+      permissionPresets: ['read-only', 'organization-safe'],
+      disabled: false,
+      presetMutable: true,
+      onChange,
+      onCommand,
+    } as const
+    const { rerender } = render(
+      <I18nProvider>
+        <SessionControls {...seat} />
+      </I18nProvider>,
+    )
+    expect(screen.getByRole('button', { name: 'Access: Default permissions' })).toBeDefined()
+    expect(screen.queryByRole('button', { name: 'Access: Unknown permission' })).toBeNull()
+    rerender(
+      <I18nProvider>
+        <SessionControls {...seat} defaultPermissionPreset="read-only" />
+      </I18nProvider>,
+    )
+    expect(screen.getByRole('button', { name: 'Access: Read Only' })).toBeDefined()
+    expect(onChange).not.toHaveBeenCalled()
+    expect(onCommand).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Access: Read Only' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Organization Safe' }))
+    expect(onChange).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ permissionPreset: 'organization-safe', permissionPresetKnown: true }),
+    )
+    expect(onCommand).not.toHaveBeenCalled()
+  })
+
+  it('keeps an explicit draft choice visible when the native default changes', () => {
+    render(
+      <I18nProvider>
+        <SessionControls
+          configuration={{
+            ...configuration({ providerId: '', modelId: '' }),
+            permissionPreset: 'read-only',
+            permissionPresetKnown: true,
+          }}
+          configurationDraft
+          defaultPermissionPreset="danger-full-access"
+          models={[]}
+          presets={[]}
+          permissionPresets={['read-only', 'danger-full-access']}
+          disabled={false}
+          presetMutable
+          onChange={vi.fn()}
+          onCommand={vi.fn()}
+        />
+      </I18nProvider>,
+    )
+    const trigger = screen.getByRole('button', { name: 'Access: Read Only' })
+    expect(trigger.parentElement?.className).not.toContain('access-picker--full-access')
+  })
+
+  it('does not substitute the new-session default for an unknown existing session policy', () => {
+    render(
+      <I18nProvider>
+        <SessionControls
+          configuration={{ ...configuration({ providerId: '', modelId: '' }), permissionPresetKnown: false }}
+          defaultPermissionPreset="danger-full-access"
+          models={[]}
+          presets={[]}
+          permissionPresets={['read-only', 'danger-full-access']}
+          disabled={false}
+          presetMutable
+          onChange={vi.fn()}
+          onCommand={vi.fn()}
+        />
+      </I18nProvider>,
+    )
+    expect(screen.getByRole('button', { name: 'Access: Unknown permission' })).toBeDefined()
+  })
+
   it('keeps a withdrawn current Auto permission visible but prevents selecting it again', () => {
     const onCommand = vi.fn()
     const seat = {

@@ -15,6 +15,7 @@ import {
   type ScheduleRepository,
   type UserQuestionRepository,
   type SessionProjectionValues,
+  type PermissionPresetCatalog,
   type ModsBandRepository,
   type InspectorDevtoolsRepository,
   type EditorBridgeRepository,
@@ -103,7 +104,7 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
 
   protected permissionCatalogReader(
     _transport: DshTransport,
-  ): ((signal?: AbortSignal) => Promise<readonly string[]>) | undefined {
+  ): ((signal?: AbortSignal) => Promise<PermissionPresetCatalog>) | undefined {
     return undefined
   }
 
@@ -235,7 +236,7 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
       preallocatedSessionId: true,
       supportsSessionRestore: this.supportsSessionRestore,
       supportsFileUploads: this.supportsFileUploads,
-      readPermissionPresets: this.permissionCatalogReader(transport),
+      readPermissionCatalog: this.permissionCatalogReader(transport),
       commandAttachmentWire: this.commandAttachmentWire,
       maxPromptAttachmentBytes: 20 * 1024 * 1024,
       maxPromptAttachmentTotalBytes: 200 * 1024 * 1024,

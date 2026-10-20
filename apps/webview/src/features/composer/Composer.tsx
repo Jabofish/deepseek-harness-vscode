@@ -111,6 +111,7 @@ export interface ComposerProps {
   readonly presetSelectionEnabled?: boolean
   readonly permissionPresets?: readonly string[]
   readonly configurationDraft?: boolean
+  readonly defaultPermissionPreset?: string
   readonly commands?: readonly DynamicCommand[]
   /** Client-owned bare-command popup decorations; host rows remain authoritative. */
   readonly popupSelects?: PopupSelectRegistry
@@ -328,6 +329,9 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
       presets,
       permissionPresets,
       ...(props.configurationDraft === undefined ? {} : { configurationDraft: props.configurationDraft }),
+      ...(props.defaultPermissionPreset === undefined
+        ? {}
+        : { defaultPermissionPreset: props.defaultPermissionPreset }),
       disabled: props.configurationDisabled ?? props.disabled,
       presetMutable: props.presetMutable === true,
       surface,

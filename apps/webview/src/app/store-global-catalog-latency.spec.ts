@@ -30,6 +30,33 @@ function response(request: WebviewRequest): unknown {
 const catalogTypes = ['providers.list', 'models.list', 'preset.list', 'permissions.presets.list'] as const
 
 describe('Global catalog response latency', () => {
+  it('retains the native default across the Host response and clears it on disconnect', async () => {
+    let emit: Parameters<ProtocolClient['subscribe']>[0] = () => {}
+    const client = {
+      subscribe: (listener: typeof emit) => {
+        emit = listener
+        return () => {}
+      },
+      dispose: () => {},
+      request: (request: WebviewRequest) =>
+        Promise.resolve(
+          request.type === 'permissions.presets.list'
+            ? { items: ['organization-safe', 'read-only'], defaultPreset: 'read-only' }
+            : response(request),
+        ),
+    }
+    const store = createAppStore(client as unknown as ProtocolClient)
+    try {
+      await store.refreshSessions()
+      await vi.waitFor(() => expect(store.getState().newSessionPermissionDefault).toBe('read-only'))
+      expect(store.getState().newSessionPermissionPresets).toEqual(['organization-safe', 'read-only'])
+      emit({ type: 'event', name: 'connection.lost', sequence: 1, payload: {} })
+      expect(store.getState().newSessionPermissionDefault).toBeUndefined()
+    } finally {
+      store.dispose()
+    }
+  })
+
   it.each(catalogTypes)('publishes healthy directories while %s remains pending', async (slow) => {
     let finish!: () => void
     const pending = new Promise<void>((resolve) => {

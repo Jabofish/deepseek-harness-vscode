@@ -1,5 +1,5 @@
 import type { CommandAttachmentWire } from '../command-repository.js'
-import type { SessionProjectionValues } from '@dsh-vscode/domain'
+import type { PermissionPresetCatalog, SessionProjectionValues } from '@dsh-vscode/domain'
 
 export interface Rc6SessionRepositoryOptions {
   /** Exact version adapters may normalize selected projection DTOs at the wire boundary. */
@@ -7,6 +7,7 @@ export interface Rc6SessionRepositoryOptions {
   readonly supportsFileUploads?: boolean
   readonly supportsSessionRestore?: boolean
   readonly readPermissionPresets?: ((signal?: AbortSignal) => Promise<readonly string[]>) | undefined
+  readonly readPermissionCatalog?: ((signal?: AbortSignal) => Promise<PermissionPresetCatalog>) | undefined
   /** rc.2 accepts an idempotency/preallocated sessionId without rc.1's reuse flag. */
   readonly preallocatedSessionId?: boolean
   readonly reuseWorkspaceBlank?: boolean

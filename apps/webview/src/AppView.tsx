@@ -362,6 +362,9 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                       configuration={state.pendingSession.configuration}
                       configurationDraft
                       permissionPresets={state.newSessionPermissionPresets ?? []}
+                      {...(state.newSessionPermissionDefault === undefined
+                        ? {}
+                        : { defaultPermissionPreset: state.newSessionPermissionDefault })}
                       presets={state.presets}
                       presetMutable
                       {...(newSessionPresetSelectionEnabled === undefined
