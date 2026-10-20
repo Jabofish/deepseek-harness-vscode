@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 聚焦布局的标准和紧凑视图不再为每次模型请求重复显示首 Token 与生成速度；整轮 Token 用量保留一次，逐请求指标在详细或完整视图中查看。
+- Focused standard and compact views no longer repeat first-token and generation-rate headers for every model request. Completed Turn token totals remain available once; detailed and verbose views retain request metrics.
+
 - 新会话的创建回执已确认预设和模型、且没有额外权限或 Plan 选择时，不再重复配置读取；显式配置、复用会话与失败重试仍先完成配置再发送。
 - Skips redundant configuration reads when a fresh create receipt confirms the preset/model and no additional permission or Plan choice was made. Explicit choices, reused sessions and retries still configure before sending.
 

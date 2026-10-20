@@ -565,7 +565,9 @@ function renderAssistantTurn(
   const messageBlocks = contentBlocks.filter((block) => block.kind === 'message')
   const truncated = messageBlocks.some((block) => truncatedNodeIds.has(block.id))
   const metricsLabel =
-    performanceUsage === 'detailed' ? assistantMetricsLabel(node.timing, node.usage, t) : undefined
+    performanceUsage === 'detailed' && (!focused || focusedPresentationPolicy(transcriptView).requestMetrics)
+      ? assistantMetricsLabel(node.timing, node.usage, t)
+      : undefined
   const turnUsage =
     performanceUsage === 'detailed' && node.turnCompleted === true ? node.turnUsage : undefined
   const detailLabel =
@@ -660,7 +662,9 @@ function renderAssistantMessage(
   const actionsUnavailable = running || inProgress || (node.turn !== undefined && node.turnCompleted !== true)
   const truncated = truncatedNodeIds.has(node.id)
   const metricsLabel =
-    performanceUsage === 'detailed' ? assistantMetricsLabel(node.timing, node.usage, t) : undefined
+    performanceUsage === 'detailed' && (!focused || focusedPresentationPolicy(transcriptView).requestMetrics)
+      ? assistantMetricsLabel(node.timing, node.usage, t)
+      : undefined
   const turnUsage =
     performanceUsage === 'detailed' && node.turnCompleted === true ? node.turnUsage : undefined
   const detailLabel =
