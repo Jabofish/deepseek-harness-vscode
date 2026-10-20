@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Markdown 代码块随栏宽自动换行，长标识符也可折行；流式与完成后的显示一致，保留缩进和复制原文。
+- Markdown code blocks wrap to the available width, including long identifiers, during streaming and after completion while preserving indentation and copied source text.
+
 - 会话历史补齐与重试提示改为显示在正文上方，修复刚进入会话时正文被挤到右半边、同步完成后才恢复宽度的问题。
 - Stacks history loading and retry notices above messages so opening a session keeps content at full width throughout synchronization.
 

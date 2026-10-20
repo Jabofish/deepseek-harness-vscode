@@ -125,7 +125,7 @@
 .dsh-markdown pre code {
   padding: 0;
   background: transparent;
-  overflow-wrap: normal;
+  overflow-wrap: anywhere;
 }
 
 .dsh-markdown table {
@@ -164,7 +164,7 @@
   border-radius: 0;
   font-size: var(--dsh-font-size-sm);
   line-height: 1.65;
-  white-space: pre;
+  white-space: pre-wrap;
   tab-size: 2;
 }
 
