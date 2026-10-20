@@ -87,6 +87,7 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
     turnWatchers,
   } = deps
   let permissionCatalogGeneration = 0
+  let resyncing = false
   const unsubscribe = client.subscribe((message) => {
     if (lifecycle.isDisposed()) return
     const previousBackendKind = getState().backend.kind
@@ -97,18 +98,32 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
     if (surfaceActions.applySurfaceEvent(message)) return
     if (message.type === 'event' && message.name === 'ui.resync') {
       turnWatchers.disposeAll()
-      const state = getState()
-      if (state.backend.kind === 'connected' && state.activeSessionId !== undefined) {
-        void client
-          .request({
-            type: 'session.transcript.resync',
-            requestId: requestId(),
-            payload: { sessionId: state.activeSessionId },
-          })
-          .catch(() => undefined)
-        reopenActiveView()
-        void refresh().catch(() => undefined)
-      }
+      if (resyncing) return
+      resyncing = true
+      // The missing control frame may itself have been the connection snapshot.
+      // Recover it and replay process-local interactions before reopening a view.
+      void client
+        .request({ type: 'app.ready', requestId: requestId(), payload: { snapshotOnly: true } })
+        .then(() => {
+          if (lifecycle.isDisposed()) return
+          const state = getState()
+          if (state.backend.kind !== 'connected') return
+          if (state.activeSessionId !== undefined) {
+            void client
+              .request({
+                type: 'session.transcript.resync',
+                requestId: requestId(),
+                payload: { sessionId: state.activeSessionId },
+              })
+              .catch(() => undefined)
+            reopenActiveView()
+          }
+          void refresh().catch(() => undefined)
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          resyncing = false
+        })
       return
     }
     if (message.type === 'event' && message.name === 'session.transcript.invalidated') {

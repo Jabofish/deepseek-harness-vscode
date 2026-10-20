@@ -238,7 +238,9 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     }
     if (request.type === 'app.ready') {
       const opening = openingConnection
-      if (opening !== undefined && !opening.abort.signal.aborted) {
+      if (request.payload?.snapshotOnly === true) {
+        // Delivery recovery rereads authority; it never starts or reconnects DSH.
+      } else if (opening !== undefined && !opening.abort.signal.aborted) {
         try {
           await opening.promise
         } finally {

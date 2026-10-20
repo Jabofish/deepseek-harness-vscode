@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { WebviewSurfaceRegistry } from './webview-surface-registry.js'
 import type { WebviewSurface, WebviewSurfaceKind } from './webview-surface.js'
@@ -37,6 +37,16 @@ function surface(
 }
 
 describe('WebviewSurfaceRegistry', () => {
+  it('reports a missed ready surface even when another chat accepted the broadcast', async () => {
+    const registry = new WebviewSurfaceRegistry()
+    registry.register(surface('sidebar', 'sidebar', { accepts: false }))
+    registry.register(surface('editor:s1', 'editor'))
+    const missed = vi.fn()
+    expect(await registry.post({ message: 'control' }, missed)).toBe(true)
+    expect(missed).toHaveBeenCalledExactlyOnceWith('sidebar')
+    registry.dispose()
+  })
+
   it('broadcasts to every surface and reports delivery when any accepted', async () => {
     const registry = new WebviewSurfaceRegistry()
     const sidebar = surface('sidebar', 'sidebar', { accepts: false })

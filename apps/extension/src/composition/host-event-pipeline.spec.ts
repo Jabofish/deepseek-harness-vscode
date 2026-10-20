@@ -4,7 +4,10 @@ import { createHostEventPipeline, type HostEventPipelineDependencies } from './h
 
 vi.mock('vscode', () => ({ commands: { executeCommand: vi.fn() } }))
 
-function harness(respond: (message: HostMessage) => Promise<boolean>): {
+function harness(
+  respond: (message: HostMessage) => Promise<boolean>,
+  postTo = vi.fn(() => Promise.resolve(true)),
+): {
   readonly pipeline: ReturnType<typeof createHostEventPipeline>
   readonly posted: readonly HostMessage[]
 } {
@@ -15,7 +18,7 @@ function harness(respond: (message: HostMessage) => Promise<boolean>): {
       posted.push(message as HostMessage)
       return respond(message as HostMessage)
     },
-    postTo: vi.fn(() => Promise.resolve(true)),
+    postTo,
     backendService: { requireBackend: () => ({ connection: {} }) },
     diagnostics: { log: vi.fn(), connectionOutput: () => undefined },
     editorContextUseCases: {},
@@ -28,6 +31,20 @@ function harness(respond: (message: HostMessage) => Promise<boolean>): {
 }
 
 describe('Host event delivery', () => {
+  it('recovers a targeted control failure only on that surface and bounds a failed recovery', async () => {
+    const postTo = vi.fn(() => Promise.resolve(false))
+    const { pipeline, posted } = harness(() => Promise.resolve(true), postTo)
+    await expect(pipeline.postEventTo('editor:s1', 'connection.snapshot', {})).resolves.toBe(false)
+    expect(postTo.mock.calls).toEqual([
+      ['editor:s1', expect.objectContaining({ name: 'connection.snapshot', sequence: 1 })],
+      ['editor:s1', expect.objectContaining({ name: 'ui.resync', sequence: 2 })],
+    ])
+    expect(posted).toEqual([])
+    await pipeline.postEventTo('editor:s1', 'ui.resync', {})
+    expect(postTo).toHaveBeenCalledTimes(3)
+    pipeline.dispose()
+  })
+
   it('consumes the sequence and resyncs after a control event is not delivered', async () => {
     let fail = true
     const { pipeline, posted } = harness((message) => {

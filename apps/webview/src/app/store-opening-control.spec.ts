@@ -194,6 +194,15 @@ const flushAsync = async (): Promise<void> => {
 describe('AppStore session gap healing', () => {
   afterEach(() => document.body.replaceChildren())
 
+  it('repeats the ready handshake on resync even when the connected snapshot was missed', async () => {
+    const { store, client } = makeStore()
+    expect(store.getState().backend.kind).toBe('idle')
+    client.emit(hostEvent(1, 'ui.resync', {}))
+    await flushAsync()
+    expect(client.requests.some((request) => request.type === 'app.ready')).toBe(true)
+    store.dispose()
+  })
+
   it('replays every control event delivered before first paint over stale advisory snapshots', async () => {
     const sessionId = activeSession.id
     const queueItem = {

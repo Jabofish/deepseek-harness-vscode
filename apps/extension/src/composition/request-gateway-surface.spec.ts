@@ -14,6 +14,7 @@ const host = vi.hoisted(() => {
     focusFails: false,
     deliveryFails: false,
     sessionGate: undefined as Promise<void> | undefined,
+    connectCount: 0,
   }
 })
 
@@ -104,6 +105,7 @@ function buildGateway(): Harness {
   host.focusFails = false
   host.deliveryFails = false
   host.sessionGate = undefined
+  host.connectCount = 0
   const sent: Sent[] = []
   const events: Sent[] = []
   const rejected = new Set<string>()
@@ -151,7 +153,10 @@ function buildGateway(): Harness {
       requireBackend: () => ({ sessions: { rename: () => Promise.resolve(host.renamedTitle) } }),
     },
     editorContextProvider: { dispose: () => teardowns.push('editor-context') },
-    connect: () => Promise.resolve(),
+    connect: () => {
+      host.connectCount += 1
+      return Promise.resolve()
+    },
     coordinator: { getState: () => ({ kind: 'idle' }) },
     requireCurrentWorkspaceSession: (sessionId: string) =>
       Promise.resolve(host.sessionGate).then(() => {
@@ -202,6 +207,18 @@ describe('request gateway editor surface routes', () => {
 
   beforeEach(() => {
     harness = buildGateway()
+  })
+
+  it('rereads recovery state without starting a connection', async () => {
+    await harness.gateway.router.handle(
+      request('app.ready', 'recover-state', { snapshotOnly: true }),
+      'sidebar',
+    )
+    expect(host.connectCount).toBe(0)
+    expect(harness.events.find((event) => event.name === 'connection.snapshot')?.payload).toMatchObject({
+      kind: 'idle',
+    })
+    expect(harness.sent).toContainEqual(expect.objectContaining({ requestId: 'recover-state', ok: true }))
   })
 
   it('updates title-bar layout only from the sidebar, independently of connection and trust', async () => {

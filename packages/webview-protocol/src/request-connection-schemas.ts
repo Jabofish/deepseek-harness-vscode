@@ -2,7 +2,16 @@ import { z } from 'zod'
 import { requestBase } from './request-common.js'
 
 export const connectionRequestSchemas = [
-  z.object({ type: z.literal('app.ready'), ...requestBase }).strict(),
+  z
+    .object({
+      type: z.literal('app.ready'),
+      ...requestBase,
+      payload: z
+        .object({ snapshotOnly: z.literal(true) })
+        .strict()
+        .optional(),
+    })
+    .strict(),
   z.object({ type: z.literal('connection.retry'), ...requestBase }).strict(),
   z
     .object({

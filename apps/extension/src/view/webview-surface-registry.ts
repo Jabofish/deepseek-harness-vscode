@@ -46,7 +46,7 @@ export class WebviewSurfaceRegistry implements vscode.Disposable {
   }
 
   /** Broadcast: used for events that every surface filters for itself. */
-  public async post(message: unknown): Promise<boolean> {
+  public async post(message: unknown, onMissedSurface?: (surfaceId: string) => void): Promise<boolean> {
     const targets = [...this.surfaces.values()]
     if (targets.length === 0) return false
     const results = await Promise.all(
@@ -59,7 +59,14 @@ export class WebviewSurfaceRegistry implements vscode.Disposable {
           ),
       ),
     )
-    return results.some(Boolean)
+    const delivered = results.some(Boolean)
+    // A successful editor post says nothing about delivery to the sidebar.
+    // Unready/disposed surfaces recover through their own ready handshake.
+    if (delivered && onMissedSurface !== undefined)
+      for (const [index, surface] of targets.entries())
+        if (!results[index] && surface.isReady && this.surfaces.get(surface.surfaceId) === surface)
+          onMissedSurface(surface.surfaceId)
+    return delivered
   }
 
   public async postTo(surfaceId: string, message: unknown): Promise<boolean> {

@@ -29,7 +29,7 @@ const BULK_EVENT_NAMES = new Set([
   'session.transcript.patch',
   'runtime.update.progress',
 ])
-function isBulkEvent(name: string): boolean {
+export function isBulkEvent(name: string): boolean {
   return BULK_EVENT_NAMES.has(name)
 }
 
@@ -258,12 +258,23 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
         // another surface's kind, session or count.
         const delivered = surfaceId === undefined ? await post(message) : await postTo(surfaceId, message)
         if (delivered) sequence = nextSequence
-        else if (priority && surfaceId === undefined) {
+        else if (priority) {
           // A control frame the Webview never received must not be followed by
           // a contiguously numbered stream: consume its sequence and ask for
           // the reread a rejected frame already triggers.
           sequence = nextSequence
-          eventPostQueue.invalidate()
+          if (surfaceId === undefined) eventPostQueue.invalidate()
+          else if (nextEvent.name !== 'ui.resync') {
+            // Recovery belongs to the failed surface. Never repeatedly retry
+            // the recovery frame itself when that surface has gone away.
+            const recoverySequence = ++sequence
+            await postTo(surfaceId, {
+              type: 'event',
+              name: 'ui.resync',
+              sequence: recoverySequence,
+              payload: {},
+            })
+          }
         }
         return delivered
       },
