@@ -1,4 +1,4 @@
-import { useSyncExternalStore, type SetStateAction } from 'react'
+import { useMemo, useSyncExternalStore, type SetStateAction } from 'react'
 
 /**
  * The composer draft, held outside the React tree so two composer instances
@@ -26,6 +26,8 @@ export interface DraftStore {
   readonly set: (action: SetStateAction<string>) => void
   readonly subscribe: (listener: () => void) => () => void
   readonly activate: (owner: string | undefined) => void
+  readonly getFor: (owner: string | undefined) => string
+  readonly setFor: (owner: string | undefined, action: SetStateAction<string>) => void
   readonly clearIf: (owner: string | undefined, text: string) => void
   readonly reset: () => void
 }
@@ -71,6 +73,21 @@ function createDraftStore(): DraftStore {
         listeners.delete(listener)
       }
     },
+    getFor: (owner) => {
+      if (owner === undefined || owner === activeOwner) return current
+      return drafts.get(keyFor(owner)) ?? ''
+    },
+    setFor: (owner, action) => {
+      const target = owner === undefined ? activeOwner : owner
+      const key = keyFor(target)
+      const base = target === activeOwner ? current : (drafts.get(key) ?? '')
+      const next = typeof action === 'function' ? action(base) : action
+      if (next === base) return
+      if (next === '') drafts.delete(key)
+      else drafts.set(key, next)
+      if (target === activeOwner) current = next
+      announce()
+    },
     activate: (owner) => {
       if (owner === activeOwner) return
       const previous = activeOwner
@@ -113,12 +130,19 @@ function createDraftStore(): DraftStore {
 
 const store = createDraftStore()
 
-export function useDraftValue(): string {
-  return useSyncExternalStore(store.subscribe, store.get, store.get)
+/** Subscribe to one composer's draft; reads that owner directly, not whichever is active. */
+export function useDraftValue(owner?: string): string {
+  const get = useMemo(() => () => store.getFor(owner), [owner])
+  return useSyncExternalStore(store.subscribe, get, get)
 }
 
 export function setDraft(action: SetStateAction<string>): void {
   store.set(action)
+}
+
+/** Edit one composer's draft without depending on activation order. */
+export function setDraftFor(owner: string | undefined, action: SetStateAction<string>): void {
+  store.setFor(owner, action)
 }
 
 /** Event-time read; render-time consumers must use `useDraftValue`. */

@@ -77,6 +77,8 @@ export interface ComposerProps {
   readonly attachmentsDisabled?: boolean
   readonly running: boolean
   readonly draft: string
+  /** Conversation identity that owns the draft; undo history resets with it. */
+  readonly draftKey?: string | undefined
   readonly attachments: readonly PromptAttachment[]
   readonly editorContext?: readonly EditorContextItem[]
   readonly editorContextAvailableKinds?: readonly EditorContextKind[]
@@ -174,7 +176,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const hintId = useId()
   const pendingCursorRef = useRef<number | undefined>(undefined)
-  const { restoreDraft } = useDraftHistory(props.draft, props.onDraftChange)
+  const { restoreDraft } = useDraftHistory(props.draft, props.onDraftChange, props.draftKey)
   const { railRef: attachmentRailRef, scrollable: attachmentRailScrollable } = useAttachmentRail(
     props.attachments.length,
   )

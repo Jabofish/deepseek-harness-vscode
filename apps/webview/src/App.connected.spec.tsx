@@ -2472,13 +2472,14 @@ describe('App connected rendering', () => {
     fireEvent.change(input, { target: { value: 'draft for one' } })
 
     updateState({ ...withSecond, activeSessionId: 's2' })
-    expect(await screen.findByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })).toHaveProperty(
-      'value',
-      '',
-    )
-    fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), {
-      target: { value: 'draft for two' },
-    })
+    const second = await screen.findByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+    expect(second).not.toBe(input)
+    expect(second).toHaveProperty('value', '')
+    // Undo history belongs to the composer instance, not to the Webview: a
+    // switch must not let Ctrl+Z restore the previous conversation's draft.
+    fireEvent.keyDown(second, { key: 'z', ctrlKey: true })
+    expect(second.value).toBe('')
+    fireEvent.change(second, { target: { value: 'draft for two' } })
 
     updateState(withSecond)
     expect(await screen.findByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })).toHaveProperty(

@@ -355,6 +355,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                       store={store}
                       modelScope="global"
                       key={state.pendingSession.revision}
+                      draftKey={`pending:${state.pendingSession.revision}`}
                       disabled={backend.kind !== 'connected'}
                       running={false}
                       attachments={attachments}
@@ -752,6 +753,8 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                     {subagentReadOnlyReason === undefined || activeRunning ? (
                       <>
                         <ConnectedComposer
+                          key={active.id}
+                          draftKey={active.id}
                           store={store}
                           modelScope="session"
                           disabled={backend.kind !== 'connected'}

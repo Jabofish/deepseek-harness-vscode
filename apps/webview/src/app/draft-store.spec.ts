@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { activateDraftOwner, clearDraftIf, readDraft, resetDraft, setDraft } from './draft-store.js'
+import {
+  activateDraftOwner,
+  clearDraftIf,
+  readDraft,
+  resetDraft,
+  setDraft,
+  setDraftFor,
+} from './draft-store.js'
 
 describe('composer draft ownership', () => {
   beforeEach(() => {
@@ -16,6 +23,17 @@ describe('composer draft ownership', () => {
     expect(readDraft()).toBe('draft for one')
     activateDraftOwner('s2')
     expect(readDraft()).toBe('draft for two')
+  })
+
+  it('writes a specific owner draft without changing the visible one', () => {
+    activateDraftOwner('s1')
+    setDraft('visible')
+    setDraftFor('s2', 'background edit')
+    expect(readDraft()).toBe('visible')
+    activateDraftOwner('s2')
+    expect(readDraft()).toBe('background edit')
+    activateDraftOwner('s1')
+    expect(readDraft()).toBe('visible')
   })
 
   it('moves a pending composition draft into the session it opens', () => {
