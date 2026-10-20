@@ -52,6 +52,23 @@ describe('Timeline', () => {
     expect(screen.queryByRole('button', { name: 'Jump to latest' })).toBeNull()
   })
 
+  it('marks a clipped message and opens its complete content', () => {
+    const onOpenFullContent = vi.fn()
+    render(
+      <Timeline
+        sessionId="session-1"
+        nodes={[{ kind: 'user-message', id: 'user-1', markdown: 'visible prefix' }]}
+        streaming={false}
+        omittedNodeIds={['user-1']}
+        onOpenFullContent={onOpenFullContent}
+      />,
+    )
+
+    expect(screen.getByRole('note').textContent).toContain('Long content')
+    fireEvent.click(screen.getByRole('button', { name: 'Open full content' }))
+    expect(onOpenFullContent).toHaveBeenCalledWith('user-1')
+  })
+
   it('shows tool activity when a live tool is present in the transcript tail', () => {
     render(
       <Timeline

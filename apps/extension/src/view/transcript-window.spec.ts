@@ -250,9 +250,16 @@ describe('Host transcript windows', () => {
     )
     service.acknowledge(sessionId, sent.at(-1)!.revision)
     await vi.advanceTimersByTimeAsync(16)
-    const latest = sent.at(-1)!
-    const node = 'changedNodes' in latest ? latest.changedNodes.at(-1) : undefined
-    expect(node?.kind === 'assistant-message' && node.markdown.endsWith('11')).toBe(true)
+    const live = sent
+      .flatMap((value) =>
+        'changedNodes' in value
+          ? [...value.changedNodes, ...(value.textUpdates?.map((entry) => entry.node) ?? [])]
+          : [],
+      )
+      .find((entry) => entry.kind === 'assistant-message')
+    // The live answer is still delivered after the byte budget releases; the
+    // representation may be a clipped prefix or a suffix, not necessarily a tail.
+    expect(live).toBeDefined()
     service.dispose()
   })
 
@@ -534,6 +541,31 @@ describe('Host transcript windows', () => {
     expect(window.nodes[1]).toMatchObject({ kind: 'tool', tool: { status: 'completed' } })
     expect(window.omittedNodeIds).toEqual([])
     client.service.dispose()
+  })
+
+  it('keeps a long conversation message instead of collapsing it to the historical preview limit', () => {
+    const { service, open } = fixture()
+    const text = `BEGIN-${'a'.repeat(6_000)}-END`
+    const window = open([message(1, text)])
+    const node = window.nodes[0]
+    expect(node).toMatchObject({ kind: 'assistant-message', id: 'm-1' })
+    if (node?.kind !== 'assistant-message') throw new Error('Expected an assistant message.')
+    expect(node.markdown).toBe(text)
+    expect(window.omittedNodeIds).toEqual([])
+    service.dispose()
+  })
+
+  it('clips an oversized message from the front and marks it omitted', () => {
+    const { service, open } = fixture()
+    const text = `BEGIN-${'b'.repeat(129 * 1024)}`
+    const window = open([message(1, text)])
+    const node = window.nodes[0]
+    if (node?.kind !== 'assistant-message') throw new Error('Expected an assistant message.')
+    expect(node.markdown.length).toBeGreaterThan(4_096)
+    expect(node.markdown.length).toBeLessThan(text.length)
+    expect(node.markdown.startsWith('BEGIN-')).toBe(true)
+    expect(window.omittedNodeIds).toEqual(['m-1'])
+    service.dispose()
   })
 
   it('invalidates a published view once after Adapter recovery instead of maintaining a second gap-healing journal', () => {

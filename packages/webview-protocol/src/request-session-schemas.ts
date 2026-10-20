@@ -37,6 +37,13 @@ export const sessionRequestSchemas = [
       payload: z.object({ sessionId: id, revision: z.number().int().nonnegative(), nodeId: id }).strict(),
     })
     .strict(),
+  z
+    .object({
+      type: z.literal('session.transcript.content'),
+      ...requestBase,
+      payload: z.object({ sessionId: id, revision: z.number().int().nonnegative(), nodeId: id }).strict(),
+    })
+    .strict(),
   z.object({ type: z.literal('workspace.list'), ...requestBase }).strict(),
   z.object({ type: z.literal('workspace.addFolder'), ...requestBase }).strict(),
   z

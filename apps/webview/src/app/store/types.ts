@@ -283,6 +283,7 @@ export interface AppActions {
   loadOlderHistory(): Promise<void>
   navigateTranscript(direction: 'newer' | 'latest'): Promise<void>
   openTranscriptContent(nodeId: string): Promise<void>
+  loadTranscriptContent(nodeId: string): Promise<string>
   openSubagent(entry: SubagentView, parentAvailable: boolean): Promise<void>
   renameSession(sessionId: string, title: string): Promise<void>
   renameWorkspace(workspaceId: string, name: string): Promise<void>

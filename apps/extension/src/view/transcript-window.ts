@@ -32,10 +32,12 @@ type ReadPage = (
   signal: AbortSignal,
   child: boolean,
 ) => Promise<SessionHistoryPage>
-// One active answer/thinking pair remains bounded without freezing at the
-// historical prefix limit. The whole view still obeys TRANSCRIPT_MAX_CHARS.
-const LIVE_NODE_CHARS = 64 * 1024
-const LIVE_MARKDOWN_CHARS = 24 * 1024
+// Conversation prose is the primary product surface, so it keeps a much larger
+// prefix than tool cards. The whole view still obeys TRANSCRIPT_MAX_CHARS;
+// anything past this limit is marked omitted and can be read in full through
+// the content route.
+const MESSAGE_NODE_CHARS = 192 * 1024
+const MESSAGE_MARKDOWN_CHARS = 128 * 1024
 interface PendingOpen {
   readonly sessionId: string
   readonly generation: number
@@ -699,7 +701,10 @@ export class TranscriptWindowService {
     const projectNode = (original: TimelineNode): { value: TimelineNode; omitted: boolean; size: number } => {
       let clipped = this.previews.get(original)
       if (clipped === undefined) {
-        const projected = preview(original, isLiveText(original) ? LIVE_NODE_CHARS : TRANSCRIPT_NODE_CHARS)
+        const projected = preview(
+          original,
+          isMessageNode(original) ? MESSAGE_NODE_CHARS : TRANSCRIPT_NODE_CHARS,
+        )
         const node = projected.value
         clipped = { value: node, omitted: projected.omitted, size: JSON.stringify(node).length }
         this.previews.set(original, clipped)
@@ -1122,6 +1127,10 @@ export function isTranscriptOnlyEvent(event: BackendEvent): boolean {
   )
 }
 
+function isMessageNode(node: TimelineNode): boolean {
+  return node.kind === 'assistant-message' || node.kind === 'user-message' || node.kind === 'reasoning'
+}
+
 /** Bound every body and nested collection; omission is explicit and reversible through DSH. */
 function isLiveText(node: TimelineNode): boolean {
   return (
@@ -1140,16 +1149,16 @@ function preview(value: TimelineNode, budget: number): { value: TimelineNode; om
       return null
     }
     if (typeof input === 'string') {
-      const liveMarkdown = isLiveText(value) && field === 'markdown'
-      const limit = Math.max(0, Math.min(liveMarkdown ? LIVE_MARKDOWN_CHARS : 4096, remaining))
+      const messageMarkdown = isMessageNode(value) && field === 'markdown'
+      const limit = Math.max(0, Math.min(messageMarkdown ? MESSAGE_MARKDOWN_CHARS : 4096, remaining))
+      // Conversation text is always clipped from the front so the installed
+      // view stays monotonic: a later suffix append remains a prefix match.
       // Keep upstream recovery/overflow text at the end of tool summaries.
       // This is presentation clipping, without parsing or inventing a locator.
       const output =
-        liveMarkdown && input.length > limit && limit > 0
-          ? `…${input.slice(input.length - limit + 1)}`
-          : field === 'outputSummary' && input.length > limit && limit > 16
-            ? `${input.slice(0, Math.floor((limit - 3) / 2))}\n…\n${input.slice(-Math.ceil((limit - 3) / 2))}`
-            : input.slice(0, limit)
+        field === 'outputSummary' && input.length > limit && limit > 16
+          ? `${input.slice(0, Math.floor((limit - 3) / 2))}\n…\n${input.slice(-Math.ceil((limit - 3) / 2))}`
+          : input.slice(0, limit)
       remaining -= output.length
       if (output.length < input.length) omitted = true
       return output

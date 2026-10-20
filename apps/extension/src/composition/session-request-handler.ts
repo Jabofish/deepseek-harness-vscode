@@ -156,6 +156,16 @@ export function createSessionRequestHandler(
       await vscode.window.showTextDocument(document, { preview: true })
       return { opened: true }
     }
+    if (request.type === 'session.transcript.content') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      const content = await deps.transcript.content(
+        request.payload.sessionId,
+        request.payload.nodeId,
+        request.payload.revision,
+        signal,
+      )
+      return { content }
+    }
 
     if (request.type === 'session.create') {
       const workspace = await ensureCurrentWorkspace(request.payload.workspaceId, signal)

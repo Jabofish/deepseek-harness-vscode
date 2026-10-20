@@ -653,6 +653,11 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                       onFeedback={timelineOnFeedback}
                       onFeedbackPrepare={timelineOnFeedbackPrepare}
                       onFeedbackSubmit={timelineOnFeedbackSubmit}
+                      {...(state.transcript === undefined
+                        ? {}
+                        : { omittedNodeIds: state.transcript.omittedNodeIds })}
+                      onOpenFullContent={(nodeId) => store.openTranscriptContent(nodeId)}
+                      loadFullContent={(nodeId) => store.loadTranscriptContent(nodeId)}
                     />
                   ) : (
                     <TrajectoryView

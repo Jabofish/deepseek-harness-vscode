@@ -740,6 +740,17 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         payload: { sessionId: window.sessionId, revision: window.revision, nodeId },
       })
     },
+    loadTranscriptContent: async (nodeId) => {
+      const window = state.transcript
+      if (window === undefined) throw new Error('Transcript content is unavailable.')
+      const result = await client.request<{ readonly content?: unknown }>({
+        type: 'session.transcript.content',
+        requestId: requestId(),
+        payload: { sessionId: window.sessionId, revision: window.revision, nodeId },
+      })
+      if (typeof result?.content !== 'string') throw new Error('Transcript content is unavailable.')
+      return result.content
+    },
     openSubagent,
     ...sessionActions,
     ...goalQueueActions,

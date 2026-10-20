@@ -80,6 +80,10 @@ export interface TimelineProps {
   readonly onFeedback?: (messageId: string, rating: MessageFeedbackRating) => void
   readonly onFeedbackSubmit?: FeedbackSubmit
   readonly onFeedbackPrepare?: FeedbackPrepare
+  /** Nodes whose wire projection clipped their Markdown. */
+  readonly omittedNodeIds?: readonly string[]
+  readonly onOpenFullContent?: (nodeId: string) => void | Promise<void>
+  readonly loadFullContent?: (nodeId: string) => Promise<string>
   /** Whether an older DSH history window is available. */
   readonly hasMoreHistory?: boolean
   readonly loadingOlderHistory?: boolean
@@ -226,6 +230,9 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
   const stableOnFeedback = useStableOptionalCallback(props.onFeedback)
   const stableOnFeedbackSubmit = useStableOptionalCallback(props.onFeedbackSubmit)
   const stableOnFeedbackPrepare = useStableOptionalCallback(props.onFeedbackPrepare)
+  const stableOnOpenFullContent = useStableOptionalCallback(props.onOpenFullContent)
+  const stableLoadFullContent = useStableOptionalCallback(props.loadFullContent)
+  const truncatedNodeIds = useMemo(() => new Set(props.omittedNodeIds), [props.omittedNodeIds])
   const [openLinkError, setOpenLinkError] = useState<{ readonly href: string; readonly message: string }>()
   const [openLinkBusy, setOpenLinkBusy] = useState(false)
   const requestOpenLink = useCallback(
@@ -508,6 +515,9 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
       onFeedback: hasFeedback ? stableOnFeedback : undefined,
       onFeedbackSubmit: props.onFeedbackSubmit === undefined ? undefined : stableOnFeedbackSubmit,
       onFeedbackPrepare: props.onFeedbackPrepare === undefined ? undefined : stableOnFeedbackPrepare,
+      truncatedNodeIds,
+      onOpenFullContent: props.onOpenFullContent === undefined ? undefined : stableOnOpenFullContent,
+      loadFullContent: props.loadFullContent === undefined ? undefined : stableLoadFullContent,
       requestOpenLink,
       t,
     }),
@@ -527,19 +537,24 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
       props.feedback,
       props.feedbackUnavailable,
       performanceUsage,
+      props.loadFullContent,
       props.onFeedbackSubmit,
       props.onFeedbackPrepare,
+      props.onOpenFullContent,
       requestOpenLink,
       running,
+      stableLoadFullContent,
       stableOnBranch,
       stableOnFeedback,
       stableOnFeedbackSubmit,
       stableOnFeedbackPrepare,
       stableOnLoadImage,
+      stableOnOpenFullContent,
       stableOnOpenSession,
       stableOnShowInFolder,
       transcriptView,
       t,
+      truncatedNodeIds,
       userTextFacts,
     ],
   )

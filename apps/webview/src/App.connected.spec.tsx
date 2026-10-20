@@ -287,6 +287,7 @@ function storeFor(state: AppState): AppStore {
     loadOlderHistory: vi.fn().mockResolvedValue(undefined),
     navigateTranscript: vi.fn().mockResolvedValue(undefined),
     openTranscriptContent: vi.fn().mockResolvedValue(undefined),
+    loadTranscriptContent: vi.fn().mockResolvedValue(''),
     openSubagent: vi.fn().mockResolvedValue(undefined),
     renameSession: vi.fn().mockResolvedValue(undefined),
     renameWorkspace: vi.fn().mockResolvedValue(undefined),

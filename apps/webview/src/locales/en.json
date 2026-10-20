@@ -1330,6 +1330,8 @@
   "message.copy": "Copy",
   "message.copied": "Copied",
   "message.copyFailed": "Copy failed",
+  "message.contentTruncated": "Long content — showing the beginning",
+  "message.openFullContent": "Open full content",
   "message.branch": "Branch into a new conversation",
   "message.branchUnavailable": "Available only on a completed answer",
   "message.feedbackPositive": "Good response",

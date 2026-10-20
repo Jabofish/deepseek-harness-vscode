@@ -63,6 +63,9 @@ function renderNode(
   transcriptView: TranscriptViewMode = 'standard',
   performanceUsage: PerformanceUsageMode = 'detailed',
   focused = false,
+  truncatedNodeIds: ReadonlySet<string> = new Set(),
+  onOpenFullContent?: (nodeId: string) => void | Promise<void>,
+  loadFullContent?: (nodeId: string) => Promise<string>,
 ): ReactElement {
   switch (node.kind) {
     case 'tool':
@@ -111,6 +114,9 @@ function renderNode(
         transcriptView,
         performanceUsage,
         focused,
+        truncatedNodeIds,
+        onOpenFullContent,
+        loadFullContent,
       )
     case 'goal':
       return (
@@ -348,7 +354,17 @@ function renderNode(
               </div>
             )}
           </article>
-          {node.markdown.trim() === '' ? null : <MessageActions text={node.markdown} translate={t} />}
+          {node.markdown.trim() === '' ? null : (
+            <MessageActions
+              text={node.markdown}
+              truncated={truncatedNodeIds.has(node.id)}
+              {...(onOpenFullContent === undefined
+                ? {}
+                : { onOpenFullContent: () => onOpenFullContent(node.id) })}
+              {...(loadFullContent === undefined ? {} : { loadFullText: () => loadFullContent(node.id) })}
+              translate={t}
+            />
+          )}
         </div>
       )
     }
@@ -373,6 +389,9 @@ function renderNode(
         transcriptView,
         performanceUsage,
         focused,
+        truncatedNodeIds,
+        onOpenFullContent,
+        loadFullContent,
       )
     case 'reasoning':
       if (transcriptView === 'compact') return <></>
@@ -411,6 +430,9 @@ function renderNode(
         transcriptView,
         performanceUsage,
         focused,
+        truncatedNodeIds,
+        onOpenFullContent,
+        loadFullContent,
       )
   }
 }
@@ -441,6 +463,9 @@ export function renderTimelineNode(
     context.transcriptView,
     context.performanceUsage,
     context.conversationLayout === 'focused',
+    context.truncatedNodeIds,
+    context.onOpenFullContent,
+    context.loadFullContent,
   )
 }
 
@@ -538,10 +563,15 @@ function renderAssistantTurn(
   transcriptView: TranscriptViewMode = 'standard',
   performanceUsage: PerformanceUsageMode = 'detailed',
   focused = false,
+  truncatedNodeIds: ReadonlySet<string> = new Set(),
+  onOpenFullContent?: (nodeId: string) => void | Promise<void>,
+  loadFullContent?: (nodeId: string) => Promise<string>,
 ): ReactElement {
   const inProgress = assistantNodeInProgress(node)
   const actionsUnavailable = running || inProgress || (node.turn !== undefined && node.turnCompleted !== true)
   const producedFiles = producedFilePaths(node.tools)
+  const contentNodeId = assistantMessageId(node) ?? node.id
+  const truncated = truncatedNodeIds.has(contentNodeId)
   const metricsLabel =
     performanceUsage === 'detailed' ? assistantMetricsLabel(node.timing, node.usage, t) : undefined
   const turnUsage =
@@ -582,6 +612,13 @@ function renderAssistantTurn(
       {node.markdown.trim() === '' || actionsUnavailable ? null : (
         <MessageActions
           text={node.markdown}
+          truncated={truncated}
+          {...(truncated && onOpenFullContent !== undefined
+            ? { onOpenFullContent: () => onOpenFullContent(contentNodeId) }
+            : {})}
+          {...(truncated && loadFullContent !== undefined
+            ? { loadFullText: () => loadFullContent(contentNodeId) }
+            : {})}
           {...feedbackActionProps(
             assistantMessageId(node),
             feedback,
@@ -621,9 +658,13 @@ function renderAssistantMessage(
   transcriptView: TranscriptViewMode = 'standard',
   performanceUsage: PerformanceUsageMode = 'detailed',
   focused = false,
+  truncatedNodeIds: ReadonlySet<string> = new Set(),
+  onOpenFullContent?: (nodeId: string) => void | Promise<void>,
+  loadFullContent?: (nodeId: string) => Promise<string>,
 ): ReactElement {
   const inProgress = assistantNodeInProgress(node)
   const actionsUnavailable = running || inProgress || (node.turn !== undefined && node.turnCompleted !== true)
+  const truncated = truncatedNodeIds.has(node.id)
   const metricsLabel =
     performanceUsage === 'detailed' ? assistantMetricsLabel(node.timing, node.usage, t) : undefined
   const turnUsage =
@@ -676,6 +717,13 @@ function renderAssistantMessage(
       {node.markdown.trim() === '' || actionsUnavailable ? null : (
         <MessageActions
           text={node.markdown}
+          truncated={truncated}
+          {...(truncated && onOpenFullContent !== undefined
+            ? { onOpenFullContent: () => onOpenFullContent(node.id) }
+            : {})}
+          {...(truncated && loadFullContent !== undefined
+            ? { loadFullText: () => loadFullContent(node.id) }
+            : {})}
           {...feedbackActionProps(
             node.id,
             feedback,

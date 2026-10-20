@@ -50,6 +50,7 @@ class Client {
         ...window(request.payload.sessionId, request.payload.revision + 1, 'Older reply'),
         historical: true,
       }
+    if (request.type === 'session.transcript.content') result = { content: 'Complete reply' }
     return Promise.resolve(result as T)
   }
   public subscribe(listener: (message: HostMessage) => void): () => void {
@@ -68,6 +69,21 @@ class Client {
 }
 
 describe('Webview installs Host windows', () => {
+  it('loads the complete message text through the content route', async () => {
+    const client = new Client()
+    const store = createAppStore(client as unknown as ProtocolClient)
+    try {
+      await store.openSession('s')
+      await expect(store.loadTranscriptContent('reply-s')).resolves.toBe('Complete reply')
+      expect(client.requests.at(-1)).toMatchObject({
+        type: 'session.transcript.content',
+        payload: { sessionId: 's', revision: 1, nodeId: 'reply-s' },
+      })
+    } finally {
+      store.dispose()
+    }
+  })
+
   it('notifies subscribers synchronously when a Host view arrives', async () => {
     const client = new Client()
     const store = createAppStore(client as unknown as ProtocolClient)

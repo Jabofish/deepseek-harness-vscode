@@ -113,6 +113,9 @@ export interface TimelineNodeRenderContext {
   readonly onFeedback: ((messageId: string, rating: MessageFeedbackRating) => void) | undefined
   readonly onFeedbackSubmit: FeedbackSubmit | undefined
   readonly onFeedbackPrepare: FeedbackPrepare | undefined
+  readonly truncatedNodeIds: ReadonlySet<string>
+  readonly onOpenFullContent: ((nodeId: string) => void | Promise<void>) | undefined
+  readonly loadFullContent: ((nodeId: string) => Promise<string>) | undefined
   readonly t: Translate
 }
 

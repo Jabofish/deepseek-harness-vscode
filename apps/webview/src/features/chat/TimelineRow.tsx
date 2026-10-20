@@ -53,6 +53,9 @@ function timelineRowContextEqual(
     previous.onFeedback !== next.onFeedback ||
     previous.onFeedbackSubmit !== next.onFeedbackSubmit ||
     previous.onFeedbackPrepare !== next.onFeedbackPrepare ||
+    previous.truncatedNodeIds !== next.truncatedNodeIds ||
+    previous.onOpenFullContent !== next.onOpenFullContent ||
+    previous.loadFullContent !== next.loadFullContent ||
     previous.feedbackUnavailable !== next.feedbackUnavailable ||
     previous.transcriptView !== next.transcriptView ||
     previous.performanceUsage !== next.performanceUsage ||

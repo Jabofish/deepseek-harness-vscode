@@ -37,6 +37,7 @@ export function requiresTrustedWorkspace(type: WebviewRequest['type']): boolean 
     case 'session.transcript.resync':
     case 'session.transcript.navigate':
     case 'session.transcript.openContent':
+    case 'session.transcript.content':
     case 'session.sendPrompt':
     case 'session.queue.list':
     case 'session.queue.update':
