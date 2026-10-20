@@ -15,6 +15,7 @@ import { parseHostDomainEvent } from './event-parser.js'
 import { backendEventSessionId, applyHostMessage } from './host-message-reducers.js'
 import { object } from './unknown-record.js'
 import { parsePermissionCatalog } from './permission-catalog.js'
+import { connectionIdentity } from './session-projection.js'
 
 type AccountEventActions = Pick<
   ReturnType<typeof createAccountActions>,
@@ -52,6 +53,7 @@ export interface HostEventSubscriptionDependencies {
   readonly pluginInstallRecovery: Pick<PluginInstallRecoveryController, 'progress'>
   readonly projectionSequences: ProjectionSequenceIndex
   readonly refresh: () => Promise<void>
+  readonly refreshSessionDirectory: () => Promise<void>
   readonly refreshModelCatalog: () => Promise<void>
   readonly refreshCommands: (sessionId?: string, force?: boolean) => Promise<void>
   readonly refreshLiveGoals: () => Promise<void>
@@ -78,6 +80,7 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
     pluginInstallRecovery,
     projectionSequences,
     refresh,
+    refreshSessionDirectory,
     refreshCommands,
     refreshLiveGoals,
     refreshSessionModelDirectoryForSession,
@@ -91,6 +94,15 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
   const unsubscribe = client.subscribe((message) => {
     if (lifecycle.isDisposed()) return
     const previousBackendKind = getState().backend.kind
+    const previousConnectionEpoch = getState().connectionEpoch
+    const snapshot =
+      message.type === 'event' && message.name === 'connection.snapshot' ? object(message.payload) : undefined
+    const nextIdentity = connectionIdentity(snapshot)
+    const sameConnection =
+      previousBackendKind === 'connected' &&
+      snapshot?.kind === 'connected' &&
+      nextIdentity !== undefined &&
+      nextIdentity === projectionSequences.connectionIdentity
     // Surface frames are Host-owned UI control messages whose handling includes
     // store side effects (opening the bound session, asking the Host to open the
     // active session in the editor area). They own their own reduction and never
@@ -137,7 +149,7 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
     }
     if (
       message.type === 'event' &&
-      (message.name === 'connection.snapshot' || message.name === 'connection.lost')
+      (message.name === 'connection.lost' || (message.name === 'connection.snapshot' && !sameConnection))
     ) {
       permissionCatalogGeneration += 1
       lifecycle.invalidateGlobalCatalogs()
@@ -207,13 +219,18 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
       message.name === 'ui.sessions.toggle' &&
       currentState.drawer === 'sessions'
     )
-      void refresh()
+      void refreshSessionDirectory()
     if (
       message.type === 'event' &&
       message.name === 'connection.snapshot' &&
       object(message.payload)?.kind === 'connected'
     ) {
-      if (previousBackendKind !== 'connected') void refresh().catch(() => undefined)
+      // An app.ready snapshot of the same connection must not retire the
+      // startup catalog without replacing it. A new identity always refreshes.
+      // applyHostMessage already reopens/refreshes a changed connection epoch.
+      // Legacy snapshots without an identity still need the fallback refresh.
+      if (!sameConnection && currentState.connectionEpoch === previousConnectionEpoch)
+        void refresh().catch(() => undefined)
       setState((current) => ({
         ...current,
         pluginInventoryRevision: current.pluginInventoryRevision + 1,
@@ -325,7 +342,9 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
         message.name === 'session.added' ||
         message.name === 'session.removed')
     )
-      void refresh()
+      // Workspace/session membership does not change the global model,
+      // credential or preset catalogs. Their own events refresh those owners.
+      void refreshSessionDirectory()
     if (message.type === 'event' && message.name === 'session.created') {
       const created = object(message.payload)
       const createdId = typeof created?.id === 'string' ? created.id : undefined
@@ -333,7 +352,7 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
         // This is an explicit creation path. It owns the startup choice and
         // must not race the fallback selected from a concurrent refresh.
         lifecycle.clearStartupRestorePending()
-        void refresh()
+        void refreshSessionDirectory()
           .then(() => callbacks.openCreatedSession?.(createdId))
           .catch(() => undefined)
       }

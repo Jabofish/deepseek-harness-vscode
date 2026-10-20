@@ -7,7 +7,6 @@ import type {
   DshBackend,
   SessionSummary,
   TaskListScope,
-  TaskSummary,
 } from '@dsh-vscode/domain'
 import type { BackendService } from '@dsh-vscode/application'
 import {
@@ -30,7 +29,6 @@ import {
   createVscodeCheckpointWorkspace,
 } from '../checkpoints/vscode-checkpoint-adapter.js'
 import { TaskCenterRegistry } from '../tasks/task-center-registry.js'
-import { featureTaskSummary } from '../tasks/task-feature-handler.js'
 import { PromptTemplateStore } from '../prompts/prompt-template-store.js'
 import {
   createVscodePromptTemplateStorage,
@@ -87,7 +85,6 @@ export function createChangeCheckpointTaskAssembly(
     nextFeatureLocalSequence,
     workspaceFolderIdForSession,
     currentWorkspaceFolders,
-    currentWorkspaceFolderId,
   } = deps
   const changePathGuard = new WorkspacePathGuard(vscode.workspace)
   const postChangeFeatureEvent = (
@@ -206,7 +203,7 @@ export function createChangeCheckpointTaskAssembly(
       taskListScope = scope
     },
   }
-  const postTaskFeatureEvent = (task: TaskSummary): Promise<boolean> => {
+  const postTaskInvalidated = (sessionId: string): Promise<boolean> => {
     let connection: DshBackend['connection']
     try {
       connection = backendService.requireBackend().connection
@@ -219,15 +216,15 @@ export function createChangeCheckpointTaskAssembly(
     return Promise.resolve(
       post({
         type: 'feature.event',
-        name: 'tasks.updated',
+        name: 'tasks.invalidated',
         identity: {
           backendInstanceId: connection.backendInstanceId,
           connectionGeneration: connection.connectionGeneration,
           stream: 'local',
-          ...(task.sessionId === undefined ? {} : { sessionId: task.sessionId }),
+          sessionId,
           localSeq,
         },
-        task: featureTaskSummary(task),
+        sessionId,
       }),
     )
   }
@@ -263,20 +260,10 @@ export function createChangeCheckpointTaskAssembly(
     isWorkspaceFolderOpen: (workspaceId) =>
       currentWorkspaceFolders().some((folder) => workspaceFolderId(folder) === workspaceId),
     onChange: (sessionId) => {
-      if (taskListScope === 'workspace') {
-        void taskRegistry
-          .listSnapshot({ scope: 'workspace', includeCompleted: true, limit: 200 })
-          .then((snapshot) => Promise.all(snapshot.items.map((task) => postTaskFeatureEvent(task))))
-          .catch(() => undefined)
-        return
-      }
-      if (taskSessionId !== sessionId) return
-      const workspaceId = currentWorkspaceFolderId()
-      if (workspaceId === undefined) return
-      void taskRegistry
-        .listSnapshot({ sessionId, workspaceFolderId: workspaceId, includeCompleted: true, limit: 200 })
-        .then((snapshot) => Promise.all(snapshot.items.map((task) => postTaskFeatureEvent(task))))
-        .catch(() => undefined)
+      if (taskListScope !== 'workspace' && taskSessionId !== sessionId) return
+      // One authority read belongs to the receiving view. Fetching the same
+      // snapshot here and again after each row notification doubles the work.
+      void postTaskInvalidated(sessionId).catch(() => undefined)
     },
   })
   const taskUseCases = new TaskUseCases(taskRegistry)

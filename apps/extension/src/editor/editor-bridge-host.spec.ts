@@ -222,7 +222,7 @@ describe('automatic editor sharing', () => {
     const { host } = harness('managed', false, undefined, undefined, true)
     try {
       await host.prepareSession('session-a', new AbortController().signal)
-      expect(host.snapshot().reason).toBe('missing')
+      await vi.waitFor(() => expect(host.snapshot().reason).toBe('missing'))
       expect(install).not.toHaveBeenCalled()
     } finally {
       await host.dispose()
@@ -265,7 +265,7 @@ describe('automatic editor sharing', () => {
         broker.read('session-a', { kind: 'selection' }, new AbortController().signal),
       ).resolves.toMatchObject({ text: 'selected' })
       await host.prepareSession('new-session', new AbortController().signal)
-      expect(broker.hasSession('session-a')).toBe(false)
+      await vi.waitFor(() => expect(broker.hasSession('session-a')).toBe(false))
       await expect(
         broker.read('new-session', { kind: 'selection' }, new AbortController().signal),
       ).resolves.toMatchObject({ text: 'selected' })
@@ -325,6 +325,7 @@ describe('automatic editor sharing', () => {
     await new Promise((resolve) => setTimeout(resolve, 10))
     expect(attach).not.toHaveBeenCalled()
     await host.prepareSession('restored-session', new AbortController().signal)
+    await vi.waitFor(() => expect(host.snapshot().phase).toBe('ready'))
     expect(attach).toHaveBeenCalledWith(
       'restored-session',
       expect.any(String),
@@ -433,6 +434,7 @@ describe('automatic editor sharing', () => {
     async (cwd) => {
       const { host, attach } = harness('managed', true, cwd === '' ? cwd : path.resolve(cwd))
       await host.prepareSession('new-session', new AbortController().signal)
+      await vi.waitFor(() => expect(host.snapshot().phase).toBe('ready'))
       expect(attach).toHaveBeenCalledWith(
         'new-session',
         expect.any(String),

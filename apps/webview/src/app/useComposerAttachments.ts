@@ -461,7 +461,7 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
       submission = Promise.reject(reason instanceof Error ? reason : new Error(t('app.error.prompt')))
     }
     return submission
-      .then(async () => {
+      .then(() => {
         delivered = true
         if (!mountedRef.current || Boolean(signal?.aborted)) return
         const admitted = store.getState()
@@ -476,11 +476,11 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
           ) {
             awaitingVisibility = true
             admissionStarted = true
-            // An RPC receipt can precede the durable user message. Keep the
-            // original draft visible until that message reaches the timeline
-            // or the authoritative queue proves the prompt was actually queued.
+            // Reconcile the temporary Inbox projection in the background.
+            // The accepted RPC releases the composer immediately; waiting for
+            // the transcript here would add an entire return trip to Send.
             const sessionId = admitted.activeSessionId
-            await new Promise<void>((resolve, reject) => {
+            void new Promise<void>((resolve, reject) => {
               let unsubscribe = (): void => undefined
               let settled = false
               let retryRead: ReturnType<typeof setTimeout> | undefined
@@ -548,11 +548,13 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
               if (signal?.aborted) cancelled()
               else check()
             })
+              .finally(() => store.forgetDirectPromptRequests(directRequests))
+              .catch(() => undefined)
           }
         } finally {
           // An explicit abort still needs these identities in the late-admission
           // watcher below, including when the RPC already returned acceptance.
-          if (directRequests.length > 0 && signal?.aborted !== true)
+          if (directRequests.length > 0 && signal?.aborted !== true && !awaitingVisibility)
             store.forgetDirectPromptRequests(directRequests)
         }
         if (!mountedRef.current || Boolean(signal?.aborted)) return

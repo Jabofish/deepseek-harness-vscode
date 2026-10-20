@@ -35,8 +35,8 @@ type ReadPage = (
 // Ordinary conversation bodies travel intact. The bounded transport window is
 // independent of full content, which visible rows obtain automatically.
 const MESSAGE_NODE_CHARS = TRANSCRIPT_MAX_CHARS - 192 * 1024
-/** Bounded backoff for a window the renderer never acknowledged receiving. */
-const DELIVERY_RETRY_DELAYS_MS = [250, 1_000, 4_000] as const
+/** Bound immediate recovery attempts when a window cannot enter the renderer. */
+const DELIVERY_RETRY_LIMIT = 3
 interface PendingOpen {
   readonly sessionId: string
   readonly generation: number
@@ -110,7 +110,7 @@ export class TranscriptWindowService {
     | undefined
   private invalidated = false
   private retryAttempt = 0
-  private retryTimer: ReturnType<typeof setTimeout> | undefined
+  private deliveryEpoch = 0
   private readonly recentEvents = new Map<string, true>()
   private hostSequence = 0
   private readonly notices = new Map<
@@ -142,6 +142,7 @@ export class TranscriptWindowService {
 
   public begin(sessionId: string, child = false): number {
     const generation = ++this.generation
+    this.deliveryEpoch++
     this.clearRetry()
     this.published = undefined
     this.pending = { sessionId, generation, child, events: [], chars: 0, overflow: false }
@@ -291,7 +292,7 @@ export class TranscriptWindowService {
       this.reduce(this.tail, event)
       if (this.displayed === this.tail && this.tail.timeline !== previous) {
         this.revision++
-        this.schedule()
+        this.schedule(event.type === 'tool.updated')
       }
     } else if ((event.type === 'notice' || event.type === 'session.gap') && sessionId !== undefined) {
       const scratch = reduceTimeline(empty(sessionId), {
@@ -475,6 +476,7 @@ export class TranscriptWindowService {
   public setVisible(visible: boolean): void {
     this.visible = visible
     if (visible && this.displayed !== undefined) {
+      this.deliveryEpoch++
       this.published = undefined
       this.revision++
       this.pendingAcks.clear()
@@ -956,21 +958,26 @@ export class TranscriptWindowService {
     }
   }
 
-  private schedule(): void {
+  private schedule(urgent = false): void {
     this.dirty = true
     // A single ACK round trip must not become the streaming frame interval.
     // Keep a small credit window; stalled/hidden renderers still retain only
     // the newest Host state, never an unbounded queue of text deltas.
     const credits = this.deps.postPatch === undefined ? 1 : 64
-    if (!this.visible || this.posting || this.budgetBlocked || this.pendingAcks.size >= credits) return
-    void this.publish()
+    // One reserved frame lets an executed tool's context precede its question
+    // even while ordinary streaming has exhausted its delivery credits.
+    if (
+      !this.visible ||
+      this.posting ||
+      (!urgent && this.budgetBlocked) ||
+      this.pendingAcks.size >= credits + (urgent ? 1 : 0)
+    )
+      return
+    void this.publish(urgent)
   }
 
   private clearRetry(): void {
     this.retryAttempt = 0
-    if (this.retryTimer === undefined) return
-    clearTimeout(this.retryTimer)
-    this.retryTimer = undefined
   }
 
   /**
@@ -981,8 +988,7 @@ export class TranscriptWindowService {
    */
   private retryDelivery(): void {
     this.dirty = true
-    if (this.retryTimer !== undefined) return
-    const retrying = this.retryAttempt < DELIVERY_RETRY_DELAYS_MS.length
+    const retrying = this.retryAttempt < DELIVERY_RETRY_LIMIT
     this.deps.report?.({ attempt: this.retryAttempt + 1, retrying })
     if (!retrying) {
       const sessionId = this.displayed?.sessionId
@@ -991,20 +997,17 @@ export class TranscriptWindowService {
       this.deps.invalidate?.(sessionId)
       return
     }
-    const delay = DELIVERY_RETRY_DELAYS_MS[this.retryAttempt]!
     this.retryAttempt += 1
-    this.retryTimer = setTimeout(() => {
-      this.retryTimer = undefined
-      if (this.visible && this.displayed !== undefined) this.schedule()
-    }, delay)
+    this.schedule()
   }
 
-  private async publish(): Promise<void> {
+  private async publish(urgent = false): Promise<void> {
     if (!this.visible || this.displayed === undefined) return
     this.dirty = false
     this.posting = true
     const sentRevision = this.revision
     const generation = this.generation
+    const deliveryEpoch = this.deliveryEpoch
     const resident = this.displayed
     try {
       const sources = new Map(resident.timeline.nodes.map((node) => [node.id, node]))
@@ -1082,18 +1085,36 @@ export class TranscriptWindowService {
         }) as TranscriptPatch
       }
       const chars = JSON.stringify(patch ?? window).length
-      if (this.pendingAcks.size > 0 && this.pendingChars + chars > 512 * 1024) {
+      if (!urgent && this.pendingAcks.size > 0 && this.pendingChars + chars > 512 * 1024) {
         this.dirty = true
         this.budgetBlocked = true
         return
       }
       this.pendingAcks.set(sentRevision, chars)
       this.pendingChars += chars
+      // VS Code preserves invocation order on a Webview. Reserve this baseline
+      // before awaiting its receipt, so the next delta can enter IPC immediately.
+      this.published = {
+        sessionId: window.sessionId,
+        revision: sentRevision,
+        cwd: resident.cwd,
+        nodes: sources,
+        publicNodes,
+        metadataSource,
+      }
+      this.posting = false
       const delivered =
         patch !== undefined && postPatch !== undefined
           ? await postPatch(patch)
           : 'eventFacts' in window && (await this.deps.post(window))
+      if (
+        this.generation !== generation ||
+        this.deliveryEpoch !== deliveryEpoch ||
+        this.displayed !== resident
+      )
+        return
       if (!delivered) {
+        this.deliveryEpoch++
         this.pendingAcks.clear()
         this.pendingChars = 0
         this.budgetBlocked = false
@@ -1101,22 +1122,20 @@ export class TranscriptWindowService {
         this.retryDelivery()
       } else {
         this.clearRetry()
-        if (this.generation === generation && this.displayed === resident) {
-          this.published = {
-            sessionId: window.sessionId,
-            revision: sentRevision,
-            cwd: resident.cwd,
-            nodes: sources,
-            publicNodes,
-            metadataSource,
-          }
-        }
       }
     } catch {
+      if (
+        this.generation !== generation ||
+        this.deliveryEpoch !== deliveryEpoch ||
+        this.displayed !== resident
+      )
+        return
+      this.deliveryEpoch++
       this.pendingAcks.clear()
       this.pendingChars = 0
       this.budgetBlocked = false
       this.published = undefined
+      this.posting = false
       this.retryDelivery()
     } finally {
       this.posting = false

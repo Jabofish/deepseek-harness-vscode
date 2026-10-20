@@ -33,6 +33,28 @@ export function isBulkEvent(name: string): boolean {
   return BULK_EVENT_NAMES.has(name)
 }
 
+/** Executed tool context shares the reserved control capacity, in source order. */
+function hasActiveToolContext(payload: unknown): boolean {
+  if (typeof payload !== 'object' || payload === null) return false
+  const value = payload as { readonly nodes?: unknown; readonly changedNodes?: unknown }
+  const nodes = value.changedNodes ?? value.nodes
+  return (
+    Array.isArray(nodes) &&
+    nodes.some(
+      (node: unknown) =>
+        typeof node === 'object' &&
+        node !== null &&
+        'kind' in node &&
+        node.kind === 'tool' &&
+        'tool' in node &&
+        typeof node.tool === 'object' &&
+        node.tool !== null &&
+        'status' in node.tool &&
+        node.tool.status === 'running',
+    )
+  )
+}
+
 export type PostHostMessage = (message: HostMessage | FeatureHostMessage) => Thenable<boolean>
 /** Deliver an event to exactly one surface (surface-owned state, not broadcasts). */
 export type PostHostMessageTo = (
@@ -233,9 +255,7 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
   }
   let sequence = 0
   const eventPostQueue = new BoundedEventQueue(async () => {
-    const nextSequence = sequence + 1
-    if (await post({ type: 'event', name: 'ui.resync', sequence: nextSequence, payload: {} }))
-      sequence = nextSequence
+    await post({ type: 'event', name: 'ui.resync', sequence: ++sequence, payload: {} })
   })
   const enqueueEvent = (
     resolve: () => Promise<{ readonly name: string; readonly payload: unknown } | undefined>,
@@ -247,7 +267,7 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
       async () => {
         const nextEvent = await resolve()
         if (nextEvent === undefined) return true
-        const nextSequence = sequence + 1
+        const nextSequence = ++sequence
         const message = {
           type: 'event' as const,
           name: nextEvent.name,
@@ -257,12 +277,10 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
         // A surface-directed event is that surface's own state; it must not leak
         // another surface's kind, session or count.
         const delivered = surfaceId === undefined ? await post(message) : await postTo(surfaceId, message)
-        if (delivered) sequence = nextSequence
-        else if (priority) {
+        if (!delivered && priority) {
           // A control frame the Webview never received must not be followed by
           // a contiguously numbered stream: consume its sequence and ask for
           // the reread a rejected frame already triggers.
-          sequence = nextSequence
           if (surfaceId === undefined) eventPostQueue.invalidate()
           else if (nextEvent.name !== 'ui.resync') {
             // Recovery belongs to the failed surface. Never repeatedly retry
@@ -288,7 +306,7 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
       () => Promise.resolve({ name, payload }),
       eventPayloadCharacters(payload),
       undefined,
-      !isBulkEvent(name),
+      !isBulkEvent(name) || hasActiveToolContext(payload),
     )
   }
   const postEventTo: PostSurfaceEvent = (surfaceId, name, payload, isCurrent) =>
@@ -296,7 +314,7 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
       () => Promise.resolve(isCurrent?.() === false ? undefined : { name, payload }),
       eventPayloadCharacters(payload),
       surfaceId,
-      !isBulkEvent(name),
+      !isBulkEvent(name) || hasActiveToolContext(payload),
     )
   const publicControlEvent = (event: BackendEvent): unknown =>
     sanitizePublicValue(event, undefined, [

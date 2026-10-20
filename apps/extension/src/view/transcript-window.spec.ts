@@ -58,6 +58,57 @@ function fixture(
 afterEach(() => vi.useRealTimers())
 
 describe('Host transcript windows', () => {
+  it('posts subsequent text and executed tool context before the preceding IPC receipt settles', async () => {
+    vi.useFakeTimers()
+    const sent: (TranscriptWindow | TranscriptPatch)[] = []
+    let release!: (value: boolean) => void
+    const firstReceipt = new Promise<boolean>((resolve) => {
+      release = resolve
+    })
+    const service = new TranscriptWindowService({
+      read: () => Promise.resolve({ events: [], hasMore: false }),
+      publicValue: (value) => value,
+      post: (value) => {
+        sent.push(value)
+        return sent.length === 1 ? firstReceipt : Promise.resolve(true)
+      },
+      postPatch: (value) => {
+        sent.push(value)
+        return Promise.resolve(true)
+      },
+    })
+    service.installPage(sessionId, { events: [message(0)], hasMore: false }, service.begin(sessionId))
+    service.accept({ type: 'message.delta', sessionId, messageId: 'live', delta: 'first' })
+    service.accept({ type: 'message.delta', sessionId, messageId: 'live', delta: ' second' })
+    service.accept({
+      type: 'tool.updated',
+      sessionId,
+      sequence: 1,
+      tool: {
+        id: 'call',
+        name: 'ask_user_question',
+        category: 'other',
+        title: 'Question',
+        status: 'running',
+        metadata: {},
+      },
+    })
+    expect(sent).toHaveLength(3)
+    expect((sent[1] as TranscriptPatch).changedNodes).toContainEqual(
+      expect.objectContaining({ markdown: 'first second' }),
+    )
+    expect((sent[2] as TranscriptPatch).changedNodes).toContainEqual(
+      expect.objectContaining({ kind: 'tool', id: 'call' }),
+    )
+    expect(vi.getTimerCount()).toBe(0)
+    release(false)
+    for (let index = 0; index < 6; index++) await Promise.resolve()
+    expect(sent.at(-1)).toHaveProperty('eventFacts')
+    expect((sent.at(-1) as TranscriptWindow).nodes).toContainEqual(
+      expect.objectContaining({ markdown: 'first second' }),
+    )
+    service.dispose()
+  })
   it.each(['message.delta', 'reasoning.delta'] as const)(
     'keeps all %s content intact above the former preview budget',
     async (type) => {
@@ -402,13 +453,12 @@ describe('Host transcript windows', () => {
     failNextPatch = true
     service.accept({ type: 'message.delta', sessionId, messageId: 'live', delta: 'x', turn: 1, step: 1 })
     await Promise.resolve()
-    expect(sent).toHaveLength(2)
+    expect(sent).toHaveLength(3)
     expect(sent[1]).toHaveProperty('baseRevision')
     expect(report).toHaveBeenCalledWith({ attempt: 1, retrying: true })
-
-    await vi.advanceTimersByTimeAsync(250)
     await Promise.resolve()
     expect(sent).toHaveLength(3)
+    expect(vi.getTimerCount()).toBe(0)
     // The failed patch invalidated the renderer baseline, so the retry must be
     // a full window that carries the newest text.
     expect(sent[2]).toHaveProperty('eventFacts')
@@ -443,12 +493,8 @@ describe('Host transcript windows', () => {
     await Promise.resolve()
     service.accept({ type: 'message.delta', sessionId, messageId: 'live', delta: 'x', turn: 1, step: 1 })
     await Promise.resolve()
-    await vi.advanceTimersByTimeAsync(250)
-    await Promise.resolve()
-    await vi.advanceTimersByTimeAsync(1_000)
-    await Promise.resolve()
-    await vi.advanceTimersByTimeAsync(4_000)
-    await Promise.resolve()
+    for (let index = 0; index < 8; index++) await Promise.resolve()
+    expect(vi.getTimerCount()).toBe(0)
 
     expect(report.mock.calls).toEqual([
       [{ attempt: 1, retrying: true }],

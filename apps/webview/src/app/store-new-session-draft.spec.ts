@@ -45,6 +45,7 @@ function fixture(
   failFirstOpen = false,
   beforeList?: () => Promise<void>,
   beforeConfigure?: () => Promise<void>,
+  createReceipt?: Record<string, unknown>,
 ): {
   store: ReturnType<typeof createAppStore>
   requests: WebviewRequest[]
@@ -78,7 +79,7 @@ function fixture(
       }
       if (request.type === 'session.create') {
         created = true
-        return { id: 'created' }
+        return createReceipt ?? { id: 'created' }
       }
       if (request.type === 'session.configure') await beforeConfigure?.()
       if (request.type === 'session.open') {
@@ -147,7 +148,7 @@ describe('New Session draft', () => {
 
   it('waits for the selected permissions and Plan before sending the first prompt', async () => {
     const gate = deferred<void>()
-    const { store, requests } = fixture(false, undefined, () => gate.promise)
+    const { store, requests } = fixture(false, undefined, () => gate.promise, session('created'))
     try {
       await store.refreshSessions()
       await store.stageSession('w1')
@@ -165,6 +166,48 @@ describe('New Session draft', () => {
       expect(requests.filter((r) => r.type === 'session.sendPrompt')).toHaveLength(1)
     } finally {
       gate.resolve()
+      store.dispose()
+    }
+  })
+
+  it('uses a fresh authoritative create receipt without reconfiguring untouched display defaults', async () => {
+    const { store, requests } = fixture(false, undefined, undefined, session('created'))
+    try {
+      await store.refreshSessions()
+      await store.stageSession('w1')
+      await store.sendPendingPrompt('Hello', [], 'queue')
+      expect(requests.some((request) => request.type === 'session.configure')).toBe(false)
+      expect(requests.some((request) => request.type === 'session.sendPrompt')).toBe(true)
+    } finally {
+      store.dispose()
+    }
+  })
+
+  it('rechecks configuration on retry even if the first fresh create needed no additional writes', async () => {
+    const { store, requests } = fixture(true, undefined, undefined, session('created'))
+    try {
+      await store.refreshSessions()
+      await store.stageSession('w1')
+      await expect(store.sendPendingPrompt('Hello', [], 'queue')).rejects.toThrow('Open failed')
+      expect(requests.some((request) => request.type === 'session.configure')).toBe(false)
+      await store.sendPendingPrompt('Hello', [], 'queue')
+      expect(requests.filter((request) => request.type === 'session.configure')).toHaveLength(1)
+      expect(requests.filter((request) => request.type === 'session.create')).toHaveLength(1)
+    } finally {
+      store.dispose()
+    }
+  })
+
+  it('configures a model that the create receipt did not confirm', async () => {
+    const { store, requests } = fixture(false, undefined, undefined, session('created'))
+    try {
+      await store.refreshSessions()
+      await store.stageSession('w1')
+      const pending = store.getState().pendingSession!.configuration
+      store.configurePendingSession({ ...pending, model: { providerId: 'provider', modelId: 'selected' } })
+      await store.sendPendingPrompt('Hello', [], 'queue')
+      expect(requests.filter((request) => request.type === 'session.configure')).toHaveLength(1)
+    } finally {
       store.dispose()
     }
   })

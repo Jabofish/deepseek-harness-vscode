@@ -327,27 +327,18 @@ export class EditorBridgeHost {
     this.editStatus?.dispose()
     this.decoration?.dispose()
   }
-  public async prepareSession(sessionId: string, signal: AbortSignal): Promise<void> {
-    signal.throwIfAborted()
+  public prepareSession(sessionId: string, signal: AbortSignal): Promise<void> {
+    if (signal.aborted)
+      return Promise.reject(
+        signal.reason instanceof Error
+          ? signal.reason
+          : new DOMException('The operation was aborted', 'AbortError'),
+      )
     this.deps.sessionNavigation.select(sessionId)
-    if (!readEditorPreferences().enabled || this.disposed) return
-    const operation = this.reconcile()
-    let timer: ReturnType<typeof setTimeout> | undefined
-    let abort: (() => void) | undefined
-    try {
-      await Promise.race([
-        operation,
-        new Promise<void>((resolve) => {
-          abort = () => resolve()
-          timer = setTimeout(resolve, 2_500)
-          signal.addEventListener('abort', abort, { once: true })
-        }),
-      ])
-    } finally {
-      clearTimeout(timer)
-      if (abort !== undefined) signal.removeEventListener('abort', abort)
-    }
-    signal.throwIfAborted()
+    // Editor tools already wait for their own binding and carry exec.signal.
+    // Optional companion setup must not hold an ordinary prompt admission.
+    if (readEditorPreferences().enabled && !this.disposed) void this.reconcile()
+    return Promise.resolve()
   }
   public snapshot(): EditorIntegrationStatus {
     let backend: DshBackend | undefined

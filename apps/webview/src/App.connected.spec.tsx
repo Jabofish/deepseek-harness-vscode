@@ -725,7 +725,7 @@ describe('App connected rendering', () => {
     expect(screen.getByTestId('timeline')).toBeDefined()
   })
 
-  it('keeps an idle send in the composer through RPC acceptance until its durable message appears', async () => {
+  it('releases an accepted idle send before its durable message while reconciling Inbox state', async () => {
     let state = connectedState(true)
     const listeners = new Set<() => void>()
     const publish = (next: AppState): void => {
@@ -790,8 +790,8 @@ describe('App connected rendering', () => {
       acknowledge()
       await ack
     })
-    expect(input.value).toBe('Hello')
-    expect(screen.getByRole('button', { name: 'Cancel sending' })).toBeTruthy()
+    expect(input.value).toBe('')
+    expect(screen.queryByRole('button', { name: 'Cancel sending' })).toBeNull()
     // Identity wins even if DSH expands a reference in the displayed text.
     act(() => {
       publish({
@@ -847,8 +847,14 @@ describe('App connected rendering', () => {
           listeners.add(listener)
           return () => listeners.delete(listener)
         },
-        sendPrompt: vi.fn(() => {
+        sendPrompt: vi.fn((_id, _text, _attachments, _mode, signal?: AbortSignal) => {
           publish({ ...state, directPromptRequestIds: ['request'] })
+          if (cancelled)
+            return new Promise<void>((_resolve, reject) => {
+              signal?.addEventListener('abort', () => reject(new DOMException('Cancelled', 'AbortError')), {
+                once: true,
+              })
+            })
           return Promise.resolve()
         }),
         loadTranscriptContent,
@@ -885,7 +891,7 @@ describe('App connected rendering', () => {
         }),
       )
       await waitFor(() => expect(loadTranscriptContent).toHaveBeenCalledWith('admitted'))
-      if (receipt === 'matching' || receipt === 'recovered')
+      if (!cancelled || receipt === 'matching' || receipt === 'recovered')
         await waitFor(() => expect(input.value.length).toBe(0))
       else expect(input.value).toBe(text)
     },
@@ -933,7 +939,7 @@ describe('App connected rendering', () => {
       await act(async () => {
         await Promise.resolve()
       })
-      expect(input.value).toBe('Hello')
+      expect(input.value).toBe('')
 
       // rc.6 queue rows cannot name the request, so the timeout check must
       // recognize this new row by its content instead of failing the send.
@@ -947,7 +953,7 @@ describe('App connected rendering', () => {
     }
   })
 
-  it('clears a late accepted draft when cancellation happened after the RPC receipt', async () => {
+  it('releases an accepted draft immediately and preserves a newer draft when its transcript arrives', async () => {
     let state = connectedState(true)
     const listeners = new Set<() => void>()
     const publish = (next: AppState): void => {
@@ -980,10 +986,9 @@ describe('App connected rendering', () => {
     await act(async () => {
       await Promise.resolve()
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel sending' }))
-    await act(async () => {
-      await Promise.resolve()
-    })
+    expect(screen.queryByRole('button', { name: 'Cancel sending' })).toBeNull()
+    expect(input.value).toBe('')
+    fireEvent.change(input, { target: { value: 'new draft' } })
     act(() =>
       publish({
         ...state,
@@ -1000,7 +1005,7 @@ describe('App connected rendering', () => {
         },
       }),
     )
-    await waitFor(() => expect(input.value).toBe(''))
+    await waitFor(() => expect(input.value).toBe('new draft'))
   })
 
   it('clears the cancelled draft when the accepted direct turn arrives late', async () => {

@@ -288,7 +288,7 @@ export function createSessionRequestHandler(
     }
 
     if (request.type === 'session.cancel') {
-      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal, { controlOnly: true })
       return sessionUseCases.cancel(request.payload.sessionId, signal)
     }
 

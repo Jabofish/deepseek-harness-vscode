@@ -5,7 +5,7 @@ import type { ProtocolClient } from '../protocol-client.js'
 import { requestId } from './ids.js'
 import { clearedActiveSession, upsertOpenedSession } from './session-projection.js'
 import { isSessionSummary } from './session-guards.js'
-import { createDefaultConfiguration, isAgentConfiguration } from './model-catalog.js'
+import { createDefaultConfiguration, isAgentConfiguration, sameModelSelection } from './model-catalog.js'
 import { findReusableBlankSession } from './session-registry.js'
 import type { createPromptActions } from './prompt-actions.js'
 import type { AppActions, AppState, StateSetter } from './types.js'
@@ -150,6 +150,7 @@ export function createSessionCreationActions(
         })
       const send = (async () => {
         let sessionId = pending.createdSessionId
+        let needsConfiguration = true
         if (sessionId === undefined) {
           const state = getState()
           const workspace = state.workspaces.find((entry) => entry.id === pending.workspaceId)
@@ -182,6 +183,12 @@ export function createSessionCreationActions(
               throw new Error(translate('app.error.createSession'))
             rememberCreatedSession(result)
             sessionId = result.id
+            // A fresh create receipt already confirms the preset/model it
+            // selected. Unknown permission/Plan display defaults request no
+            // writes, so repeating configure only rereads the same history.
+            // Reused sessions, retries and explicit choices still configure.
+            needsConfiguration =
+              rc11ReusableBlank !== undefined || !creationCoversConfiguration(result, pending.configuration)
           }
           if (sessionId === undefined) throw new Error(translate('app.error.createSession'))
           const createdSessionId = sessionId
@@ -196,17 +203,16 @@ export function createSessionCreationActions(
         }
         if (signal?.aborted === true) throw new DOMException('Cancelled', 'AbortError')
         if (getState().pendingSession?.revision !== pending.revision) throw supersededSend()
-        // Creation only selects the preset/model. Apply all staged choices,
-        // including permissions, before admitting the first user turn. This
-        // also covers reused blanks and retries after an earlier open failed.
-        await client.request(
-          {
-            type: 'session.configure',
-            requestId: requestId(),
-            payload: { sessionId, configuration: pending.configuration },
-          },
-          signal,
-        )
+        // Apply remaining staged choices before admitting the first user turn.
+        if (needsConfiguration)
+          await client.request(
+            {
+              type: 'session.configure',
+              requestId: requestId(),
+              payload: { sessionId, configuration: pending.configuration },
+            },
+            signal,
+          )
         signal?.throwIfAborted()
         if (
           getState().pendingSession?.revision !== pending.revision ||
@@ -271,4 +277,24 @@ export function createSessionCreationActions(
       return typeof created?.id === 'string' ? created.id : undefined
     },
   }
+}
+
+function creationCoversConfiguration(
+  created: Record<string, unknown>,
+  requested: AgentConfiguration,
+): boolean {
+  const applied = created.configuration
+  return (
+    created.blank === true &&
+    created.status === 'idle' &&
+    isAgentConfiguration(applied) &&
+    requested.toolMode === 'native' &&
+    requested.permissionPresetKnown === false &&
+    requested.planModeKnown === false &&
+    requested.sandboxMode === undefined &&
+    requested.approvalPolicy === undefined &&
+    (requested.preset === '' || applied.preset === requested.preset) &&
+    ((requested.model.providerId === '' && requested.model.modelId === '') ||
+      sameModelSelection(applied.model, requested.model))
+  )
 }

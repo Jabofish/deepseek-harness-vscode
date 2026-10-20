@@ -5,6 +5,9 @@ import { relative, resolve } from 'node:path'
 const root = fileURLToPath(new URL('../', import.meta.url))
 const vitest = fileURLToPath(new URL('../node_modules/vitest/vitest.mjs', import.meta.url))
 const contracts = [
+  'apps/webview/src/app/store-realtime-delivery.spec.ts',
+  'apps/webview/src/app/store/feature-actions.tasks.spec.ts',
+  'apps/extension/src/tasks/task-center-registry.spec.ts',
   'apps/webview/src/App.connected.spec.tsx',
   'apps/webview/src/features/shell/AppNotices.spec.tsx',
   'apps/webview/src/components/common/useScrollFollow.spec.tsx',

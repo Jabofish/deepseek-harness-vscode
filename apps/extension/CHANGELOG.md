@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- 新会话的创建回执已确认预设和模型、且没有额外权限或 Plan 选择时，不再重复配置读取；显式配置、复用会话与失败重试仍先完成配置再发送。
+- Skips redundant configuration reads when a fresh create receipt confirms the preset/model and no additional permission or Plan choice was made. Explicit choices, reused sessions and retries still configure before sending.
+
+- 会话和工作区目录变化只刷新对应目录，不再连带重复读取模型、设置和凭据；全局目录继续由启动、显式刷新和各自的变更事件更新。
+- Session/workspace membership changes refresh their directory without repeating model, settings and credential reads. Startup, explicit refreshes and catalog change events continue to update global directories.
+
+- 任务状态变化只发送一次失效通知，前端复用进行中的读取并核对最新状态；文本、推理和工具进度不再触发任务与会话历史的重复拉取。
+- Task changes invalidate the view once, share in-flight reads, and reconcile the latest state. Streaming text, reasoning and tool progress no longer trigger repeated task and session-history reads.
+
+- 会话内容到达后立即投递，不再等待上一条 IPC 回执；保留有界背压，工具上下文随调用发送，失败后立即有界恢复。发送获确认后立即释放输入框，编辑器配套准备不阻塞发送，停止复用当前连接和工作区下已验证的会话归属。
+- Delivers conversation updates without serial IPC receipt waits, retains bounded backpressure, sends active tool context immediately, and retries failed delivery without a fixed delay. Accepted sends release the composer immediately; optional editor setup and advisory ownership refreshes no longer hold up ordinary sends or verified session stops.
+
 - 自动读取完整会话内容期间明确提示当前显示尚未完整，读取成功后移除提示，无需用户额外操作。
 - Marks content as incomplete while it is read automatically and clears the status once complete, with no additional user action.
 

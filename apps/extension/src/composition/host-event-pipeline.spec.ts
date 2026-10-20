@@ -31,6 +31,28 @@ function harness(
 }
 
 describe('Host event delivery', () => {
+  it('delivers text and control events while a different surface broadcast receipt is stalled', async () => {
+    let release!: (value: boolean) => void
+    const stalled = new Promise<boolean>((resolve) => {
+      release = resolve
+    })
+    const postTo = vi.fn(() => Promise.resolve(true))
+    const { pipeline, posted } = harness(() => stalled, postTo)
+    const first = pipeline.postEvent('session.status', {})
+    await Promise.resolve()
+    await pipeline.postEventTo('editor:healthy', 'session.transcript', {})
+    await pipeline.postEventTo('editor:healthy', 'question.requested', {})
+    expect(posted[0]).toMatchObject({ sequence: 1 })
+    expect(postTo.mock.calls).toEqual([
+      ['editor:healthy', expect.objectContaining({ name: 'session.transcript', sequence: 2 })],
+      ['editor:healthy', expect.objectContaining({ name: 'question.requested', sequence: 3 })],
+    ])
+    release(true)
+    await first
+    await pipeline.postEventTo('editor:healthy', 'session.transcript.patch', {})
+    expect(postTo.mock.calls.at(-1)).toEqual(['editor:healthy', expect.objectContaining({ sequence: 4 })])
+    pipeline.dispose()
+  })
   it('recovers a targeted control failure only on that surface and bounds a failed recovery', async () => {
     const postTo = vi.fn(() => Promise.resolve(false))
     const { pipeline, posted } = harness(() => Promise.resolve(true), postTo)

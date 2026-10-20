@@ -316,7 +316,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       return undefined
     }
   }
-  const refresh = async (): Promise<void> => {
+  const refresh = async (includeCatalogs = true): Promise<void> => {
     if (disposed) return
     const version = ++refreshVersion
     // Session/workspace visibility is enough to choose the startup session.
@@ -325,7 +325,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     await refreshSessions(
       client,
       setState,
-      globalCatalogs.refreshAll,
+      // Directory invalidations cannot invalidate a concurrent global catalog
+      // read. Catalogs have their own connection/generation guards.
+      includeCatalogs ? () => globalCatalogs.refreshAll(() => !disposed) : () => Promise.resolve(),
       () => !disposed && version === refreshVersion,
       false,
     )
@@ -570,6 +572,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     pluginInstallRecovery,
     projectionSequences,
     refresh,
+    refreshSessionDirectory: () => refresh(false),
     refreshModelCatalog: globalCatalogs.refreshModels,
     refreshCommands,
     refreshLiveGoals,
@@ -666,7 +669,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     openSession: openCreatedSession,
     persistWebviewState: () => persistWebviewState(),
     rememberComposerConfiguration,
-    refresh,
+    refresh: () => refresh(false),
     sendUserTurn,
     setPendingSend: (pending) => {
       pendingSend = pending
