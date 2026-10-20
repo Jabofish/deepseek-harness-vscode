@@ -2,8 +2,8 @@ import type { PromptAttachment, QueuedInput, RunningInputMode } from '@dsh-vscod
 
 /**
  * A queue-mode prompt the Host accepted locally before DSH projected it.
- * `queueIdsBefore` pins the rows that already existed when the receipt was
- * created, so an identical older row can never confirm this submission.
+ * `queueIdsBefore` pins existing rows and rows already used to confirm another
+ * receipt, so a repeated snapshot can never confirm this submission twice.
  */
 export interface PendingPromptReceipt extends QueuedInput {
   readonly queueIdsBefore: readonly string[]
@@ -109,7 +109,10 @@ export function confirmPendingPrompts<Receipt extends QueuedInput>(
   const usedRows = new Set<string>()
   const confirmed = new Set<Receipt>()
   const eligible = (receipt: Receipt, row: QueuedInput): boolean =>
-    !confirmed.has(receipt) && !usedRows.has(row.id) && !wasAlreadyQueued(receipt, row)
+    receipt.sessionId === row.sessionId &&
+    !confirmed.has(receipt) &&
+    !usedRows.has(row.id) &&
+    !wasAlreadyQueued(receipt, row)
   for (const receipt of pending) {
     if (receipt.rpcId === undefined) continue
     const row = rows.find((candidate) => eligible(receipt, candidate) && candidate.rpcId === receipt.rpcId)
@@ -120,11 +123,22 @@ export function confirmPendingPrompts<Receipt extends QueuedInput>(
   for (const receipt of pending) {
     if (confirmed.has(receipt)) continue
     const row = rows.find(
-      (candidate) => eligible(receipt, candidate) && sameQueuedPromptContent(receipt, candidate),
+      (candidate) =>
+        eligible(receipt, candidate) &&
+        (candidate.rpcId === undefined || receipt.rpcId === undefined) &&
+        sameQueuedPromptContent(receipt, candidate),
     )
     if (row === undefined) continue
     usedRows.add(row.id)
     confirmed.add(receipt)
   }
-  return confirmed.size === 0 ? undefined : pending.filter((receipt) => !confirmed.has(receipt))
+  if (confirmed.size === 0) return undefined
+  return pending
+    .filter((receipt) => !confirmed.has(receipt))
+    .map((receipt) => {
+      const consumed = rows.filter((row) => usedRows.has(row.id) && row.sessionId === receipt.sessionId)
+      if (consumed.length === 0) return receipt
+      const before = (receipt as Partial<PendingPromptReceipt>).queueIdsBefore ?? []
+      return { ...receipt, queueIdsBefore: [...new Set([...before, ...consumed.map((row) => row.id)])] }
+    })
 }

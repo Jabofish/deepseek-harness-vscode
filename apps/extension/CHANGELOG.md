@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 重复排队相同内容时，一个无请求标识的队列项只确认一次发送，重复快照不再提前隐藏其他待发送回执。
+- Keeps identical queued submissions distinct when runtime rows lack request identities, including across repeated snapshots.
+
 - Markdown 代码块随栏宽自动换行，长标识符也可折行；流式与完成后的显示一致，保留缩进和复制原文。
 - Markdown code blocks wrap to the available width, including long identifiers, during streaming and after completion while preserving indentation and copied source text.
 

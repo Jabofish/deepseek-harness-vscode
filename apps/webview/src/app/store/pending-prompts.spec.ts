@@ -76,11 +76,22 @@ describe('pending prompt receipts', () => {
     const first = receipt()
     const second = receipt({ id: 'pending:two', rpcId: 'request-two' })
     const oneRow = row()
-    expect(confirmPendingPrompts([first, second], [oneRow])).toEqual([second])
+    const remaining = confirmPendingPrompts([first, second], [oneRow])!
+    expect(remaining).toEqual([{ ...second, queueIdsBefore: [oneRow.id] }])
+    expect(confirmPendingPrompts(remaining, [oneRow])).toBeUndefined()
+    expect(second.queueIdsBefore).toEqual([])
+    expect(confirmPendingPrompts(remaining, [oneRow, row({ id: 'row-two' })])).toEqual([])
 
     const twoRows = [row({ id: 'row-one' }), row({ id: 'row-two', rpcId: 'request-two' })]
     // Identity wins: the second receipt must not consume the first row.
     expect(confirmPendingPrompts([first, second], twoRows)).toEqual([])
+  })
+
+  it('never substitutes a different known request identity or another conversation', () => {
+    expect(confirmPendingPrompts([receipt()], [row({ rpcId: 'other-request' })])).toBeUndefined()
+    expect(
+      confirmPendingPrompts([receipt()], [row({ rpcId: 'request-one', sessionId: 'other' })]),
+    ).toBeUndefined()
   })
 
   it('does not treat a row that predated the send as its projection', () => {

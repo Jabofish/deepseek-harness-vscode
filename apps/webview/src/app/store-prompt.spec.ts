@@ -90,6 +90,40 @@ function response(request: WebviewRequest): unknown {
 }
 
 describe('AppStore prompt admission', () => {
+  it('keeps an identical pending submission through repeated id-less queue snapshots', async () => {
+    const client = new FakeClient(response)
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.openSession(session.id)
+    await store.sendPrompt(session.id, 'same prompt', [], 'queue')
+    await store.sendPrompt(session.id, 'same prompt', [], 'queue')
+    expect(store.getState().pendingPrompts).toHaveLength(2)
+    const projected = {
+      id: 'first-row',
+      sessionId: session.id,
+      text: 'same prompt',
+      attachments: [],
+      textOnly: true,
+      mode: 'queue' as const,
+      createdAt: session.createdAt,
+    }
+    for (const sequence of [1, 2]) {
+      client.emit({
+        type: 'event',
+        name: 'queue.updated',
+        sequence,
+        payload: { sessionId: session.id, items: [projected] },
+      })
+      expect(store.getState().pendingPrompts).toHaveLength(1)
+    }
+    client.emit({
+      type: 'event',
+      name: 'queue.updated',
+      sequence: 3,
+      payload: { sessionId: session.id, items: [projected, { ...projected, id: 'second-row' }] },
+    })
+    expect(store.getState().pendingPrompts).toEqual([])
+    store.dispose()
+  })
   describe('queue reread ordering', () => {
     const queued = {
       id: 'queued-input',
