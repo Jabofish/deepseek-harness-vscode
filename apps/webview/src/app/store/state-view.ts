@@ -13,6 +13,7 @@ export const STATE_VIEW_KEYS_B = [
   'workspaces',
   'activeSessionId',
   'pendingSession',
+  'directPromptReceipts',
   'preferredOpenFileId',
   'timeline',
   'historyHasMore',

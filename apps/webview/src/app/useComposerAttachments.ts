@@ -463,8 +463,8 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
           if (
             directRequests.length > 0 &&
             !signal?.aborted &&
-            expectedSessionId !== undefined &&
-            admitted.activeSessionId === expectedSessionId
+            admitted.activeSessionId !== undefined &&
+            (expectedSessionId === undefined || admitted.activeSessionId === expectedSessionId)
           ) {
             awaitingVisibility = true
             admissionStarted = true

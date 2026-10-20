@@ -642,6 +642,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                   <QueuePanel
                     key={state.activeSessionId}
                     items={state.queue}
+                    directEntries={state.directPromptReceipts}
                     {...(state.pendingPrompts === undefined
                       ? {}
                       : {

@@ -9,6 +9,41 @@ export interface PendingPromptReceipt extends QueuedInput {
   readonly queueIdsBefore: readonly string[]
 }
 
+/**
+ * Native inbox admission can publish a row even for an idle direct send. It
+ * is still represented by the composer's pending submission, not the queue
+ * dock. Match each receipt once and never hide an older identical queued row.
+ */
+export function withoutDirectPromptRows(
+  rows: readonly QueuedInput[],
+  receipts: readonly PendingPromptReceipt[],
+): readonly QueuedInput[] {
+  if (receipts.length === 0 || rows.length === 0) return rows
+  const identified = new Set(rows.flatMap((row) => (row.rpcId === undefined ? [] : [row.rpcId])))
+  const unmatched = [...receipts]
+  const visible = rows.filter((row) => {
+    let index = unmatched.findIndex(
+      (receipt) =>
+        receipt.sessionId === row.sessionId &&
+        !receipt.queueIdsBefore.includes(row.id) &&
+        row.rpcId !== undefined &&
+        receipt.rpcId === row.rpcId,
+    )
+    // Older profiles omit the browser request identity from queue records.
+    if (index < 0 && row.rpcId === undefined)
+      index = unmatched.findIndex(
+        (receipt) =>
+          (receipt.rpcId === undefined || !identified.has(receipt.rpcId)) &&
+          !receipt.queueIdsBefore.includes(row.id) &&
+          sameQueuedPromptContent(receipt, row),
+      )
+    if (index < 0) return true
+    unmatched.splice(index, 1)
+    return false
+  })
+  return visible.length === rows.length ? rows : visible
+}
+
 function isImageAttachment(attachment: PromptAttachment): boolean {
   return attachment.mimeType?.startsWith('image/') === true
 }

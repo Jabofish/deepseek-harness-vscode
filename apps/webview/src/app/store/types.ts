@@ -147,6 +147,8 @@ export interface SurfaceAssignment {
 export interface AppState extends SessionModelDirectoryState {
   /** Recent direct sends, correlated with DSH inbox rows by request identity. */
   readonly directPromptRequestIds?: readonly string[]
+  /** Direct sends stay in the composer until confirmed, including while DSH briefly projects an inbox row. */
+  readonly directPromptReceipts?: readonly PendingPromptReceipt[]
   /** Queue-mode prompts accepted by the Host but not yet projected by DSH. */
   readonly pendingPrompts?: readonly PendingPromptReceipt[]
   readonly backend: WebviewBackendState

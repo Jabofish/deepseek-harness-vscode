@@ -6,12 +6,17 @@ import { Icon } from '../../ui/Icon.js'
 import { SelectMenu } from '../../components/common/SelectMenu.js'
 import { MessageImages } from '../chat/MessageImages.js'
 import { useQueueHandoff } from './useQueueHandoff.js'
-import { confirmPendingPrompts } from '../../app/store/pending-prompts.js'
+import {
+  confirmPendingPrompts,
+  withoutDirectPromptRows,
+  type PendingPromptReceipt,
+} from '../../app/store/pending-prompts.js'
 
 export interface QueuePanelProps {
   readonly items: readonly QueuedInput[]
   /** Accepted queue-mode sends that the Host has not projected yet. */
   readonly pendingEntries?: readonly QueuedInput[] | undefined
+  readonly directEntries?: readonly PendingPromptReceipt[] | undefined
   readonly running: boolean
   readonly transcript?: TranscriptWindow | undefined
   readonly connected?: boolean
@@ -30,7 +35,10 @@ export const QueuePanel = memo(function QueuePanel(props: QueuePanelProps): Reac
   const [collapsed, setCollapsed] = useState(false)
   const removingRef = useRef<Set<string>>(new Set())
   const [removingIds, setRemovingIds] = useState<ReadonlySet<string>>(() => new Set())
-  const queueItems = props.items
+  const queueItems = useMemo(
+    () => withoutDirectPromptRows(props.items, props.directEntries ?? []),
+    [props.items, props.directEntries],
+  )
   const transcript = props.transcript
   const pendingEntries = useMemo(() => {
     const confirmedRpcIds = new Set(

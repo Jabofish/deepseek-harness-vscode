@@ -542,6 +542,7 @@ export function withoutConnectionScopedSurfaces(state: AppState): AppState {
       ),
     },
     sessionDirectoryStatus: 'loading',
+    directPromptReceipts: [],
     queue: [],
     jobs: [],
     jobFollow: undefined,

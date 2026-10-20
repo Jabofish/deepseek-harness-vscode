@@ -92,11 +92,24 @@ export function createPromptActions(deps: PromptActionDependencies): {
     // not be treated as a direct turn.
     const idle = status === 'idle' || status === 'completed' || status === 'failed'
     const direct = subagent === undefined && idle && state.queue.length === 0
-    if (direct)
+    if (direct) {
+      const receipt: PendingPromptReceipt = {
+        id: pendingId,
+        sessionId,
+        text,
+        attachments: [...attachments],
+        textOnly: attachments.length === 0,
+        mode,
+        createdAt: new Date().toISOString(),
+        rpcId: rpcRequestId,
+        queueIdsBefore: state.queue.map((item) => item.id),
+      }
       setState((current) => ({
         ...current,
         directPromptRequestIds: [...(current.directPromptRequestIds ?? []), rpcRequestId].slice(-64),
+        directPromptReceipts: [...(current.directPromptReceipts ?? []), receipt].slice(-64),
       }))
+    }
     // Only the panel that shows this session's queue can consume a local
     // receipt; a background send has no dock to reconcile it against.
     if (!direct && subagent === undefined && mode === 'queue' && state.activeSessionId === sessionId) {
@@ -214,6 +227,9 @@ export function createPromptActions(deps: PromptActionDependencies): {
         setState((current) => ({
           ...current,
           directPromptRequestIds: (current.directPromptRequestIds ?? []).filter((id) => id !== rpcRequestId),
+          directPromptReceipts: (current.directPromptReceipts ?? []).filter(
+            (entry) => entry.rpcId !== rpcRequestId,
+          ),
         }))
       if (signal?.aborted !== true && subagent === undefined && mode === 'queue' && !direct)
         setState((current) => ({

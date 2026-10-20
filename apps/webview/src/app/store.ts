@@ -806,6 +806,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       setState((current) => ({
         ...current,
         directPromptRequestIds: (current.directPromptRequestIds ?? []).filter((id) => !dropped.has(id)),
+        directPromptReceipts: (current.directPromptReceipts ?? []).filter(
+          (entry) => entry.rpcId === undefined || !dropped.has(entry.rpcId),
+        ),
       }))
     },
     refreshQueue: async (sessionId) => {
