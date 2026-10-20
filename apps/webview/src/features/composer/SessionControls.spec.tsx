@@ -60,6 +60,30 @@ function modelTriggerLabel(): string {
 describe('SessionControls model seat', () => {
   afterEach(() => cleanup())
 
+  it('stages Plan in a new-session draft instead of sending a command before creation', () => {
+    const onChange = vi.fn()
+    const onCommand = vi.fn()
+    render(
+      <I18nProvider>
+        <SessionControls
+          configuration={configuration({ providerId: '', modelId: '' })}
+          configurationDraft
+          models={[]}
+          presets={[]}
+          permissionPresets={[]}
+          commands={[{ name: 'plan', description: 'Plan mode' }]}
+          disabled={false}
+          presetMutable
+          onChange={onChange}
+          onCommand={onCommand}
+        />
+      </I18nProvider>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Turn on plan mode' }))
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ planMode: true, planModeKnown: true }))
+    expect(onCommand).not.toHaveBeenCalled()
+  })
+
   it('states the route the host named while the session names none', () => {
     // The configuration carries a selection only once someone makes one; an
     // empty one is not "no model", it is whatever the host routes by default.

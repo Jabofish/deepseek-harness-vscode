@@ -203,10 +203,13 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
     },
     [applyPermissionPreset, riskContext],
   )
-  const handlePlanToggle = useCallback(
-    (): void => onCommand(configuration.planMode ? '/plan off' : '/plan'),
-    [configuration.planMode, onCommand],
-  )
+  const handlePlanToggle = useCallback((): void => {
+    if (props.configurationDraft === true)
+      void Promise.resolve(
+        onChange({ ...configuration, planMode: !configuration.planMode, planModeKnown: true }),
+      ).catch(() => undefined)
+    else onCommand(configuration.planMode ? '/plan off' : '/plan')
+  }, [props.configurationDraft, configuration, onChange, onCommand])
   const contextWindowTokens = positiveTokenCount(props.contextWindowTokens)
   /**
    * What the seat states as the current model. The configuration is the

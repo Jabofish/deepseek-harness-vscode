@@ -196,6 +196,23 @@ export function createSessionCreationActions(
         }
         if (signal?.aborted === true) throw new DOMException('Cancelled', 'AbortError')
         if (getState().pendingSession?.revision !== pending.revision) throw supersededSend()
+        // Creation only selects the preset/model. Apply all staged choices,
+        // including permissions, before admitting the first user turn. This
+        // also covers reused blanks and retries after an earlier open failed.
+        await client.request(
+          {
+            type: 'session.configure',
+            requestId: requestId(),
+            payload: { sessionId, configuration: pending.configuration },
+          },
+          signal,
+        )
+        signal?.throwIfAborted()
+        if (
+          getState().pendingSession?.revision !== pending.revision ||
+          getState().pendingSession?.configuration !== pending.configuration
+        )
+          throw supersededSend()
         try {
           await openSession(sessionId)
           if (getState().activeSessionId !== sessionId) throw supersededSend()

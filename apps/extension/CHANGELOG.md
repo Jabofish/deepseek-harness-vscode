@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 首条消息发送前先应用草稿中选择的权限、Plan 和会话配置；配置失败或取消时保留草稿与已创建的会话，不继续投递。
+- Applies staged permission, Plan and session choices before the first message. Configuration failures or cancellation retain the draft and created session without admitting the prompt.
+
 - 修复 Windows 冷启动超过 15 秒即被误判失败的问题；启动和连接请求使用匹配的有界等待，取消仍立即生效。
 - Allows slow Windows cold starts to finish with aligned startup and connection deadlines while retaining immediate cancellation.
 

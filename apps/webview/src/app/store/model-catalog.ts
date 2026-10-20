@@ -202,7 +202,9 @@ export function createDefaultConfiguration(
     preset,
     toolMode: 'native',
     permissionPreset: 'workspace-write',
+    permissionPresetKnown: false,
     planMode: false,
+    planModeKnown: false,
     model,
   }
 }

@@ -5,6 +5,8 @@ export interface SessionConfigurationInput extends Pick<
   AgentConfiguration,
   'preset' | 'toolMode' | 'permissionPreset' | 'planMode'
 > {
+  readonly permissionPresetKnown?: boolean | undefined
+  readonly planModeKnown?: boolean | undefined
   readonly sandboxMode?: string | undefined
   readonly approvalPolicy?: string | undefined
   readonly model: Pick<AgentConfiguration['model'], 'providerId' | 'modelId'> & {
@@ -12,7 +14,7 @@ export interface SessionConfigurationInput extends Pick<
   }
 }
 
-/** Keep writable choices separate from configuration projection metadata. */
+/** Preserve whether policy values are choices or unobserved display fallbacks. */
 export function resolveSessionConfigurationForRoster(
   requested: SessionConfigurationInput,
   presets: readonly AgentPresetDescriptor[],
@@ -31,6 +33,10 @@ export function resolveSessionConfigurationForRoster(
     toolMode: requested.toolMode,
     permissionPreset: requested.permissionPreset,
     planMode: requested.planMode,
+    ...(requested.permissionPresetKnown === undefined
+      ? {}
+      : { permissionPresetKnown: requested.permissionPresetKnown }),
+    ...(requested.planModeKnown === undefined ? {} : { planModeKnown: requested.planModeKnown }),
     ...(requested.sandboxMode === undefined ? {} : { sandboxMode: requested.sandboxMode }),
     ...(requested.approvalPolicy === undefined ? {} : { approvalPolicy: requested.approvalPolicy }),
     model: {

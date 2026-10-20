@@ -35,6 +35,33 @@ describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live DSH authoritative tran
             model: { providerId: '', modelId: '' },
           },
         })
+        if (runtime.snapshot.version === '0.2.1-rc.2') {
+          // No model request: first-send preparation must preserve unchosen
+          // policy defaults, then apply explicit choices through native commands.
+          await backend.sessions.setConfiguration(session.id, {
+            ...session.configuration,
+            permissionPreset: 'workspace-write',
+            permissionPresetKnown: false,
+            planModeKnown: false,
+          })
+          const before = await backend.sessions.get(session.id)
+          expect(before.permissionPresets).toContain('read-only')
+          await backend.sessions.setConfiguration(session.id, {
+            ...before.configuration,
+            permissionPreset: 'read-only',
+            permissionPresetKnown: true,
+            planMode: true,
+            planModeKnown: true,
+          })
+          const configured = await backend.sessions.get(session.id)
+          expect(configured.configuration).toMatchObject({
+            permissionPreset: 'read-only',
+            permissionPresetKnown: true,
+            planMode: true,
+            planModeKnown: true,
+          })
+          runtime.steps.push('native pre-send permission/Plan changes read back authoritatively')
+        }
         const generation = service.begin(session.id)
         const detail =
           backend.sessions.open === undefined

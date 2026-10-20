@@ -62,7 +62,7 @@ describe('session preset resolution', () => {
     expect(resolveSessionConfigurationForRoster({ ...requested, preset }, roster).preset).toBe(expected)
   })
 
-  it('keeps writable model and policy choices while excluding projection metadata', () => {
+  it('keeps model choices and the unknown-policy markers instead of writing display fallbacks', () => {
     const configuration: AgentConfiguration = {
       ...requested,
       permissionPresetKnown: false,
@@ -77,6 +77,8 @@ describe('session preset resolution', () => {
     expect(resolved).toEqual({
       ...requested,
       planMode: true,
+      permissionPresetKnown: false,
+      planModeKnown: false,
       sandboxMode: 'workspace-write',
       approvalPolicy: 'on-request',
       model: { providerId: 'local', modelId: 'chosen', reasoningLevel: 'high' },
