@@ -26,12 +26,67 @@ interface Dependencies {
   readonly stop: () => Promise<void>
   readonly halt: () => Promise<void>
   readonly undo: () => Promise<void>
+  readonly checkPackageManager?: () => Promise<NonNullable<EditorIntegrationStatus['packageManager']>>
 }
 interface RecoveryArchive extends CompanionArchive {
   readonly enabled: boolean
 }
 /** All installation and lifecycle actions originate in native user controls. */
 export class EditorCompanionManagement {
+  private observed: Pick<EditorIntegrationStatus, 'installed' | 'packageManager'> = {}
+  private observedBackend: DshBackend | undefined
+  private observedAt = 0
+  private refreshing: Promise<void> | undefined
+  public get installationStatus(): typeof this.observed {
+    return this.observedBackend !== undefined && this.deps.current(this.observedBackend) ? this.observed : {}
+  }
+  public async refreshStatus(force = false): Promise<void> {
+    if (this.refreshing !== undefined) return this.refreshing
+    if (
+      this.busy ||
+      (!force &&
+        this.observedBackend !== undefined &&
+        this.deps.current(this.observedBackend) &&
+        Date.now() - this.observedAt < 30_000)
+    )
+      return
+    const refresh = (async (): Promise<void> => {
+      try {
+        const backend = this.deps.backend()
+        if (!this.deps.current(backend) || typeof backend.pluginBundles?.listBundles !== 'function') return
+        const bundles = await backend.pluginBundles.listBundles(AbortSignal.timeout(10_000))
+        if (!this.deps.current(backend)) return
+        const installed = bundles.some(
+          (bundle) => bundle.name === EDITOR_COMPANION_PACKAGE && bundle.installed,
+        )
+        const packageManager =
+          backend.connection.ownership === 'managed' && vscode.workspace.isTrusted
+            ? await this.deps.checkPackageManager?.()
+            : undefined
+        if (!this.deps.current(backend)) return
+        this.observedBackend = backend
+        this.observedAt = Date.now()
+        this.observed = { installed, ...(packageManager === undefined ? {} : { packageManager }) }
+        if (
+          packageManager === 'ready' &&
+          this.failure.installationFailureKind === 'pnpm-missing' &&
+          this.installPhase === 'failed'
+        ) {
+          this.failure = {}
+          this.installPhase = undefined
+        }
+      } catch {
+        this.observedAt = 0
+        this.observed = {}
+      }
+    })()
+    this.refreshing = refresh
+    try {
+      await refresh
+    } finally {
+      if (this.refreshing === refresh) this.refreshing = undefined
+    }
+  }
   private installPhase: EditorIntegrationStatus['installation']
   private installBackend: DshBackend | undefined
   private failure: Pick<EditorIntegrationStatus, 'installationErrorCode' | 'installationFailureKind'> = {}
@@ -254,6 +309,19 @@ export class EditorCompanionManagement {
     try {
       const backend = this.available()
       this.installBackend = backend
+      const packageManager = await this.deps.checkPackageManager?.()
+      controller.signal.throwIfAborted()
+      if (!this.deps.current(backend)) return false
+      if (packageManager !== undefined) {
+        if (this.observedBackend !== backend) this.observed = {}
+        this.observedBackend = backend
+        this.observed = { ...this.installationStatus, packageManager }
+        if (packageManager !== 'ready') {
+          this.installPhase = 'failed'
+          this.failure = { installationFailureKind: 'pnpm-missing' }
+          return false
+        }
+      }
       const repository = backend.pluginBundles
       if (repository === undefined) throw new Error('Unavailable')
       const storage = this.deps.storageUri
@@ -263,6 +331,8 @@ export class EditorCompanionManagement {
       const installed = (await repository.listBundles(controller.signal)).find(
         (bundle) => bundle.name === EDITOR_COMPANION_PACKAGE && bundle.installed,
       )
+      this.observedBackend = backend
+      this.observed = { ...this.observed, installed: installed !== undefined }
       let backup: RecoveryArchive | undefined
       if (installed !== undefined) {
         if (!installed.removable || installed.readOnlyReason !== undefined)
@@ -463,6 +533,12 @@ export class EditorCompanionManagement {
   }
   private async result(backend: DshBackend, result: PluginBundleChangeResult, silent = false): Promise<void> {
     if (!this.deps.current(backend)) return
+    this.observedAt = 0
+    if (
+      result.stage !== 'remove' &&
+      (result.application === 'applied' || result.application === 'restart-required')
+    )
+      this.observed = { ...this.observed, installed: true }
     this.failure = {
       ...(result.errorCode === undefined ? {} : { installationErrorCode: result.errorCode }),
       ...(result.failureKind === undefined ? {} : { installationFailureKind: result.failureKind }),

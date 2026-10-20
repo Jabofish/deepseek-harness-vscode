@@ -29,10 +29,21 @@ export const editorIntegrationStatusSchema = z
     canRestart: z.boolean(),
     canUndo: z.boolean(),
     installation: z
-      .enum(['installing', 'cancelling', 'unknown', 'cancelled', 'failed', 'installed'])
+      .enum([
+        'preparing-dependencies',
+        'dependencies-failed',
+        'installing',
+        'cancelling',
+        'unknown',
+        'cancelled',
+        'failed',
+        'installed',
+      ])
       .optional(),
     canCancelInstall: z.boolean().optional(),
     installationErrorCode: pluginBundleErrorCodeSchema.optional(),
     installationFailureKind: pluginBundleChangeResultSchema.shape.failureKind,
+    installed: z.boolean().optional(),
+    packageManager: z.enum(['ready', 'missing', 'broken']).optional(),
   })
   .strict()

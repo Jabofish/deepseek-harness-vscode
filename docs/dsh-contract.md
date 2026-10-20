@@ -103,6 +103,10 @@ rc.2 与 rc.1 的 Connection / Gateway、全部 API Remote、Session V4、Accoun
 
 配套默认不自动安装；用户在设置中选择安装并启用后，Host 通过 DSH 原生 Plugin Manager 将随扩展构建的 tgz 安装到扩展自有 profile，启动不再注入本地文件或专用 overlay。包按 DSH 规范导出 `package.json` 与 `locale/*.json`，中英文 `meta.title/description` 直接进入 DSH 自身的插件目录。安装依赖 DSH 环境中的包管理器及精确兼容检查，失败不阻断聊天。原生 tarball 安装同时负责更新已有依赖，更新前不卸载旧包；失败或取消由 DSH 恢复原 manifest/lockfile，可用的缓存包用于恢复。
 
+设置读取原生 `listBundles` 判断安装状态，安装意愿标记不代表已经安装。自有实例安装前只读探测 pnpm，禁用 Corepack 探测中的联网；缺失或损坏时先显示命令、官方指南与重新检测，不发送安装 mutation。远程环境在 Extension Host 侧准备依赖。迁移只移除扩展存储内经名称、loader 特征和引用归属验证的旧文件，跳过符号链接、未知文件和锁定项；缓存、回滚包及会话数据不清理。
+
+用户可明确发起安装／修复 pnpm：优先使用 Corepack 的标准全局准备命令，缺少 Corepack 时使用 npm 安装已验证版本，验证可执行后重连扩展自有 DSH 以更新环境。准备操作独立支持取消，失败不宣称配套已经安装；首次配套安装仍由用户发起。只读探测不触发依赖修复，外部实例不执行此操作。
+
 固定源码已核对 `dsh-v0.2.0-rc.2` / `639ed015397290b3745d163aafe02ffee4aa3f84`，以及 `dsh-v0.2.1-alpha.1` 至 `alpha.5`、`rc.1` 至 `rc.2` 的 Typert Service/Registry 和工具契约；关键来源为 `apps/cli/src/bin.ts`、`packages/typert/protocol/src/index.ts`、`packages/typert/registry/src/service.ts`、`packages/core/tools`。`rc.1` 为 `1600d8a1e140dcde43a1a0941940a0480712c011`，`rc.2` 为 `687f282e8625c6b8d11ff58211a90524be2e4317`。标准安装及元数据来源固定到该 `rc.2` 的 `packages/boot/plugin-manager/src/index.ts`、`packages/boot/app-boot/src/package-meta.ts`、`packages/host/plugin-inventory/src/index.ts`；旧版本已有真实工具链证据不等于新版安装流程已验证。引入 Principal 前的 Gateway 仅提供认证 Peer ID，新 Gateway 则另要求 owner principal；真实 Peer 仍用于绑定归属。
 
 协议 2 的 `vscodeEditorCompanion/describe`、`verifyHost`、`attach`、`poll`、`respond`、`detach` 均以 `request` 为命名参数；结果为严格 `status: ok/error` 联合。可选 `buildIdentity` 方法返回随包构建指纹，旧配套缺少它不改变原有 `describe` 形状。用户已选择安装且启用后，只对当前自有实例中已经安装的配套比较指纹并走标准更新；缺包仍要求显式安装，不自动替换外部连接。原生结果要求重启时才重连自有实例。F5 遵循相同安装选择，构建后以调试专用标记启动新实例并采用空闲端口，不改持久连接设置。协议 1 的 `vscodeEditorBridge` 方法保留，仅能力缺失时回退元数据。无法协商的能力不会被猜成成功，普通附件和手动编辑器上下文仍可使用。共享要求 loopback 及同侧随机文件挑战；内容访问限于当前 VS Code 窗口已打开且受信的根，按已有编辑器设置授权，不要求协议 2 会话目录与根相同。协议 1 回退保留目录关联校验。协议 2 可先绑定请求通道，缺少文件夹或信任时在首次工具调用提供原生入口，满足条件前不读取内容。远程环境按 Extension Host 执行侧处理，不把端口转发当成共享文件系统证明。

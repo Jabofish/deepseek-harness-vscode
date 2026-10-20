@@ -25,6 +25,41 @@ function mount(handle: (request: FeatureRequest) => Promise<unknown>): void {
   )
 }
 describe('editor integration in Webview settings', () => {
+  it('offers standard installation even while an old overlay still provides working tools', async () => {
+    mount(() => Promise.resolve({ ...ready, installed: false, packageManager: 'ready' }))
+    expect(
+      (await screen.findByRole('button', { name: 'Install and enable companion' })).hasAttribute('disabled'),
+    ).toBe(false)
+  })
+  it('shows first installation despite old consent and guides dependency preparation before any install', async () => {
+    const handle = vi.fn<(request: FeatureRequest) => Promise<unknown>>().mockResolvedValue({
+      ...ready,
+      installed: false,
+      packageManager: 'broken',
+      phase: 'limited',
+      reason: 'missing',
+    })
+    mount(handle)
+    const install = await screen.findByRole('button', { name: 'Install and enable companion' })
+    expect(install.hasAttribute('disabled')).toBe(true)
+    expect(screen.queryByRole('button', { name: 'Repair or update companion' })).toBeNull()
+    await screen.findByText(/pnpm was found but cannot run/)
+    fireEvent.click(screen.getByRole('button', { name: 'Install / repair pnpm' }))
+    await waitFor(() =>
+      expect(handle).toHaveBeenCalledWith(expect.objectContaining({ payload: { action: 'prepare-pnpm' } })),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Copy pnpm install command' }))
+    await waitFor(() =>
+      expect(handle).toHaveBeenCalledWith(
+        expect.objectContaining({ payload: { action: 'copy-pnpm-command' } }),
+      ),
+    )
+    expect(
+      handle.mock.calls.some(
+        ([value]) => value.type === 'editor.companion.action' && value.payload.action === 'setup',
+      ),
+    ).toBe(false)
+  })
   it('shows the native installation cause and preserves the retry action', async () => {
     mount(() =>
       Promise.resolve({
@@ -33,11 +68,12 @@ describe('editor integration in Webview settings', () => {
         reason: 'setup-failed',
         installation: 'failed',
         installationFailureKind: 'pnpm-missing',
+        installed: false,
       }),
     )
     await screen.findByText(/DSH cannot run pnpm/)
     expect(screen.queryByText(/Restart to use the bundled integration/)).toBeNull()
-    expect(screen.getByRole('button', { name: 'Retry installation' })).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Install and enable companion' })).toBeDefined()
   })
   it('sends a separate native cancellation while Install is pending and waits for the actual result', async () => {
     const missing = {
@@ -168,7 +204,7 @@ describe('editor integration in Webview settings', () => {
     })
     mount(handle)
     await screen.findByText('Connect to DSH to use editor tools. Settings are saved for this workspace.')
-    expect(screen.queryByRole('button', { name: 'Retry installation' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Repair or update companion' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Restart DSH' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Retry connection' }))
     await waitFor(() =>

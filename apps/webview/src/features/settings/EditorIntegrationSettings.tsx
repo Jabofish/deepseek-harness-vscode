@@ -62,7 +62,9 @@ export function EditorIntegrationSettings({
     if (request === undefined || busyRef.current) return
     busyRef.current = true
     setBusy(true)
-    const setup = command.type === 'editor.companion.action' && command.payload.action === 'setup'
+    const setup =
+      command.type === 'editor.companion.action' &&
+      (command.payload.action === 'setup' || command.payload.action === 'prepare-pnpm')
     if (setup) setInstalling(true)
     const current = ++epoch.current
     try {
@@ -84,7 +86,18 @@ export function EditorIntegrationSettings({
   const configure = (change: Partial<EditorIntegrationPreferences>): void => {
     void execute({ type: 'editor.companion.configure', requestId: crypto.randomUUID(), payload: change })
   }
-  const action = (name: 'retry' | 'setup' | 'restart' | 'undo' | 'start-managed'): void => {
+  const action = (
+    name:
+      | 'retry'
+      | 'setup'
+      | 'restart'
+      | 'undo'
+      | 'start-managed'
+      | 'check-dependencies'
+      | 'copy-pnpm-command'
+      | 'open-pnpm-guide'
+      | 'prepare-pnpm',
+  ): void => {
     void execute({
       type: 'editor.companion.action',
       requestId: crypto.randomUUID(),
@@ -118,6 +131,8 @@ export function EditorIntegrationSettings({
   const phase = status?.phase
   const installPhase = status?.installation ?? (installing ? 'installing' : undefined)
   const installLabels = {
+    'preparing-dependencies': t('editorIntegration.preparingPnpm'),
+    'dependencies-failed': t('editorIntegration.preparePnpmFailed'),
     installing: t('editorIntegration.installing'),
     cancelling: t('editorIntegration.cancellingInstall'),
     unknown: t('editorIntegration.installUnknown'),
@@ -183,6 +198,64 @@ export function EditorIntegrationSettings({
         control={toggle('allowEdits', t('editorIntegration.allowEdits'))}
       />
       {failed ? <p role="alert">{t('editorIntegration.requestFailed')}</p> : null}
+      {status?.installed === false ||
+      (status?.canInstall && phase !== 'ready') ||
+      (installPhase === 'failed' && status?.canRestart) ? (
+        <div className="dsh-editor-integration__prerequisites">
+          <p>{t('editorIntegration.prerequisites')}</p>
+          <p role="status">
+            {status.packageManager === 'missing'
+              ? t('editorIntegration.pnpmMissing')
+              : status.packageManager === 'broken'
+                ? t('editorIntegration.pnpmBroken')
+                : status.packageManager === 'ready'
+                  ? t('editorIntegration.pnpmReady')
+                  : t('editorIntegration.pnpmCheck')}
+          </p>
+          {status.packageManager !== 'ready' ? (
+            <>
+              <code>npm install --global pnpm@11.19.0</code>
+              <p>{t('editorIntegration.pnpmInstructions')}</p>
+              <div className="dsh-settings__actions">
+                {status.canInstall ? (
+                  <button
+                    type="button"
+                    className="dsh-button dsh-button--secondary"
+                    disabled={busy}
+                    onClick={() => action('prepare-pnpm')}
+                  >
+                    {t('editorIntegration.preparePnpm')}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="dsh-button dsh-button--secondary"
+                  disabled={busy}
+                  onClick={() => action('copy-pnpm-command')}
+                >
+                  {t('editorIntegration.copyPnpmCommand')}
+                </button>
+                <button
+                  type="button"
+                  className="dsh-button dsh-button--secondary"
+                  disabled={busy}
+                  onClick={() => action('open-pnpm-guide')}
+                >
+                  {t('editorIntegration.pnpmGuide')}
+                </button>
+                <button
+                  type="button"
+                  className="dsh-button dsh-button--secondary"
+                  disabled={busy}
+                  onClick={() => action('check-dependencies')}
+                >
+                  {t('editorIntegration.checkDependencies')}
+                </button>
+              </div>
+            </>
+          ) : null}
+        </div>
+      ) : null}
       {installPhase === undefined ? null : <p role="status">{installLabels[installPhase]}</p>}
       {installPhase === 'failed' &&
       status !== undefined &&
@@ -230,14 +303,14 @@ export function EditorIntegrationSettings({
                 ? t('editorIntegration.chooseFolder')
                 : t('editorIntegration.retry')}
         </button>
-        {status?.canInstall && phase !== 'ready' ? (
+        {status?.canInstall && (status.installed === false || phase !== 'ready') ? (
           <button
             type="button"
             className="dsh-button dsh-button--secondary"
-            disabled={busy}
+            disabled={busy || status.packageManager === 'missing' || status.packageManager === 'broken'}
             onClick={() => action('setup')}
           >
-            {status.preferences.autoSetup ? t('editorIntegration.repair') : t('editorIntegration.install')}
+            {status.installed === true ? t('editorIntegration.repair') : t('editorIntegration.install')}
           </button>
         ) : null}
         {status?.canRestart && phase !== 'ready' ? (
