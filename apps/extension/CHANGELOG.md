@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 实时审批与提问缺少答复标识时触发协议恢复，不再显示无法答复的交互；已失效请求与工作区权限拒绝使用不同错误。
+- Recovers malformed live approvals and questions without inventing response identities, and distinguishes expired interactions from workspace access denial.
+
 - 审批保留完整命令行，并自动补齐被传输裁切或移出当前窗口的工具请求；读取完成前仍可拒绝，批准等待完整请求就绪。
 - Preserves complete approval commands and automatically reads clipped or off-window tool requests. Rejection remains available while approval waits for complete request content.
 

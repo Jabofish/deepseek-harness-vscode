@@ -326,8 +326,8 @@ export function createSessionScope(deps: SessionScopeDependencies): SessionScope
     const owner = backendService.requireBackend().interactions.sessionForPermission?.(requestId)
     if (owner === undefined) {
       throw new AppError({
-        code: 'PERMISSION_DENIED',
-        message: 'The requested permission is not owned by the current workspace.',
+        code: 'STALE_INTERACTION',
+        message: 'This permission request is no longer available. Refresh the conversation and retry.',
         retryable: false,
       })
     }
@@ -337,8 +337,8 @@ export function createSessionScope(deps: SessionScopeDependencies): SessionScope
     const owner = backendService.requireBackend().interactions.sessionForQuestion?.(questionId)
     if (owner === undefined) {
       throw new AppError({
-        code: 'PERMISSION_DENIED',
-        message: 'The requested question is not owned by the current workspace.',
+        code: 'STALE_INTERACTION',
+        message: 'This question is no longer available. Refresh the conversation and retry.',
         retryable: false,
       })
     }

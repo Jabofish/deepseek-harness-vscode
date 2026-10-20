@@ -10,6 +10,17 @@ export function normalizeEnvelope(value: unknown): BackendEvent | undefined {
     return withSequence({ type: 'unknown', name: 'protocol/frame', payload: safePayload(value) }, undefined)
   if (typeof frame.type !== 'string')
     return withSequence({ type: 'unknown', name: 'protocol/frame', payload: safePayload(frame) }, frame.seq)
+  // Native live requests echo this envelope identity when answered. Durable
+  // history mapping has no such requirement; never invent an id from callId.
+  if (
+    (frame.type === 'approval/requested' || frame.type === 'question/requested') &&
+    typeof envelope?.rpcId !== 'string'
+  )
+    throw new AppError({
+      code: 'PROTOCOL_ERROR',
+      message: 'DSH live interaction is missing its response identity.',
+      retryable: true,
+    })
   const withRpcId = typeof envelope?.rpcId === 'string' ? { ...frame, rpcId: envelope.rpcId } : frame
   switch (frame.type) {
     case 'session/assistant-stream':

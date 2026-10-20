@@ -65,6 +65,7 @@ describe('fork ownership without migration', () => {
 function scopeWith(overrides: {
   readonly archivedSessionIds?: readonly string[]
   readonly get?: ReturnType<typeof vi.fn>
+  readonly interactionOwner?: string
 }): {
   readonly scope: ReturnType<typeof createSessionScope>
   readonly get: ReturnType<typeof vi.fn>
@@ -85,6 +86,10 @@ function scopeWith(overrides: {
           listArchivedSessionIds: () => Promise.resolve(overrides.archivedSessionIds ?? ['s1']),
         },
         sessions: { get },
+        interactions: {
+          sessionForPermission: () => overrides.interactionOwner,
+          sessionForQuestion: () => overrides.interactionOwner,
+        },
         subagents: {},
       }),
     } as never,
@@ -97,6 +102,25 @@ function scopeWith(overrides: {
 }
 
 describe('session scope pending-load reuse', () => {
+  it.each(['permission', 'question'] as const)(
+    'reports an unknown %s as stale without claiming workspace denial',
+    async (kind) => {
+      const { scope, get } = scopeWith({})
+      const guard = kind === 'permission' ? scope.requireOwnedPermission : scope.requireOwnedQuestion
+      await expect(guard('unknown', new AbortController().signal)).rejects.toMatchObject({
+        code: 'STALE_INTERACTION',
+      })
+      expect(get).not.toHaveBeenCalled()
+    },
+  )
+
+  it('still applies normal session scope checks when the interaction owner is known', async () => {
+    const { scope } = scopeWith({ interactionOwner: 's1' })
+    await expect(
+      scope.requireOwnedPermission('permission', new AbortController().signal),
+    ).rejects.toMatchObject({ code: 'PERMISSION_DENIED' })
+  })
+
   it('never hands a pending recovery load to an ordinary route', async () => {
     // The two `allowArchived` routes are the only callers that may reach an
     // archived session. If an ordinary route adopts the in-flight recovery
