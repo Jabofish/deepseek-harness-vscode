@@ -56,12 +56,15 @@ export interface SessionOpenHost {
   readonly nextSessionModelDirectoryGeneration: () => number
   readonly getSessionModelDirectoryGeneration: () => number
   readonly getGoalReadGeneration: () => number
+  readonly nextQueueReadGeneration: () => number
+  readonly getQueueReadGeneration: () => number
   readonly setGoalActivationAvailable: () => void
   readonly clearStartupRestorePending: () => void
 }
 
 interface SessionAdvisoryReads {
   readonly goalGeneration: number
+  readonly queueGeneration: number
   readonly queue: Promise<readonly QueuedInput[] | undefined>
   readonly goals: Promise<readonly GoalView[] | undefined>
   readonly jobs: Promise<readonly JobView[] | undefined>
@@ -94,6 +97,7 @@ export function createSessionOpenController(host: SessionOpenHost): {
   const { requestFeedbackSnapshot } = feedbackCache
   const readAdvisoryData = (sessionId: string): SessionAdvisoryReads => ({
     goalGeneration: host.getGoalReadGeneration(),
+    queueGeneration: host.nextQueueReadGeneration(),
     queue: safeList<QueuedInput>(
       client,
       { type: 'session.queue.list', requestId: requestId(), payload: { sessionId } },
@@ -122,7 +126,9 @@ export function createSessionOpenController(host: SessionOpenHost): {
       eventNames: readonly string[],
     ): void => {
       if (!isCurrent()) return
-      const superseded = key === 'goals' && reads.goalGeneration !== host.getGoalReadGeneration()
+      const superseded =
+        (key === 'goals' && reads.goalGeneration !== host.getGoalReadGeneration()) ||
+        (key === 'queue' && reads.queueGeneration !== host.getQueueReadGeneration())
       setState((current) => {
         if (superseded) return current
         const unavailableLists = [

@@ -1,10 +1,4 @@
-import type {
-  AgentConfiguration,
-  PromptMode,
-  QueuedInput,
-  SubagentCatalog,
-  SubagentView,
-} from '@dsh-vscode/domain'
+import type { AgentConfiguration, PromptMode, SubagentCatalog, SubagentView } from '@dsh-vscode/domain'
 import type { FeatureRequest } from '@dsh-vscode/webview-protocol'
 import { transcriptNodeSchema } from '@dsh-vscode/webview-protocol'
 import type { TimelineNode } from '@dsh-vscode/timeline'
@@ -41,10 +35,15 @@ import { createHistoryActions } from './store/history-actions.js'
 import { installTranscript, parseTranscript } from './store/transcript-state.js'
 import { createSessionCreationActions } from './store/session-creation-actions.js'
 import { createAppLifecycleActions } from './store/app-lifecycle-actions.js'
-import { parseGoalViews } from './store/event-values.js'
+import { parseGoalViews, parseQueuedInputs } from './store/event-values.js'
 import { parseDshSettingsSnapshot } from './store/host-settings.js'
 import { createInitialState } from './store/initial-state.js'
-import { sameGoalList, sameSessionSummaryList, strictListValues } from './store/list-equality.js'
+import {
+  sameGoalList,
+  sameQueuedInputList,
+  sameSessionSummaryList,
+  strictListValues,
+} from './store/list-equality.js'
 import { confirmPendingPrompts } from './store/pending-prompts.js'
 import { normalizedModelSelection } from './store/model-catalog.js'
 import { parsePluginInventory } from './store/plugin-parsers.js'
@@ -203,6 +202,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   const callbacks: { openCreatedSession?: (sessionId: string) => Promise<void> } = {}
   let refreshVersion = 0
   let goalActivationAvailable = false
+  let queueReadGeneration = 0
   let goalReadGeneration = 0
   let openVersion = 0
   let sessionModelDirectoryGeneration = 0
@@ -465,6 +465,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     nextSessionModelDirectoryGeneration: () => ++sessionModelDirectoryGeneration,
     getSessionModelDirectoryGeneration: () => sessionModelDirectoryGeneration,
     getGoalReadGeneration: () => goalReadGeneration,
+    nextQueueReadGeneration: () => ++queueReadGeneration,
+    getQueueReadGeneration: () => queueReadGeneration,
     setGoalActivationAvailable: () => {
       goalActivationAvailable = true
     },
@@ -812,15 +814,36 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       }))
     },
     refreshQueue: async (sessionId) => {
+      const generation = ++queueReadGeneration
+      const version = openVersion
+      const epoch = state.connectionEpoch
+      const before = state.queue
+      const active = state.activeSessionId
+      const sequence = projectionSequences.queueBySession.get(sessionId)
       const result = await client.request<unknown>({
         type: 'session.queue.list',
         requestId: requestId(),
         payload: { sessionId },
       })
-      if (!Array.isArray(result)) return undefined
-      const queue = result as readonly QueuedInput[]
+      if (
+        disposed ||
+        generation !== queueReadGeneration ||
+        version !== openVersion ||
+        epoch !== state.connectionEpoch
+      )
+        return undefined
+      // A live Inbox cut received during this read is newer authority, even
+      // when it repeats identical rows. Never replace it with a delayed RPC.
+      if (
+        sequence !== projectionSequences.queueBySession.get(sessionId) ||
+        (active === sessionId && !sameQueuedInputList(state.queue, before))
+      )
+        return state.activeSessionId === sessionId ? state.queue : undefined
+      const queue = parseQueuedInputs(result, sessionId)
+      if (queue === undefined) return undefined
       setState((current) => {
-        const next = current.activeSessionId === sessionId ? { ...current, queue } : current
+        const next =
+          current.activeSessionId === sessionId ? { ...withAvailableList(current, 'queue'), queue } : current
         const remaining = confirmPendingPrompts(next.pendingPrompts ?? [], queue)
         return remaining === undefined ? next : { ...next, pendingPrompts: remaining }
       })
