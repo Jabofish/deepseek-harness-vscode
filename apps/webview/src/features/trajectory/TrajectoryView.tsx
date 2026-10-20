@@ -107,51 +107,22 @@ export const TrajectoryView = memo(function TrajectoryView(props: TrajectoryView
           </span>
         )}
       </div>
-      <div
-        ref={scrollRef}
-        className="dsh-trajectory"
-        data-scroll-follow={isPinnedToBottom ? 'pinned' : 'free'}
-        aria-label={t('trajectory.ledger')}
-      >
-        <div ref={contentRef} className="dsh-trajectory__content">
-          {projection.recordCount === 0 ? (
-            <p className="dsh-trajectory__empty">{t('trajectory.empty')}</p>
-          ) : searching ? (
-            matches.length === 0 ? (
-              <p className="dsh-trajectory__empty">{t('trajectory.noMatch', { query: query.trim() })}</p>
-            ) : (
-              <ul className="dsh-trajectory__rows">
-                {matches.map((record) => (
-                  <TrajectoryRow
-                    key={record.id}
-                    record={record}
-                    selected={selectedId === record.id}
-                    onSelect={selectRecord}
-                    t={t}
-                  />
-                ))}
-              </ul>
-            )
-          ) : (
-            projection.sections.map((section, sectionIndex) => (
-              <section
-                className="dsh-trajectory__section"
-                key={
-                  section.kind === 'turn' ? `turn:${section.turn ?? sectionIndex}` : `between:${sectionIndex}`
-                }
-                aria-label={
-                  section.kind === 'turn'
-                    ? t('trajectory.turn', { turn: section.turn ?? 0 })
-                    : t('trajectory.betweenTurns')
-                }
-              >
-                <h3 className="dsh-trajectory__section-title">
-                  {section.kind === 'turn'
-                    ? t('trajectory.turn', { turn: section.turn ?? 0 })
-                    : t('trajectory.betweenTurns')}
-                </h3>
+      <div className="dsh-trajectory-stage">
+        <div
+          ref={scrollRef}
+          className="dsh-trajectory"
+          data-scroll-follow={isPinnedToBottom ? 'pinned' : 'free'}
+          aria-label={t('trajectory.ledger')}
+        >
+          <div ref={contentRef} className="dsh-trajectory__content">
+            {projection.recordCount === 0 ? (
+              <p className="dsh-trajectory__empty">{t('trajectory.empty')}</p>
+            ) : searching ? (
+              matches.length === 0 ? (
+                <p className="dsh-trajectory__empty">{t('trajectory.noMatch', { query: query.trim() })}</p>
+              ) : (
                 <ul className="dsh-trajectory__rows">
-                  {section.records.map((record) => (
+                  {matches.map((record) => (
                     <TrajectoryRow
                       key={record.id}
                       record={record}
@@ -161,30 +132,65 @@ export const TrajectoryView = memo(function TrajectoryView(props: TrajectoryView
                     />
                   ))}
                 </ul>
-              </section>
-            ))
-          )}
-          {props.streaming ? (
-            <span className="dsh-sr-only" aria-live="polite">
-              {t('timeline.streaming')}
-            </span>
-          ) : null}
+              )
+            ) : (
+              projection.sections.map((section, sectionIndex) => (
+                <section
+                  className="dsh-trajectory__section"
+                  key={
+                    section.kind === 'turn'
+                      ? `turn:${section.turn ?? sectionIndex}`
+                      : `between:${sectionIndex}`
+                  }
+                  aria-label={
+                    section.kind === 'turn'
+                      ? t('trajectory.turn', { turn: section.turn ?? 0 })
+                      : t('trajectory.betweenTurns')
+                  }
+                >
+                  <h3 className="dsh-trajectory__section-title">
+                    {section.kind === 'turn'
+                      ? t('trajectory.turn', { turn: section.turn ?? 0 })
+                      : t('trajectory.betweenTurns')}
+                  </h3>
+                  <ul className="dsh-trajectory__rows">
+                    {section.records.map((record) => (
+                      <TrajectoryRow
+                        key={record.id}
+                        record={record}
+                        selected={selectedId === record.id}
+                        onSelect={selectRecord}
+                        t={t}
+                      />
+                    ))}
+                  </ul>
+                </section>
+              ))
+            )}
+            {props.streaming ? (
+              <span className="dsh-sr-only" aria-live="polite">
+                {t('timeline.streaming')}
+              </span>
+            ) : null}
+          </div>
         </div>
+        {showJumpToLatest && selected === undefined ? (
+          <ScrollToLatestButton label={t('timeline.jump')} onClick={scrollToLatest} />
+        ) : null}
+        {selected === undefined ? null : (
+          <TrajectoryInspector
+            record={selected}
+            onClose={() => {
+              setSelectedId(undefined)
+              // The keyboard returns to the row that asked for the details.
+              const target = selectedRowRef.current
+              selectedRowRef.current = null
+              if (target !== null && target.isConnected) target.focus()
+            }}
+            t={t}
+          />
+        )}
       </div>
-      {showJumpToLatest ? <ScrollToLatestButton label={t('timeline.jump')} onClick={scrollToLatest} /> : null}
-      {selected === undefined ? null : (
-        <TrajectoryInspector
-          record={selected}
-          onClose={() => {
-            setSelectedId(undefined)
-            // The keyboard returns to the row that asked for the details.
-            const target = selectedRowRef.current
-            selectedRowRef.current = null
-            if (target !== null && target.isConnected) target.focus()
-          }}
-          t={t}
-        />
-      )}
     </div>
   )
 })
