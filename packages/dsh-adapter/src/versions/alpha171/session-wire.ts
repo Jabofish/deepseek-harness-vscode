@@ -102,11 +102,26 @@ export function readAlpha171HistoryRecord(
   }
 }
 
-/** A view reads an already restored DSH session, not a complete persisted artifact. */
-export function readAlpha171SessionSnapshot(
+/** A validated V4 snapshot envelope whose history records are left undecoded. */
+export interface Alpha171SessionSnapshotEnvelope {
+  readonly header: Record<string, unknown>
+  readonly cursor: number
+  readonly records: readonly unknown[]
+  readonly hasMore: boolean
+  readonly projections: Record<string, unknown>
+  readonly assistantStream?: unknown
+}
+
+/**
+ * Validate a V4 snapshot envelope without decoding its history records. The
+ * per-record V4 codec admission is the expensive part of
+ * `readAlpha171SessionSnapshot`; the stream path decodes records incrementally
+ * so a large history snapshot cannot starve the transport heartbeat.
+ */
+export function readAlpha171SessionSnapshotEnvelope(
   value: unknown,
   profile?: AlphaV4SessionProfile,
-): Alpha171SessionSnapshot | undefined {
+): Alpha171SessionSnapshotEnvelope | undefined {
   const record = plainRecord(value)
   const header = plainRecord(record?.header)
   if (
@@ -119,20 +134,29 @@ export function readAlpha171SessionSnapshot(
     !validAlpha171ProjectionBaseline(record.projections)
   )
     return undefined
-  const records: Alpha171SessionHistoryRecord[] = []
-  for (const raw of record.records) {
-    const readable = readAlpha171HistoryRecord(raw, profile)
-    if (readable !== undefined && readable.event.seq <= record.cursor) records.push(readable)
-  }
   return {
-    type: 'snapshot',
     header,
     cursor: record.cursor,
-    records,
+    records: record.records,
     hasMore: record.hasMore,
     projections: record.projections,
     ...(record.assistantStream === undefined ? {} : { assistantStream: record.assistantStream }),
   }
+}
+
+/** A view reads an already restored DSH session, not a complete persisted artifact. */
+export function readAlpha171SessionSnapshot(
+  value: unknown,
+  profile?: AlphaV4SessionProfile,
+): Alpha171SessionSnapshot | undefined {
+  const envelope = readAlpha171SessionSnapshotEnvelope(value, profile)
+  if (envelope === undefined) return undefined
+  const records: Alpha171SessionHistoryRecord[] = []
+  for (const raw of envelope.records) {
+    const readable = readAlpha171HistoryRecord(raw, profile)
+    if (readable !== undefined && readable.event.seq <= envelope.cursor) records.push(readable)
+  }
+  return { type: 'snapshot', ...envelope, records }
 }
 
 export function validAlpha171SessionEvent(

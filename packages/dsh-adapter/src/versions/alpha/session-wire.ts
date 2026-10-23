@@ -152,6 +152,61 @@ export function expandHistoryRecords(
     .map(({ event }) => event)
 }
 
+/**
+ * Yield to the event loop so a long synchronous decode cannot starve the mux's
+ * WebSocket heartbeat. With `allowSynchronousEvents` disabled the `ws` pong is
+ * deferred behind `setImmediate`, so a single long-running decode delays every
+ * pong and lets DSH terminate the socket (abnormal 1006 close). `setImmediate`
+ * runs in the check phase, after the poll phase has had a chance to deliver the
+ * inbound ping frame.
+ */
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve))
+}
+
+/**
+ * Incrementally decode + normalize a V4 snapshot's history records, yielding to
+ * the event loop at least every ~100ms of synchronous work. This is the
+ * streaming-path replacement for `expandHistoryRecords` on `v4`: it also applies
+ * the `seq <= cursor` admission that `readAlpha171SessionSnapshot` would otherwise
+ * perform synchronously, so a snapshot's records are not decoded twice.
+ */
+export async function expandV4HistoryRecordsIncremental(
+  records: readonly unknown[],
+  sessionId: string,
+  cursor: number,
+  autoReviewDenialContract: boolean,
+  profile?: AlphaV4SessionProfile,
+): Promise<readonly Record<string, unknown>[]> {
+  const out: { event: Record<string, unknown>; index: number }[] = []
+  let lastYield = Date.now()
+  for (let index = 0; index < records.length; index++) {
+    const readable = readAlpha171HistoryRecord(records[index], profile)
+    if (readable !== undefined && readable.event.seq <= cursor)
+      out.push({
+        event: {
+          ...withAutoReviewDenialContract(
+            normalizeV4Event(readable.event, profile),
+            autoReviewDenialContract,
+          ),
+          sessionId,
+        },
+        index,
+      })
+    const now = Date.now()
+    if (now - lastYield >= 100) {
+      lastYield = now
+      await yieldToEventLoop()
+    }
+  }
+  return out
+    .sort((left, right) => {
+      const sequenceDelta = (left.event.seq as number) - (right.event.seq as number)
+      return sequenceDelta === 0 ? left.index - right.index : sequenceDelta
+    })
+    .map(({ event }) => event)
+}
+
 function withAutoReviewDenialContract(
   event: Record<string, unknown>,
   enabled: boolean,

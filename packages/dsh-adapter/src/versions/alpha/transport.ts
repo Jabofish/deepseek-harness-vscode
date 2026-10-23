@@ -37,6 +37,7 @@ import {
   alphaEventOutcome,
   alphaSessionList,
   expandHistoryRecords,
+  expandV4HistoryRecordsIncremental,
   normalizeAlphaEvent,
   readAlphaWireEventFrame,
   readAlphaWireSnapshot,
@@ -45,6 +46,7 @@ import {
   validAlphaEventReady,
   validAlphaEventWaterfall,
 } from './session-wire.js'
+import { readAlpha171SessionSnapshotEnvelope } from '../alpha171/session-wire.js'
 import {
   credentialDescribe,
   goalReceipt,
@@ -853,12 +855,45 @@ export class AlphaLoopbackApiClient implements DshTransport {
         for await (const item of this.openRemoteStream('session/follow', { request }, signal)) {
           const frame = recordOrUndefined(item)
           if (frame?.type === 'snapshot') {
-            const snapshot = readAlphaWireSnapshot(frame, wireVersion, this.options.sessionWireProfile)
-            if (snapshot === undefined) throw malformedResponse('session/follow snapshot')
+            // V4 history records carry expensive codec admission. Decode them
+            // incrementally (yielding to the event loop) so a large snapshot
+            // cannot starve the mux heartbeat and get the socket terminated by
+            // DSH. Older wire versions decode cheaply in a single pass.
+            let cursor: number
+            let projections: Record<string, unknown>
+            let assistantStream: unknown
+            let events: readonly Record<string, unknown>[]
+            if (wireVersion === 'v4') {
+              const envelope = readAlpha171SessionSnapshotEnvelope(frame, this.options.sessionWireProfile)
+              if (envelope === undefined) throw malformedResponse('session/follow snapshot')
+              cursor = envelope.cursor
+              projections = envelope.projections
+              assistantStream = envelope.assistantStream
+              events = await expandV4HistoryRecordsIncremental(
+                envelope.records,
+                sessionId,
+                envelope.cursor,
+                this.options.autoReviewDenialContract === true,
+                this.options.sessionWireProfile,
+              )
+            } else {
+              const snapshot = readAlphaWireSnapshot(frame, wireVersion, this.options.sessionWireProfile)
+              if (snapshot === undefined) throw malformedResponse('session/follow snapshot')
+              cursor = snapshot.cursor
+              projections = snapshot.projections
+              assistantStream = snapshot.assistantStream
+              events = expandHistoryRecords(
+                snapshot.records,
+                sessionId,
+                wireVersion,
+                this.options.autoReviewDenialContract === true,
+                this.options.sessionWireProfile,
+              )
+            }
             let queueFrame: unknown
             if (this.options.normalizeSessionQueueProjection !== undefined) {
               try {
-                queueFrame = this.options.normalizeSessionQueueProjection(sessionId, snapshot.projections)
+                queueFrame = this.options.normalizeSessionQueueProjection(sessionId, projections)
               } catch (cause) {
                 // Validate the projection-derived queue before publishing any part
                 // of this snapshot so malformed Inbox state cannot partially
@@ -866,28 +901,21 @@ export class AlphaLoopbackApiClient implements DshTransport {
                 throw malformedResponse('session/follow Inbox projection', cause)
               }
             }
-            const events = expandHistoryRecords(
-              snapshot.records,
-              sessionId,
-              wireVersion,
-              this.options.autoReviewDenialContract === true,
-              this.options.sessionWireProfile,
-            )
             if (projector !== undefined) for (const event of events) projector.rememberDurable(event)
             for (const event of events) yield { type: 'session/event', sessionId, event }
             if (queueFrame !== undefined) yield queueFrame
             yield {
               type: 'session/subscribed',
               sessionId,
-              lastSeq: snapshot.cursor,
+              lastSeq: cursor,
               // Alpha's Session follow is separate from session/control and
               // $events. A follow reconnect must not reset queue, jobs, or pending
               // interactions that are still owned by those streams.
               controlBaseline: false,
-              projections: snapshot.projections,
+              projections,
             }
             if (projector !== undefined) {
-              if (snapshot.assistantStream === undefined) {
+              if (assistantStream === undefined) {
                 // The host ignored the opt-in, so there is no baseline to adopt
                 // and re-opening cannot produce one. Stay on the durable path;
                 // the next attempt's start frame can still resume the preview.
@@ -898,7 +926,7 @@ export class AlphaLoopbackApiClient implements DshTransport {
               if (previewEnabled) {
                 let projected: readonly Alpha13ProjectorOutput[]
                 try {
-                  projected = projector.open(snapshot.assistantStream, sessionId, consecutiveRecoveries > 0)
+                  projected = projector.open(assistantStream, sessionId, consecutiveRecoveries > 0)
                 } catch {
                   recovery = 'baseline'
                   break
