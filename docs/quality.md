@@ -80,6 +80,8 @@ Fixture 只留结构必需字段，路径、Prompt、名称、模型输出和 ke
 $env:DSH_LIVE_SMOKE = '1'
 $env:DSH_LIVE_RUNTIME = '<dsh-executable>'
 $env:DSH_LIVE_RUNTIME_VERSION = '<exact-supported-version>'
+# Optional: explicitly install and exercise the bundled editor companion in this isolated runtime.
+$env:DSH_LIVE_EDITOR_COMPANION = '1'
 # Optional: a sanitized, disposable DSH home stored directly under the OS temp directory.
 $env:DSH_LIVE_HISTORY_FIXTURE_HOME = '<preseeded-temp-dsh-home>'
 pnpm exec vitest run tests/live-dsh

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { DshTransport } from '../src/contracts.js'
 import { Rc211VersionAdapter } from '../src/versions/rc211/adapter.js'
 import { Rc212VersionAdapter } from '../src/versions/rc212/adapter.js'
+import { Rc213VersionAdapter } from '../src/versions/rc213/adapter.js'
 import { AlphaLoopbackApiClient } from '../src/versions/alpha/transport.js'
 import { Alpha212PluginBundleRepository } from '../src/versions/alpha212/plugin-manager-repository.js'
 import { Alpha213PluginBundleRepository } from '../src/versions/alpha213/plugin-manager-repository.js'
@@ -28,84 +29,93 @@ function fixture(value: () => unknown): DshTransport {
   }
 }
 
-describe.each([Rc211VersionAdapter, Rc212VersionAdapter])('%s incremental contracts', (Adapter) => {
-  class FixtureAdapter extends Adapter {
-    public transport(): AlphaLoopbackApiClient {
-      return new AlphaLoopbackApiClient({
-        ...this.createTransportOptions(endpoint),
-        webSocket: FakeWebSocket,
+describe.each([Rc211VersionAdapter, Rc212VersionAdapter, Rc213VersionAdapter])(
+  '%s incremental contracts',
+  (Adapter) => {
+    class FixtureAdapter extends Adapter {
+      public transport(): AlphaLoopbackApiClient {
+        return new AlphaLoopbackApiClient({
+          ...this.createTransportOptions(endpoint),
+          webSocket: FakeWebSocket,
+        })
+      }
+    }
+    it('accepts Workspace replacement within a generation and replaces archive/pin projections', async () => {
+      const transport = new FixtureAdapter(transportOptions(globalThis.fetch)).transport()
+      const signal = new AbortController()
+      const iterator = transport.openWorkspaceStream(signal.signal)[Symbol.asyncIterator]()
+      const first = iterator.next()
+      const socket = FakeWebSocket.instances.at(-1)!
+      socket.open()
+      await vi.waitFor(() => expect(socket.sent.length).toBeGreaterThan(0))
+      const opening = JSON.parse(socket.sent[0]!) as { streamId: string }
+      const send = (value: unknown): void =>
+        socket.message({ type: 'item', streamId: opening.streamId, value })
+      send({ type: 'baseline', value: { items: [], archivedSessionIds: ['old'], pinnedSessionIds: ['old'] } })
+      expect((await first).value).toEqual({ type: 'host/workspace-changed' })
+      expect((await iterator.next()).value).toMatchObject({ sessionIds: ['old'] })
+      expect((await iterator.next()).value).toMatchObject({ sessionIds: ['old'] })
+      send({ type: 'replace', value: { items: [], archivedSessionIds: [], pinnedSessionIds: ['new'] } })
+      expect((await iterator.next()).value).toEqual({ type: 'host/workspace-changed' })
+      expect((await iterator.next()).value).toEqual({
+        type: 'host/archived-sessions-changed',
+        sessionIds: [],
       })
-    }
-  }
-  it('accepts Workspace replacement within a generation and replaces archive/pin projections', async () => {
-    const transport = new FixtureAdapter(transportOptions(globalThis.fetch)).transport()
-    const signal = new AbortController()
-    const iterator = transport.openWorkspaceStream(signal.signal)[Symbol.asyncIterator]()
-    const first = iterator.next()
-    const socket = FakeWebSocket.instances.at(-1)!
-    socket.open()
-    await vi.waitFor(() => expect(socket.sent.length).toBeGreaterThan(0))
-    const opening = JSON.parse(socket.sent[0]!) as { streamId: string }
-    const send = (value: unknown): void => socket.message({ type: 'item', streamId: opening.streamId, value })
-    send({ type: 'baseline', value: { items: [], archivedSessionIds: ['old'], pinnedSessionIds: ['old'] } })
-    expect((await first).value).toEqual({ type: 'host/workspace-changed' })
-    expect((await iterator.next()).value).toMatchObject({ sessionIds: ['old'] })
-    expect((await iterator.next()).value).toMatchObject({ sessionIds: ['old'] })
-    send({ type: 'replace', value: { items: [], archivedSessionIds: [], pinnedSessionIds: ['new'] } })
-    expect((await iterator.next()).value).toEqual({ type: 'host/workspace-changed' })
-    expect((await iterator.next()).value).toEqual({ type: 'host/archived-sessions-changed', sessionIds: [] })
-    expect((await iterator.next()).value).toEqual({
-      type: 'host/pinned-sessions-changed',
-      sessionIds: ['new'],
+      expect((await iterator.next()).value).toEqual({
+        type: 'host/pinned-sessions-changed',
+        sessionIds: ['new'],
+      })
+      send({ type: 'replace', value: { items: [], archivedSessionIds: [], pinnedSessionIds: null } })
+      await expect(iterator.next()).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+      signal.abort()
+      await transport.close()
+      expect(socket.closeCalls).toBe(1)
     })
-    send({ type: 'replace', value: { items: [], archivedSessionIds: [], pinnedSessionIds: null } })
-    await expect(iterator.next()).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
-    signal.abort()
-    await transport.close()
-    expect(socket.closeCalls).toBe(1)
-  })
 
-  it.each([
-    ['gateway/interactions-forbidden', 'PERMISSION_DENIED'],
-    ['gateway/peer-disposed', 'BACKEND_UNREACHABLE'],
-    ['gateway/unrecognized', 'PROTOCOL_ERROR'],
-  ])('maps %s without exposing diagnostics or replaying writes', async (wireCode, code) => {
-    let requests = 0
-    const transport = new Rc211VersionAdapter(
-      transportOptions((_input, init) => {
-        requests++
-        return Promise.resolve(failureResponse(init, wireCode, 'private path and token'))
-      }),
-    ).createTransport(endpoint)
-    await expect(callRpc(transport, 'session.create', {})).rejects.toMatchObject({ code })
-    expect(requests).toBe(1)
-    await transport.close()
-  })
+    it.each([
+      ['gateway/interactions-forbidden', 'PERMISSION_DENIED'],
+      ['gateway/peer-disposed', 'BACKEND_UNREACHABLE'],
+      ['gateway/unrecognized', 'PROTOCOL_ERROR'],
+    ])('maps %s without exposing diagnostics or replaying writes', async (wireCode, code) => {
+      let requests = 0
+      const transport = new Adapter(
+        transportOptions((_input, init) => {
+          requests++
+          return Promise.resolve(failureResponse(init, wireCode, 'private path and token'))
+        }),
+      ).createTransport(endpoint)
+      await expect(callRpc(transport, 'session.create', {})).rejects.toMatchObject({ code })
+      expect(requests).toBe(1)
+      await transport.close()
+    })
 
-  it('closes declined/cancelled probes for malformed, business, protocol and timeout failures', async () => {
-    for (const mode of ['malformed', 'business-error', 'protocol-error', 'timeout'] as const) {
-      const transport = new ProbeFixtureTransport(mode)
-      class Adapter extends Rc211VersionAdapter {
-        public override createTransport(): DshTransport {
-          return transport
+    it('closes declined/cancelled probes for malformed, business, protocol and timeout failures', async () => {
+      for (const mode of ['malformed', 'business-error', 'protocol-error', 'timeout'] as const) {
+        const transport = new ProbeFixtureTransport(mode)
+        class FixtureVersionAdapter extends Adapter {
+          public override createTransport(): DshTransport {
+            return transport
+          }
         }
+        const adapter = new FixtureVersionAdapter(transportOptions(globalThis.fetch))
+        const candidate = {
+          endpoint,
+          source: 'configured' as const,
+          confidence: 1,
+          runtimeVersion: adapter.supportedVersion,
+        }
+        expect(await adapter.probe(candidate)).toBeUndefined()
+        expect(transport.closeCalls).toBe(1)
+        const abort = new AbortController()
+        abort.abort()
+        await expect(adapter.probe(candidate, abort.signal)).rejects.toMatchObject({ name: 'AbortError' })
+        expect(transport.closeCalls).toBe(2)
       }
-      const adapter = new Adapter(transportOptions(globalThis.fetch))
-      const candidate = {
-        endpoint,
-        source: 'configured' as const,
-        confidence: 1,
-        runtimeVersion: '0.2.1-rc.1',
-      }
-      expect(await adapter.probe(candidate)).toBeUndefined()
-      expect(transport.closeCalls).toBe(1)
-      const abort = new AbortController()
-      abort.abort()
-      await expect(adapter.probe(candidate, abort.signal)).rejects.toMatchObject({ name: 'AbortError' })
-      expect(transport.closeCalls).toBe(2)
-    }
-  })
+    })
+  },
+)
 
+describe('shared 0.2.1 incremental repository contracts', () => {
   it('keeps restart reasons on install, recovery, enable and remove; refuses malformed reasons', async () => {
     let value: unknown = {
       target: 'fixture',

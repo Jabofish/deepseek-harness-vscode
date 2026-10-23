@@ -27,6 +27,7 @@ import {
   Alpha215VersionAdapter,
   Rc211VersionAdapter,
   Rc212VersionAdapter,
+  Rc213VersionAdapter,
   Rc02VersionAdapter,
   Rc03VersionAdapter,
   Rc6VersionAdapter,
@@ -90,6 +91,7 @@ describe('version adapter family chains', () => {
       new Alpha215VersionAdapter(options),
       new Rc211VersionAdapter(options),
       new Rc212VersionAdapter(options),
+      new Rc213VersionAdapter(options),
     ]
 
     expect(adapters.map((adapter) => adapter.supportedVersion)).toEqual([...SUPPORTED_DSH_VERSIONS])

@@ -3,6 +3,25 @@ import { CONNECTION_PHASES } from '@dsh-vscode/domain'
 import { publicState } from './public-projection.js'
 
 describe('public connection progress', () => {
+  it('projects blank reuse only as a safe capability, defaulting older adapters to false', () => {
+    for (const blankSessionReuse of [true, false, undefined]) {
+      const projected = publicState({
+        kind: 'connected',
+        backend: {
+          endpoint: { host: '127.0.0.1', port: 3939, baseUrl: 'http://127.0.0.1:3939' },
+          ownership: 'external',
+          capabilities: {
+            protocolVersion: 'fixture',
+            dshVersion: 'fixture',
+            features: new Set(),
+            ...(blankSessionReuse === undefined ? {} : { blankSessionReuse }),
+          },
+        },
+      })
+      expect(projected).toMatchObject({ blankSessionReuse: blankSessionReuse === true })
+      expect(projected).not.toHaveProperty('endpoint')
+    }
+  })
   it.each(CONNECTION_PHASES)('projects only the safe phase for %s', (phase) => {
     expect(
       publicState({

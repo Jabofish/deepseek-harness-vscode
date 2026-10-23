@@ -7,6 +7,13 @@ in Settings. It is not automatically installed, including during F5 launches. Th
 agent edits remain undoable. Initially clean buffers save automatically;
 existing unsaved user changes remain unsaved when edits are applied or undone.
 
+Compatibility follows the available Host services and the negotiated editor protocol.
+The published archive accepts DSH versions broadly, including prereleases; its optional
+Cordis, Tools and Typert peers come from the running Host. It does not install another
+copy of these services or require a list of DSH release numbers. Development dependencies
+pin only the types used to build the archive. Missing methods or capabilities remain
+unavailable, and authenticated peer ownership is checked on every request.
+
 ## Start and configure
 
 1. Connect DSH and select or create a session in your open workspace.

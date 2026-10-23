@@ -8,6 +8,24 @@ import {
 import { featureHostEventSchema, featureRequestSchema, featureResponseSchema } from './feature-schemas.js'
 
 describe('generic Webview host response values', () => {
+  it('admits the blank reuse capability only as a connected boolean without Host details', () => {
+    const event = (payload: unknown): unknown => ({
+      type: 'event',
+      name: 'connection.snapshot',
+      sequence: 1,
+      payload,
+    })
+    expect(hostMessageSchema.safeParse(event({ kind: 'connected', blankSessionReuse: true })).success).toBe(
+      true,
+    )
+    expect(hostMessageSchema.safeParse(event({ kind: 'connected' })).success).toBe(true)
+    for (const payload of [
+      { kind: 'connected', blankSessionReuse: 'true' },
+      { kind: 'idle', blankSessionReuse: true },
+      { kind: 'connected', blankSessionReuse: true, endpoint: 'http://private.example' },
+    ])
+      expect(hostMessageSchema.safeParse(event(payload)).success).toBe(false)
+  })
   it('carries bounded session-search completeness metadata in the generic host result', () => {
     expect(
       hostEnvelopeSchema.safeParse({

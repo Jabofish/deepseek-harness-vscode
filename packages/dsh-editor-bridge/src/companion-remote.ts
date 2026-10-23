@@ -79,7 +79,7 @@ export class VscodeEditorCompanion extends TypertRemoteService {
       status: 'ok',
       value: {
         protocolVersion: 2,
-        packageVersion: '0.2.1',
+        packageVersion: '0.2.2',
         capabilities: [...EDITOR_COMPANION_CAPABILITIES],
         maxGrants: 16,
       },

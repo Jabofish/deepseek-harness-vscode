@@ -25,6 +25,7 @@ export function publicState(state: BackendState, output?: readonly ConnectionLog
       ? {
           dshVersion: state.backend.capabilities.dshVersion,
           sessionRestore: state.backend.capabilities.sessionRestore === true,
+          blankSessionReuse: state.backend.capabilities.blankSessionReuse === true,
           jobController: state.backend.capabilities.jobController === true,
           accountLifecycleAvailable: state.backend.capabilities.features.has('account-lifecycle'),
           ...(state.backend.capabilities.subagentImagePrompts === true ? { subagentImagePrompts: true } : {}),

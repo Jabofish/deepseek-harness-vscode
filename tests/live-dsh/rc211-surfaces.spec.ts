@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { PluginBundleUseCases } from '../../packages/application/src/use-cases/plugin-bundle-use-cases.js'
 import { canConnect, LIVE_TIMEOUT_MS, startManagedRuntime } from './harness.js'
 
-/** Exact published 0.2.1 alpha.3/.4/.5 and rc.1/.2; pins in rc211-contract.spec.ts.
+/** Exact published 0.2.1 alpha.3/.4/.5 and rc.1/.2/.3; pins in rc211-contract.spec.ts.
  * Only a harness-owned process with disposable workspace and home; no model, account or package mutation.
  */
 const version = process.env.DSH_LIVE_RUNTIME_VERSION ?? ''
-const releases = ['0.2.1-alpha.3', '0.2.1-alpha.4', '0.2.1-alpha.5', '0.2.1-rc.1', '0.2.1-rc.2']
+const releases = ['0.2.1-alpha.3', '0.2.1-alpha.4', '0.2.1-alpha.5', '0.2.1-rc.1', '0.2.1-rc.2', '0.2.1-rc.3']
 
 describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1' || !releases.includes(version))(
   'live DSH 0.2.1 incremental shipped contracts',
@@ -17,7 +17,7 @@ describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1' || !releases.includes(version
         const runtime = await startManagedRuntime()
         try {
           const { backend } = runtime
-          if (version === '0.2.1-rc.2') {
+          if (version === '0.2.1-rc.2' || version === '0.2.1-rc.3') {
             const settings = backend.settings
             const initial = await settings.readSnapshot()
             const selection = initial.schema.namespaces.find((entry) => entry.ns === 'web')!

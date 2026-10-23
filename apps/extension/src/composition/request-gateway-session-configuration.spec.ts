@@ -46,13 +46,14 @@ const workspace: WorkspaceSummary = {
   sessionCount: 1,
 }
 
-function harness(): {
+function harness(blankSessionReuse = false): {
   readonly gateway: RequestGateway
   readonly sent: unknown[]
   readonly list: Mock<DshBackend['presets']['list']>
   readonly create: Mock<DshBackend['sessions']['create']>
   readonly setConfiguration: Mock<DshBackend['sessions']['setConfiguration']>
   readonly guard: Mock<RequestGatewayDependencies['requireCurrentWorkspaceSession']>
+  readonly service: BackendService
 } {
   const list = vi.fn<DshBackend['presets']['list']>().mockResolvedValue({
     presets: [{ id: 'deployed-default', trust: 'system', isDefault: true }],
@@ -66,6 +67,7 @@ function harness(): {
   const service = new BackendService()
   service.attach(
     {
+      connection: { capabilities: { blankSessionReuse } },
       events: { subscribe: () => () => undefined },
       presets: { list },
       sessions: { create, setConfiguration },
@@ -94,10 +96,10 @@ function harness(): {
     diagnostics: { log: () => {} },
     context: { extensionUri: { fsPath: '/extension' }, subscriptions: [] },
   } as unknown as RequestGatewayDependencies)
-  return { gateway, sent, list, create, setConfiguration, guard }
+  return { gateway, sent, list, create, setConfiguration, guard, service }
 }
 
-function request(type: 'session.create' | 'session.configure'): unknown {
+function request(type: 'session.create' | 'session.configure', sessionId?: string): unknown {
   return {
     protocolVersion: 1,
     message: {
@@ -106,6 +108,7 @@ function request(type: 'session.create' | 'session.configure'): unknown {
       payload: {
         ...(type === 'session.create' ? { workspaceId: 'workspace' } : { sessionId: 'session' }),
         configuration,
+        ...(sessionId === undefined ? {} : { sessionId }),
       },
     },
   }
@@ -115,6 +118,51 @@ describe('session configuration routes', () => {
   beforeEach(() => {
     host.isTrusted = true
   })
+
+  it('authorizes a named reusable blank before resolving configuration and creating', async () => {
+    const { gateway, sent, create, guard } = harness(true)
+    await gateway.router.handle(request('session.create', 'session'))
+    expect(guard).toHaveBeenCalledOnce()
+    expect(guard).toHaveBeenCalledWith('session', expect.any(AbortSignal), { allowArchived: true })
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'session', workspaceId: 'workspace' }),
+      expect.any(AbortSignal),
+    )
+    expect(sent[0]).toMatchObject({ ok: true })
+  })
+
+  it('refuses a late blank creation after the connected backend changes during configuration resolution', async () => {
+    const { gateway, sent, list, create, service } = harness(true)
+    list.mockImplementation(() => {
+      service.attach(
+        { events: { subscribe: () => () => undefined } } as unknown as DshBackend,
+        () => undefined,
+      )
+      return Promise.resolve({
+        presets: [{ id: 'deployed-default', trust: 'system', isDefault: true }],
+        authorable: false,
+      })
+    })
+    await gateway.router.handle(request('session.create', 'session'))
+    expect(sent[0]).toMatchObject({ ok: false, error: { code: 'REQUEST_CANCELLED' } })
+    expect(create).not.toHaveBeenCalled()
+  })
+
+  it.each(['foreign', 'wrong-workspace'] as const)(
+    'rejects %s blank adoption before mutation',
+    async (mode) => {
+      const { gateway, sent, create, list, guard } = harness(true)
+      if (mode === 'foreign')
+        guard.mockRejectedValue(
+          new AppError({ code: 'PERMISSION_DENIED', message: 'Foreign session', retryable: false }),
+        )
+      else guard.mockResolvedValue({ ...session, workspaceId: 'other' })
+      await gateway.router.handle(request('session.create', 'session'))
+      expect(sent[0]).toMatchObject({ ok: false, error: { code: 'PERMISSION_DENIED' } })
+      expect(create).not.toHaveBeenCalled()
+      expect(list).not.toHaveBeenCalled()
+    },
+  )
 
   it.each(['session.create', 'session.configure'] as const)(
     '%s applies the same Application rules and preserves Host projection',

@@ -160,6 +160,7 @@ export interface AppState extends SessionModelDirectoryState {
   /** True only when the selected pinned adapter accepts inline subagent images. */
   readonly subagentImagePrompts: boolean
   readonly sessionRestore?: boolean
+  readonly blankSessionReuse?: boolean
   readonly jobControllerAvailable: boolean
   /** Safe compatibility warning for an unknown/fallback DSH runtime. */
   readonly dshCompatibilityWarning: string | undefined

@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 0.3.9
+
+- 编辑器配套包升级到 `0.2.2`，采用跨版本兼容声明与可选 Host peer；通过服务和协议协商决定能力，不以 DSH 版本枚举限制安装，也不额外安装一套核心服务。保留构建指纹更新与原有协议。
+- Updates the editor companion to `0.2.2` with broad runtime compatibility and optional Host peers. Services and protocol negotiation determine available capabilities without a DSH version allowlist or an extra core-service installation. Build fingerprint updates and the existing protocol remain available.
+
+- 新增 DSH `0.2.1-rc.3` 精确适配器，核对固定发布源码的 Remote、Gateway、Session、设置、工具与启动契约；更新可选运行时版本，引导安装默认继续使用稳定通道的 `0.2.1-rc.2`。
+- Adds an exact DSH `0.2.1-rc.3` adapter after comparing its pinned Remote, Gateway, Session, settings, tools and launch contracts. Runtime updates offer the new version; guided installation retains stable-channel `0.2.1-rc.2`.
+
+- 新版新会话回到工作区内已有空白草稿，按显式预设隔离 Creator 与普通草稿；保留已有模型选择，合并重复点击，采用 Host 实际返回的会话，并校验工作区归属及连接代次。
+- New Session on the new runtime returns to an existing workspace blank and matches explicit presets so Creator keeps ordinary drafts separate. It preserves the existing model choice, coalesces repeated clicks, follows the Host's actual result, and checks workspace ownership and connection identity.
+
+- 动态承接官方模型目录、百万上下文与模型目录超时／缓存配置；新增精确版本、草稿、错误、协议和隔离运行回归。浏览器专用插件插槽仍由 DSH Web UI 承载，VS Code 使用原生视图与已有插件管理入口。
+- Consumes the official model catalog, million-token context metadata and listing timeout/cache settings dynamically, with exact-version, draft, error, protocol and isolated-runtime regressions. Browser plugin slots remain in DSH Web UI; VS Code uses native views and the existing plugin manager.
+
 ## 0.3.8
 
 - 修复空 VS Code 窗口安装编辑器配套时因保存工作区设置失败而立即终止的问题；未打开文件夹时保存到用户设置，安装、关闭与只读控制均可使用。

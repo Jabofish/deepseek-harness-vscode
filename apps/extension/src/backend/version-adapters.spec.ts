@@ -5,7 +5,7 @@ import {
   LATEST_PUBLISHED_DSH_VERSION,
   LATEST_SUPPORTED_DSH_VERSION,
   Rc202VersionAdapter,
-  Rc212VersionAdapter,
+  Rc213VersionAdapter,
   VersionedBackendProbe,
 } from '@dsh-vscode/dsh-adapter'
 
@@ -61,10 +61,11 @@ describe('production version adapter registry', () => {
 
     expect(marker).toBeInstanceOf(Rc202VersionAdapter)
     expect(marker?.fallback).toBe(false)
-    expect(adapters[0]).toBeInstanceOf(Rc212VersionAdapter)
+    expect(adapters[0]).toBeInstanceOf(Rc213VersionAdapter)
     expect(adapters[0]?.fallback).toBe(false)
     expect(new Set(adapters.map((adapter) => adapter.supportedVersion)).size).toBe(adapters.length)
-    expect(adapters.slice(0, 9).map((adapter) => adapter.supportedVersion)).toEqual([
+    expect(adapters.slice(0, 10).map((adapter) => adapter.supportedVersion)).toEqual([
+      '0.2.1-rc.3',
       '0.2.1-rc.2',
       '0.2.1-rc.1',
       '0.2.1-alpha.5',
@@ -75,12 +76,12 @@ describe('production version adapter registry', () => {
       '0.2.0-rc.2',
       '0.2.0-rc.1',
     ])
-    expect(adapters[9]?.supportedVersion).toBe('0.1.7-rc.2')
+    expect(adapters[10]?.supportedVersion).toBe('0.1.7-rc.2')
     expect(adapters.filter((adapter) => adapter.supportedVersion === '0.2.1-alpha.1')).toHaveLength(1)
     expect(adapters.filter((adapter) => adapter.supportedVersion === '0.2.0-rc.2')).toHaveLength(1)
     expect(adapters.filter((adapter) => adapter.supportedVersion === '0.2.0-rc.1')).toHaveLength(1)
-    expect(LATEST_PUBLISHED_DSH_VERSION).toBe('0.2.1-rc.2')
-    expect(LATEST_SUPPORTED_DSH_VERSION).toBe('0.2.1-rc.2')
+    expect(LATEST_PUBLISHED_DSH_VERSION).toBe('0.2.1-rc.3')
+    expect(LATEST_SUPPORTED_DSH_VERSION).toBe('0.2.1-rc.3')
     expect(DEFAULT_INSTALL_DSH_VERSION).toBe('0.2.1-rc.2')
   })
 })

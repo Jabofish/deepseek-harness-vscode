@@ -206,12 +206,15 @@ export function findReusableBlankSession(
   sessions: readonly SessionSummary[],
   archivedSessionIds: readonly string[],
   workspace: WorkspaceSummary,
+  presetId?: string,
 ): SessionSummary | undefined {
   const archived = new Set(archivedSessionIds)
   return sessions.find(
     (session) =>
       session.origin !== 'subagent' &&
       session.blank &&
+      session.status === 'idle' &&
+      (presetId === undefined || session.agentPreset === undefined || session.agentPreset === presetId) &&
       !archived.has(session.id) &&
       (workspace.sessionIds?.includes(session.id) === true || session.workspaceId === workspace.id),
   )

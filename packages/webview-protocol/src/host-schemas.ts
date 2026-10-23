@@ -1,4 +1,6 @@
 import { z } from 'zod'
+import { CONNECTION_PHASES } from '@dsh-vscode/domain'
+import { connectionOutputSchema } from './connection-output.js'
 import { containsControlCharacters, featureRelativePathSchema } from './feature-schemas/feature-shared.js'
 import { protocolAppErrorCodeSchema } from './feature-schemas.js'
 import { id, wireVersion, MAX_HOST_ERROR_MESSAGE_CHARS, boundedUnknown } from './request-common.js'
@@ -222,12 +224,59 @@ const genericHostEventSchema = z
           name !== 'job.follow.failed' &&
           name !== 'queue.updated' &&
           name !== 'tool.preparing' &&
+          name !== 'connection.snapshot' &&
           name !== 'session.transcript',
       ),
     sequence: z.number().int().nonnegative(),
     payload: boundedUnknown,
   })
   .strict()
+
+const connectionSnapshotHostEventSchema = z
+  .object({
+    type: z.literal('event'),
+    name: z.literal('connection.snapshot'),
+    sequence: z.number().int().nonnegative(),
+    payload: z
+      .object({
+        kind: z.enum([
+          'idle',
+          'locating-runtime',
+          'discovering',
+          'connecting',
+          'starting',
+          'connected',
+          'runtime-missing',
+          'failed',
+          'port-conflict',
+          'stopping',
+        ]),
+        phase: z.enum(CONNECTION_PHASES).optional(),
+        output: connectionOutputSchema.optional(),
+        dshVersion: z.string().max(256).optional(),
+        sessionRestore: z.boolean().optional(),
+        blankSessionReuse: z.boolean().optional(),
+        jobController: z.boolean().optional(),
+        accountLifecycleAvailable: z.boolean().optional(),
+        subagentImagePrompts: z.boolean().optional(),
+        backendInstanceId: id.optional(),
+        connectionGeneration: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+        compatibilityWarning: z.string().max(MAX_HOST_ERROR_MESSAGE_CHARS).optional(),
+        message: z.string().max(MAX_HOST_ERROR_MESSAGE_CHARS).optional(),
+        retryable: z.boolean().optional(),
+        port: z.number().int().min(1).max(65535).optional(),
+        searchedLocations: z.array(z.string().max(2048)).max(512).optional(),
+      })
+      .strict()
+      .refine((value) => value.blankSessionReuse !== true || value.kind === 'connected', {
+        message: 'Blank reuse requires a connected backend.',
+      }),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const failure = budgetFailure(value)
+    if (failure !== undefined) context.addIssue({ code: 'custom', message: failure })
+  })
 
 const queueUpdatedHostEventSchema = z
   .object({
@@ -269,6 +318,7 @@ const jobFollowFailedHostEventSchema = z
   .strict()
 
 export const hostEventSchema = z.union([
+  connectionSnapshotHostEventSchema,
   z
     .object({
       type: z.literal('event'),

@@ -4,7 +4,7 @@
 
 ## 上游来源与安装默认
 
-当前上游最新发布包为 `@deepseek-ai/dsh@0.2.1-rc.2`；扩展引导安装默认包为 `@deepseek-ai/dsh@0.2.1-rc.2`，固定源码见下文版本表，隔离验证方法见[质量流程](quality.md)。发布版本与安装默认分别由 `LATEST_PUBLISHED_DSH_VERSION`、`DEFAULT_INSTALL_DSH_VERSION` 维护；新增适配不自动切换默认，安装和更新均使用经过验证的精确版本，不跟随浮动 dist-tag。默认版本不代表所有能力完成，timed 提问等验收缺口仍见能力矩阵。
+当前上游最新发布包为 `@deepseek-ai/dsh@0.2.1-rc.3`（npm `next`，`latest` 仍为 rc.2）；扩展引导安装默认包为 `@deepseek-ai/dsh@0.2.1-rc.2`，固定源码见下文版本表，隔离验证方法见[质量流程](quality.md)。发布版本与安装默认分别由 `LATEST_PUBLISHED_DSH_VERSION`、`DEFAULT_INSTALL_DSH_VERSION` 维护；新增适配不自动切换默认，安装和更新均使用经过验证的精确版本，不跟随浮动 dist-tag。默认版本不代表所有能力完成，timed 提问等验收缺口仍见能力矩阵。
 
 历史 Host API 的固定基线是提交 [`47f943859bef60e4160492346772ded9b24f765a`](https://github.com/deepseek-ai/deepseek-harness/tree/47f943859bef60e4160492346772ded9b24f765a)：[RPC map](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/host/apiproxy/src/api/rpc-map.ts)、[events](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/host/apiproxy/src/api/events.ts)、[tool catalog](https://github.com/deepseek-ai/deepseek-harness/tree/47f943859bef60e4160492346772ded9b24f765a/packages/core/tools)。它只证明该 Host API 家族；较新的 Connection/Gateway、typed Remote 和 Session Controller 必须从**目标版本自己的 tag/commit 和实际存在的接口文件**核对。尤其 `0.1.5-rc.2` 与 `0.1.5-rc.3` 的 wire 比较不能引用上述已不存在的旧 RPC 文件；两者被适配器消费的 Session Controller、typed Remote、Connection/Gateway 与工具运行时源码相同，仍保留各自精确身份。
 
@@ -35,6 +35,7 @@
 | `0.2.1-alpha.5`                                                                     | `alpha215`                                      | 账号奖励通知标题与可选显示字段；任意 JSON 元数据留在 Host；仅精确身份                                                                                             |
 | `0.2.1-rc.1`                                                                        | `rc211`                                         | 独立入口，复用已核对 alpha.5 消费契约；不作为未知版本回退                                                                                                         |
 | `0.2.1-rc.2`                                                                        | `rc212`                                         | 独立入口，复用已核对 rc.1 消费契约；动态承接 Search / Fetch 设置；不作为未知版本回退                                                                              |
+| `0.2.1-rc.3`                                                                        | `rc213`                                         | 独立精确入口；按预设复用空白草稿，动态承接官方模型目录与 listing 设置；不作为未知版本回退                                                                         |
 
 `0.1.7-rc.2` 的固定源码是 [tag `dsh-v0.1.7-rc.2`](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.1.7-rc.2)，提交 `477b4f420553e8a52c2fbccc464d7561b239c443`。其他新增版本也必须在 fixture 注明 tag、commit、文件和类型；版本身份、schema、错误词汇、启动参数与能力声明一起核对。
 
@@ -92,6 +93,20 @@ Plugin Manager 只在新入口读取并校验五种 `restartReason`，从 mutati
 账号奖励通知的 `title` 和 display 字段可以缺省；`campaign`、`amount`、`currency`、`grantedAt` 可以是任意 JSON，不能据此拒绝整批通知，也不能把它们原样投影。只发送安全字符串显示字段和有界标题，缺省金额仍允许显示及确认奖励；`orderId` 继续严格校验，确认身份留在 Host。
 
 rc.2 与 rc.1 的 Connection / Gateway、全部 API Remote、Session V4、Account、Plugin Manager 和工具声明源码相同。新增 Search / Fetch provider 通过 `settings.describe` 暴露 `web` 的实时 provider 选择和 `web-deepseek-api` 的配置，包括结果数量及是否发送原始问题；通用插件配置界面从运行时 schema 生成控件，不内置 provider 清单。密钥继续通过 Host 原生凭据入口管理。上游临时模型标签只改变展示，不改变目录名称、model ID 或路由，本扩展保持权威目录原值。精确准入、继承的错误 / 取消 / 释放及隔离真实配置读写入口见 `rc211-contract.spec.ts`、`rc211-incremental-contract.spec.ts` 和 `tests/live-dsh/rc211-surfaces.spec.ts`。
+
+### rc.3 的模型目录与空白草稿
+
+`0.2.1-rc.3` 固定到 [tag `dsh-v0.2.1-rc.3`](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.2.1-rc.3)，提交 `1f81c047fc48fa190a683e469daa699857e9afe8`。相对 rc.2，Connection/Gateway、Host 侧 API Remote、Session V4 与格式目录、Workspace、Job、Schedule、Account、Plugin Manager、Typert、CLI 参数及工具声明源码未变；Session Controller 的 client summary 注释更新不改变 wire。`rc213` 独立继承已核对的 rc.2 契约，保持精确身份及 `fallback: false`。
+
+- [新会话导航](https://github.com/deepseek-ai/deepseek-harness/blob/1f81c047fc48fa190a683e469daa699857e9afe8/packages/client/ui-workspace/src/client/navigation.ts)重新使用工作区内可复用的空白会话；指定预设时跳过已列出其他预设的候选，未列出预设仍可候选。Adapter 声明 Domain `blankSessionReuse`，Host 只投影安全布尔值，严格协议拒绝非法类型和 Host 私有字段。Webview 按能力进入原生创建流程，传候选 `sessionId` 与所选预设，不发送旧 `reuseWorkspaceBlank`；Host 先验证所属工作区，DSH 对候选是否仍可复用作最终决定。打开实际回执 ID，保留已有模型与该会话草稿；Creator 不接管列出其他预设的普通草稿。不自动发送消息，重复点击合并，较新的导航或连接使迟到回执失效。旧入口保留原有创建策略。
+- [官方 API-key 目录加载](https://github.com/deepseek-ai/deepseek-harness/blob/1f81c047fc48fa190a683e469daa699857e9afe8/packages/llm/llm-deepseek-api-key/src/index.ts)与账号路由共用缓存和 listing 解析。是否读取官方 `/models`、认证、后台刷新、失败重试、明确的自定义模型配置及非官方 origin 的边界均由 DSH 执行；扩展仍从原生 `session/modelCatalog` 动态读取名称、推理选项、可路由状态和失败，不另行访问官方 API。普通 ModelCatalogModel 不承诺 `contextWindow`，扩展不为缺省字段补造百万上下文；新的内置上下文值由 DSH provider 配置声明，实际请求额度归 DSH 管理。
+- [listing 配置](https://github.com/deepseek-ai/deepseek-harness/blob/1f81c047fc48fa190a683e469daa699857e9afe8/packages/llm/llm-deepseek/src/listing-config.ts)的 `modelsTimeoutMs`、`modelsMaxAgeMs` 通过通用 Settings schema 进入配置界面，保留实时生效、修订校验、非法值拒绝及重置。设置 namespace 来自 Loader entry ID（默认 API-key entry 为 `llm-deepseek`），不能从 npm 包名猜测。账号的模型 override 与凭据规则仍由原有动态设置承载，Secret 不跨 Webview。
+- [入口定制](https://github.com/deepseek-ai/deepseek-harness/tree/1f81c047fc48fa190a683e469daa699857e9afe8/packages/client/ui-entry-customization)及会话视图折叠属于 DSH 浏览器 client slots，没有新增 Host Remote。扩展继续以 VS Code 原生视图布局、现有插件管理和 Creator 入口提供相应工作流，不执行第三方浏览器组件、插槽或遥测。原生视图拖动与设置不转换成未声明的 DSH RPC。
+- 配套包 `@dsh-vscode/editor-bridge@0.2.2` 的 `engines.dsh` 和 Cordis/Tools/Typert peers 使用 `*`，Host peers 标为 optional；兼容声明覆盖各类 DSH 版本及预发布，不以已验证版本作安装白名单。能力由所连接服务、`describe`/方法及独立编辑器协议协商，缺失方法明确不可用，认证 Peer 与 owner 权限校验保留。只有构建用的 devDependencies 固定类型基线，发布归档不会因此安装另一套 DSH 核心服务；锁文件保留历史 codec 的独立 peer 快照。目标 tag 的工具、Registry 和 Remote 注册源码仍须核对；声明可安装不等于所有运行时已验证。`tests/live-dsh/editor-bridge.spec.ts` 由 `DSH_LIVE_EDITOR_COMPANION=1` 显式启用，针对所选精确运行包验证标准 tgz 安装、元数据、工具执行、更新/移除/重装/取消与释放；不调用模型。
+
+新增增量 fixture 为 `rc213-contract.spec.ts`，精确准入、继承的 Workspace/error/probe 取消与释放由共享版本表覆盖；Webview 草稿/导航/并发、Host 归属和严格协议各在对应边界回归。隔离真实运行入口为 `tests/live-dsh/rc213-surfaces.spec.ts`、`rc211-surfaces.spec.ts` 和 `run.spec.ts`：空白复用、归档候选替换、Preset 回读、Search/Fetch 与 listing 设置读写/拒绝/恢复、账号和可选服务读取、进程端口释放。空 home 不证明真实官方账号/凭据列表、付费模型、浏览器插槽或人工 Webview 体验，相关能力保持 `PARTIAL`。
+
+未发布主干的同版本开发构建不等于该 tag：已审计快照 `22ddee3792402c3e70ec5f86a63c3e3e895a2f60` 含 Gateway 访问控制、Typert resource resolver、Session summary/baseline、媒体与插件安装等后续变化，不能以 rc.3 标签套用未冻结的主干契约。精确支持范围针对上表固定发布来源；后续发布需重新比较自己的来源。
 
 ### 未知版本
 

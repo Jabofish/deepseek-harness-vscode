@@ -201,6 +201,10 @@ importers:
 
   packages/dsh-editor-bridge:
     dependencies:
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+    devDependencies:
       '@deepseek-ai/cordis':
         specifier: ~4.0.5
         version: 4.0.5(@deepseek-ai/cordis-plugin-include@1.0.10)(@deepseek-ai/cordis-plugin-loader@1.0.6)
@@ -213,10 +217,6 @@ importers:
       '@deepseek-ai/dsh-typert-registry':
         specifier: 0.2.1-rc.2
         version: 0.2.1-rc.2(@deepseek-ai/cordis@4.0.5)
-      zod:
-        specifier: 4.4.3
-        version: 4.4.3
-    devDependencies:
       '@dsh-vscode/domain':
         specifier: workspace:*
         version: link:../domain

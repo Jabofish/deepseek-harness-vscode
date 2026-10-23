@@ -82,9 +82,86 @@ export function createSessionCreationActions(
     )
   }
 
+  const blankCreations = new Map<string, { intent: number; promise: Promise<string | undefined> }>()
+  const createSession = (workspaceId?: string, presetId?: string): Promise<string | undefined> => {
+    const state = getState()
+    const targetWorkspaceId =
+      workspaceId ??
+      (state.blankSessionReuse === true
+        ? state.sessions.find((session) => session.id === state.activeSessionId)?.workspaceId
+        : undefined)
+    const workspace =
+      (targetWorkspaceId === undefined
+        ? undefined
+        : state.workspaces.find((entry) => entry.id === targetWorkspaceId)) ?? state.workspaces[0]
+    const key =
+      state.blankSessionReuse === true
+        ? JSON.stringify([state.connectionEpoch, workspace?.id, presetId])
+        : undefined
+    const existing = key === undefined ? undefined : blankCreations.get(key)
+    if (existing !== undefined) {
+      existing.intent = nextOpenIntent()
+      return existing.promise
+    }
+    const creation = { intent: nextOpenIntent(), promise: Promise.resolve<string | undefined>(undefined) }
+    const run = async (): Promise<string | undefined> => {
+      const defaultConfiguration = createDefaultConfiguration(state, getComposerPreferences())
+      const configuration =
+        presetId === undefined ? defaultConfiguration : { ...defaultConfiguration, preset: presetId }
+      const reusableBlank =
+        workspace !== undefined && (presetId === undefined || state.blankSessionReuse === true)
+          ? findReusableBlankSession(state.sessions, state.archivedSessionIds, workspace, presetId)
+          : undefined
+      if (state.connectedDshVersion === DSH_RC12_VERSION && reusableBlank !== undefined) {
+        await openSession(reusableBlank.id)
+        return reusableBlank.id
+      }
+      const rc11ReusableBlank = state.connectedDshVersion === DSH_RC11_VERSION ? reusableBlank : undefined
+      const namedBlank = state.blankSessionReuse === true ? reusableBlank : rc11ReusableBlank
+      const result = await client.request<unknown>({
+        type: 'session.create',
+        requestId: requestId(),
+        payload: {
+          ...(workspace === undefined ? {} : { workspaceId: workspace.id }),
+          ...(namedBlank === undefined ? {} : { sessionId: namedBlank.id }),
+          ...(rc11ReusableBlank === undefined ? {} : { reuseWorkspaceBlank: true as const }),
+          // Returning to a draft keeps its model choice. The Host still applies
+          // the requested preset (or its deployment default) when adopting it.
+          configuration:
+            state.blankSessionReuse === true && namedBlank !== undefined
+              ? { ...configuration, model: { providerId: '', modelId: '' } }
+              : configuration,
+        },
+      })
+      // A late receipt belongs to its original connection, never a new backend.
+      if (
+        state.connectionEpoch !== getState().connectionEpoch ||
+        (state.blankSessionReuse === true &&
+          (getState().backend.kind !== 'connected' || getState().blankSessionReuse !== true))
+      )
+        return undefined
+      const created = object(result)
+      rememberCreatedSession(created)
+      try {
+        if (creation.intent === getOpenIntent() && typeof created?.id === 'string')
+          await openSession(created.id)
+      } finally {
+        void refresh().catch(() => undefined)
+      }
+      return typeof created?.id === 'string' ? created.id : undefined
+    }
+    creation.promise = run().finally(() => {
+      if (key !== undefined && blankCreations.get(key) === creation) blankCreations.delete(key)
+    })
+    if (key !== undefined) blankCreations.set(key, creation)
+    return creation.promise
+  }
+
   return {
-    stageSession: (workspaceId, presetId) =>
-      new Promise<void>((resolve) => {
+    stageSession: (workspaceId, presetId) => {
+      if (getState().blankSessionReuse === true)
+        return createSession(workspaceId, presetId).then(() => undefined)
+      return new Promise<void>((resolve) => {
         const state = getState()
         const workspace =
           (workspaceId === undefined
@@ -115,7 +192,8 @@ export function createSessionCreationActions(
         }))
         persistWebviewState()
         resolve()
-      }),
+      })
+    },
     configurePendingSession: (configuration) => {
       if (!isAgentConfiguration(configuration)) throw new Error(translate('app.error.sessionSettings'))
       setState((current) =>
@@ -236,46 +314,7 @@ export function createSessionCreationActions(
       setPendingSend({ revision: pending.revision, promise })
       return promise
     },
-    createSession: async (workspaceId, presetId) => {
-      const navigationIntent = nextOpenIntent()
-      const state = getState()
-      const workspace =
-        (workspaceId === undefined
-          ? undefined
-          : state.workspaces.find((entry) => entry.id === workspaceId)) ?? state.workspaces[0]
-      const defaultConfiguration = createDefaultConfiguration(state, getComposerPreferences())
-      const configuration =
-        presetId === undefined ? defaultConfiguration : { ...defaultConfiguration, preset: presetId }
-      const reusableBlank =
-        presetId === undefined && workspace !== undefined
-          ? findReusableBlankSession(state.sessions, state.archivedSessionIds, workspace)
-          : undefined
-      if (state.connectedDshVersion === DSH_RC12_VERSION && reusableBlank !== undefined) {
-        await openSession(reusableBlank.id)
-        return reusableBlank.id
-      }
-      const rc11ReusableBlank = state.connectedDshVersion === DSH_RC11_VERSION ? reusableBlank : undefined
-      const result = await client.request<unknown>({
-        type: 'session.create',
-        requestId: requestId(),
-        payload: {
-          ...(workspace === undefined ? {} : { workspaceId: workspace.id }),
-          ...(rc11ReusableBlank === undefined
-            ? {}
-            : { sessionId: rc11ReusableBlank.id, reuseWorkspaceBlank: true as const }),
-          configuration,
-        },
-      })
-      const created = object(result)
-      rememberCreatedSession(created)
-      try {
-        if (navigationIntent === getOpenIntent() && typeof created?.id === 'string')
-          await openSession(created.id)
-      } finally {
-        void refresh().catch(() => undefined)
-      }
-      return typeof created?.id === 'string' ? created.id : undefined
-    },
+    createSession,
   }
 }
 

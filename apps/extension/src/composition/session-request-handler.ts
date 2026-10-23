@@ -1,5 +1,5 @@
 import * as vscode from 'vscode'
-import { type SessionSummary } from '@dsh-vscode/domain'
+import { AppError, type SessionSummary } from '@dsh-vscode/domain'
 import type { WebviewRequest } from '@dsh-vscode/webview-protocol'
 import { publicList } from './public-projection.js'
 import { listScopedSessions } from './session-directory.js'
@@ -180,11 +180,37 @@ export function createSessionRequestHandler(
     }
 
     if (request.type === 'session.create') {
+      const backend = backendService.requireBackend()
       const workspace = await ensureCurrentWorkspace(request.payload.workspaceId, signal)
+      if (
+        request.payload.sessionId !== undefined &&
+        backend.connection?.capabilities.blankSessionReuse === true
+      ) {
+        // An archived/stale candidate may no longer be reusable. Authorize its
+        // ownership and let native create leave it intact and mint a replacement.
+        const candidate = await requireCurrentWorkspaceSession(request.payload.sessionId, signal, {
+          allowArchived: true,
+        })
+        if (candidate.workspaceId !== workspace.id)
+          throw new AppError({
+            code: 'PERMISSION_DENIED',
+            message: 'The blank session does not belong to the selected workspace.',
+            retryable: false,
+          })
+      }
       const resolvedConfiguration = await modelUseCases.resolveSessionConfiguration(
         request.payload.configuration,
         signal,
       )
+      if (
+        backend.connection?.capabilities.blankSessionReuse === true &&
+        backendService.requireBackend() !== backend
+      )
+        throw new AppError({
+          code: 'REQUEST_CANCELLED',
+          message: 'The connection changed before session creation.',
+          retryable: true,
+        })
       return publicValue(
         withSessionWorkspaceScope(
           await sessionUseCases.create(

@@ -1,6 +1,6 @@
 {
   "name": "@dsh-vscode/editor-bridge",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "type": "module",
   "description": "Optional DSH companion for explicitly shared VS Code editor metadata",
@@ -19,7 +19,7 @@
   ],
   "engines": {
     "node": ">=22.19.0",
-    "dsh": "0.2.1-rc.2"
+    "dsh": "*"
   },
   "dsh": {
     "bundle": {
@@ -32,15 +32,33 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "~4.0.5",
-    "@deepseek-ai/dsh-tools": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-typert-protocol": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-typert-registry": "0.2.1-rc.2"
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-tools": "*",
+    "@deepseek-ai/dsh-typert-protocol": "*",
+    "@deepseek-ai/dsh-typert-registry": "*"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-typert-protocol": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-typert-registry": {
+      "optional": true
+    }
   },
   "dependencies": {
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@deepseek-ai/cordis": "~4.0.5",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-typert-protocol": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-typert-registry": "0.2.1-rc.2",
     "@dsh-vscode/domain": "workspace:*"
   }
 }

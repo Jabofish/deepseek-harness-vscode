@@ -22,6 +22,7 @@ export function createInitialState(composerPreferences: ComposerPreferences): Ap
     connectedDshVersion: undefined,
     subagentImagePrompts: false,
     sessionRestore: false,
+    blankSessionReuse: false,
     jobControllerAvailable: false,
     dshCompatibilityWarning: undefined,
     dshUpdate: undefined,
