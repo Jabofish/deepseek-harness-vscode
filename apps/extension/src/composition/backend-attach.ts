@@ -128,6 +128,10 @@ export function createBackendAttach(deps: BackendAttachDependencies): BackendAtt
       )
         invalidateCurrentWorkspaceSessionDetails()
       if (event.type === 'connection.lost') {
+        // The reason is pre-sanitized by the adapter (`safeReason`), so it is
+        // safe to surface on the diagnostics channel and pin down why a stream
+        // dropped (socket close vs protocol error vs logical stream end).
+        diagnostics.log('warn', 'connection-lost', { reason: event.reason })
         void disposeAccountLifecycleHost()
         invalidateCurrentWorkspaceSessionDetails()
         detachSessionAdapters()
