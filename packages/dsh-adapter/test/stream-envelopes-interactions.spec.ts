@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeEnvelope } from '../src/stream-envelopes.js'
+import { AppError } from '@dsh-vscode/domain'
+import { normalizeEnvelope, safeReason } from '../src/stream-envelopes.js'
 import { rc6Mapper } from '../src/versions/rc6/mapper.js'
 
 const approval = { type: 'approval/requested', sessionId: 's1', approvalId: 'approval', toolName: 'bash' }
@@ -31,5 +32,28 @@ describe('live interaction envelope identity', () => {
       request: { id: 'approval' },
     })
     expect(rc6Mapper.event('approval/requested', approval)).not.toHaveProperty('request.rpcId')
+  })
+})
+
+describe('safeReason', () => {
+  it('surfaces the WebSocket close code when the transport carried one', () => {
+    const error = new AppError({
+      code: 'BACKEND_UNREACHABLE',
+      message: 'The alpha DSH multiplexed stream closed unexpectedly.',
+      retryable: true,
+      context: { closeCode: 1006 },
+    })
+    expect(safeReason(error)).toBe(
+      'DSH event stream disconnected (BACKEND_UNREACHABLE, WebSocket close 1006).',
+    )
+  })
+
+  it('omits the close code when the transport did not report one', () => {
+    const error = new AppError({
+      code: 'BACKEND_UNREACHABLE',
+      message: 'The alpha DSH multiplexed stream closed unexpectedly.',
+      retryable: true,
+    })
+    expect(safeReason(error)).toBe('DSH event stream disconnected (BACKEND_UNREACHABLE).')
   })
 })
