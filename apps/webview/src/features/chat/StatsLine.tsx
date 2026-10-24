@@ -9,6 +9,8 @@ import { StatsPopover } from './StatsPopover.js'
 import { useConversationLayout } from '../../app/ConversationLayoutProvider.js'
 
 export interface StatsLineProps {
+  /** Optional independent reading; this renderer does not own its calculation or I/O. */
+  readonly cost?: ReactElement
   readonly sessionId?: string | undefined
   readonly nodes: readonly TimelineNode[]
   /** Optional reducer boundary for incremental fallback statistics. */
@@ -99,6 +101,7 @@ export const StatsLine = memo(function StatsLine(props: StatsLineProps): ReactEl
         {props.usage === undefined ? null : (
           <span title={t('stats.cache')}>{t('stats.cacheShort', { percent: cachePercent })}</span>
         )}
+        {props.cost}
       </div>
     )
   }
@@ -122,6 +125,7 @@ export const StatsLine = memo(function StatsLine(props: StatsLineProps): ReactEl
         usageLabel={usageLabel}
         stats={stats}
         usage={props.usage}
+        {...(props.cost === undefined ? {} : { cost: props.cost })}
       />
     )
   }
@@ -167,11 +171,13 @@ export const StatsLine = memo(function StatsLine(props: StatsLineProps): ReactEl
           )}
         </>
       )}
+      {props.cost}
     </div>
   )
 })
 
 function FocusedStatsLine(props: {
+  readonly cost?: ReactElement
   readonly counts: string
   readonly usageLabel: string
   readonly stats: WindowStats
@@ -197,6 +203,7 @@ function FocusedStatsLine(props: {
           onOpenChange={(open) => setOpenDetail(open ? 'tokens' : undefined)}
         />
       )}
+      {props.cost}
     </div>
   )
 }

@@ -85,6 +85,9 @@ importers:
       '@dsh-vscode/webview-protocol':
         specifier: workspace:*
         version: link:../../packages/webview-protocol
+      llm-pricing:
+        specifier: 0.20.0
+        version: 0.20.0
       undici:
         specifier: 7.29.0
         version: 7.29.0
@@ -2943,6 +2946,11 @@ packages:
 
   linkify-it@5.0.2:
     resolution: {integrity: sha512-ONTm2jCMAVZjgQa/Fy1kScXsuOoF5NPTsoFBdE1KVIZ2vAh/r9+Bqo+0jINCBYnavTPQZz38QzFTme79ENoN3Q==}
+
+  llm-pricing@0.20.0:
+    resolution: {integrity: sha512-1IB0j2I2Cqsz3uX+22omgP4ACrtsnn7smRRtJuXXix2dFMPjg6K3N2glEcKd8DlGdtfafcxlz3J6ORFYFFwiPA==}
+    engines: {node: '>=20'}
+
 
   locate-path@6.0.0:
     resolution: {integrity: sha512-iPZK6eYjbxRu3uB4/WZ3EsEIMJFMqAoopl3R+zuq0UjcAm/MO6KCweDgPfP3elTztoKP3KtnVHxTn2NHBSDVUw==}
@@ -6851,6 +6859,8 @@ snapshots:
   linkify-it@5.0.2:
     dependencies:
       uc.micro: 2.1.0
+
+  llm-pricing@0.20.0: {}
 
   locate-path@6.0.0:
     dependencies:

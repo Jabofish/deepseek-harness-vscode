@@ -1,4 +1,6 @@
 import * as vscode from 'vscode'
+import { BillingFeatureHost } from './billing/billing-feature-handler.js'
+import { ModelsDevPriceSource } from './billing/models-dev-price-source.js'
 import type { DshRuntimeUpdateProgress, EditorContextOwner, SessionSummary } from '@dsh-vscode/domain'
 import {
   featureHostEnvelopeSchema,
@@ -325,6 +327,16 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     currentWorkspaceFolderId,
   })
   const { handleFeatureRequest } = createFeatureRequestHandler({
+    billing: new BillingFeatureHost(
+      {
+        storage: context.globalState,
+        backendService,
+        requireSession: requireCurrentWorkspaceSession,
+        isTrusted: () => vscode.workspace.isTrusted,
+        changed: () => postFeatureEvent('billing.settings.changed', {}),
+      },
+      new ModelsDevPriceSource(),
+    ),
     editorCompanion: () => commands.editorCompanion,
     getAccountLifecycleHost,
     backendService,

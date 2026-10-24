@@ -1,4 +1,5 @@
 export * from './backend.js'
+export * from './billing.js'
 export * from './inspector.js'
 export * from './account-lifecycle.js'
 export * from './feedback.js'

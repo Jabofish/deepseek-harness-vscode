@@ -1,4 +1,5 @@
 import type { WorkspaceChangeSource } from './changes.js'
+import type { BillingUsageRepository } from './billing.js'
 import type { ModsBandRepository } from './mods-band.js'
 import type { InspectorDevtoolsRepository } from './inspector.js'
 import type { BackendEvent, GoalView, JobFollowFrame, JobView, SubagentCatalog } from './events.js'
@@ -55,6 +56,8 @@ export interface AsyncEventSource<T> {
 }
 
 export interface SessionRepository {
+  /** Optional, exact-version, prompt-free accounting. Independent of presentation history. */
+  readonly readBillingPage?: BillingUsageRepository['readBillingPage']
   /** Runtime-owned permission choices, available before a session exists. */
   listPermissionPresets?(signal?: AbortSignal): Promise<readonly string[]>
   readPermissionCatalog?(signal?: AbortSignal): Promise<PermissionPresetCatalog>

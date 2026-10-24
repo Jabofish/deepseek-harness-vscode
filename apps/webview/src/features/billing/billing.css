@@ -1,0 +1,374 @@
+.dsh-billing {
+  margin-block: 0.5rem;
+  min-width: 0;
+  container-type: inline-size;
+  color: var(--vscode-foreground);
+}
+.dsh-billing summary {
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.dsh-billing__summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+  font-weight: 600;
+  list-style: none;
+}
+.dsh-billing__summary::-webkit-details-marker {
+  display: none;
+}
+.dsh-billing__summary > span {
+  flex: 1;
+}
+.dsh-billing__summary > .dsh-icon:last-child {
+  transition: transform 120ms ease;
+}
+.dsh-billing[open] > .dsh-billing__summary > .dsh-icon:last-child {
+  transform: rotate(180deg);
+}
+.dsh-billing__editor {
+  border: 1px solid var(--vscode-widget-border, var(--vscode-contrastBorder, transparent));
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+  overflow: clip;
+}
+.dsh-billing fieldset {
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+.dsh-billing fieldset.dsh-billing__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  padding: 0.5rem 0.625rem;
+  background: var(--vscode-textBlockQuote-background, transparent);
+  border-bottom: 1px solid var(--vscode-widget-border, transparent);
+}
+.dsh-billing label {
+  display: grid;
+  min-width: 0;
+  gap: 0.25rem;
+  margin: 0;
+}
+.dsh-billing label.dsh-billing__switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  cursor: pointer;
+}
+.dsh-billing__switch input {
+  appearance: none;
+  flex: 0 0 26px;
+  width: 26px;
+  height: 16px;
+  margin: 0;
+  border: 1px solid var(--vscode-widget-border, var(--vscode-foreground));
+  border-radius: 9px;
+  background: var(--vscode-input-background);
+  cursor: pointer;
+}
+.dsh-billing__switch input::before {
+  content: '';
+  display: block;
+  width: 10px;
+  height: 10px;
+  margin: 2px;
+  border-radius: 50%;
+  background: var(--vscode-foreground);
+  transition: transform 120ms ease;
+}
+.dsh-billing__switch input:checked {
+  background: var(--vscode-button-background);
+  border-color: var(--vscode-button-background);
+}
+.dsh-billing__switch input:checked::before {
+  transform: translateX(10px);
+  background: var(--vscode-button-foreground);
+}
+.dsh-billing__control-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  margin-left: auto;
+}
+.dsh-billing__section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.375rem 0.625rem;
+  padding: 0.625rem;
+}
+.dsh-billing__section-head h3 {
+  margin: 0;
+  font: inherit;
+  font-weight: 600;
+}
+.dsh-billing__section-head > span {
+  color: var(--vscode-descriptionForeground, inherit);
+}
+.dsh-billing__search {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  margin: 0 0.625rem 0.5rem;
+  padding-left: 0.5rem;
+  border: 1px solid var(--vscode-input-border, var(--vscode-widget-border, transparent));
+  border-radius: 4px;
+  background: var(--vscode-input-background);
+}
+.dsh-billing__search:focus-within {
+  outline: 1px solid var(--vscode-focusBorder);
+}
+.dsh-billing input:not([type='checkbox']) {
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, var(--vscode-widget-border, transparent));
+  border-radius: 3px;
+  padding: 0.375rem 0.5rem;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+.dsh-billing__search > input:not([type='checkbox']) {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  padding-inline: 0;
+  outline: none;
+}
+.dsh-billing button {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  border: 1px solid var(--vscode-contrastBorder, transparent);
+  border-radius: 3px;
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  background: var(--vscode-button-secondaryBackground, var(--vscode-input-background));
+  font: inherit;
+  padding: 0.375rem 0.625rem;
+  cursor: pointer;
+}
+.dsh-billing button:hover:not(:disabled) {
+  background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground));
+}
+.dsh-billing button.dsh-billing__primary {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+.dsh-billing button.dsh-billing__primary:hover:not(:disabled) {
+  background: var(--vscode-button-hoverBackground, var(--vscode-button-background));
+}
+.dsh-billing button.dsh-billing__icon-button {
+  flex-shrink: 0;
+  padding: 0.375rem;
+  background: transparent;
+}
+.dsh-billing button.dsh-billing__text-button {
+  padding: 0.25rem 0;
+  background: transparent;
+  color: var(--vscode-textLink-foreground, var(--vscode-foreground));
+  text-align: left;
+}
+.dsh-billing button.dsh-billing__text-button:hover:not(:disabled) {
+  color: var(--vscode-textLink-activeForeground, var(--vscode-textLink-foreground));
+  background: transparent;
+  text-decoration: underline;
+}
+.dsh-billing button:disabled,
+.dsh-billing fieldset:disabled .dsh-billing__switch {
+  opacity: 0.5;
+  cursor: default;
+}
+.dsh-billing :focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+}
+.dsh-billing__models {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 26rem;
+  overflow: auto;
+}
+.dsh-billing__model {
+  padding: 0.625rem;
+  border-top: 1px solid var(--vscode-widget-border, transparent);
+}
+.dsh-billing__model-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+.dsh-billing__identity {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 0.125rem;
+}
+.dsh-billing__identity > span {
+  color: var(--vscode-descriptionForeground, inherit);
+  overflow-wrap: anywhere;
+}
+.dsh-billing__badge {
+  flex: 0 1 auto;
+  max-width: 45%;
+  border: 1px solid var(--vscode-widget-border, transparent);
+  border-radius: 3px;
+  padding: 0.125rem 0.375rem;
+}
+.dsh-billing__badge--automatic {
+  color: var(--vscode-testing-iconPassed, var(--vscode-foreground));
+}
+.dsh-billing__badge--manual {
+  color: var(--vscode-textLink-foreground, var(--vscode-foreground));
+}
+.dsh-billing__badge--ambiguous,
+.dsh-billing__badge--missing {
+  color: var(--vscode-editorWarning-foreground, var(--vscode-foreground));
+}
+.dsh-billing__badge--unsupported,
+.dsh-billing__badge--unavailable {
+  color: var(--vscode-errorForeground, var(--vscode-foreground));
+}
+.dsh-billing__price-preview {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.375rem 1rem;
+  margin-top: 0.375rem;
+  font-variant-numeric: tabular-nums;
+}
+.dsh-billing__price-preview > span {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.25rem;
+}
+.dsh-billing__price-preview b {
+  font-weight: 500;
+}
+.dsh-billing__source {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  margin-top: 0.375rem;
+  overflow-wrap: anywhere;
+}
+.dsh-billing__rule-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  margin-top: 0.375rem;
+}
+.dsh-billing__candidates {
+  display: grid;
+  gap: 0.375rem;
+  margin-top: 0.5rem;
+}
+.dsh-billing button.dsh-billing__candidate {
+  justify-content: flex-start;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.dsh-billing__candidate > .dsh-icon {
+  flex-shrink: 0;
+}
+.dsh-billing__candidate > .dsh-icon:last-child {
+  margin-left: auto;
+}
+.dsh-billing__model > .dsh-billing__text-button {
+  margin-top: 0.375rem;
+}
+.dsh-billing__period {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding-block: 0.375rem;
+}
+.dsh-billing__period > span {
+  flex: 1;
+}
+.dsh-billing__form .dsh-billing__section-head {
+  padding-inline: 0;
+}
+.dsh-billing__form {
+  padding-inline: 0.625rem;
+}
+.dsh-billing__rates,
+.dsh-billing__route-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.625rem 0.75rem;
+  margin-bottom: 0.75rem;
+}
+.dsh-billing__disclosure {
+  border-top: 1px solid var(--vscode-widget-border, transparent);
+}
+.dsh-billing__disclosure > summary {
+  padding-block: 0.5rem;
+  font-weight: 500;
+}
+.dsh-billing__rules fieldset {
+  padding-block: 0.5rem;
+}
+.dsh-billing__rules legend {
+  padding: 0;
+  font-weight: 500;
+}
+.dsh-billing__form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding-block: 0.625rem;
+  position: sticky;
+  bottom: 0;
+  background: var(--vscode-editor-background);
+  border-top: 1px solid var(--vscode-widget-border, transparent);
+}
+.dsh-billing__message,
+.dsh-billing__error {
+  margin: 0.5rem 0.625rem;
+}
+.dsh-billing__error {
+  color: var(--vscode-errorForeground);
+}
+.dsh-billing .dsh-billing__more {
+  display: flex;
+  width: calc(100% - 1.25rem);
+  margin: 0.5rem 0.625rem;
+  background: transparent;
+}
+@container (max-width: 360px) {
+  .dsh-billing__route-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .dsh-billing__section-head > span {
+    flex-basis: 100%;
+  }
+  .dsh-billing__price-preview {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.25rem;
+  }
+}
+@container (max-width: 260px) {
+  .dsh-billing__rates {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dsh-billing__summary > .dsh-icon:last-child,
+  .dsh-billing__switch input::before {
+    transition: none;
+  }
+}
