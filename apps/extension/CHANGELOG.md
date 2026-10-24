@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 减少长回复逐段追加时的重复序列化，并避免对未变节点重复扫描、建立索引和排序。大小计算包含字段变化及跨片段 Unicode，保留脱敏、协议校验和及时的统计更新。
+- Reduces repeated serialization during long replies and avoids rescanning, indexing and sorting unchanged rows. Size accounting includes metadata changes and Unicode split across chunks, while preserving redaction, protocol validation and current statistics.
+
 - 会话费用跟随界面语言：中文显示人民币，英文显示美元；汇总和明细按同一份 ECB 每日参考汇率换算并显示日期，保留原始单价与费用。汇率读取失败时默认按 1 USD = 6.8 CNY 换算并标注。
 - Session cost estimates use CNY in Chinese and USD in English. Totals and charge details share a dated ECB reference quote, while original prices and accounting remain intact; failed exchange reads use a labeled default of 1 USD = 6.8 CNY.
 

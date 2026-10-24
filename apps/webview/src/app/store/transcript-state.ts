@@ -6,6 +6,7 @@ import {
   type TranscriptWindow,
 } from '@dsh-vscode/webview-protocol'
 import type { TimelineNode, TimelineState } from '@dsh-vscode/timeline'
+import { appendedTextNodeChars } from '@dsh-vscode/timeline'
 import type { AppState } from './types.js'
 import { withCurrentTodos } from './todo-state.js'
 
@@ -125,7 +126,9 @@ export function installTranscriptPatch(state: AppState, patch: TranscriptPatch):
         reasoning: { ...node.reasoning, markdown: reasoning + node.reasoning.markdown },
       }
     } else if (update.reasoningLength !== undefined) throw new Error('Invalid transcript reasoning update.')
-    chars += nodeChars(next) - nodeChars(old)
+    const nextChars = appendedTextNodeChars(old, node, nodeChars(old))
+    chars += nextChars - nodeChars(old)
+    serializedNodeChars.set(next, nextChars)
     nodes[position] = next
   }
   const window: TranscriptWindow = {
@@ -142,14 +145,22 @@ export function installTranscriptPatch(state: AppState, patch: TranscriptPatch):
   }
   const { nodes: _nodes, ...metadata } = window
   void _nodes
-  const metadataChars =
+  // Scalar-only patches (the streaming fast path) adjust the known metadata
+  // length by the digits their scalars gained instead of re-serializing the
+  // whole bounded fact metadata per patch.
+  const scalarOnly =
     patch.metadata === undefined &&
-    patch.lastSequence === undefined &&
     patch.hasMore === undefined &&
     patch.activeTurn === undefined &&
     patch.tokenUsage === undefined
-      ? previousSize.metadata + String(patch.revision).length - String(previous.revision).length
-      : JSON.stringify({ ...metadata, nodes: [] }).length
+  const metadataChars = scalarOnly
+    ? previousSize.metadata +
+      String(patch.revision).length -
+      String(previous.revision).length +
+      (patch.lastSequence === undefined
+        ? 0
+        : String(patch.lastSequence).length - String(previous.lastSequence).length)
+    : JSON.stringify({ ...metadata, nodes: [] }).length
   if (
     nodes.length > TRANSCRIPT_MAX_NODES ||
     chars + metadataChars + Math.max(0, nodes.length - 1) > TRANSCRIPT_MAX_CHARS

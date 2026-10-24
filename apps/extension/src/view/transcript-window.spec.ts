@@ -379,6 +379,67 @@ describe('Host transcript windows', () => {
     expect(terminal.metadata).not.toHaveProperty('activeTurn')
     service.dispose()
   })
+  it('never substitutes raw append text for an equally long sanitized suffix', async () => {
+    const sent: (TranscriptWindow | TranscriptPatch)[] = []
+    const service = new TranscriptWindowService({
+      read: () => Promise.resolve({ events: [], hasMore: false }),
+      publicValue: (value) =>
+        JSON.parse(JSON.stringify(value).replaceAll('fixture-secret', 'xxxxxxxxxxxxxx')) as unknown,
+      post: (value) => {
+        sent.push(value)
+        return Promise.resolve(true)
+      },
+      postPatch: (value) => {
+        sent.push(value)
+        return Promise.resolve(true)
+      },
+    })
+    try {
+      service.installPage(sessionId, { events: [message(0)], hasMore: false }, service.begin(sessionId))
+      service.accept({ type: 'message.delta', sessionId, messageId: 'live', delta: 'x'.repeat(300) })
+      await Promise.resolve()
+      service.accept({ type: 'message.delta', sessionId, messageId: 'live', delta: 'fixture-secret' })
+      await Promise.resolve()
+      expect((sent.at(-1) as TranscriptPatch).textUpdates?.[0]?.node.markdown).toBe('xxxxxxxxxxxxxx')
+      expect(JSON.stringify(sent)).not.toContain('fixture-secret')
+    } finally {
+      service.dispose()
+    }
+  })
+
+  it('publishes current durable facts even when the stream pauses before 32 events', async () => {
+    const sent: (TranscriptWindow | TranscriptPatch)[] = []
+    const service = new TranscriptWindowService({
+      read: () => Promise.resolve({ events: [], hasMore: false }),
+      publicValue: (value) => value,
+      post: (value) => {
+        sent.push(value)
+        return Promise.resolve(true)
+      },
+      postPatch: (value) => {
+        sent.push(value)
+        return Promise.resolve(true)
+      },
+    })
+    try {
+      service.installPage(sessionId, { events: [message(0)], hasMore: false }, service.begin(sessionId))
+      for (let sequence = 1; sequence <= 3; sequence++) {
+        service.accept({
+          type: 'message.delta',
+          sessionId,
+          messageId: 'live',
+          delta: 'x'.repeat(300),
+          sequence,
+        })
+        await Promise.resolve()
+      }
+      const patch = sent.at(-1) as TranscriptPatch
+      expect(patch.metadata?.eventFacts.at(-1)?.sequence).toBe(3)
+    } finally {
+      service.dispose()
+    }
+  })
+
   it('carries completion state for a long streamed node in an empty text update', async () => {
     const sent: (TranscriptWindow | TranscriptPatch)[] = []
     const service = new TranscriptWindowService({

@@ -8,6 +8,7 @@ import {
 } from '@dsh-vscode/domain'
 import {
   reduceTimeline,
+  appendedTextNodeChars,
   isRedundantTurnFailureNotice,
   timelineSequenceOptions,
   type TimelineNode,
@@ -60,6 +61,8 @@ interface Resident {
   upper?: number
   omitted: Set<string>
   sources: Map<string, { from: number; to: number }>
+  /** Raw sizes follow immutable node identities and are pruned on eviction. */
+  rawChars: Map<string, { readonly node: TimelineNode; readonly chars: number }>
   facts: TranscriptEventFact[]
   factCounter: number
   contextIds: Set<string>
@@ -375,6 +378,7 @@ export class TranscriptWindowService {
         },
         hasMore: older.hasMore,
         sources: new Map([...older.sources, ...previous.sources]),
+        rawChars: new Map([...older.rawChars, ...previous.rawChars]),
         omitted: new Set([...older.omitted, ...previous.omitted]),
         facts: [
           ...new Map([...older.facts, ...previous.facts].map((fact) => [fact.id, fact])).values(),
@@ -385,10 +389,8 @@ export class TranscriptWindowService {
       this.bound(merged, true)
       // Keep receiving live changes in the expanded conversation. Only an
       // actual budget eviction needs the separate live-tail fallback.
-      if (
-        previous === this.tail &&
-        previous.timeline.nodes.every((node) => merged.timeline.nodes.some((kept) => kept.id === node.id))
-      )
+      const keptIds = new Set(merged.timeline.nodes.map((node) => node.id))
+      if (previous === this.tail && previous.timeline.nodes.every((node) => keptIds.has(node.id)))
         this.tail = merged
       this.displayed = merged
     } else {
@@ -544,6 +546,7 @@ export class TranscriptWindowService {
       hasMore: page.hasMore,
       omitted: new Set(),
       sources: new Map(),
+      rawChars: new Map(),
       liveBodies: new Map(),
       facts: [],
       factCounter: 0,
@@ -570,7 +573,7 @@ export class TranscriptWindowService {
         ...(entry.sequence === resident.timeline.lastSequence ? { advanceSequence: false as const } : {}),
       })
       this.rememberLiveBodies(resident, entry.event)
-      this.rememberSources(resident, previous, entry.sequence, entry.coveredSequences?.[0])
+      this.rememberChanges(resident, previous, entry.event, entry.sequence, entry.coveredSequences?.[0])
       this.bound(resident)
       this.updateCurrentTodos(resident, entry.event)
     }
@@ -649,7 +652,7 @@ export class TranscriptWindowService {
           .reverse(),
         event.type === 'session.gap' ? { from: event.fromSequence, to: event.toSequence } : undefined,
       )
-    if (event.sequence !== undefined) this.rememberSources(resident, previous, event.sequence)
+    this.rememberChanges(resident, previous, event, event.sequence)
     this.bound(resident)
     this.updateCurrentTodos(resident, event)
   }
@@ -685,29 +688,45 @@ export class TranscriptWindowService {
       }
   }
 
+  private rememberChanges(
+    resident: Resident,
+    previous: readonly TimelineNode[],
+    event: BackendEvent,
+    sequence?: number,
+    fromSequence = sequence,
+  ): void {
+    if (resident.timeline.nodes === previous) return
+    const start = resident.timeline.nodeChangeBase === previous ? (resident.timeline.nodeChangeStart ?? 0) : 0
+    for (let index = start; index < resident.timeline.nodes.length; index++) {
+      const node = resident.timeline.nodes[index]!
+      const tracked = resident.rawChars.get(node.id)
+      if (node === previous[index] || tracked?.node === node) continue
+      if (sequence !== undefined) {
+        const source = resident.sources.get(node.id)
+        resident.sources.set(node.id, {
+          from: Math.min(source?.from ?? fromSequence ?? sequence, fromSequence ?? sequence),
+          to: sequence,
+        })
+      }
+      const suffix = tracked === undefined ? undefined : appendedNodeSuffix(tracked.node, node, event)
+      resident.rawChars.set(node.id, {
+        node,
+        chars:
+          tracked !== undefined &&
+          suffix !== undefined &&
+          (tracked.node.kind === 'assistant-message' || tracked.node.kind === 'reasoning')
+            ? appendedTextNodeChars(tracked.node, suffix, tracked.chars)
+            : JSON.stringify(node).length,
+      })
+    }
+  }
+
   private updateCurrentTodos(resident: Resident, event: BackendEvent): void {
     if (resident.nativeTodos || event.type !== 'todo.updated') return
     const result = preview({ kind: 'todo', id: 'current-todos', todos: event.todos }, TRANSCRIPT_NODE_CHARS)
     resident.currentTodos = result.value.kind === 'todo' ? result.value.todos : []
     if (result.omitted) resident.currentTodosOmitted = true
     else delete resident.currentTodosOmitted
-  }
-
-  private rememberSources(
-    resident: Resident,
-    previous: readonly TimelineNode[],
-    sequence: number,
-    fromSequence = sequence,
-  ): void {
-    const unchanged = new Set(previous)
-    for (const node of resident.timeline.nodes)
-      if (!unchanged.has(node)) {
-        const old = resident.sources.get(node.id)
-        resident.sources.set(node.id, {
-          from: Math.min(old?.from ?? fromSequence, fromSequence),
-          to: sequence,
-        })
-      }
   }
 
   private rememberIdentity(event: BackendEvent, sequence: number): void {
@@ -778,7 +797,8 @@ export class TranscriptWindowService {
     } => {
       let clipped = this.previews.get(original)
       if (clipped === undefined) {
-        const rawSize = JSON.stringify(original).length
+        const tracked = resident.rawChars.get(original.id)
+        const rawSize = tracked?.node === original ? tracked.chars : JSON.stringify(original).length
         const projected = preview(
           original,
           isMessageNode(original)
@@ -786,6 +806,8 @@ export class TranscriptWindowService {
               ? 64 * 1024
               : MESSAGE_NODE_CHARS
             : TRANSCRIPT_NODE_CHARS,
+          undefined,
+          rawSize,
         )
         const node = projected.value
         clipped = {
@@ -793,7 +815,7 @@ export class TranscriptWindowService {
           omitted: projected.omitted,
           contentOmitted: projected.omitted,
           publicCwd: resident.cwd,
-          size: JSON.stringify(node).length,
+          size: node === original ? rawSize : JSON.stringify(node).length,
           rawSize,
         }
         if (
@@ -826,22 +848,25 @@ export class TranscriptWindowService {
       remaining = Math.max(0, remaining - (resident.liveBodies.has(original.id) ? size : clipped.rawSize))
       // Keep the single canonical body. Only publication projects a bounded
       // transport representation, so later deltas can never append to lost text.
-      nodes.unshift(original)
+      // The position sort below restores order after this newest-first walk.
+      nodes.push(original)
       if (clipped.omitted) resident.omitted.add(node.id)
       else resident.omitted.delete(node.id)
     }
     // Context parents preserve supplied call identities and pairing, while
     // the actual page boundary follows the contiguous display rows below.
-    const byId = new Map(source.map((node) => [node.id, node]))
-    const positionsById = new Map(source.map((node, index) => [node.id, index]))
+    let byId: Map<string, TimelineNode> | undefined
     const normalIds = new Set(nodes.map((node) => node.id))
     const contextIds = new Set<string>()
     let contextChars = 64 * 1024
-    for (const node of [...nodes]) {
+    const normalCount = nodes.length
+    for (let index = 0; index < normalCount; index++) {
+      const node = nodes[index]!
       let parentId = node.kind === 'tool' ? node.tool.parentCallId : undefined
       const visited = new Set<string>()
       while (parentId !== undefined && !visited.has(parentId)) {
         visited.add(parentId)
+        byId ??= new Map(source.map((node) => [node.id, node]))
         const parent = byId.get(parentId)
         if (parent?.kind !== 'tool') break
         if (!normalIds.has(parentId) && !contextIds.has(parentId)) {
@@ -855,11 +880,15 @@ export class TranscriptWindowService {
         parentId = parent.tool.parentCallId
       }
     }
-    nodes.sort((left, right) => (positionsById.get(left.id) ?? 0) - (positionsById.get(right.id) ?? 0))
+    if (contextIds.size > 0) {
+      const positionsById = new Map(source.map((node, index) => [node.id, index]))
+      nodes.sort((left, right) => (positionsById.get(left.id) ?? 0) - (positionsById.get(right.id) ?? 0))
+    } else if (!preferOlder) nodes.reverse()
     resident.contextIds = contextIds
     const kept = new Set(nodes.map((node) => node.id))
     for (const id of resident.omitted) if (!kept.has(id)) resident.omitted.delete(id)
     for (const id of resident.sources.keys()) if (!kept.has(id)) resident.sources.delete(id)
+    for (const id of resident.rawChars.keys()) if (!kept.has(id)) resident.rawChars.delete(id)
     const evicted = source.length > nodes.length
     // All bookkeeping is bounded too; a partial turn never claims exact aggregate usage.
     const tracking = Object.entries(resident.timeline.turnUsageTracking ?? {})
@@ -1176,6 +1205,44 @@ export class TranscriptWindowService {
   }
 }
 
+/** Prove only the text append; all other node fields are measured separately. */
+function appendedNodeSuffix(
+  previous: TimelineNode,
+  next: TimelineNode,
+  event: BackendEvent,
+): Extract<TimelineNode, { kind: 'assistant-message' | 'reasoning' }> | undefined {
+  if (event.type !== 'message.delta' && event.type !== 'reasoning.delta') return undefined
+  if (event.messageId !== next.id) return undefined
+  if (
+    next.kind === 'reasoning' &&
+    previous.kind === 'reasoning' &&
+    event.type === 'reasoning.delta' &&
+    next.markdown.length === previous.markdown.length + event.delta.length
+  )
+    return { ...next, markdown: event.delta }
+  if (next.kind !== 'assistant-message' || previous.kind !== 'assistant-message') return undefined
+  const oldReasoning = previous.reasoning?.markdown ?? ''
+  const newReasoning = next.reasoning?.markdown ?? ''
+  const markdownAppend =
+    event.type === 'message.delta' &&
+    next.markdown.length === previous.markdown.length + event.delta.length &&
+    newReasoning === oldReasoning
+  const reasoningAppend =
+    event.type === 'reasoning.delta' &&
+    next.markdown === previous.markdown &&
+    newReasoning.length === oldReasoning.length + event.delta.length
+  if (!markdownAppend && !reasoningAppend) return undefined
+  return {
+    ...next,
+    markdown: markdownAppend ? event.delta : '',
+    ...(next.reasoning === undefined
+      ? {}
+      : {
+          reasoning: { ...next.reasoning, markdown: reasoningAppend ? event.delta : '' },
+        }),
+  }
+}
+
 function textUpdate(
   previous: TimelineNode | undefined,
   next: TimelineNode,
@@ -1303,8 +1370,10 @@ function preview(
   value: TimelineNode,
   budget: number,
   markdownLimit = budget,
+  knownChars?: number,
 ): { value: TimelineNode; omitted: boolean } {
-  if (isMessageNode(value) && JSON.stringify(value).length <= budget) return { value, omitted: false }
+  if (isMessageNode(value) && (knownChars ?? JSON.stringify(value).length) <= budget)
+    return { value, omitted: false }
   let remaining = budget
   let omitted = false
   let visited = 0
