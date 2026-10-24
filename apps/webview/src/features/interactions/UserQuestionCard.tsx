@@ -17,6 +17,7 @@ export interface UserQuestionCardProps {
 interface ItemDraft {
   readonly selected: readonly string[]
   readonly custom: string
+  readonly customSelected: boolean
   readonly skipped: boolean
 }
 
@@ -40,8 +41,10 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
   const planReview = isPlanReview(items)
   const timedForeground = props.question.state === 'open' && props.question.timed === true
   const [drafts, setDrafts] = useState<readonly ItemDraft[]>(() =>
-    items.map(() => ({ selected: [], custom: '', skipped: false })),
+    items.map(() => ({ selected: [], custom: '', customSelected: false, skipped: false })),
   )
+  const composing = useRef(false)
+  const submitting = useRef(false)
   const [waitState, setWaitState] = useState<TimedWaitState | undefined>(undefined)
   const [submitted, setSubmitted] = useState(false)
   const [waitAttempt, setWaitAttempt] = useState(0)
@@ -131,11 +134,15 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
   // accepting edits it can never send.
   const inputsFrozen = props.disabled || replyQueued || timedUnavailable
   const submit = async (response: string | readonly string[] | readonly QuestionAnswer[]): Promise<void> => {
+    if (submitting.current) return
+    submitting.current = true
     try {
       await props.onRespond(response)
       if (props.question.state === 'continued') setSubmitted(true)
     } catch {
       // The owning hook reports the Host error; keep the draft editable here.
+    } finally {
+      submitting.current = false
     }
   }
   return (
@@ -143,6 +150,28 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
       className={`dsh-interaction dsh-interaction--question${planReview ? ' dsh-interaction--plan-review' : ''}`}
       role="group"
       aria-labelledby={`question-${props.question.id}`}
+      onCompositionStart={() => {
+        composing.current = true
+      }}
+      onCompositionEnd={() => {
+        composing.current = false
+      }}
+      onKeyDown={(event) => {
+        if (
+          planReview ||
+          event.key !== 'Enter' ||
+          (!event.ctrlKey && !event.metaKey) ||
+          event.altKey ||
+          event.shiftKey ||
+          composing.current ||
+          event.nativeEvent.isComposing ||
+          event.nativeEvent.keyCode === 229
+        )
+          return
+        event.preventDefault()
+        event.stopPropagation()
+        if (!event.repeat && !submitDisabled) void submit(encodeAnswers(items, drafts))
+      }}
     >
       <header className="dsh-interaction__header">
         <span className="dsh-interaction__icon" aria-hidden="true">
@@ -232,6 +261,7 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
                                         ? toggle(draft.selected, choice.id)
                                         : [choice.id],
                                     custom: item.multiSelect === true ? draft.custom : '',
+                                    customSelected: item.multiSelect === true && draft.customSelected,
                                     skipped: false,
                                   }
                                 : draft,
@@ -262,6 +292,31 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
                 disabled={inputsFrozen}
                 ariaLabel={t('question.answer', { prompt: item.prompt })}
                 placeholder={t('question.custom')}
+                {...((item.choices?.length ?? 0) === 0
+                  ? {}
+                  : {
+                      choice: {
+                        type: item.multiSelect === true ? ('checkbox' as const) : ('radio' as const),
+                        name: `${props.question.id}:${item.id}`,
+                        checked: drafts[index]?.customSelected === true,
+                        label: t('question.customOption', { prompt: item.prompt }),
+                      },
+                    })}
+                onSelect={(selected) => {
+                  if (inputsFrozen) return
+                  setDrafts((current) =>
+                    current.map((draft, position) =>
+                      position === index
+                        ? {
+                            ...draft,
+                            selected: selected && item.multiSelect !== true ? [] : draft.selected,
+                            customSelected: selected,
+                            skipped: false,
+                          }
+                        : draft,
+                    ),
+                  )
+                }}
                 onChange={(value) => {
                   setDrafts((current) =>
                     current.map((draft, position) =>
@@ -269,6 +324,7 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
                         ? {
                             selected: item.multiSelect === true ? draft.selected : [],
                             custom: value,
+                            customSelected: true,
                             skipped: false,
                           }
                         : draft,
@@ -285,7 +341,9 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
                 onClick={() =>
                   setDrafts((current) =>
                     current.map((draft, position) =>
-                      position === index ? { selected: [], custom: '', skipped: true } : draft,
+                      position === index
+                        ? { selected: [], custom: '', customSelected: false, skipped: true }
+                        : draft,
                     ),
                   )
                 }
@@ -332,6 +390,8 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
               className="dsh-button dsh-button--primary dsh-button--compact"
               type="button"
               disabled={submitDisabled}
+              aria-keyshortcuts="Control+Enter Meta+Enter"
+              title={t('question.submitShortcut')}
               onClick={() => {
                 void submit(encodeAnswers(items, drafts))
               }}
@@ -351,6 +411,13 @@ interface QuestionAnswerFieldProps {
   readonly ariaLabel: string
   readonly placeholder: string
   readonly onChange: (value: string) => void
+  readonly onSelect: (selected: boolean) => void
+  readonly choice?: {
+    readonly type: 'radio' | 'checkbox'
+    readonly name: string
+    readonly checked: boolean
+    readonly label: string
+  }
 }
 
 /**
@@ -360,20 +427,40 @@ interface QuestionAnswerFieldProps {
  * question actions out of the takeover card.
  */
 function QuestionAnswerField(props: QuestionAnswerFieldProps): ReactElement {
-  return (
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const field = (
     <div className="dsh-question__field">
       <div className="dsh-question__field-mirror" aria-hidden="true">
         {`${props.value}\n`}
       </div>
       <textarea
+        ref={textareaRef}
         className="dsh-question__textarea"
         disabled={props.disabled}
         value={props.value}
         rows={1}
         aria-label={props.ariaLabel}
         placeholder={props.placeholder}
+        onFocus={() => props.onSelect(true)}
         onChange={(event) => props.onChange(event.target.value)}
       />
+    </div>
+  )
+  if (props.choice === undefined) return field
+  return (
+    <div className="dsh-question__choice dsh-question__choice--custom">
+      <input
+        type={props.choice.type}
+        name={props.choice.name}
+        disabled={props.disabled}
+        checked={props.choice.checked}
+        aria-label={props.choice.label}
+        onChange={(event) => {
+          props.onSelect(event.target.checked)
+          if (event.target.checked) textareaRef.current?.focus()
+        }}
+      />
+      {field}
     </div>
   )
 }
@@ -383,13 +470,13 @@ function encodeAnswers(
   drafts: readonly ItemDraft[],
 ): readonly QuestionAnswer[] {
   return items.map((item, index) => {
-    const draft = drafts[index] ?? { selected: [], custom: '', skipped: false }
+    const draft = drafts[index] ?? { selected: [], custom: '', customSelected: false, skipped: false }
     // Free text is only carried where the item permits it: the Host rejects the
     // whole batch when `custom` arrives on an item with `allowFreeText: false`.
     // No shipped adapter emits that flag today, so this guards the wire contract
     // rather than a reachable state; it is here so a future mapper that starts
     // reading the flag cannot send the card's draft past the validator.
-    const custom = item.allowFreeText ? draft.custom.trim() : ''
+    const custom = item.allowFreeText && draft.customSelected ? draft.custom.trim() : ''
     return {
       id: item.id,
       response: draft.skipped || (item.multiSelect !== true && custom !== '') ? [] : draft.selected,
@@ -473,7 +560,7 @@ function hasAnswer(draft: ItemDraft, allowFreeText: boolean): boolean {
   // validator refuses `custom` on an item that forbids it, so counting it here
   // would enable Submit for a batch that can never be recorded. Like the gate
   // above, this reads a flag no shipped adapter sets to false today.
-  return draft.selected.length > 0 || (allowFreeText && draft.custom.trim() !== '')
+  return draft.selected.length > 0 || (allowFreeText && draft.customSelected && draft.custom.trim() !== '')
 }
 
 function isPlanReview(items: readonly UserQuestionItem[]): boolean {

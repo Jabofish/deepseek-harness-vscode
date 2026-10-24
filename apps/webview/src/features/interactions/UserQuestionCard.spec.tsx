@@ -166,6 +166,106 @@ describe('UserQuestionCard', () => {
     expect(onRespond).toHaveBeenCalledWith([{ id: 'q-free', response: [], custom: 'feature/question-batch' }])
   })
 
+  it('selects the custom radio on focus, including an empty answer, and switches back to a choice', () => {
+    render(
+      <UserQuestionCard
+        question={{
+          id: 'q1',
+          sessionId: 's1',
+          prompt: 'Choose',
+          allowFreeText: true,
+          choices: [{ id: 'Allow', label: 'Allow' }],
+        }}
+        disabled={false}
+        onRespond={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    )
+
+    const choice = screen.getByRole<HTMLInputElement>('radio', { name: 'Allow' })
+    const custom = screen.getByRole<HTMLInputElement>('radio', { name: 'Custom answer for Choose' })
+    const field = screen.getByRole('textbox')
+    expect(custom.checked).toBe(false)
+    fireEvent.click(choice)
+    fireEvent.focus(field)
+    expect(custom.checked).toBe(true)
+    expect(choice.checked).toBe(false)
+    expect(submitButton().disabled).toBe(true)
+    fireEvent.change(field, { target: { value: 'Something else' } })
+    expect(submitButton().disabled).toBe(false)
+    fireEvent.click(choice)
+    expect(custom.checked).toBe(false)
+    fireEvent.click(custom)
+    expect(custom.checked).toBe(true)
+    expect(document.activeElement).toBe(field)
+  })
+
+  it('keeps multi-select choices when focusing custom text and excludes unchecked custom text', () => {
+    const onRespond = vi.fn()
+    render(
+      <UserQuestionCard
+        question={batchQuestion()}
+        disabled={false}
+        onRespond={onRespond}
+        onCancel={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('radio', { name: /Approve/ }))
+    const alice = screen.getByRole<HTMLInputElement>('checkbox', { name: 'Alice' })
+    fireEvent.click(alice)
+    const field = screen.getByRole('textbox', { name: 'Answer for Who to notify?' })
+    const custom = screen.getByRole<HTMLInputElement>('checkbox', {
+      name: 'Custom answer for Who to notify?',
+    })
+    fireEvent.focus(field)
+    fireEvent.change(field, { target: { value: 'The release channel' } })
+    expect(custom.checked).toBe(true)
+    expect(alice.checked).toBe(true)
+    fireEvent.click(custom)
+    fireEvent.click(submitButton())
+    expect(onRespond).toHaveBeenCalledWith([
+      { id: 'q-plan', response: ['Approve'] },
+      { id: 'q-extra', response: ['Alice'] },
+    ])
+  })
+
+  it.each([{ ctrlKey: true }, { metaKey: true }])(
+    'submits a complete batch with modifier Enter %j',
+    (modifier) => {
+      const onRespond = vi.fn().mockResolvedValue(undefined)
+      render(
+        <UserQuestionCard
+          question={batchQuestion()}
+          disabled={false}
+          onRespond={onRespond}
+          onCancel={vi.fn()}
+        />,
+      )
+
+      const field = screen.getByRole('textbox', { name: 'Answer for Who to notify?' })
+      fireEvent.change(field, { target: { value: 'The release channel' } })
+      fireEvent.keyDown(field, { key: 'Enter', ...modifier })
+      expect(onRespond).not.toHaveBeenCalled()
+      fireEvent.click(screen.getByRole('radio', { name: /Approve/ }))
+      fireEvent.keyDown(field, { key: 'Enter' })
+      fireEvent.keyDown(field, { key: 'Enter', ...modifier, isComposing: true })
+      fireEvent.keyDown(field, { key: 'Enter', ...modifier, keyCode: 229 })
+      fireEvent.compositionStart(field)
+      fireEvent.keyDown(field, { key: 'Enter', ...modifier })
+      fireEvent.compositionEnd(field)
+      fireEvent.keyDown(field, { key: 'Enter', ...modifier, repeat: true })
+      expect(onRespond).not.toHaveBeenCalled()
+      fireEvent.keyDown(field, { key: 'Enter', ...modifier })
+      fireEvent.keyDown(field, { key: 'Enter', ...modifier })
+      expect(onRespond).toHaveBeenCalledOnce()
+      expect(onRespond).toHaveBeenCalledWith([
+        { id: 'q-plan', response: ['Approve'] },
+        { id: 'q-extra', response: [], custom: 'The release channel' },
+      ])
+    },
+  )
+
   it('falls back to the legacy single-question shape without items', () => {
     const onRespond = vi.fn()
     render(

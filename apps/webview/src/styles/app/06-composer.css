@@ -516,6 +516,21 @@ occupancy so the overflow is visible without opening the details. */
   background: var(--dsh-surface-hover);
 }
 
+.dsh-question__choice--custom {
+  --dsh-question-field-padding: 0;
+}
+
+.dsh-question__choice--custom:has(textarea:focus-visible) {
+  outline: 2px solid var(--dsh-focus);
+  outline-offset: 2px;
+}
+
+.dsh-question__choice--custom .dsh-question__textarea {
+  border: 0;
+  outline: none;
+  background: transparent;
+}
+
 .dsh-question__choice-label,
 .dsh-question__choice-description {
   min-width: 0;

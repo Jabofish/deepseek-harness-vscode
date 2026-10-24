@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 提问卡的自定义回答增加与选项一致的选择标记，聚焦输入框即选中；支持 Ctrl+Enter / ⌘Enter 提交整组答案，保留普通回车换行并防止输入法及重复按键误提交。
+- Custom question answers have selection controls that activate on focus. Ctrl+Enter / ⌘Enter submits the complete answer batch while Enter adds a line; composition and repeated key events do not submit.
+
 - 行内代码包裹的完整 Markdown 链接也可点击；文件引用不再覆盖已有链接的目标，避免一次点击打开两个位置。
 - Complete Markdown links wrapped in inline code remain clickable. Produced-file references preserve explicit link targets and avoid opening two locations from one click.
 
