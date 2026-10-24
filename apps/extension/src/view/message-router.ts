@@ -422,8 +422,6 @@ function publicErrorMessage(
   if (requestType === 'runtime.action') {
     if (context?.operation === 'runtime.install') {
       const reason = context.reason
-      if (reason === 'node-version')
-        return 'DSH installation requires Node.js 22.19.0 or newer in the Extension Host.'
       if (reason === 'npm-not-found')
         return 'npm was not found in the Extension Host environment. Copy the install command or open a terminal.'
       if (reason === 'verify-failed')
@@ -440,8 +438,6 @@ function publicErrorMessage(
   if (requestType === 'runtime.update.install' || requestType === 'runtime.update.check') {
     if (context?.operation === 'runtime.update') {
       const reason = context.reason
-      if (reason === 'node-version')
-        return 'DSH installation requires Node.js 22.19.0 or newer in the Extension Host.'
       if (reason === 'npm-not-found')
         return 'npm was not found in the Extension Host environment. Copy the install command or open a terminal.'
       if (reason === 'invalid-version') return 'Select an exact DSH version from the upstream version list.'

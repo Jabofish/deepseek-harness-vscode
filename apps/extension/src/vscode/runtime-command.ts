@@ -22,8 +22,13 @@ export function streamRuntimeCommand(
     let stderr = ''
     let timedOut = false
     let settled = false
+    let drainTimer: ReturnType<typeof setTimeout> | undefined
+    const startedAt = Date.now()
+    let lastOutputAt = startedAt
     const decoders = { stdout: new StringDecoder('utf8'), stderr: new StringDecoder('utf8') }
     const receive = (stream: 'stdout' | 'stderr', text: string): void => {
+      if (text === '') return
+      lastOutputAt = Date.now()
       if (stream === 'stdout') stdout = (stdout + text).slice(-options.maxBuffer)
       else stderr = (stderr + text).slice(-options.maxBuffer)
       try {
@@ -36,19 +41,35 @@ export function streamRuntimeCommand(
       timedOut = true
       stopOwnedCommand(child)
     }, options.timeout)
+    const heartbeat =
+      options.onHeartbeat === undefined
+        ? undefined
+        : setInterval(() => {
+            try {
+              options.onHeartbeat?.(Date.now() - startedAt, Date.now() - lastOutputAt)
+            } catch {
+              /* Advisory only. */
+            }
+          }, 15_000)
     const finish = (error?: Error): void => {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      clearTimeout(drainTimer)
+      if (heartbeat !== undefined) clearInterval(heartbeat)
+      child.stdout?.removeAllListeners('data')
+      child.stderr?.removeAllListeners('data')
       receive('stdout', decoders.stdout.end())
       receive('stderr', decoders.stderr.end())
+      child.stdout?.destroy()
+      child.stderr?.destroy()
       if (error !== undefined) reject(Object.assign(error, { stdout, stderr, timedOut, killed: timedOut }))
       else resolve({ stdout, stderr })
     }
     child.stdout?.on('data', (chunk: Buffer) => receive('stdout', decoders.stdout.write(chunk)))
     child.stderr?.on('data', (chunk: Buffer) => receive('stderr', decoders.stderr.write(chunk)))
     child.once('error', (error) => finish(error))
-    child.once('close', (code, signal) => {
+    const completed = (code: number | null, signal: NodeJS.Signals | null): void => {
       finish(
         code === 0 && !timedOut
           ? undefined
@@ -57,7 +78,14 @@ export function streamRuntimeCommand(
               signal,
             }),
       )
+    }
+    child.once('exit', (code, signal) => {
+      clearTimeout(timer)
+      // A lifecycle script can leave a descendant holding npm's output pipes.
+      // Drain trailing output briefly, then verify the package using npm's exit result.
+      drainTimer = setTimeout(() => completed(code, signal), 1_000)
     })
+    child.once('close', completed)
   })
 }
 

@@ -19,6 +19,8 @@ export function withNpmFetchDefaults(environment: NodeJS.ProcessEnv, checking = 
 }
 
 export const RUNTIME_INSTALL_FAILURE_MESSAGES = {
+  engine:
+    'A DSH dependency requires a different Node.js version. Update the Node.js installation used by npm and reload VS Code.',
   proxyAuthentication:
     'The proxy requires authentication. Configure npm proxy credentials in the Extension Host environment and retry.',
   certificate:
@@ -44,6 +46,7 @@ export function runtimeInstallationFailureMessage(error: unknown): string | unde
       ? /(?:^|\r?\n)npm\s+(?:error|ERR!)\s+code\s+([A-Z0-9_]+)\b/u.exec(record.stderr)?.[1]
       : undefined
   const code = npmCode ?? record.code
+  if (code === 'EBADENGINE') return RUNTIME_INSTALL_FAILURE_MESSAGES.engine
   const text = [record.stderr, record.stdout, record.message]
     .filter((value): value is string => typeof value === 'string')
     .join('\n')

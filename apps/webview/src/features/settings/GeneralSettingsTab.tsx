@@ -136,6 +136,14 @@ export function GeneralSettingsTab(input: GeneralSettingsTabProps): ReactElement
     return () => clearInterval(timer)
   }, [dshUpdateBusy])
   const elapsed = Math.max(0, Math.floor((now - (dshUpdateProgress?.startedAt ?? now)) / 1_000))
+  const silentSince = dshUpdateProgress?.lastActivityAt ?? dshUpdateProgress?.startedAt
+  const waitingForOutput =
+    (dshUpdateProgress?.phase === 'downloading' || dshUpdateProgress?.phase === 'installing') &&
+    silentSince !== undefined &&
+    now - silentSince >= 15_000
+  const progressLabel = waitingForOutput
+    ? t('settings.dshUpdateWaitingForOutput')
+    : dshUpdateProgressLabel(dshUpdateBusy ?? 'check', dshUpdateProgress, t)
   const showOutput = (): void => {
     setOutputError(undefined)
     void props.onShowDshUpdateOutput?.().catch(() => setOutputError(t('settings.dshUpdateOutputFailed')))
@@ -348,7 +356,7 @@ export function GeneralSettingsTab(input: GeneralSettingsTabProps): ReactElement
           {dshUpdateBusy !== undefined ? (
             <div className="dsh-settings__runtime-update-progress" role="status" aria-live="polite">
               <div className="dsh-settings__runtime-update-progress-head">
-                <span>{dshUpdateProgressLabel(dshUpdateBusy, dshUpdateProgress, t)}</span>
+                <span>{progressLabel}</span>
                 <span>
                   {t('settings.dshUpdateProgressStage', {
                     current: dshUpdateProgressStage(dshUpdateBusy, dshUpdateProgress),
@@ -363,7 +371,7 @@ export function GeneralSettingsTab(input: GeneralSettingsTabProps): ReactElement
                 aria-valuemin={0}
                 aria-valuemax={DSH_UPDATE_PROGRESS_TOTAL_STAGES}
                 aria-valuenow={dshUpdateProgressStage(dshUpdateBusy, dshUpdateProgress)}
-                aria-valuetext={dshUpdateProgressLabel(dshUpdateBusy, dshUpdateProgress, t)}
+                aria-valuetext={progressLabel}
               >
                 {Array.from({ length: DSH_UPDATE_PROGRESS_TOTAL_STAGES }, (_, index) => {
                   const stage = index + 1
@@ -380,6 +388,13 @@ export function GeneralSettingsTab(input: GeneralSettingsTabProps): ReactElement
                 <span>{t('settings.dshUpdateElapsed', { seconds: elapsed })}</span>
               )}
             </div>
+          ) : null}
+          {dshUpdateProgress?.phase === 'completed' &&
+          dshUpdateProgress.version !== undefined &&
+          dshUpdate?.globalVersion === dshUpdateProgress.version ? (
+            <p className="dsh-settings__runtime-update-notice" role="status">
+              {t('settings.dshUpdateVerified', { version: dshUpdate.globalVersion })}
+            </p>
           ) : null}
           {props.onShowDshUpdateOutput !== undefined &&
           (dshUpdateProgress?.version !== undefined || dshUpdateError !== undefined) ? (

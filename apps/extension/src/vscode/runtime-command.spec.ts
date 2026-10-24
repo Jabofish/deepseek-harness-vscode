@@ -1,8 +1,62 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { runtimeNpmEnvironment, streamRuntimeCommand } from './runtime-command.js'
 import { runtimeInstallationFailureMessage, withNpmFetchDefaults } from './runtime-installation.js'
 
 describe('runtime npm execution', () => {
+  it('returns success and preserves warning output when npm exits with zero', async () => {
+    const result = await streamRuntimeCommand(
+      process.execPath,
+      [
+        '-e',
+        "process.stderr.write('npm warn EBADENGINE Unsupported engine\\n');process.stdout.write('added packages\\n')",
+      ],
+      { timeout: 5000, maxBuffer: 1024 },
+    )
+    expect(result.stderr).toContain('npm warn EBADENGINE')
+    expect(result.stdout).toContain('added packages')
+  })
+
+  it('settles after npm exits even if a lifecycle descendant keeps its output pipe open', async () => {
+    const result = await streamRuntimeCommand(
+      process.execPath,
+      [
+        '-e',
+        "const {spawn}=require('node:child_process');spawn(process.execPath,['-e','setTimeout(()=>{},2500)'],{stdio:['ignore',1,2],windowsHide:true}).unref();process.stdout.write('installed\\n')",
+      ],
+      // The descendant outlives this budget; the parent has already succeeded.
+      { timeout: 1800, maxBuffer: 1024 },
+    )
+    expect(result.stdout).toContain('installed')
+  })
+
+  it('reports a silent running process and releases its heartbeat when the command ends', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+    const heartbeat = vi.fn()
+    let announce!: () => void
+    const started = new Promise<void>((resolve) => {
+      announce = resolve
+    })
+    const operation = streamRuntimeCommand(
+      process.execPath,
+      ['-e', "process.stdout.write('ready');setTimeout(()=>{},100)"],
+      {
+        timeout: 5000,
+        maxBuffer: 128,
+        onOutput: () => announce(),
+        onHeartbeat: heartbeat,
+      },
+    )
+    try {
+      await started
+      vi.advanceTimersByTime(15_000)
+      expect(heartbeat).toHaveBeenCalledWith(15_000, 15_000)
+      await operation
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      await operation
+      vi.useRealTimers()
+    }
+  })
   it('streams output before completion and retains bounded tails without interrupting npm', async () => {
     let streamed = ''
     let completed = false
@@ -89,6 +143,7 @@ describe('runtime npm execution', () => {
     ['ENOSPC', 'disk space'],
     ['EINTEGRITY', 'verify'],
     ['EPERM', 'not writable'],
+    ['EBADENGINE', 'Node.js'],
   ])('classifies %s without returning raw diagnostics', (code, expected) => {
     const message = runtimeInstallationFailureMessage({
       code: 1,

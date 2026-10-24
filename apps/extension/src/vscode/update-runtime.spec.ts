@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import type { DshRuntime, DshRuntimeUpdateProgress } from '@dsh-vscode/domain'
+import { describe, expect, it, vi } from 'vitest'
+import { type DshRuntime, type DshRuntimeUpdateProgress } from '@dsh-vscode/domain'
 
 import {
   compareVersions,
@@ -36,11 +36,94 @@ function updater(
     ...(onProgress === undefined ? {} : { onProgress }),
     environment: () => ({ PATH: 'test-path' }),
     now: () => new Date('2026-08-21T00:00:00.000Z'),
-    nodeSupported: () => true,
   })
 }
 
 describe('DshRuntimeUpdater', () => {
+  it('returns the verified installed package even if the optional executable scan hangs', async () => {
+    vi.useFakeTimers()
+    let installed = '0.1.0-rc.6'
+    let lookups = 0
+    let probeSignal: AbortSignal | undefined
+    const subject = new DshRuntimeUpdater({
+      npmExecutable: () => 'npm',
+      activeVersion: () => '0.1.0-rc.6',
+      locateRuntime: (signal) => {
+        if (++lookups === 1) return Promise.resolve(runtime())
+        probeSignal = signal
+        return new Promise(() => undefined)
+      },
+      execute: async (_executable, args) => {
+        await Promise.resolve()
+        if (args[0] === 'view') return { stdout: metadata, stderr: '' }
+        if (args[0] === 'install') installed = '0.1.0-rc.8'
+        return {
+          stdout: JSON.stringify({ dependencies: { '@deepseek-ai/dsh': { version: installed } } }),
+          stderr: '',
+        }
+      },
+    })
+    try {
+      const result = subject.installVersion('0.1.0-rc.8')
+      await vi.advanceTimersByTimeAsync(5_000)
+      await expect(result).resolves.toMatchObject({
+        status: 'ready',
+        globalVersion: installed,
+        restartRequired: true,
+      })
+      expect(probeSignal?.aborted).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reports verification failure when npm succeeds but the requested version is missing', async () => {
+    const phases: string[] = []
+    const execute: ExecuteRuntimeCommand = async (_executable, args) => {
+      await Promise.resolve()
+      return { stdout: args[0] === 'view' ? metadata : '{}', stderr: 'npm warn EBADENGINE' }
+    }
+    await expect(
+      updater(execute, runtime(), (value) => phases.push(value.phase)).installVersion('0.1.0-rc.8'),
+    ).rejects.toMatchObject({ context: { reason: 'verify-failed' } })
+    expect(phases.at(-1)).toBe('failed')
+  })
+
+  it('publishes the verified final version after a successful install with engine and cleanup warnings', async () => {
+    let installed = '0.1.0-rc.6'
+    const progress: DshRuntimeUpdateProgress[] = []
+    const execute: ExecuteRuntimeCommand = async (_executable, args) => {
+      await Promise.resolve()
+      if (args[0] === 'view') return { stdout: metadata, stderr: '' }
+      if (args[0] === 'install') {
+        expect(args).not.toContain('--engine-strict')
+        installed = '0.1.0-rc.8'
+        return {
+          stdout: 'added 1 package, and changed 612 packages',
+          stderr: 'npm warn EBADENGINE Unsupported engine\nnpm warn cleanup EPERM',
+        }
+      }
+      return {
+        stdout: JSON.stringify({ dependencies: { '@deepseek-ai/dsh': { version: installed } } }),
+        stderr: 'npm warn cleanup EPERM',
+      }
+    }
+    const result = await updater(execute, runtime(), (value) => progress.push(value)).installVersion(
+      '0.1.0-rc.8',
+    )
+    expect(result).toMatchObject({
+      status: 'ready',
+      globalVersion: installed,
+      updateAvailable: false,
+      restartRequired: true,
+    })
+    expect(progress.at(-1)).toMatchObject({
+      phase: 'completed',
+      version: installed,
+      snapshot: result,
+    })
+    expect(progress.some((value) => value.phase === 'failed')).toBe(false)
+  })
   it('ignores an old check completing after installation and shares concurrent installs', async () => {
     let release!: (value: { stdout: string; stderr: string }) => void
     let views = 0
@@ -223,7 +306,7 @@ describe('DshRuntimeUpdater', () => {
       '@deepseek-ai/dsh@0.1.0-rc.8',
       '--no-audit',
       '--no-fund',
-      '--loglevel=http',
+      '--loglevel=info',
     ])
   })
 

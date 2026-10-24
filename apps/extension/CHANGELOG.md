@@ -5,6 +5,9 @@
 - 可选模型计费按实际请求路由估算会话费用；合法长历史页不再误报协议错误，达到总读取预算时保留部分统计。首次读取失败显示重试入口，已关闭计费的会话保持隐藏。
 - Optional model billing estimates session costs from actual request routes. Valid large history pages no longer fail as malformed; reaching the total read budget retains a partial estimate. The first failed read offers retry, while confirmed disabled estimates remain hidden.
 
+- npm 警告不再触发额外的 Node 版本拦截，以进程退出结果和安装后版本验证判断成败。安装脚本、耗时和最终验证结果显示到输出窗口，设置页显示安装完成及已安装版本；收到完成通知即可结束等待，不依赖单条请求回复。
+- npm warnings do not trigger an additional Node version gate. Installation follows the process exit result and installed-version verification. Script output, timing and final verification appear in the output window; settings show the installed version and settle on verified completion events even if the request reply is lost.
+
 - 减少长会话中的重复计算：已显示的代码高亮不因全局缓存淘汰而重复请求；历史片段按组一次性合并文本和覆盖序列；经典布局复用组内工具与正文数组，保持原有显示、顺序和交互。
 - Reduces repeated work in long conversations: displayed code highlights survive shared-cache eviction without new requests, history chunks assemble text and sequence coverage once per group, and classic layout reuses tool and content arrays while preserving presentation, ordering and interactions.
 

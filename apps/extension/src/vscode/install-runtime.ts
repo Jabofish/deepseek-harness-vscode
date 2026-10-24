@@ -19,14 +19,6 @@ export class RuntimeInstaller {
   public constructor(private readonly dependencies: RuntimeInstallerDependencies) {}
 
   public install(): Promise<void> {
-    if (!isSupportedNodeVersion())
-      return Promise.reject(
-        runtimeInstallError(
-          'node-version',
-          'DSH installation requires Node.js 22.19.0 or newer in the Extension Host.',
-          false,
-        ),
-      )
     if (this.dependencies.runInstall !== undefined) {
       return this.dependencies
         .runInstall()
@@ -91,17 +83,8 @@ export class RuntimeInstaller {
   }
 }
 
-export function isSupportedNodeVersion(version = process.versions.node): boolean {
-  const match = version.match(/^(\d+)\.(\d+)\.(\d+)/)
-  if (match === null) return false
-  const major = Number(match[1])
-  const minor = Number(match[2])
-  const patch = Number(match[3])
-  return major > 22 || (major === 22 && (minor > 19 || (minor === 19 && patch >= 0)))
-}
-
 function runtimeInstallError(
-  reason: 'node-version' | 'verify-failed' | 'npm-not-found' | 'install-failed',
+  reason: 'verify-failed' | 'npm-not-found' | 'install-failed',
   message: string,
   retryable: boolean,
   cause?: unknown,

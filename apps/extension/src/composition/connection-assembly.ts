@@ -283,6 +283,13 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
     }
     return installOutput
   }
+  const appendInstallStatus = (message: string): void => {
+    try {
+      installOutput?.appendLine(message)
+    } catch {
+      // Output disposal must not hide the verified result or fail npm work.
+    }
+  }
   const executeRuntimeCommand: ExecuteRuntimeCommand = (executable, args, options) => {
     const installing = args[0] === 'install'
     const key = [executable, ...args].join('\0')
@@ -326,7 +333,7 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
         installOutput.clear()
         installOutput.show(true)
         installOutput.appendLine(
-          'Downloading and installing DSH. npm handles registry access, proxy settings, retries and cached downloads.',
+          'Downloading and installing DSH. Build script output and timing details follow.',
         )
         const pending = { stdout: '', stderr: '' }
         const discarding = { stdout: false, stderr: false }
@@ -367,9 +374,22 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
             [
               ...(resolved?.prefixArgs ?? []),
               ...args,
-              ...(!args.includes('--loglevel=http') ? ['--no-audit', '--no-fund', '--loglevel=http'] : []),
+              ...['--no-audit', '--no-fund', '--loglevel=info', '--foreground-scripts', '--timing'].filter(
+                (flag) => !args.includes(flag),
+              ),
             ],
-            { ...options, cwd: homedir(), env: withNpmFetchDefaults(environment), onOutput: output },
+            {
+              ...options,
+              cwd: homedir(),
+              env: withNpmFetchDefaults(environment),
+              onOutput: output,
+              onHeartbeat: (elapsedMs, silentMs) => {
+                if (silentMs >= 15_000)
+                  installOutput?.appendLine(
+                    `npm is still running: ${Math.floor(elapsedMs / 1_000)}s elapsed, ${Math.floor(silentMs / 1_000)}s without new output.`,
+                  )
+              },
+            },
           )
         } catch (error) {
           outcome =
@@ -379,7 +399,7 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
         } finally {
           for (const stream of ['stdout', 'stderr'] as const)
             if (!discarding[stream]) display(pending[stream])
-          installOutput.appendLine(outcome)
+          appendInstallStatus(outcome)
         }
       }
       const result = await execFileAsync(resolvedExecutable, [...(resolved?.prefixArgs ?? []), ...args], {
@@ -420,7 +440,20 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
     },
     verifyInstall: async () => {
       runtimeLocator.invalidate()
-      return (await runtimeLocator.locate()).runtime?.supported === true
+      try {
+        const verified = (await runtimeLocator.locate()).runtime?.supported === true
+        appendInstallStatus(
+          verified
+            ? 'DSH installed and verified.'
+            : 'npm finished, but the installed DSH executable could not be verified. Refresh runtime status before retrying.',
+        )
+        return verified
+      } catch (error) {
+        appendInstallStatus(
+          'npm finished, but DSH executable verification failed. Refresh runtime status before retrying.',
+        )
+        throw error
+      }
     },
     verifyExecutable: async (executable) => (await runtimeLocator.inspectExecutable(executable)).supported,
   })
@@ -441,7 +474,19 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
       const state = coordinator.getState()
       return state.kind === 'connected' && state.backend.ownership === 'managed'
     },
-    onProgress: (progress) => onRuntimeUpdateProgress(progress),
+    onProgress: (progress) => {
+      // Final verification happens after the npm process and must also reach
+      // the native output window, even when the initiating chat has closed.
+      if (progress.version !== undefined && installOutput !== undefined) {
+        if (progress.phase === 'completed' && progress.snapshot?.globalVersion === progress.version)
+          appendInstallStatus(
+            `DSH ${progress.version} installed and verified.${progress.snapshot.restartRequired === true ? ' Restart DSH to use the installed version.' : ''}`,
+          )
+        else if (progress.phase === 'failed')
+          appendInstallStatus('DSH update did not complete. Refresh update status before retrying.')
+      }
+      onRuntimeUpdateProgress(progress)
+    },
     execute: executeRuntimeCommand,
     environment: () => runtimeEnvironment(),
   })

@@ -28,7 +28,7 @@ The optional [editor integration](packages/dsh-editor-bridge/README.md) is insta
 Install [DeepSeek Harness Companion for VS Code](https://marketplace.visualstudio.com/items?itemName=Direwolf.deepseek-harness-client) from the Marketplace, or download a platform VSIX from the [latest GitHub Release](https://github.com/Jabofish/deepseek-harness-vscode/releases/latest) and use **Extensions: Install from VSIX...**.
 
 1. Open the **DeepSeek Harness** view.
-2. If DSH is missing, use the guided installer, select an existing executable, or copy the exact install command shown in the view. The installer checks its required Node.js version before running.
+2. If DSH is missing, use the guided installer, select an existing executable, or copy the exact install command shown in the view. The installer shows npm output and verifies the installed version; npm warnings alone do not fail the installation.
 3. Choose or create a workspace, start a session, and send a task.
 
 The DeepSeek Harness Chat view appears in VS Code's Secondary Side Bar by default (on the right in the default workbench layout). If you previously moved it, VS Code may keep your saved layout. Run **DSH: Move View to Secondary Side Bar** from the Command Palette to choose the Chat view and **New Secondary Side Bar Entry**, or right-click the view title and use **Move View**.

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppError } from '@dsh-vscode/domain'
 
 import { INSTALL_COMMAND } from '../constants.js'
-import { RuntimeInstaller, isSupportedNodeVersion } from './install-runtime.js'
+import { RuntimeInstaller } from './install-runtime.js'
 
 interface Harness {
   readonly installer: RuntimeInstaller
@@ -63,9 +63,7 @@ function createHarness(
 const originalNodeVersion = Object.getOwnPropertyDescriptor(process.versions, 'node')
 
 beforeEach(() => {
-  // `install()` gates on the Extension Host's own Node runtime, which is
-  // whatever this machine happens to run; pin it so the install paths are
-  // exercised regardless of the local toolchain.
+  // The Extension Host and npm may use different Node versions.
   Object.defineProperty(process.versions, 'node', { value: '24.0.0', configurable: true })
 })
 
@@ -149,29 +147,12 @@ describe('runtime installer', () => {
     expect(show).toHaveBeenCalledWith(true)
   })
 
-  it('refuses to install on an Extension Host Node older than the supported floor', async () => {
+  it('verifies a successful installation without blocking on the Extension Host Node version', async () => {
     const harness = createHarness()
 
-    await expect(withNodeVersion('20.11.1', () => harness.installer.install())).rejects.toMatchObject({
-      code: 'INVALID_CONFIGURATION',
-      retryable: false,
-      context: { operation: 'runtime.install', reason: 'node-version' },
-    })
-    expect(harness.runInstall).not.toHaveBeenCalled()
-    expect(harness.createTerminal).not.toHaveBeenCalled()
-    await expect(harness.installer.install()).resolves.toBeUndefined()
-  })
-
-  it('gates the install on the documented Node floor', () => {
-    expect(isSupportedNodeVersion('22.19.0')).toBe(true)
-    expect(isSupportedNodeVersion('22.19.7')).toBe(true)
-    expect(isSupportedNodeVersion('22.20.0')).toBe(true)
-    expect(isSupportedNodeVersion('23.0.0')).toBe(true)
-    expect(isSupportedNodeVersion('24.18.0')).toBe(true)
-    expect(isSupportedNodeVersion('22.18.9')).toBe(false)
-    expect(isSupportedNodeVersion('21.99.99')).toBe(false)
-    expect(isSupportedNodeVersion('20.11.1')).toBe(false)
-    expect(isSupportedNodeVersion('not-a-version')).toBe(false)
+    await expect(withNodeVersion('20.11.1', () => harness.installer.install())).resolves.toBeUndefined()
+    expect(harness.runInstall).toHaveBeenCalledOnce()
+    expect(harness.verifyInstall).toHaveBeenCalledOnce()
   })
 
   it('selects an executable only after verification and then pins it in settings', async () => {

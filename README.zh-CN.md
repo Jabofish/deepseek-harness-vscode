@@ -28,7 +28,7 @@
 从 [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=Direwolf.deepseek-harness-client) 安装扩展，或从[最新 GitHub Release](https://github.com/Jabofish/deepseek-harness-vscode/releases/latest)下载对应平台的 VSIX，再执行 **Extensions: Install from VSIX...**。
 
 1. 打开 **DeepSeek Harness** 视图。
-2. 如果缺少 DSH，使用引导安装、选择现有可执行文件，或复制视图显示的精确安装命令。安装器会先检查所需的 Node.js 版本。
+2. 如果缺少 DSH，使用引导安装、选择现有可执行文件，或复制视图显示的精确安装命令。安装器会显示 npm 输出并验证安装版本；npm 警告本身不会导致安装失败。
 3. 选择或创建工作区，开始会话并发送任务。
 
 DeepSeek Harness 的 Chat 视图默认注册在辅助侧边栏（VS Code 默认布局中位于编辑器右侧）。如果你以前移动过视图，VS Code 可能保留已有布局；可在命令面板运行 **DSH: Move View to Secondary Side Bar**，选择 Chat 视图和 **New Secondary Side Bar Entry**，或右键视图标题使用 **Move View**。

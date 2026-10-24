@@ -7,7 +7,6 @@ import type {
 import { AppError } from '@dsh-vscode/domain'
 import { DSH_PACKAGE_NAME, isDshPackageVersion as isDshSemVerVersion } from '@dsh-vscode/dsh-adapter'
 
-import { isSupportedNodeVersion } from './install-runtime.js'
 import {
   RUNTIME_INSTALL_MAX_BUFFER,
   RUNTIME_INSTALL_TIMEOUT_MS,
@@ -23,6 +22,7 @@ export interface RuntimeCommandOptions {
   readonly env?: NodeJS.ProcessEnv
   readonly signal?: AbortSignal
   readonly onOutput?: (text: string, stream: 'stdout' | 'stderr') => void
+  readonly onHeartbeat?: (elapsedMs: number, silentMs: number) => void
 }
 
 export interface RuntimeCommandResult {
@@ -44,7 +44,6 @@ export interface DshRuntimeUpdaterDependencies {
   readonly onProgress?: (progress: DshRuntimeUpdateProgress) => void
   readonly environment?: () => NodeJS.ProcessEnv
   readonly now?: () => Date
-  readonly nodeSupported?: () => boolean
   readonly activeVersion?: () => string | undefined
   readonly canRestart?: () => boolean
 }
@@ -133,13 +132,6 @@ export class DshRuntimeUpdater {
         'Select an exact DSH version from the upstream version list.',
         false,
       )
-    if (!(this.dependencies.nodeSupported?.() ?? isSupportedNodeVersion()))
-      throw updateError(
-        'node-version',
-        'DSH installation requires Node.js 22.19.0 or newer in the Extension Host.',
-        false,
-      )
-
     this.emitProgress({ phase: 'checking', version: requested })
     const checked = await this.checkOnce(signal, revision, false)
     if (checked.status !== 'ready' || !checked.availableVersions.includes(requested)) {
@@ -176,7 +168,7 @@ export class DshRuntimeUpdater {
           `${DSH_PACKAGE_NAME}@${requested}`,
           '--no-audit',
           '--no-fund',
-          '--loglevel=http',
+          '--loglevel=info',
         ],
         {
           ...this.commandOptions(RUNTIME_INSTALL_TIMEOUT_MS, signal),
@@ -220,13 +212,26 @@ export class DshRuntimeUpdater {
       )
     }
     let runtime: DshRuntime | undefined
+    const probeAbort = new AbortController()
+    let probeTimer: ReturnType<typeof setTimeout> | undefined
     try {
-      runtime = await this.dependencies.locateRuntime()
+      runtime = await Promise.race([
+        this.dependencies.locateRuntime(probeAbort.signal),
+        new Promise<undefined>((resolve) => {
+          probeTimer = setTimeout(() => {
+            probeAbort.abort()
+            resolve(undefined)
+          }, 5_000)
+        }),
+      ])
     } catch {
       // The package was verified through npm global state. A separately
       // configured executable may still be broken, so do not turn a completed
       // package update into a false install failure.
       runtime = undefined
+    } finally {
+      clearTimeout(probeTimer)
+      probeAbort.abort()
     }
     const metadata = this.metadata ?? metadataFromSnapshot(checked)
     const snapshot = this.snapshot('ready', runtime, globalVersion, metadata)
@@ -526,13 +531,7 @@ function cancelledError(cause: unknown): AppError {
 }
 
 function updateError(
-  reason:
-    | 'invalid-version'
-    | 'node-version'
-    | 'metadata-unavailable'
-    | 'npm-not-found'
-    | 'install-failed'
-    | 'verify-failed',
+  reason: 'invalid-version' | 'metadata-unavailable' | 'npm-not-found' | 'install-failed' | 'verify-failed',
   message: string,
   retryable: boolean,
   cause?: unknown,
@@ -544,9 +543,7 @@ function updateError(
         ? 'DSH_NOT_FOUND'
         : reason === 'metadata-unavailable'
           ? 'CAPABILITY_UNAVAILABLE'
-          : reason === 'install-failed' || reason === 'node-version'
-            ? 'INVALID_CONFIGURATION'
-            : 'INVALID_CONFIGURATION',
+          : 'INVALID_CONFIGURATION',
     message,
     retryable,
     ...(cause === undefined ? {} : { cause }),

@@ -22,11 +22,21 @@ function harness(): {
   request: ReturnType<typeof vi.fn<ProtocolClient['request']>>
   getState: () => AppState
   connected: (version: string) => void
+  emit: (message: Parameters<Parameters<ProtocolClient['subscribe']>[0]>[0]) => void
 } {
   let state: AppState = { ...createInitialState({}), dshUpdate: snapshot }
   const request = vi.fn<ProtocolClient['request']>()
+  let listener: Parameters<ProtocolClient['subscribe']>[0] | undefined
   const actions = createDshUpdateActions({
-    client: { request } as unknown as ProtocolClient,
+    client: {
+      request: <T>(...args: Parameters<ProtocolClient['request']>) => request(...args) as Promise<T>,
+      subscribe: (callback) => {
+        listener = callback
+        return () => {
+          listener = undefined
+        }
+      },
+    },
     setState: (update) => {
       state = typeof update === 'function' ? update(state) : update
     },
@@ -34,6 +44,7 @@ function harness(): {
   return {
     actions,
     request,
+    emit: (message) => listener?.(message),
     getState: () => state,
     connected: (version: string) => {
       state = { ...state, connectedDshVersion: version }
@@ -42,6 +53,59 @@ function harness(): {
 }
 
 describe('runtime update state', () => {
+  it('settles a verified completion when the request reply is lost and ignores a later request error', async () => {
+    const h = harness()
+    let reject!: (error: Error) => void
+    h.request.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, fail) => {
+          reject = fail
+        }),
+    )
+    const result = h.actions.installDshVersion('0.2.1-rc.3')
+    h.emit({
+      type: 'event',
+      name: 'runtime.update.progress',
+      sequence: 1,
+      payload: { phase: 'completed', version: '0.2.1-rc.3', snapshot },
+    })
+    await expect(result).resolves.toMatchObject({ globalVersion: '0.2.1-rc.3' })
+    reject(new Error('late request timeout'))
+    await Promise.resolve()
+    expect(h.getState().dshUpdateProgress?.phase).toBe('completed')
+    expect(h.getState().dshUpdate?.globalVersion).toBe('0.2.1-rc.3')
+    h.request.mockResolvedValueOnce(snapshot)
+    await h.actions.checkDshUpdates(true)
+    expect(h.request).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not treat an unverified or unrelated completion as its installation result', async () => {
+    const h = harness()
+    let resolve!: (value: unknown) => void
+    h.request.mockImplementationOnce(
+      () =>
+        new Promise((done) => {
+          resolve = done
+        }),
+    )
+    const result = h.actions.installDshVersion('0.2.1-rc.3')
+    h.emit({
+      type: 'event',
+      name: 'runtime.update.progress',
+      sequence: 1,
+      payload: { phase: 'completed', version: '0.2.1-rc.3' },
+    })
+    h.emit({
+      type: 'event',
+      name: 'runtime.update.progress',
+      sequence: 2,
+      payload: { phase: 'completed', version: '0.2.1-rc.2', snapshot },
+    })
+    await Promise.resolve()
+    expect(h.getState().dshUpdateProgress?.phase).toBe('checking')
+    resolve(snapshot)
+    await result
+  })
   it('receives verified installation results from another chat surface', () => {
     let state: AppState = { ...createInitialState({}), connectedDshVersion: '0.2.1-rc.2' }
     applyHostMessage(
