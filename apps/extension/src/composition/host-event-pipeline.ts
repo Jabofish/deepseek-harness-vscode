@@ -77,6 +77,7 @@ type AccountFeatureHostEvent =
 export type PostFeatureEvent = (
   name:
     | 'editor.context.changed'
+    | 'billing.settings.changed'
     | 'editor.context.availability.changed'
     | 'schedule.invalidated'
     | 'plugin.manager.changed'
@@ -144,6 +145,7 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
   const postFeatureEvent = (
     name:
       | 'editor.context.changed'
+      | 'billing.settings.changed'
       | 'editor.context.availability.changed'
       | 'schedule.invalidated'
       | 'plugin.manager.changed'

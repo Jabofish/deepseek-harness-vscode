@@ -12,6 +12,7 @@ const contracts = [
   'apps/webview/src/features/shell/AppNotices.spec.tsx',
   'apps/webview/src/components/common/useScrollFollow.spec.tsx',
   'apps/webview/src/features/chat/Timeline.spec.tsx',
+  'apps/webview/src/features/billing/Billing.spec.tsx',
   'apps/webview/src/features/inspector/SessionInspector.spec.tsx',
   'apps/webview/src/components/common/useDismissibleLayer.spec.tsx',
   'apps/webview/src/features/schedules/ScheduleDrawer.spec.tsx',

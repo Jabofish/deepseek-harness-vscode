@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { billingRequestSchemas } from '../billing-schemas.js'
 import { editorIntegrationPreferencesSchema } from './feature-editor.js'
 import {
   changeSummarySchema,
@@ -49,6 +50,7 @@ export const promptTemplateOwnerPayload = {
 
 /** Future request union. Do not merge it into `webviewRequestSchema` early. */
 export const featureRequestSchema = z.discriminatedUnion('type', [
+  ...billingRequestSchemas,
   z
     .object({
       type: z.literal('editor.companion.status'),

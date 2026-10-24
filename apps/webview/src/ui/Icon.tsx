@@ -42,6 +42,7 @@ export type IconName =
   | 'tool'
   | 'trash'
   | 'users'
+  | 'wallet'
 
 export interface IconProps {
   readonly name: IconName
@@ -109,11 +110,10 @@ function renderIcon(name: IconName): ReactElement {
     case 'branch':
       return (
         <>
-          <circle cx="6" cy="5" r="2" />
-          <circle cx="18" cy="5" r="2" />
-          <circle cx="18" cy="19" r="2" />
-          <path d="M8 5h4a6 6 0 0 1 6 6v6" />
-          <path d="M6 7v10a2 2 0 0 0 2 2h8" />
+          <path d="M7 7v2a5 5 0 0 0 5 5m5-7v2a5 5 0 0 1-5 5v3" />
+          <circle cx="7" cy="5" r="2" />
+          <circle cx="17" cy="5" r="2" />
+          <circle cx="12" cy="19" r="2" />
         </>
       )
     case 'check':
@@ -187,10 +187,9 @@ function renderIcon(name: IconName): ReactElement {
     case 'model':
       return (
         <>
-          <circle cx="8" cy="8" r="3" />
-          <circle cx="16" cy="8" r="3" />
-          <circle cx="12" cy="16" r="3" />
-          <path d="m10.5 9.5 1.5 3M13.5 9.5 12 13M9.5 8h5" />
+          <rect x="6" y="6" width="12" height="12" rx="2.5" />
+          <rect x="10" y="10" width="4" height="4" rx="0.75" />
+          <path d="M9 3v3m6-3v3M9 18v3m6-3v3M3 9h3m-3 6h3m12-6h3m-3 6h3" />
         </>
       )
     case 'more':
@@ -336,6 +335,15 @@ function renderIcon(name: IconName): ReactElement {
           <circle cx="9" cy="9" r="2.5" />
           <circle cx="16.5" cy="10" r="2" />
           <path d="M4.5 19a4.5 4.5 0 0 1 9 0M14 18a3.5 3.5 0 0 1 6 1" />
+        </>
+      )
+    case 'wallet':
+      return (
+        <>
+          <path d="M5 7V6a2 2 0 0 1 2-2h11" />
+          <rect x="3" y="7" width="18" height="13" rx="2.5" />
+          <path d="M21 11h-4a3 3 0 0 0 0 6h4" />
+          <circle cx="17" cy="14" r="0.8" fill="currentColor" stroke="none" />
         </>
       )
   }

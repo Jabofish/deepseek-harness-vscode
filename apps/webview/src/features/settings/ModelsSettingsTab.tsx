@@ -8,6 +8,7 @@ import type {
 import type { Translate } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
 import { SelectMenu } from '../../components/common/SelectMenu.js'
+import { BillingSettings } from '../billing/BillingSettings.js'
 import { CustomProviderCard, type CustomProviderTemplate } from './CustomProviderCard.js'
 import { ProviderSettingsEditor, type ProviderSettingChange } from './ProviderSettingsEditor.js'
 import type { SettingsDrawerProps } from './settings-drawer-props.js'
@@ -123,6 +124,9 @@ export function ModelsSettingsTab(input: ModelsSettingsTabProps): ReactElement {
         <p className="dsh-settings__error" role="alert">
           {saveError}
         </p>
+      )}
+      {props.featureRequest === undefined ? null : (
+        <BillingSettings request={props.featureRequest} models={props.models} />
       )}
       {dshState.status === 'loading' ? (
         <p className="dsh-settings__empty" role="status">

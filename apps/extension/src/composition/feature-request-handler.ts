@@ -1,4 +1,5 @@
 import * as vscode from 'vscode'
+import type { BillingFeatureHost } from '../billing/billing-feature-handler.js'
 import type { EditorBridgeHost } from '../editor/editor-bridge-host.js'
 import {
   AppError,
@@ -56,6 +57,7 @@ import type { TaskFocusState } from './change-checkpoint-task-assembly.js'
 import { inspectorClientUrl } from './inspector-client-url.js'
 
 export interface FeatureRequestHandlerDependencies {
+  readonly billing?: BillingFeatureHost
   readonly editorCompanion?: () => Pick<EditorBridgeHost, 'snapshot' | 'readStatus' | 'configure' | 'action'>
   readonly getAccountLifecycleHost: () => AccountLifecycleHost | undefined
   readonly backendService: BackendService
@@ -112,6 +114,17 @@ export function createFeatureRequestHandler(deps: FeatureRequestHandlerDependenc
     currentWorkspaceFolders,
   } = deps
   const handleFeatureRequest = async (request: FeatureRequest, signal: AbortSignal): Promise<unknown> => {
+    if (
+      request.type === 'billing.settings.read' ||
+      request.type === 'billing.settings.save' ||
+      request.type === 'billing.estimate' ||
+      request.type === 'billing.catalog.read' ||
+      request.type === 'billing.reference.read'
+    ) {
+      if (deps.billing === undefined)
+        throw new AppError({ code: 'FEATURE_DISABLED', message: 'Billing is unavailable.', retryable: false })
+      return deps.billing.handle(request, signal)
+    }
     if (
       request.type === 'editor.companion.status' ||
       request.type === 'editor.companion.configure' ||

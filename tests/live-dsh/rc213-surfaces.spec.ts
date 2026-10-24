@@ -39,6 +39,15 @@ describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1' || process.env.DSH_LIVE_RUNTI
             model: { providerId: '', modelId: '' },
           }
           const original = await backend.sessions.create({ workspaceId: workspace.id, configuration })
+          const accounting = backend.sessions.readBillingPage
+          expect(accounting).toBeDefined()
+          const accountingPage = await accounting!.call(backend.sessions, original.id)
+          expect(accountingPage).toMatchObject({ facts: [], hasMore: false, contiguous: true })
+          const cancelledRead = new AbortController()
+          cancelledRead.abort()
+          await expect(
+            accounting!.call(backend.sessions, original.id, undefined, cancelledRead.signal),
+          ).rejects.toThrow()
           const reused = await backend.sessions.create({
             workspaceId: workspace.id,
             sessionId: original.id,

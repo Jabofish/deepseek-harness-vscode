@@ -12,6 +12,13 @@ export const featureHostEventSchema = z.discriminatedUnion('name', [
   z
     .object({
       type: z.literal('feature.event'),
+      name: z.literal('billing.settings.changed'),
+      identity: featureEventIdentitySchema,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('feature.event'),
       name: z.literal('account.lifecycle.updated'),
       identity: featureEventIdentitySchema,
       snapshot: accountLifecycleSnapshotSchema,

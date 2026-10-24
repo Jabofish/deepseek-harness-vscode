@@ -1,4 +1,10 @@
 import { z } from 'zod'
+import {
+  billingEstimateResponseSchema,
+  billingCatalogResponseSchema,
+  billingReferenceResponseSchema,
+  billingSettingsResponseSchema,
+} from '../billing-schemas.js'
 import { editorIntegrationStatusSchema } from './feature-editor.js'
 import {
   accountLifecycleSnapshotSchema,
@@ -38,6 +44,10 @@ import { contextKind, promptTemplateVariable } from './feature-requests.js'
 import { modsBandSnapshotSchema } from './feature-mods-band.js'
 
 export const featureResponsePayloadSchema = z.discriminatedUnion('kind', [
+  billingEstimateResponseSchema,
+  billingCatalogResponseSchema,
+  billingReferenceResponseSchema,
+  billingSettingsResponseSchema,
   editorIntegrationStatusSchema,
   z
     .object({
