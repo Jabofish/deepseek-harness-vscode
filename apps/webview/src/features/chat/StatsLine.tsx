@@ -10,7 +10,7 @@ import { useConversationLayout } from '../../app/ConversationLayoutProvider.js'
 
 export interface StatsLineProps {
   /** Optional independent reading; this renderer does not own its calculation or I/O. */
-  readonly cost?: (details: boolean) => ReactElement
+  readonly cost?: (details: boolean, inline?: boolean) => ReactElement
   readonly sessionId?: string | undefined
   readonly nodes: readonly TimelineNode[]
   /** Optional reducer boundary for incremental fallback statistics. */
@@ -114,9 +114,12 @@ export const StatsLine = memo(function StatsLine(props: StatsLineProps): ReactEl
           <span title={t('stats.cache')}>{t('stats.cacheShort', { percent: cachePercent })}</span>
         )}
         {narrow && props.cost !== undefined ? (
-          <StatsDetails stats={stats} usage={props.usage}>
-            {props.cost(true)}
-          </StatsDetails>
+          <>
+            <StatsDetails stats={stats} usage={props.usage}>
+              {props.cost(true)}
+            </StatsDetails>
+            {props.cost(false, true)}
+          </>
         ) : (
           props.cost?.(false)
         )}
@@ -194,7 +197,7 @@ export const StatsLine = memo(function StatsLine(props: StatsLineProps): ReactEl
           )}
         </>
       )}
-      {narrow ? null : props.cost?.(false)}
+      {narrow ? props.cost?.(false, true) : props.cost?.(false)}
     </div>
   )
 })
@@ -208,7 +211,7 @@ function FocusedStatsLine({
   stats,
   usage,
 }: {
-  readonly cost?: (details: boolean) => ReactElement
+  readonly cost?: (details: boolean, inline?: boolean) => ReactElement
   readonly narrow: boolean
   readonly onContainer: (element: HTMLDivElement | null) => void
   readonly counts: string
@@ -227,6 +230,7 @@ function FocusedStatsLine({
     >
       <StatsPopover
         label={counts}
+        labelSuffix={narrow && usage === undefined ? cost?.(false, true) : undefined}
         icon="clock"
         rows={statisticsRows(stats, undefined, t, locale, 'time')}
         open={openDetail === 'time'}
@@ -237,6 +241,7 @@ function FocusedStatsLine({
       {usage === undefined ? null : (
         <StatsPopover
           label={usageLabel}
+          labelSuffix={narrow ? cost?.(false, true) : undefined}
           icon="box"
           rows={statisticsRows(stats, usage, t, locale, 'tokens')}
           open={openDetail === 'tokens'}

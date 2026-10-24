@@ -8,6 +8,7 @@ import { Icon, type IconName } from '../../ui/Icon.js'
 /** A quiet reading with a separate, bounded detail surface, as in DSH's StatsPills. */
 export function StatsPopover(props: {
   readonly label: string
+  readonly labelSuffix?: ReactNode
   readonly icon: IconName
   readonly rows: readonly { readonly label: string; readonly value: string }[]
   readonly open: boolean
@@ -51,6 +52,7 @@ export function StatsPopover(props: {
         type="button"
         className="dsh-stats-pill"
         aria-label={`${t('stats.details')}: ${props.label}`}
+        aria-describedby={props.labelSuffix == null ? undefined : `${id}-suffix`}
         aria-haspopup="dialog"
         aria-expanded={props.open}
         aria-controls={props.open ? id : undefined}
@@ -58,6 +60,11 @@ export function StatsPopover(props: {
       >
         <Icon name={props.icon} />
         <span>{props.label}</span>
+        {props.labelSuffix == null ? null : (
+          <span className="dsh-stats-pill__suffix" id={`${id}-suffix`}>
+            {props.labelSuffix}
+          </span>
+        )}
       </button>
       {props.open
         ? createPortal(

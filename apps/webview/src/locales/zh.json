@@ -71,6 +71,7 @@
   "billing.validUntil": "失效时间，不含此刻（UTC）",
   "billing.cost": "费用",
   "billing.retry": "重试读取费用",
+  "billing.cachedEstimate": "正在显示上次计算的费用。",
   "billing.unavailable": "费用不可用",
   "billing.unpricedCost": "费用未计价",
   "billing.partial": "部分计价",

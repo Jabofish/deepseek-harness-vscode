@@ -5,6 +5,71 @@ const today = Date.parse('2026-10-24T12:00:00Z')
 const quote = { date: '2026-10-23', base: 'USD', quote: 'CNY', rate: 6.6702 }
 afterEach(() => vi.restoreAllMocks())
 describe('reference exchange source', () => {
+  it('persists a successful quote and retains it across restarts and offline refreshes', async () => {
+    let stored: unknown
+    let now = today
+    const storage = {
+      get: (): unknown => stored,
+      update: (_key: string, value: unknown): Promise<void> => {
+        stored = value
+        return Promise.resolve()
+      },
+    }
+    const source = new FrankfurterExchangeSource(
+      () => Promise.resolve(Response.json(quote)),
+      () => now,
+      storage,
+    )
+    const signal = new AbortController().signal
+    const successful = await source.read(signal)
+    const offline = vi.fn<typeof fetch>().mockRejectedValue(new Error('OFFLINE'))
+    const restarted = new FrankfurterExchangeSource(offline, () => now, storage)
+    expect(await restarted.read(signal)).toEqual(successful)
+    expect(offline).not.toHaveBeenCalled()
+    now += 86_400_001
+    expect(await restarted.read(signal)).toEqual(successful)
+    expect(await restarted.read(signal)).toEqual(successful)
+    expect(offline).toHaveBeenCalledOnce()
+    now += 60_001
+    offline.mockResolvedValueOnce(Response.json({ ...quote, date: '2026-10-24', rate: 6.9 }))
+    expect(await restarted.read(signal)).toEqual({ usdCny: '6.9', date: '2026-10-24' })
+    await expect(new FrankfurterExchangeSource(offline, () => now, storage).read(signal)).resolves.toEqual({
+      usdCny: '6.9',
+      date: '2026-10-24',
+    })
+  })
+
+  it('shares a pending quote without letting one caller cancel another', async () => {
+    let deliver: ((response: Response) => void) | undefined
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          deliver = resolve
+        }),
+    )
+    const source = new FrankfurterExchangeSource(fetcher, () => today)
+    const controller = new AbortController()
+    const first = source.read(controller.signal)
+    const second = source.read(new AbortController().signal)
+    controller.abort(new Error('USER_CANCELLED'))
+    await expect(first).rejects.toThrow('USER_CANCELLED')
+    deliver?.(Response.json(quote))
+    expect(await second).toEqual({ usdCny: '6.6702', date: '2026-10-23' })
+    expect(fetcher).toHaveBeenCalledOnce()
+  })
+
+  it('ignores corrupt persisted data and tolerates failed cache writes', async () => {
+    const source = new FrankfurterExchangeSource(
+      () => Promise.resolve(Response.json(quote)),
+      () => today,
+      {
+        get: () => ({ quote: { usdCny: '7', date: '2099-01-01' }, fetchedAt: today }),
+        update: () => Promise.reject(new Error('DISK_FAILURE')),
+      },
+    )
+    expect(await source.read(new AbortController().signal)).toEqual({ usdCny: '6.6702', date: '2026-10-23' })
+  })
+
   it('reads one fixed anonymous ECB quote, caches it and refreshes after expiry', async () => {
     let now = today
     const fetcher = vi.fn<typeof fetch>().mockImplementation(() => Promise.resolve(Response.json(quote)))

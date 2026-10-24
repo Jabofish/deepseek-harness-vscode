@@ -1,18 +1,14 @@
-import { useEffect, useState, type ReactElement } from 'react'
+import { useMemo, useState, type ReactElement } from 'react'
 import {
   billingCurrencyDisplay,
   type BillingDisplayCurrency,
   type BillingCurrencyDisplay,
 } from '@dsh-vscode/domain'
-import {
-  billingEstimateResponseSchema,
-  type BillingEstimateResponse,
-  type FeatureHostEvent,
-} from '@dsh-vscode/webview-protocol'
+import { type BillingEstimateResponse, type FeatureHostEvent } from '@dsh-vscode/webview-protocol'
 import { useI18n } from '../../i18n.js'
-import { requestId } from '../../app/store/ids.js'
 import { StatsPopover } from '../chat/StatsPopover.js'
-import { useBillingClient, type BillingClient } from './billing-client.js'
+import type { BillingClient } from './billing-client.js'
+import { useBillingEstimate } from './billing-estimate-cache.js'
 
 /** Round display values without losing precision in the stored decimal amount. */
 export function formatBillingAmount(amount: string): string {
@@ -33,84 +29,82 @@ export function BillingCost(props: {
   readonly sessionId: string
   readonly usageKey: string
   readonly details?: boolean
+  readonly labelOnly?: boolean
+  readonly cacheScope?: string
 }): ReactElement | null {
   const { t, locale } = useI18n()
   const currency: BillingDisplayCurrency = locale === 'zh' ? 'CNY' : 'USD'
   const { request, subscribe, sessionId, usageKey } = props
-  const { send } = useBillingClient(request)
-  const [estimate, setEstimate] = useState<BillingEstimateResponse['estimate']>()
-  const [revision, setRevision] = useState(0)
-  const [failed, setFailed] = useState(false)
-  const [open, setOpen] = useState(false)
-  const [settledCurrency, setSettledCurrency] = useState<BillingDisplayCurrency>()
-  useEffect(
-    () =>
-      subscribe((event) => {
-        if (event.name === 'billing.settings.changed') setRevision((value) => value + 1)
-      }),
-    [subscribe],
+  const { estimate, failed, refreshing, refresh, refreshIfStale } = useBillingEstimate(
+    request,
+    subscribe,
+    props.cacheScope ?? '',
+    sessionId,
+    usageKey,
+    currency,
   )
-  useEffect(() => {
-    let current = true
-    let pending: string | undefined
-    const timer = window.setTimeout(() => {
-      const id = requestId()
-      pending = id
-      void send({ type: 'billing.estimate', requestId: id, payload: { sessionId, currency } })
-        .then((value) => {
-          const result = billingEstimateResponseSchema.parse(value)
-          if (!current || result.estimate.sessionId !== sessionId) return
-          setEstimate(result.estimate)
-          setSettledCurrency(currency)
-          setFailed(false)
-        })
-        .catch(() => {
-          if (current) {
-            setSettledCurrency(currency)
-            setFailed(true)
-          }
-        })
-        .finally(() => {
-          pending = undefined
-        })
-    }, 200)
-    return () => {
-      current = false
-      window.clearTimeout(timer)
-      if (pending !== undefined)
-        void request({
-          type: 'feature.request.cancel',
-          requestId: requestId(),
-          payload: { targetRequestId: pending },
-        }).catch(() => undefined)
-    }
-  }, [request, sessionId, usageKey, revision, send, currency])
+  const [open, setOpen] = useState(false)
+  const display = useMemo(
+    () =>
+      estimate === undefined
+        ? undefined
+        : estimate.display?.currency === currency
+          ? estimate.display
+          : billingCurrencyDisplay(estimate, currency),
+    [estimate, currency],
+  )
   const disabled = estimate?.sessionId === sessionId && !estimate.enabled
-  if (failed && !disabled && settledCurrency === currency)
-    return (
-      <button type="button" className="dsh-stats-pill" onClick={() => setRevision((value) => value + 1)}>
+  if (failed && !disabled && estimate === undefined)
+    return props.labelOnly ? (
+      <span>{t('billing.retry')}</span>
+    ) : (
+      <button type="button" className="dsh-stats-pill" onClick={refresh}>
         {t('billing.retry')}
       </button>
     )
-  if (estimate?.enabled !== true || estimate.sessionId !== sessionId) return null
-  if (settledCurrency !== currency)
-    return <span className="dsh-stats-pill">{t('billing.convertingCurrency')}</span>
-  const display =
-    estimate.display?.currency === currency ? estimate.display : billingCurrencyDisplay(estimate, currency)
+  if (estimate?.enabled !== true || estimate.sessionId !== sessionId || display === undefined) return null
   const incomplete = !estimate.historyComplete || estimate.pricedRequests !== estimate.requests
   const label = !estimate.supported
     ? t('billing.unavailable')
     : display.totals.length === 0
       ? t('billing.unpricedCost')
       : `${t('billing.cost')} ≈ ${display.totals.map((total) => `${total.currency} ${formatBillingAmount(total.amount)}`).join(' / ')}${incomplete ? ` · ${t('billing.partial')}` : ''}${display.status === 'unavailable' ? ` · ${t('billing.originalCurrency')}` : ''}`
-  const details = <BillingCostDetails estimate={estimate} display={display} />
+  if (props.labelOnly)
+    return (
+      <span title={failed || refreshing ? t('billing.cachedEstimate') : label}>
+        {' · '}
+        {!estimate.supported || display.totals.length === 0
+          ? label
+          : `≈ ${display.totals.map((total) => `${total.currency} ${formatBillingAmount(total.amount)}`).join(' / ')}`}
+      </span>
+    )
+  const details = (
+    <>
+      {failed ? (
+        <button type="button" onClick={refresh}>
+          {t('billing.retry')}
+        </button>
+      ) : null}
+      {failed || refreshing ? <p>{t('billing.cachedEstimate')}</p> : null}
+      <BillingCostDetails estimate={estimate} display={display} />
+    </>
+  )
   return props.details ? (
     <section className="dsh-stats-billing" aria-label={t('billing.cost')}>
       <strong>{label}</strong>
       {details}
     </section>
   ) : (
-    <StatsPopover label={label} icon="wallet" rows={[]} open={open} onOpenChange={setOpen}>
+    <StatsPopover
+      label={label}
+      icon="wallet"
+      rows={[]}
+      open={open}
+      onOpenChange={(value) => {
+        setOpen(value)
+        if (value) refreshIfStale()
+      }}
+    >
       {details}
     </StatsPopover>
   )

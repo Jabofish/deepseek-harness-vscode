@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- 窄面板在底部 Token 统计旁显示金额，宽面板仍使用独立费用区块。金额和详情共享计算缓存，用量、设置或连接变化后刷新，刷新失败保留上次结果并可重试。
+- Narrow panels show the cost beside token statistics; wider panels keep the separate cost pill. Shared estimates avoid recalculating on every disclosure and refresh for usage, settings or connection changes, retaining the previous result on failure.
+- 成功取得的汇率保存到本地，重启后继续复用；过期刷新失败时沿用上次报价及日期，无缓存时才使用默认 6.8。并发汇率读取合并，取消一个读取不会中断其他调用。
+- Successful exchange quotes persist across restarts. Failed refreshes retain the last quote and its date; 6.8 is used when no quote is available. Concurrent reads share one request with independent cancellation.
+
 - 工具调用失败时，所属工具组的折叠按钮和箭头标红，错误正文保留在组内工具详情，不再在折叠区域外重复显示。
 - Failed calls mark their tool-group disclosure and arrow in red. Error text stays in the tool details instead of repeating outside the collapsed group.
 

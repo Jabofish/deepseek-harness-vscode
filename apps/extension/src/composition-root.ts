@@ -340,7 +340,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
         changed: () => postFeatureEvent('billing.settings.changed', {}),
       },
       new ModelsDevPriceSource(),
-      new FrankfurterExchangeSource(),
+      new FrankfurterExchangeSource(globalThis.fetch, Date.now, context.globalState),
     ),
     editorCompanion: () => commands.editorCompanion,
     getAccountLifecycleHost,

@@ -13,6 +13,7 @@ import { ConversationLayoutProvider } from '../../app/ConversationLayoutProvider
 beforeEach(() => setActiveLocale('en'))
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
   vi.unstubAllGlobals()
 })
 
@@ -30,6 +31,7 @@ it.each([
 })
 
 it('moves cost inside focused token details when the stats container narrows and restores it on resize', async () => {
+  vi.useFakeTimers()
   let resize: ResizeObserverCallback | undefined
   let observed: Element | undefined
   const disconnect = vi.fn()
@@ -46,8 +48,10 @@ it('moves cost inside focused token details when the stats container narrows and
       disconnect = disconnect
     },
   )
-  const request: BillingClient = <T,>(): Promise<T> =>
-    Promise.resolve({
+  let estimateReads = 0
+  const request: BillingClient = <T,>(input: FeatureRequest): Promise<T> => {
+    if (input.type === 'billing.estimate') estimateReads += 1
+    return Promise.resolve({
       kind: 'billing.estimate',
       estimate: {
         sessionId: 's',
@@ -67,15 +71,17 @@ it('moves cost inside focused token details when the stats container narrows and
         detailsTruncated: false,
       },
     } as T)
+  }
   const view = render(
     <ConversationLayoutProvider initialLayout="focused">
       <StatsLine
         nodes={[]}
         cacheHit={0}
         usage={{ inputTokens: 100, outputTokens: 20, totalTokens: 120 }}
-        cost={(details) => (
+        cost={(details, inline = false) => (
           <BillingCost
             details={details}
+            labelOnly={inline}
             request={request}
             subscribe={() => () => {}}
             sessionId="s"
@@ -85,7 +91,8 @@ it('moves cost inside focused token details when the stats container narrows and
       />
     </ConversationLayoutProvider>,
   )
-  await screen.findByText('Cost ≈ USD 0.0039')
+  await act(() => vi.advanceTimersByTimeAsync(200))
+  expect(screen.getByText('Cost ≈ USD 0.0039')).toBeDefined()
   act(() =>
     resize?.(
       [{ target: observed!, contentRect: new DOMRect(0, 0, 486, 24) } as ResizeObserverEntry],
@@ -94,21 +101,29 @@ it('moves cost inside focused token details when the stats container narrows and
   )
   expect(screen.queryByText('Cost ≈ USD 0.0039')).toBeNull()
   const tokens = screen.getByRole('button', { name: /Statistics details:.*120 tokens/ })
+  expect(tokens.textContent).toContain('≈ USD 0.0039')
   fireEvent.click(tokens)
-  const cost = await screen.findByText('Cost ≈ USD 0.0039')
+  const cost = screen.getByText('Cost ≈ USD 0.0039')
   expect(cost.closest('[role="dialog"]')).toBe(screen.getByRole('dialog'))
   expect(cost.closest('button')).toBeNull()
   expect(view.container.querySelectorAll('.dsh-stats-pill')).toHaveLength(2)
   fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
   expect(screen.queryByText('Cost ≈ USD 0.0039')).toBeNull()
   expect(document.activeElement).toBe(tokens)
+  expect(tokens.textContent).toContain('≈ USD 0.0039')
+  fireEvent.click(tokens)
+  await act(() => vi.advanceTimersByTimeAsync(200))
+  fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
   act(() =>
     resize?.(
       [{ target: observed!, contentRect: new DOMRect(0, 0, 900, 24) } as ResizeObserverEntry],
       {} as ResizeObserver,
     ),
   )
-  await screen.findByRole('button', { name: /Statistics details: Cost ≈ USD 0.0039/ })
+  await act(() => vi.advanceTimersByTimeAsync(200))
+  expect(screen.getByRole('button', { name: /Statistics details: Cost ≈ USD 0.0039/ })).toBeDefined()
+  expect(tokens.textContent).not.toContain('USD')
+  expect(estimateReads).toBe(1)
   view.unmount()
   expect(disconnect).toHaveBeenCalled()
 })
@@ -361,4 +376,115 @@ it('keeps a confirmed disabled estimate hidden if a later refresh fails', async 
   await waitFor(() => expect(attempts).toBe(2))
   expect(view.container.textContent).toBe('')
   expect(screen.queryByRole('button', { name: 'Retry cost estimate' })).toBeNull()
+})
+
+function cachedEstimate(amount: string): BillingEstimate {
+  return {
+    sessionId: 's',
+    enabled: true,
+    supported: true,
+    historyComplete: true,
+    scannedEvents: 1,
+    requests: 1,
+    pricedRequests: 1,
+    partialRequests: 0,
+    unpricedRequests: 0,
+    priceRevision: 1,
+    totals: [{ currency: 'USD', amount }],
+    breakdown: [],
+    issueCounts: [],
+    entries: [],
+    detailsTruncated: false,
+  }
+}
+
+it('shares pending calculation work and keeps it alive while another reading still needs it', async () => {
+  vi.useFakeTimers()
+  const calls: FeatureRequest[] = []
+  let deliver: (() => void) | undefined
+  const request: BillingClient = <T,>(input: FeatureRequest): Promise<T> => {
+    calls.push(input)
+    if (input.type === 'feature.request.cancel') return Promise.resolve({ kind: 'empty' } as T)
+    return new Promise((resolve) => {
+      deliver = () => resolve({ kind: 'billing.estimate', estimate: cachedEstimate('1') } as T)
+    })
+  }
+  const subscribe = () => () => {}
+  const label = (
+    <BillingCost key="label" labelOnly request={request} subscribe={subscribe} sessionId="s" usageKey="one" />
+  )
+  const view = render(
+    <>
+      {label}
+      <BillingCost
+        key="detail"
+        details
+        request={request}
+        subscribe={subscribe}
+        sessionId="s"
+        usageKey="one"
+      />
+    </>,
+  )
+  await act(() => vi.advanceTimersByTimeAsync(200))
+  expect(calls.filter((call) => call.type === 'billing.estimate')).toHaveLength(1)
+  view.rerender(<>{label}</>)
+  await act(async () => {
+    await Promise.resolve()
+  })
+  expect(calls.filter((call) => call.type === 'feature.request.cancel')).toHaveLength(0)
+  await act(async () => {
+    deliver?.()
+    await Promise.resolve()
+  })
+  expect(screen.getByText('· ≈ USD 1')).toBeDefined()
+})
+
+it('isolates connections and keeps the last amount visible while a failed refresh can be retried', async () => {
+  vi.useFakeTimers()
+  let reads = 0
+  let offline = false
+  const request: BillingClient = <T,>(input: FeatureRequest): Promise<T> => {
+    if (input.type === 'feature.request.cancel') return Promise.resolve({ kind: 'empty' } as T)
+    reads += 1
+    return offline
+      ? Promise.reject(new Error('PRIVATE_NETWORK'))
+      : Promise.resolve({ kind: 'billing.estimate', estimate: cachedEstimate(String(reads)) } as T)
+  }
+  const subscribe = () => () => {}
+  const cost = (scope: string, usageKey = 'one'): React.JSX.Element => (
+    <BillingCost
+      cacheScope={scope}
+      request={request}
+      subscribe={subscribe}
+      sessionId="s"
+      usageKey={usageKey}
+    />
+  )
+  const view = render(cost('first'))
+  await act(() => vi.advanceTimersByTimeAsync(200))
+  expect(screen.getByText('Cost ≈ USD 1')).toBeDefined()
+  view.rerender(cost('second'))
+  expect(screen.queryByText('Cost ≈ USD 1')).toBeNull()
+  await act(() => vi.advanceTimersByTimeAsync(200))
+  expect(screen.getByText('Cost ≈ USD 2')).toBeDefined()
+  offline = true
+  view.rerender(cost('second', 'two'))
+  expect(screen.getByText('Cost ≈ USD 2')).toBeDefined()
+  await act(() => vi.advanceTimersByTimeAsync(200))
+  fireEvent.click(screen.getByRole('button', { name: /Statistics details: Cost/ }))
+  expect(screen.getByText('Showing the last calculated cost.')).toBeDefined()
+  expect(screen.getByText('Cost ≈ USD 2')).toBeDefined()
+  offline = false
+  fireEvent.click(screen.getByRole('button', { name: 'Retry cost estimate' }))
+  await act(() => vi.advanceTimersByTimeAsync(200))
+  expect(screen.getByText('Cost ≈ USD 4')).toBeDefined()
+  expect(reads).toBe(4)
+  expect(document.body.textContent).not.toContain('PRIVATE_NETWORK')
+  fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+  await act(() => vi.advanceTimersByTimeAsync(5 * 60_000 + 1))
+  fireEvent.click(screen.getByRole('button', { name: /Statistics details: Cost/ }))
+  expect(screen.getByText('Cost ≈ USD 4')).toBeDefined()
+  await act(() => vi.advanceTimersByTimeAsync(200))
+  expect(screen.getByText('Cost ≈ USD 5')).toBeDefined()
 })

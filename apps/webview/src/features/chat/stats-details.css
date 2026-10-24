@@ -56,6 +56,12 @@
 button.dsh-stats-pill {
   cursor: pointer;
 }
+.dsh-stats-pill > .dsh-stats-pill__suffix {
+  flex: none;
+}
+.dsh-stats-pill > .dsh-stats-pill__suffix:empty {
+  display: none;
+}
 button.dsh-stats-pill:hover,
 button.dsh-stats-pill[aria-expanded='true'] {
   color: var(--dsh-text);

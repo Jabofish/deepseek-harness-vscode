@@ -71,6 +71,7 @@
   "billing.validUntil": "Effective until, exclusive (UTC)",
   "billing.cost": "Cost",
   "billing.retry": "Retry cost estimate",
+  "billing.cachedEstimate": "Showing the last calculated cost.",
   "billing.unavailable": "Cost unavailable",
   "billing.unpricedCost": "Cost unpriced",
   "billing.partial": "Partial",

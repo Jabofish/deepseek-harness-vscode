@@ -722,9 +722,11 @@ const useAppControllerImpl = () => {
           {...(activeSessionId === undefined
             ? {}
             : {
-                cost: (details: boolean) => (
+                cost: (details: boolean, inline = false) => (
                   <BillingCost
                     details={details}
+                    labelOnly={inline}
+                    cacheScope={String(state.connectionEpoch)}
                     key={`${state.connectionEpoch}:${activeSessionId}`}
                     request={store.featureRequest}
                     subscribe={store.subscribeFeature}
