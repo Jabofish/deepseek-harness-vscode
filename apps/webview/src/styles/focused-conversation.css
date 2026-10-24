@@ -130,8 +130,7 @@
 }
 
 .dsh-focused-turn__summary > .dsh-icon,
-.dsh-focused-tools__summary > .dsh-icon,
-.dsh-focused-tools__failure > .dsh-icon {
+.dsh-focused-tools__summary > .dsh-icon {
   width: 1rem;
   height: 1rem;
   flex: 0 0 auto;
@@ -159,15 +158,9 @@
   padding-block: var(--dsh-space-2);
 }
 
-.dsh-focused-tools__failure {
-  display: flex;
-  align-items: flex-start;
-  flex-wrap: wrap;
-  gap: var(--dsh-space-1);
-  margin: var(--dsh-space-1) 0;
+.dsh-focused-tools__summary--failed,
+.dsh-focused-tools__summary--failed:hover:not(:disabled) {
   color: var(--dsh-danger);
-  font-size: var(--dsh-font-size-sm);
-  overflow-wrap: anywhere;
 }
 
 .dsh-focused-tools__pages {

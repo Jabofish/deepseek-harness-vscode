@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 工具调用失败时，所属工具组的折叠按钮和箭头标红，错误正文保留在组内工具详情，不再在折叠区域外重复显示。
+- Failed calls mark their tool-group disclosure and arrow in red. Error text stays in the tool details instead of repeating outside the collapsed group.
+
 - 提问卡的自定义回答增加与选项一致的选择标记，聚焦输入框即选中；支持 Ctrl+Enter / ⌘Enter 提交整组答案，保留普通回车换行并防止输入法及重复按键误提交。
 - Custom question answers have selection controls that activate on focus. Ctrl+Enter / ⌘Enter submits the complete answer batch while Enter adds a line; composition and repeated key events do not submit.
 

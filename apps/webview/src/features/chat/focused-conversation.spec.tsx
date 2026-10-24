@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { TimelineNode } from '@dsh-vscode/timeline'
 import { ConversationLayoutProvider } from '../../app/ConversationLayoutProvider.js'
 import { ConversationLayoutControl } from '../../app/ConversationLayoutControl.js'
-import { I18nProvider } from '../../i18n.js'
 import { Timeline } from './Timeline.js'
 import { FocusedToolActivity } from './FocusedToolActivity.js'
 import type { TranscriptViewMode } from '../../app/ui-preferences.js'
@@ -235,7 +234,11 @@ describe('focused conversation interactions', () => {
     )
     render(session('standard', source))
     expect(screen.getByText('I am examining the implementation')).toBeDefined()
-    expect(screen.getByText('Failed tool calls: 1')).toBeDefined()
+    expect(
+      screen
+        .getByRole('button', { name: /Failed tool calls: 1/u })
+        .classList.contains('dsh-focused-tools__summary--failed'),
+    ).toBe(true)
     expect(screen.queryByRole('button', { name: /Work completed/u })).toBeNull()
   })
   it('keeps produced file actions accessible while the original tool process is collapsed', () => {
@@ -341,7 +344,7 @@ describe('focused conversation interactions', () => {
     expect(screen.getAllByText('src/example.ts')).toHaveLength(2)
   })
 
-  it('shows tool failure even when details are closed and distinguishes preparation from execution', () => {
+  it('marks the parent tool group as failed and keeps errors inside its disclosure', () => {
     const tool = {
       kind: 'tool' as const,
       id: 'failed',
@@ -351,29 +354,48 @@ describe('focused conversation interactions', () => {
         title: 'Dynamic tool',
         category: 'other',
         status: 'failed' as const,
+        turn: 1,
+        step: 1,
         metadata: {},
-        error: 'The operation failed',
+        error: 'The operation failed\nFull diagnostic details',
       },
     }
     const view = render(
-      <I18nProvider>
-        <FocusedToolActivity
-          tools={[tool]}
-          expanded={new Set()}
-          onExpandedChange={() => undefined}
-          translate={(key, params) =>
-            key === 'timeline.focused.failedTools' ? `${params?.count} failed tool calls` : key
-          }
-          transcriptView="standard"
-        />
-      </I18nProvider>,
+      session('standard', [
+        ...nodes.slice(0, 2),
+        tool,
+        {
+          ...tool,
+          id: 'failed-2',
+          tool: { ...tool.tool, id: 'failed-2', error: 'Another operation failed' },
+        },
+        ...nodes.slice(3),
+      ]),
     )
-    expect(screen.getByText('The operation failed')).toBeDefined()
-    view.unmount()
+    const summary = view.container.querySelector<HTMLButtonElement>('.dsh-focused-tools__summary')!
+    expect(summary.classList.contains('dsh-focused-tools__summary--failed')).toBe(true)
+    expect(summary.getAttribute('aria-expanded')).toBe('false')
+    expect(summary.getAttribute('aria-label')).toContain('Failed tool calls: 2')
+    expect(screen.queryByText(/Full diagnostic details/)).toBeNull()
+    expect(view.container.querySelector('.dsh-focused-tools__failure')).toBeNull()
+    fireEvent.click(summary)
+    const call = view.container.querySelector('[data-tool-call-id="failed"]')!
+    fireEvent.click(call.querySelector('button')!)
+    expect(call.textContent).toContain('Full diagnostic details')
+    fireEvent.click(summary)
+    expect(summary.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByText(/Full diagnostic details/)).toBeNull()
+    expect(summary.classList.contains('dsh-focused-tools__summary--failed')).toBe(true)
+    view.rerender(session('standard'))
+    expect(view.container.querySelector('.dsh-focused-tools__summary--failed')).toBeNull()
+  })
+
+  it('distinguishes tool preparation from execution', () => {
     render(
       session('standard', [
         {
-          ...tool,
+          kind: 'tool',
+          id: 'preparing',
           tool: {
             id: 'preparing',
             name: 'dynamic',

@@ -57,6 +57,11 @@ export function FocusedToolActivity(
   const summary = preparing
     ? props.translate('timeline.focused.preparing')
     : props.translate('timeline.focused.tools', { count: executed.length })
+  const summaryLabel = `${summary}${policy.liveProcessDetail && names !== '' ? ` · ${names}` : ''}`
+  const failureLabel =
+    failed.length === 0
+      ? undefined
+      : props.translate('timeline.focused.failedTools', { count: failed.length })
   const visible = open || !policy.groupTools
   return (
     <div className="dsh-focused-tools">
@@ -67,9 +72,11 @@ export function FocusedToolActivity(
         ))}
       <button
         type="button"
-        className="dsh-focused-tools__summary"
+        className={`dsh-focused-tools__summary${failureLabel === undefined ? '' : ' dsh-focused-tools__summary--failed'}`}
         aria-expanded={visible}
         aria-controls={bodyId}
+        aria-label={failureLabel === undefined ? undefined : `${summaryLabel} · ${failureLabel}`}
+        title={failureLabel}
         disabled={!policy.groupTools}
         onClick={() => {
           setDisclosure({ ...disclosure, open: !open })
@@ -81,20 +88,10 @@ export function FocusedToolActivity(
           })
         }}
       >
-        <Icon name="tool" />
-        <span>
-          {summary}
-          {policy.liveProcessDetail && names !== '' ? ` · ${names}` : ''}
-        </span>
+        <Icon name={failureLabel === undefined ? 'tool' : 'alert'} />
+        <span>{summaryLabel}</span>
         {policy.groupTools ? <Icon name={open ? 'chevron-down' : 'chevron-right'} /> : null}
       </button>
-      {failed.length === 0 ? null : (
-        <p className="dsh-focused-tools__failure" role="status">
-          <Icon name="alert" />
-          {props.translate('timeline.focused.failedTools', { count: failed.length })}
-          {failed[0]?.tool.error === undefined ? null : <span>{failed[0].tool.error}</span>}
-        </p>
-      )}
       <div id={bodyId} hidden={!visible} className="dsh-focused-tools__body">
         {visible ? (
           <ToolCallCollection
