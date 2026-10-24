@@ -143,19 +143,21 @@ export function ContextMeter(props: ContextMeterProps): ReactElement {
                       {maximum === undefined ? '—' : formatDetailCount(maximum)}
                     </strong>
                   </div>
-                  <div
-                    className="dsh-context-meter__bar"
-                    role="img"
-                    aria-label={t('controls.contextBreakdownAria')}
-                  >
-                    {segments.map((segment) => (
-                      <span
-                        key={segment.key}
-                        className={`dsh-context-meter__segment ${segment.className}`}
-                        style={{ width: `${segmentWidth(segment, segments)}%` }}
-                      />
-                    ))}
-                  </div>
+                  {maximum === undefined ? null : (
+                    <div
+                      className="dsh-context-meter__bar"
+                      role="img"
+                      aria-label={t('controls.contextBreakdownAria')}
+                    >
+                      {segments.map((segment) => (
+                        <span
+                          key={segment.key}
+                          className={`dsh-context-meter__segment ${segment.className}`}
+                          style={{ width: `${segmentWidth(segment, segments, ratio)}%` }}
+                        />
+                      ))}
+                    </div>
+                  )}
                   <dl className="dsh-context-meter__breakdown">
                     {segments.map((segment) => (
                       <div key={segment.key}>
@@ -217,9 +219,11 @@ function contextSegmentLabel(
   }
 }
 
-function segmentWidth(segment: ContextSegment, segments: readonly ContextSegment[]): number {
+function segmentWidth(segment: ContextSegment, segments: readonly ContextSegment[], ratio: number): number {
   const total = segments.reduce((sum, entry) => sum + entry.tokens, 0)
-  return total === 0 ? 0 : (segment.tokens / total) * 100
+  // Like DSH's context meter, use provider usage for the occupied length;
+  // the independently estimated categories only determine its composition.
+  return total === 0 ? 0 : (segment.tokens / total) * ratio * 100
 }
 
 function contextLabel(current: number, maximum: number | undefined): string {

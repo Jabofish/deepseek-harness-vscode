@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 上下文条以完整窗口为 100%，彩色分项仅占已用比例，剩余容量保留底色；总容量未知时仅显示数值。
+- Context bars use the full window as 100%, with colored categories confined to the occupied share and remaining capacity unfilled. Unknown capacity keeps the numeric details without a percentage bar.
+
 - 切换权限产生的内部通知不再显示为可编辑的排队或引导输入；按官方 Web UI 的消息来源规则过滤，保留真实用户引导及 DSH 内部上下文。
 - Permission-change context no longer appears as editable queued or steering input. Steering visibility follows the official Web UI's message-source rule while preserving user input and DSH's internal context.
 

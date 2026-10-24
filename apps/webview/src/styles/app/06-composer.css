@@ -407,6 +407,7 @@ occupancy so the overflow is visible without opening the details. */
 }
 
 .dsh-context-meter__bar {
+  display: flex;
   width: 100%;
   height: 0.5rem;
   overflow: hidden;
@@ -415,8 +416,8 @@ occupancy so the overflow is visible without opening the details. */
 }
 
 .dsh-context-meter__segment {
+  flex-shrink: 0;
   height: 100%;
-  float: inline-start;
 }
 
 /* One tone modifier colours both the bar segment and the breakdown swatch. */
