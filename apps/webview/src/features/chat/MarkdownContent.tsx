@@ -427,11 +427,17 @@ function highlightRegionHtml(html: string, streaming: boolean, memory: Highlight
   const codeBlocks = Array.from(parsed.body.querySelectorAll<HTMLElement>('pre > code[class*="language-"]'))
   if (codeBlocks.length === 0) return html
   let changed = false
-  for (const code of codeBlocks) {
+  for (const [index, code] of codeBlocks.entries()) {
     const languageClass = Array.from(code.classList).find((value) => value.startsWith('language-'))
     const language = languageClass === undefined ? undefined : resolveBundledLanguage(languageClass.slice(9))
     if (language === undefined) continue
-    const highlighted = highlightedBlockHtml(language, code.textContent ?? '', streaming, memory)
+    const highlighted = highlightedBlockHtml(
+      language,
+      code.textContent ?? '',
+      streaming,
+      memory,
+      streaming ? undefined : `completed:${index}:${language}`,
+    )
     if (highlighted === undefined) continue
     const template = parsed.createElement('template')
     template.innerHTML = highlighted
@@ -449,6 +455,7 @@ function highlightedBlockHtml(
   code: string,
   streaming: boolean,
   memory: HighlightMemory,
+  slot = blockSlot(language, code),
 ): string | undefined {
   // Shiki tokenizes from left to right, so a prefix of the block always yields
   // the same tokens as the finished block. Only the text behind the last
@@ -457,8 +464,7 @@ function highlightedBlockHtml(
   const boundary = streaming ? code.lastIndexOf('\n') : code.length - 1
   if (boundary < 0) return undefined
   const stable = code.slice(0, boundary + 1)
-  const slot = blockSlot(language, code)
-  const entry = memory.get(slot)
+  const entry = memory.get(slot) ?? memory.get(blockSlot(language, code))
   // A retried attempt can replace the text with a shorter one, which makes the
   // remembered progress meaningless until a new highlight lands.
   const rewritten = entry?.shown !== undefined && !stable.startsWith(entry.shown.code)
@@ -472,6 +478,7 @@ function highlightedBlockHtml(
   // on screen and stays plaintext past that prefix.
   if (
     typeof exact !== 'string' &&
+    onScreen?.code !== stable &&
     (!streaming || requested === 0 || stable.length - requested >= growthStep(stable.length))
   ) {
     requestCodeHighlight(language, stable)

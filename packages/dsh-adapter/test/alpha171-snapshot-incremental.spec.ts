@@ -163,10 +163,34 @@ describe('alpha171 incremental snapshot decode', () => {
     await expect(expandV4HistoryRecordsIncremental(envelope!.records, 's1', -1, false)).resolves.toEqual([])
   })
 
+  it('stops admitting rows when cancellation interrupts a decode slice', async () => {
+    let clock = 0
+    let decoded = 0
+    vi.spyOn(performance, 'now').mockImplementation(() => clock)
+    const abort = new AbortController()
+    const profile: AlphaV4SessionProfile = {
+      eventValidators: {},
+      validateEvent: () => {
+        decoded++
+        clock += 10
+      },
+    }
+    const callback = setImmediate(() => abort.abort())
+    try {
+      const records = Array.from({ length: 8 }, (_, index) => event(index))
+      const result = await expandV4HistoryRecordsIncremental(records, 's1', 7, false, profile, abort.signal)
+      expect(result).toEqual([])
+      expect(decoded).toBeGreaterThan(0)
+      expect(decoded).toBeLessThan(records.length)
+    } finally {
+      clearImmediate(callback)
+    }
+  })
+
   it('allows event-loop callbacks to run before decoding finishes', async () => {
     let clock = 0
     let decoded = 0
-    vi.spyOn(Date, 'now').mockImplementation(() => clock)
+    vi.spyOn(performance, 'now').mockImplementation(() => clock)
     const profile: AlphaV4SessionProfile = {
       eventValidators: {},
       validateEvent: () => {

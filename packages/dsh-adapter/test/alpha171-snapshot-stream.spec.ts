@@ -7,14 +7,14 @@ import { FakeWebSocket } from './support/fake-web-socket.js'
 
 // Synthetic session/follow fixture from dsh-v0.1.7-alpha.1 / c36a83ff:
 // packages/api/session-controller/src/types.ts and session-format-v3-to-v4/src/codec.ts.
-function snapshot(): Record<string, unknown> {
+function snapshot(count = 8): Record<string, unknown> {
   return {
     type: 'snapshot',
     header: { version: 4, id: 's1', createdAt: 1, isSeeded: false },
-    cursor: 7,
+    cursor: count - 1,
     hasMore: false,
-    projections: { asOfSeq: 7, values: {} },
-    records: Array.from({ length: 8 }, (_, seq) => ({
+    projections: { asOfSeq: count - 1, values: {} },
+    records: Array.from({ length: count }, (_, seq) => ({
       type: 'event',
       event: { type: 'turn/start', seq, time: seq + 1, data: { turn: seq + 1 } },
     })),
@@ -36,17 +36,22 @@ function createTransport(validateEvent: () => void): AlphaLoopbackApiClient {
   })
 }
 
-async function openFollow(): Promise<{ socket: FakeWebSocket; streamId: string }> {
+async function openFollow(previousStreamId?: string): Promise<{ socket: FakeWebSocket; streamId: string }> {
   const socket = await vi.waitFor(() => {
     const instance = FakeWebSocket.instances[0]
     if (instance === undefined) throw new Error('The mux socket has not been created.')
     return instance
   })
-  socket.open()
+  if (socket.readyState === 0) socket.open()
   const streamId = await vi.waitFor(() => {
     for (const sent of socket.sent) {
       const frame = JSON.parse(sent) as Record<string, unknown>
-      if (frame.type === 'open' && frame.endpoint === 'session/follow' && typeof frame.streamId === 'string')
+      if (
+        frame.type === 'open' &&
+        frame.endpoint === 'session/follow' &&
+        typeof frame.streamId === 'string' &&
+        frame.streamId !== previousStreamId
+      )
         return frame.streamId
     }
     throw new Error('The session/follow stream has not opened.')
@@ -57,6 +62,107 @@ async function openFollow(): Promise<{ socket: FakeWebSocket; streamId: string }
 afterEach(() => vi.restoreAllMocks())
 
 describe('alpha171 incremental snapshot transport', () => {
+  it('yields while notifying subscribers and keeps the baseline ahead of queued live events', async () => {
+    const transport = createTransport(vi.fn())
+    const controller = new DshStreamController(transport, undefined, undefined, {
+      streamSource: (signal) => transport.openSessionStream('s1', signal),
+      closeTransport: false,
+    })
+    const events: BackendEvent[] = []
+    const count = 129
+    let callback: NodeJS.Immediate | undefined
+    let deliveredAtCallback = 0
+    let baselineAtCallback = false
+    let onFirstDelivery = (): void => undefined
+    controller.subscribe((event) => {
+      events.push(event)
+      if (events.length === 1) onFirstDelivery()
+    })
+    try {
+      const { socket, streamId } = await openFollow()
+      onFirstDelivery = () => {
+        callback = setImmediate(() => {
+          deliveredAtCallback = events.length
+          baselineAtCallback = events.some((event) => event.type === 'session.subscribed')
+          socket.message({
+            type: 'item',
+            streamId,
+            value: {
+              type: 'event',
+              event: { type: 'turn/start', seq: count, time: count + 1, data: { turn: count + 1 } },
+            },
+          })
+        })
+      }
+      socket.message({ type: 'item', streamId, value: snapshot(count) })
+      await vi.waitFor(() => expect(events).toHaveLength(count + 2))
+
+      expect(deliveredAtCallback).toBeGreaterThan(0)
+      expect(deliveredAtCallback).toBeLessThan(count)
+      expect(baselineAtCallback).toBe(false)
+      expect(events.slice(0, count).map((event) => event.sequence)).toEqual(
+        Array.from({ length: count }, (_, index) => index),
+      )
+      expect(events[count]).toMatchObject({ type: 'session.subscribed', lastSequence: count - 1 })
+      expect(events[count + 1]).toMatchObject({ type: 'turn.started', sequence: count })
+    } finally {
+      clearImmediate(callback)
+      await controller.close()
+      await transport.close()
+    }
+  })
+
+  it.each(['close', 'restart'] as const)('can %s between subscriber delivery batches', async (action) => {
+    const transport = createTransport(vi.fn())
+    const controller = new DshStreamController(transport, undefined, undefined, {
+      streamSource: (signal) => transport.openSessionStream('s1', signal),
+      closeTransport: false,
+    })
+    const events: BackendEvent[] = []
+    const count = 129
+    let callback: NodeJS.Immediate | undefined
+    let onFirstDelivery = (): void => undefined
+    controller.subscribe((event) => {
+      events.push(event)
+      if (events.length === 1) onFirstDelivery()
+    })
+    try {
+      const { socket, streamId } = await openFollow()
+      const actionFinished = new Promise<void>((resolve, reject) => {
+        onFirstDelivery = () => {
+          callback = setImmediate(() => {
+            void controller[action]().then(resolve, reject)
+          })
+        }
+      })
+      socket.message({ type: 'item', streamId, value: snapshot(count) })
+      await actionFinished
+
+      const oldCount = events.length
+      expect(oldCount).toBeGreaterThan(0)
+      expect(oldCount).toBeLessThan(count)
+      expect(events.every((event) => event.type === 'turn.started')).toBe(true)
+      expect(socket.sent.map((sent) => JSON.parse(sent) as unknown)).toContainEqual({
+        type: 'cancel',
+        streamId,
+      })
+      expect(socket.closeCalls).toBe(0)
+      if (action === 'restart') {
+        const next = await openFollow(streamId)
+        next.socket.message({ type: 'item', streamId: next.streamId, value: snapshot(1) })
+        await vi.waitFor(() => expect(events).toHaveLength(oldCount + 2))
+        expect(events.slice(oldCount)).toMatchObject([
+          { type: 'turn.started', sequence: 0, replayed: true },
+          { type: 'session.subscribed', lastSequence: 0 },
+        ])
+      }
+    } finally {
+      clearImmediate(callback)
+      await controller.close()
+      await transport.close()
+    }
+  })
+
   it('yields during follow snapshots and admits each record only once before publishing the baseline', async () => {
     let clock = 0
     const validateEvent = vi.fn(() => {
@@ -70,7 +176,7 @@ describe('alpha171 incremental snapshot transport', () => {
     try {
       const first = iterator.next()
       const { socket, streamId } = await openFollow()
-      vi.spyOn(Date, 'now').mockImplementation(() => clock)
+      vi.spyOn(performance, 'now').mockImplementation(() => clock)
       let decodedAtCallback: number | undefined
       callback = setImmediate(() => {
         decodedAtCallback = validateEvent.mock.calls.length
@@ -123,7 +229,7 @@ describe('alpha171 incremental snapshot transport', () => {
 
     try {
       const { socket, streamId } = await openFollow()
-      vi.spyOn(Date, 'now').mockImplementation(() => clock)
+      vi.spyOn(performance, 'now').mockImplementation(() => clock)
       let decodedAtCancel: number | undefined
       const closed = new Promise<void>((resolve, reject) => {
         callback = setImmediate(() => {

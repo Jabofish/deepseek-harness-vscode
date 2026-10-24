@@ -5,6 +5,7 @@ import { AppError } from '@dsh-vscode/domain'
 
 import type { DshTransport } from '../../contracts.js'
 import { cancelled, httpFailure, normalizeTransportError } from '../../transport-errors.js'
+import { STREAM_BATCH_SIZE, STREAM_TIME_SLICE_MS } from '../../stream-scheduling.js'
 import {
   assertValidEndpoint,
   closedConnectionError as closedError,
@@ -45,6 +46,7 @@ import {
   validAlphaEventEmit,
   validAlphaEventReady,
   validAlphaEventWaterfall,
+  yieldToEventLoop,
 } from './session-wire.js'
 import { readAlpha171SessionSnapshotEnvelope } from '../alpha171/session-wire.js'
 import {
@@ -875,6 +877,7 @@ export class AlphaLoopbackApiClient implements DshTransport {
                 envelope.cursor,
                 this.options.autoReviewDenialContract === true,
                 this.options.sessionWireProfile,
+                signal,
               )
             } else {
               const snapshot = readAlphaWireSnapshot(frame, wireVersion, this.options.sessionWireProfile)
@@ -901,8 +904,28 @@ export class AlphaLoopbackApiClient implements DshTransport {
                 throw malformedResponse('session/follow Inbox projection', cause)
               }
             }
-            if (projector !== undefined) for (const event of events) projector.rememberDurable(event)
-            for (const event of events) yield { type: 'session/event', sessionId, event }
+            if (signal.aborted) return
+            // The snapshot's decoded events are delivered back-to-back through
+            // one async-iterator microtask chain: every consumer of each
+            // `session/event` runs before the next frame is read, so a long
+            // snapshot replays as one uninterrupted stall that starves the
+            // WebSocket heartbeat. Yield to the event loop periodically so a
+            // large history cannot be terminated.
+            let delivered = 0
+            let yieldDeadline = performance.now() + STREAM_TIME_SLICE_MS
+            for (const event of events) {
+              if (signal.aborted) return
+              // Seed durable identities before opening the preview baseline below,
+              // within the same bounded work slices as normalized event delivery.
+              projector?.rememberDurable(event)
+              yield { type: 'session/event', sessionId, event }
+              delivered++
+              if (delivered % STREAM_BATCH_SIZE === 0 || performance.now() >= yieldDeadline) {
+                await yieldToEventLoop(signal)
+                yieldDeadline = performance.now() + STREAM_TIME_SLICE_MS
+              }
+            }
+            if (signal.aborted) return
             if (queueFrame !== undefined) yield queueFrame
             yield {
               type: 'session/subscribed',

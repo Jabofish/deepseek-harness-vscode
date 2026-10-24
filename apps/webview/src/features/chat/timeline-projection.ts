@@ -408,6 +408,14 @@ function collapseAssistantTurns(
 ): readonly DisplayTimelineNode[] {
   const collapsed: DisplayTimelineNode[] = [...initial]
   let pending: PendingAssistantWork | undefined
+  let reusableTurn: { readonly node: AssistantTurnNode; readonly work: PendingAssistantWork } | undefined
+
+  const resume = (node: AssistantTurnNode): PendingAssistantWork =>
+    // Only reuse arrays created in this call. Cached prefix nodes remain
+    // immutable, and a different turn still gets its own work arrays.
+    reusableTurn?.node === node
+      ? { ...reusableTurn.work, id: node.id, streaming: node.streaming }
+      : pendingFromAssistantTurn(node)
 
   const flush = (): void => {
     if (pending === undefined) return
@@ -443,7 +451,7 @@ function collapseAssistantTurns(
           pending = pendingFromAssistantMessage(previous)
         } else if (previous?.kind === 'assistant-turn' && canJoinPrevious(previous, node)) {
           collapsed.pop()
-          pending = pendingFromAssistantTurn(previous)
+          pending = resume(previous)
         } else {
           pending = { id: node.id, tools: [], blocks: [], markdown: '', streaming: false }
         }
@@ -460,24 +468,7 @@ function collapseAssistantTurns(
           pending = pendingFromAssistantMessage(previous)
         } else if (previous?.kind === 'assistant-turn' && canJoinPrevious(previous, node)) {
           collapsed.pop()
-          pending = {
-            id: previous.id,
-            ...(previous.modelLabel === undefined ? {} : { modelLabel: previous.modelLabel }),
-            ...(previous.timing === undefined ? {} : { timing: previous.timing }),
-            ...(previous.usage === undefined ? {} : { usage: previous.usage }),
-            ...(previous.turnUsage === undefined ? {} : { turnUsage: previous.turnUsage }),
-            ...(previous.images === undefined ? {} : { images: previous.images }),
-            ...(previous.reasoning === undefined ? {} : { reasoning: previous.reasoning }),
-            tools: [...previous.tools],
-            blocks: [...assistantBlocks(previous)],
-            markdown: previous.markdown,
-            streaming: previous.streaming,
-            ...(previous.sequence === undefined ? {} : { sequence: previous.sequence }),
-            ...(previous.turn === undefined ? {} : { turn: previous.turn }),
-            ...(previous.step === undefined ? {} : { step: previous.step }),
-            ...(previous.turnCompleted === undefined ? {} : { turnCompleted: previous.turnCompleted }),
-            ...(previous.interrupted === undefined ? {} : { interrupted: previous.interrupted }),
-          }
+          pending = resume(previous)
         } else pending = { id: node.id, tools: [], blocks: [], markdown: '', streaming: false }
       }
       pending.tools.push(node)
@@ -504,7 +495,9 @@ function collapseAssistantTurns(
         pending.streaming = node.streaming
         if (!hasVisibleOutput) continue
 
-        collapsed.push(toAssistantTurn(pending, node.id))
+        const turn = toAssistantTurn(pending, node.id)
+        collapsed.push(turn)
+        reusableTurn = { node: turn, work: pending }
         pending = undefined
         continue
       }
@@ -546,15 +539,13 @@ function canJoinPrevious(
   previous: Extract<DisplayTimelineNode, { readonly kind: 'assistant-message' }> | AssistantTurnNode,
   next: AssistantWorkNode,
 ): boolean {
-  return canJoinPending(
-    previous.kind === 'assistant-message'
-      ? pendingFromAssistantMessage(previous)
-      : pendingFromAssistantTurn(previous),
-    next,
-  )
+  return canJoinPending(previous, next)
 }
 
-function canJoinPending(pending: PendingAssistantWork, next: AssistantWorkNode): boolean {
+function canJoinPending(
+  pending: Pick<PendingAssistantWork, 'turn' | 'turnCompleted'>,
+  next: AssistantWorkNode,
+): boolean {
   const nextTurn = assistantWorkTurn(next)
   if (pending.turn !== undefined && nextTurn !== undefined) return pending.turn === nextTurn
   // A durable completed turn is a boundary even when a legacy reasoning node
