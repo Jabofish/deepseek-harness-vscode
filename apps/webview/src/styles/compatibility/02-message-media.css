@@ -63,28 +63,9 @@
   min-width: 28px;
 }
 
-.dsh-session-item__rename:hover:not(:disabled),
-.dsh-session-item__rename:focus-visible,
-.dsh-session-item__open-in-editor:hover:not(:disabled),
-.dsh-session-item__open-in-editor:focus-visible,
 .dsh-session-switcher__workspace-actions .dsh-icon-button:hover:not(:disabled),
 .dsh-session-switcher__workspace-actions .dsh-icon-button:focus-visible {
   color: var(--dsh-accent-line);
-}
-
-/* The row's third action must match the size of rename/archive, so a narrow
- * switcher keeps three evenly spaced targets instead of one wider glyph. */
-.dsh-session-item__open-in-editor {
-  width: 24px;
-  min-width: 24px;
-  height: 28px;
-  min-height: 28px;
-  padding: 0;
-}
-
-.dsh-session-item__open-in-editor .dsh-icon {
-  width: 14px;
-  height: 14px;
 }
 
 .dsh-session-item__status--muted {
@@ -101,9 +82,7 @@
 }
 
 .dsh-session-switcher__workspace-remove:hover:not(:disabled),
-.dsh-session-switcher__workspace-remove:focus-visible,
-.dsh-session-item__remove:hover:not(:disabled),
-.dsh-session-item__remove:focus-visible {
+.dsh-session-switcher__workspace-remove:focus-visible {
   color: var(--dsh-danger, var(--dsh-danger));
 }
 

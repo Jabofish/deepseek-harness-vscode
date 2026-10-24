@@ -778,7 +778,6 @@
   "sessions.switch": "Switch session: {title}",
   "sessions.lineage": "Session lineage",
   "sessions.openAncestor": "Open ancestor {title}",
-  "sessions.archive": "Archive session {title}",
   "sessions.archiveTitle": "Archive session",
   "sessions.archived": "Archived",
   "sessions.archivedEmpty": "No archived sessions.",
@@ -834,7 +833,6 @@
   "sessions.groupWorkspacesTitle": "Show sessions grouped by workspace",
   "sessions.showCurrentWorkspace": "Show current workspace",
   "sessions.showCurrentWorkspaceTitle": "Show sessions in the selected workspace",
-  "sessions.rename": "Rename session {title}",
   "sessions.renameTitle": "Rename session",
   "sessions.renameInvalid": "Enter a non-empty name.",
   "sessions.renameFailed": "Unable to rename.",
@@ -1844,7 +1842,6 @@
   "commands.movetoDescription": "Move the chat into the editor area or back to the side bar",
   "commands.movetoUnknownTarget": "Unknown /moveto target. Use /moveto:editor or /moveto:sidebar.",
   "commands.movetoNoSession": "Select a session before moving the chat to the editor area.",
-  "sessions.openInEditor": "Open {title} in the editor area",
   "sessions.openInEditorTitle": "Open in Editor Area",
   "app.notices": "Notifications",
   "app.showNotices": "Show notifications ({count})",
@@ -1922,5 +1919,7 @@
   "settings.dshUpdateOutputFailed": "Could not open installation output.",
   "settings.dshUpdateRestartAction": "Restart DSH",
   "settings.dshUpdateRestartManaged": "Installed. Restart DSH to use the new version.",
-  "settings.dshUpdateRestartFailed": "Could not restart DSH. Check the connection status and retry."
+  "settings.dshUpdateRestartFailed": "Could not restart DSH. Check the connection status and retry.",
+  "sessions.actions": "Session actions for {title}",
+  "sessions.actionsTitle": "Session actions"
 }

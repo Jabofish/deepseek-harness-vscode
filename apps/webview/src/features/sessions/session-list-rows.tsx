@@ -17,6 +17,7 @@ import {
   workspaceDisplayName,
   type SessionSorting,
 } from './session-drawer-model.js'
+import { SessionRowActions } from './session-row-actions.js'
 import { displaySessionTitle } from './session-title.js'
 
 export interface SessionRowProps {
@@ -156,42 +157,13 @@ export function SessionRow({
           <span className="dsh-session-item__status-label">{statusLabel}</span>
         </span>
       </button>
-      <div className="dsh-session-item__actions">
-        {onOpenInEditor === undefined ? null : (
-          <button
-            className="dsh-icon-button dsh-session-item__open-in-editor"
-            type="button"
-            aria-label={t('sessions.openInEditor', { title })}
-            title={t('sessions.openInEditorTitle')}
-            disabled={disabled}
-            onClick={() => onOpenInEditor(session)}
-          >
-            <Icon name="open-in-editor" />
-          </button>
-        )}
-        <button
-          className="dsh-icon-button dsh-session-item__rename"
-          type="button"
-          aria-label={t('sessions.rename', { title })}
-          title={t('sessions.renameTitle')}
-          disabled={disabled}
-          onClick={(event) => onRename(session, event.currentTarget)}
-        >
-          <Icon name="edit" />
-        </button>
-        {session.blank ? null : (
-          <button
-            className="dsh-icon-button dsh-session-item__remove"
-            type="button"
-            aria-label={t('sessions.archive', { title })}
-            title={t('sessions.archiveTitle')}
-            disabled={disabled}
-            onClick={() => onArchive(session)}
-          >
-            <Icon name="box" />
-          </button>
-        )}
-      </div>
+      <SessionRowActions
+        title={title}
+        disabled={disabled}
+        onRename={(trigger) => onRename(session, trigger)}
+        {...(onOpenInEditor === undefined ? {} : { onOpenInEditor: () => onOpenInEditor(session) })}
+        {...(session.blank ? {} : { onArchive: () => onArchive(session) })}
+      />
     </li>
   )
 }

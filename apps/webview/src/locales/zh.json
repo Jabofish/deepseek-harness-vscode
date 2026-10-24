@@ -778,7 +778,6 @@
   "sessions.switch": "切换会话：{title}",
   "sessions.lineage": "会话层级",
   "sessions.openAncestor": "打开父会话：{title}",
-  "sessions.archive": "归档会话 {title}",
   "sessions.archiveTitle": "归档会话",
   "sessions.archived": "已归档",
   "sessions.archivedEmpty": "没有已归档的会话。",
@@ -834,7 +833,6 @@
   "sessions.groupWorkspacesTitle": "按工作区分组显示会话",
   "sessions.showCurrentWorkspace": "显示当前工作区",
   "sessions.showCurrentWorkspaceTitle": "仅显示选中工作区中的会话",
-  "sessions.rename": "重命名会话 {title}",
   "sessions.renameTitle": "重命名会话",
   "sessions.renameInvalid": "请输入非空名称。",
   "sessions.renameFailed": "无法重命名。",
@@ -1844,7 +1842,6 @@
   "commands.movetoDescription": "把聊天移动到编辑器区或移回侧边栏",
   "commands.movetoUnknownTarget": "未知的 /moveto 目标。请使用 /moveto:editor 或 /moveto:sidebar。",
   "commands.movetoNoSession": "请先选择会话，再将聊天移动到编辑器区。",
-  "sessions.openInEditor": "在编辑器区打开 {title}",
   "sessions.openInEditorTitle": "在编辑器区打开",
   "app.notices": "通知",
   "app.showNotices": "展开 {count} 条通知",
@@ -1922,5 +1919,7 @@
   "settings.dshUpdateOutputFailed": "无法打开安装输出。",
   "settings.dshUpdateRestartAction": "重启 DSH",
   "settings.dshUpdateRestartManaged": "安装完成，重启 DSH 后使用新版本。",
-  "settings.dshUpdateRestartFailed": "DSH 重启失败，请检查连接状态后重试。"
+  "settings.dshUpdateRestartFailed": "DSH 重启失败，请检查连接状态后重试。",
+  "sessions.actions": "会话操作：{title}",
+  "sessions.actionsTitle": "会话操作"
 }

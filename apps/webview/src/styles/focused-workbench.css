@@ -403,18 +403,21 @@
   color: inherit;
 }
 
-/* Hidden actions leave room for the title. Once revealed, their actual width
- * participates in the grid, including optional actions and keyboard focus.
- * Touch devices retain persistent actions. */
+/* Workspace rows reveal their actions on hover. Session rows do not: their
+ * title wraps, and letting a hover rail take its width out of the title column
+ * re-wrapped the title and resized the row on every hover or focus. They keep
+ * one action trigger in the layout and put the rest behind a menu
+ * (session-row-actions.tsx); archived rows share the list and keep their
+ * restore/delete buttons in flow for the same reason. A workspace name never
+ * wraps, so revealing here only moves an ellipsis. Touch devices retain
+ * persistent actions. */
 @media (hover: hover) and (pointer: fine) {
-  .dsh-app[data-conversation-layout='focused']
-    :is(.dsh-session-switcher__workspace, .dsh-session-switcher__list > li) {
+  .dsh-app[data-conversation-layout='focused'] .dsh-session-switcher__workspace {
     position: relative;
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .dsh-app[data-conversation-layout='focused']
-    :is(.dsh-session-switcher__workspace-actions, .dsh-session-item__actions) {
+  .dsh-app[data-conversation-layout='focused'] .dsh-session-switcher__workspace-actions {
     position: absolute;
     inset-inline-end: 4px;
     top: 50%;
@@ -425,14 +428,13 @@
     background: var(--dsh-surface-hover);
   }
 
-  .dsh-app[data-conversation-layout='focused']
-    :is(.dsh-session-switcher__workspace, .dsh-session-switcher__list > li):is(:hover, :focus-within) {
+  .dsh-app[data-conversation-layout='focused'] .dsh-session-switcher__workspace:is(:hover, :focus-within) {
     grid-template-columns: minmax(0, 1fr) auto;
   }
 
   .dsh-app[data-conversation-layout='focused']
-    :is(.dsh-session-switcher__workspace, .dsh-session-switcher__list > li):is(:hover, :focus-within)
-    :is(.dsh-session-switcher__workspace-actions, .dsh-session-item__actions) {
+    .dsh-session-switcher__workspace:is(:hover, :focus-within)
+    .dsh-session-switcher__workspace-actions {
     position: static;
     transform: none;
     opacity: 1;
