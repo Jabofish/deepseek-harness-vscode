@@ -7,7 +7,10 @@ import { Alpha171JobRepository } from '../src/versions/alpha171/job-repository.j
 import { Alpha171PluginRepository } from '../src/versions/alpha171/plugin-repository.js'
 import { Alpha171PresetRepository } from '../src/versions/alpha171/preset-repository.js'
 import { Alpha171VersionAdapter } from '../src/versions/alpha171/adapter.js'
-import { normalizeAlpha171ControlFrame } from '../src/versions/alpha171/session-control.js'
+import {
+  normalizeAlpha171ControlFrame,
+  normalizeAlpha171SessionQueueProjection,
+} from '../src/versions/alpha171/session-control.js'
 import { Alpha172VersionAdapter } from '../src/versions/alpha172/adapter.js'
 import { Rc171VersionAdapter } from '../src/versions/rc171/adapter.js'
 import type { AlphaLoopbackApiClient, AlphaWebSocket } from '../src/versions/alpha/transport.js'
@@ -712,6 +715,13 @@ const malformedInboxFixtures: readonly { readonly name: string; readonly value: 
     value: inboxValue([{ ...inboxMessage('m-content', 'queued'), content: [{}] }]),
   },
   {
+    name: 'malformed internal guidance',
+    value: inboxValue(
+      [],
+      [{ ...inboxMessage('m-internal', 'policy notice', { kind: 'user-approval' }), content: [{}] }],
+    ),
+  },
+  {
     name: 'duplicate message id across lists',
     value: inboxValue([inboxMessage('m-duplicate', 'queued')], [inboxMessage('m-duplicate', 'steering')]),
   },
@@ -724,6 +734,55 @@ const malformedInboxFixtures: readonly { readonly name: string; readonly value: 
     value: inboxValue([inboxMessage('m-rpc-type', 'queued', { kind: 'user', rpcId: 42 })]),
   },
 ]
+
+/** rc.3 / 1f81c047fc48fa190a683e469daa699857e9afe8:
+ * user-approval/src/index.ts injects this context; ui-chat ChatView.tsx filters
+ * next-step by source.kind === 'user'. QueueDock leaves next-turn unchanged.
+ */
+it('keeps internal steering out of displayed queues in control and follow snapshots without text heuristics', () => {
+  const notice = 'The approval policy changed from "ask" to "never" (changed by the user).'
+  const internal = inboxMessage('policy', notice, { kind: 'user-approval' })
+  const plugin = inboxMessage('plugin', 'context from a plugin', { kind: 'some-plugin' })
+  const literal = inboxMessage('human', notice, { kind: 'user', rpcId: 'request-human' })
+  const nextTurn = inboxMessage('queued', 'queued plugin input', { kind: 'some-plugin' })
+  const inbox = inboxValue([nextTurn], [internal, plugin, literal])
+  const expected = {
+    type: 'session/queue',
+    sessionId: 's',
+    asOfSequence: 12,
+    items: [
+      { id: 'queued', placement: 'queued', message: { id: 'queued', content: nextTurn.content } },
+      {
+        id: 'human',
+        placement: 'steering',
+        message: { id: 'human', content: literal.content },
+        rpcId: 'request-human',
+      },
+    ],
+  }
+  const baseline = normalizeAlpha171ControlFrame({
+    type: 'baseline',
+    value: { projections: { s: { asOfSeq: 12, values: { inbox } } } },
+  })
+  const delta = normalizeAlpha171ControlFrame({
+    type: 'projection',
+    sessionId: 's',
+    key: 'inbox',
+    value: inbox,
+    seq: 12,
+  })
+  expect(baseline?.[0]).toEqual(expected)
+  expect(delta?.[0]).toEqual(expected)
+  expect(normalizeAlpha171SessionQueueProjection('s', { asOfSeq: 12, values: { inbox } })).toEqual(expected)
+  expect(delta?.[1]).toMatchObject({ type: 'session/projection', value: inbox })
+  expect(inbox['next-step']).toEqual([internal, plugin, literal])
+  expect(
+    normalizeAlpha171SessionQueueProjection('s', {
+      asOfSeq: 13,
+      values: { inbox: inboxValue([], [internal, plugin]) },
+    }),
+  ).toMatchObject({ items: [], asOfSequence: 13 })
+})
 
 for (const malformed of malformedInboxFixtures) {
   it(`rejects ${malformed.name} in both projection forms`, () => {
@@ -936,7 +995,8 @@ for (const profile of controlAdapterProfiles) {
       socket.open()
       await waitForSent(socket, 1)
       const queued = inboxMessage('m-queued', 'queued text', { kind: 'user', rpcId: 'request-queued' })
-      const steering = inboxMessage('m-steering', 'steering text', { kind: 'plugin', plugin: 'test' })
+      const steering = inboxMessage('m-steering', 'steering text', { kind: 'user' })
+      const internal = inboxMessage('m-internal', 'policy notice', { kind: 'user-approval' })
       socket.message(
         streamItem(socket, {
           type: 'baseline',
@@ -944,7 +1004,7 @@ for (const profile of controlAdapterProfiles) {
             projections: {
               's-1': {
                 asOfSeq: 12,
-                values: { title: 'Pinned', inbox: inboxValue([queued], [steering]) },
+                values: { title: 'Pinned', inbox: inboxValue([queued], [internal, steering]) },
               },
             },
           },
@@ -1000,7 +1060,7 @@ for (const profile of controlAdapterProfiles) {
           projections: {
             's-1': {
               asOfSequence: 12,
-              values: { title: 'Pinned', inbox: inboxValue([queued], [steering]) },
+              values: { title: 'Pinned', inbox: inboxValue([queued], [internal, steering]) },
             },
           },
         },

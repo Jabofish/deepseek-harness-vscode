@@ -142,6 +142,10 @@ export function inboxQueueItems(value: unknown): readonly Record<string, unknown
       if (message === undefined || ids.has(message.id)) return undefined
       ids.add(message.id)
       const source = message.source
+      // Match the official ChatView's next-step filter: injected model context
+      // (for example a policy change) is not an editable user steering input.
+      // Validate all rows first, and leave the upstream Inbox projection intact.
+      if (placement === 'steering' && source?.kind !== 'user') continue
       const rpcId =
         source !== undefined &&
         source.kind === 'user' &&

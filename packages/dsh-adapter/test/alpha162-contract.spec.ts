@@ -138,7 +138,10 @@ describe('DSH 0.1.6-alpha.2 Session-Control contract', () => {
               values: {
                 inbox: {
                   'next-turn': [inboxMessage('m-queue', 'queued text', { kind: 'user', rpcId: 'req-1' })],
-                  'next-step': [inboxMessage('m-steer', 'steering text', { kind: 'plugin', plugin: 'test' })],
+                  'next-step': [
+                    inboxMessage('m-internal', 'policy notice', { kind: 'user-approval' }),
+                    inboxMessage('m-steer', 'steering text', { kind: 'user' }),
+                  ],
                 },
               },
             },

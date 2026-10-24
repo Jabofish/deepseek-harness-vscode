@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 切换权限产生的内部通知不再显示为可编辑的排队或引导输入；按官方 Web UI 的消息来源规则过滤，保留真实用户引导及 DSH 内部上下文。
+- Permission-change context no longer appears as editable queued or steering input. Steering visibility follows the official Web UI's message-source rule while preserving user input and DSH's internal context.
+
 - 配套插件缓存按包内容去重，重复打包不再产生多份缓存；缓存列表优先显示较新的包，并区分同版本的不同构建，保留已有安装路径和回滚包。
 - Companion archives deduplicate package contents across repackaging, list newer copies first and distinguish different builds of the same version, while preserving existing installation paths and rollback archives.
 
