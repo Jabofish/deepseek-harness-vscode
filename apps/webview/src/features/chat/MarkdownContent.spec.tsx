@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { StrictMode } from 'react'
 import { MarkdownContent } from './MarkdownContent.js'
@@ -99,7 +99,10 @@ describe('MarkdownContent', () => {
     await waitFor(() =>
       expect(writeText).toHaveBeenCalledWith(container.querySelector('pre')?.textContent ?? ''),
     )
-    fireEvent.click(buttons[1]!)
+    // Lazy highlighting can replace the toolbar while clipboard completion is awaited.
+    fireEvent.click(
+      within(screen.getByRole('group', { name: 'Table' })).getByRole('button', { name: 'Copy' }),
+    )
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('Field\tValue\none\ttwo'))
   })
 
