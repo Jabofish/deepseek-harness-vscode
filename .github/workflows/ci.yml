@@ -82,8 +82,8 @@ jobs:
           path: |
             node_modules/.cache/vitest
             node_modules/.cache/node-compile
-          key: tests-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'vitest*.ts') }}-${{ github.sha }}
-          restore-keys: tests-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'vitest*.ts') }}-
+          key: tests-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'vitest*.ts', 'config/vitest*.ts') }}-${{ github.sha }}
+          restore-keys: tests-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'vitest*.ts', 'config/vitest*.ts') }}-
       - name: Run affected tests and filesystem contracts once
         run: pnpm test:changed origin/${{ github.base_ref }}
 
@@ -110,8 +110,8 @@ jobs:
           path: |
             node_modules/.cache/vitest
             node_modules/.cache/node-compile
-          key: tests-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'vitest*.ts') }}-${{ github.sha }}
-          restore-keys: tests-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'vitest*.ts') }}-
+          key: tests-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'vitest*.ts', 'config/vitest*.ts') }}-${{ github.sha }}
+          restore-keys: tests-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'vitest*.ts', 'config/vitest*.ts') }}-
       - run: pnpm exec vitest run --passWithNoTests --shard=${{ matrix.shard }}/3
 
   build:

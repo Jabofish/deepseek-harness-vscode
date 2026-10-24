@@ -23,7 +23,7 @@ function markdownFiles(directory) {
 }
 
 const files = [
-  ...['README.md', 'README.zh-CN.md', 'CHANGELOG.md', 'CONTRIBUTING.md', 'AGENTS.md'].map((name) =>
+  ...['README.md', 'README.zh-CN.md', 'CHANGELOG.md', '.github/CONTRIBUTING.md', 'AGENTS.md'].map((name) =>
     path.join(root, name),
   ),
   ...markdownFiles(docsRoot),

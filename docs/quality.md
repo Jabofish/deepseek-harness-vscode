@@ -15,6 +15,8 @@ pnpm build
 
 `pnpm check` 包含格式、文档一致性、lint、类型和自动测试；需要打包时执行 `pnpm package:vsix`，检查实际 VSIX 文件清单。开发中用 VS Code 打开仓库根目录，运行 `build` 任务后按 F5 启动 Extension Development Host；修改 Webview 可用 `pnpm dev`。`apps/extension/media/` 是生成物，不提交。没有打开真实文件夹时，Host 在 `globalStorageUri` 创建或恢复受管理的临时工作区，不把用户目录当临时目录清理。
 
+共享 TypeScript 配置与专项测试配置集中在 `config/`；根目录的 `tsconfig.json`、`vitest.config.ts`、ESLint 和 Prettier 配置保留为自动发现入口。专项测试通过下文的 pnpm 命令运行。
+
 用户控制链是持续门禁：`pnpm test:contracts` 固定运行普通会话、审批、提问、子代理与多窗口的控制回归，不能只测组件回调。停止按钮必须经真实 Store、协议客户端和 Host router 到达处理端；辅助模型目录失败不能阻挡用户操作，失败必须可见且可重试。配置和权限必须传递用户选中的精确值；运行状态不能自行禁用模型与权限选择。停止、明确拒绝工具执行、撤回排队输入和取消等待在工作区失去信任后仍可发送，继续执行文件或工具的动作保持信任与归属校验。新增控制入口要覆盖缺省可选数据、旧状态、并发、断连、失败和资源释放，跨窗口请求 ID 相同也不得串扰。
 
 ### F5 附加故障

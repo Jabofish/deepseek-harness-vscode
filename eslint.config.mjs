@@ -53,9 +53,14 @@ export default tseslint.config(
     },
   },
   {
-    files: ['*.config.{mjs,ts}', 'scripts/**/*.{cjs,mjs,mts}', 'apps/extension/esbuild*.{mjs,mts}'],
+    files: [
+      '*.config.{mjs,ts}',
+      'config/*.config.ts',
+      'scripts/**/*.{cjs,mjs,mts}',
+      'apps/extension/esbuild*.{mjs,mts}',
+    ],
     languageOptions: {
-      parserOptions: { projectService: false, project: './tsconfig.tools.json' },
+      parserOptions: { projectService: false, project: './config/tsconfig.tools.json' },
     },
   },
   {

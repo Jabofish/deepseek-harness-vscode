@@ -72,4 +72,4 @@ HTTPS 要求可信证书。远程 HTTP 必须确认明文传输，DNS 地址变�
 
 网络连接、凭据、文件和进程控制均由 Extension Host 处理。Webview 不接收密钥，也不能直接访问文件系统或网络，诊断会脱敏。详见[安全模型](docs/architecture.md)和[支持说明](apps/extension/SUPPORT.md)。
 
-开发者文档从[文档索引](docs/README.md)开始；[贡献指南](CONTRIBUTING.md)说明验证与证据要求。版本更新见[扩展更新日志](apps/extension/CHANGELOG.md)。项目使用 [MIT 许可](LICENSE)。
+开发者文档从[文档索引](docs/README.md)开始；[贡献指南](.github/CONTRIBUTING.md)说明验证与证据要求。版本更新见[扩展更新日志](apps/extension/CHANGELOG.md)。项目使用 [MIT 许可](LICENSE)。

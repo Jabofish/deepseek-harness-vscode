@@ -12,7 +12,7 @@
 | [ui.md](ui.md)                               | Webview 的颜色、排版、布局、动效及可访问性规则                                             |
 | [quality.md](quality.md)                     | 开发环境、垂直切片、测试、联调、PR 和发布门禁                                              |
 
-[AGENTS.md](../AGENTS.md) 是实现代理的操作规则；[CONTRIBUTING.md](../CONTRIBUTING.md) 是 GitHub 贡献入口。用户说明分别见 [README.md](../README.md)、[README.zh-CN.md](../README.zh-CN.md) 和 Marketplace 使用的 [扩展说明](../apps/extension/README.md)。发布内容见[扩展更新日志](../apps/extension/CHANGELOG.md)。
+[AGENTS.md](../AGENTS.md) 是实现代理的操作规则；[CONTRIBUTING.md](../.github/CONTRIBUTING.md) 是 GitHub 贡献入口。用户说明分别见 [README.md](../README.md)、[README.zh-CN.md](../README.zh-CN.md) 和 Marketplace 使用的 [扩展说明](../apps/extension/README.md)。发布内容见[扩展更新日志](../apps/extension/CHANGELOG.md)。
 
 ## 文档范围
 

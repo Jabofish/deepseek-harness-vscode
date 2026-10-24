@@ -25,11 +25,11 @@
     "package:vsix": "pnpm build && pnpm --filter deepseek-harness-client package:vsix",
     "test": "vitest run --passWithNoTests",
     "test:changed": "node scripts/test-changed.mjs",
-    "test:stress": "vitest run --config vitest.stress.config.ts --tags-filter=stress",
+    "test:stress": "vitest run --config config/vitest.stress.config.ts --tags-filter=stress",
     "test:contracts": "node scripts/test-changed.mjs --contracts",
-    "test:billing-evidence": "vitest run --config vitest.billing.config.ts",
+    "test:billing-evidence": "vitest run --config config/vitest.billing.config.ts",
     "test:watch": "vitest",
-    "typecheck": "pnpm -r --if-present typecheck && pnpm exec tsc -p tests/tsconfig.json --noEmit && pnpm exec tsc -p tests/billing/tsconfig.json --noEmit && pnpm exec tsc -p tsconfig.tools.json --noEmit"
+    "typecheck": "pnpm -r --if-present typecheck && pnpm exec tsc -p tests/tsconfig.json --noEmit && pnpm exec tsc -p tests/billing/tsconfig.json --noEmit && pnpm exec tsc -p config/tsconfig.tools.json --noEmit"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

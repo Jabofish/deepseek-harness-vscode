@@ -72,4 +72,4 @@ Remote file picking keeps the selected filesystem URI. Desktop Inspector actions
 
 Network connections, credentials, files, and process control stay in the Extension Host. The Webview receives no secrets or direct filesystem/network access, and diagnostics are redacted. See the [security model](docs/architecture.md) and [support instructions](apps/extension/SUPPORT.md).
 
-Developer documentation starts at the [documentation index](docs/README.md). The [contribution guide](CONTRIBUTING.md) explains validation and evidence. Release notes are recorded in the [extension changelog](apps/extension/CHANGELOG.md). Licensed under [MIT](LICENSE).
+Developer documentation starts at the [documentation index](docs/README.md). The [contribution guide](.github/CONTRIBUTING.md) explains validation and evidence. Release notes are recorded in the [extension changelog](apps/extension/CHANGELOG.md). Licensed under [MIT](LICENSE).
