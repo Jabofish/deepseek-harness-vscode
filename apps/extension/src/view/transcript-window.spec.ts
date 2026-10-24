@@ -950,6 +950,46 @@ describe('Host transcript windows', () => {
       client.service.dispose()
     },
   )
+  it('retains named Host command receipts without caching orphan mode acknowledgements', () => {
+    const client = fixture()
+    client.service.accept({
+      type: 'notice',
+      sessionId,
+      level: 'info',
+      text: 'Permission started.',
+      commandId: 'host-mode',
+      commandName: 'permission',
+      commandPhase: 'run',
+    })
+    client.service.accept({
+      type: 'notice',
+      sessionId,
+      level: 'info',
+      text: 'Mode applied.',
+      commandId: 'host-mode',
+      commandPhase: 'done',
+    })
+    client.service.accept({
+      type: 'notice',
+      sessionId,
+      level: 'info',
+      text: 'Command finished.',
+      commandName: 'compact',
+      commandPhase: 'done',
+      commandInput: '/compact',
+    })
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const window = client.open()
+      expect(window.nodes).toHaveLength(2)
+      expect(window.nodes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: 'command-input', text: '/compact' }),
+          expect.objectContaining({ kind: 'notice', text: 'Command finished.' }),
+        ]),
+      )
+    }
+    client.service.dispose()
+  })
   it('retires prefixes already settled by the opening cut and preserves a newer retry attempt', () => {
     const client = fixture()
     const generation = client.service.begin(sessionId)

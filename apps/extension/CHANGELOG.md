@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 保留没有历史序号的普通命令回显，切换或重读会话时不丢失；无名称的模式成功回执仍不进入通知缓存。
+- Preserves named Host command output across session switches and rereads without retaining orphan mode acknowledgements.
+
 - 权限、计划模式切换的成功回执不再混入跨会话通知缓存，打开、重放和重开会话时不会重复出现在聊天中；普通命令输出、实际失败及扩展告警保留。
 - Permission and plan-mode receipts no longer enter the retained Host-notice cache, preventing repeated chat messages during opening and replay. Ordinary command output, actual failures and Host warnings remain available.
 

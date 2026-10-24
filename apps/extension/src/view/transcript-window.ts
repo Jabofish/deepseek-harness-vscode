@@ -1358,7 +1358,9 @@ export function isTranscriptEvent(event: BackendEvent): boolean {
 function isRetainedHostNotice(event: BackendEvent): boolean {
   return (
     event.type === 'session.gap' ||
-    (event.type === 'notice' && event.sequence === undefined && event.commandPhase === undefined)
+    (event.type === 'notice' &&
+      event.sequence === undefined &&
+      (event.commandPhase === undefined || event.commandName !== undefined))
   )
 }
 
