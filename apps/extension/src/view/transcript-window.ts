@@ -297,7 +297,7 @@ export class TranscriptWindowService {
         this.revision++
         this.schedule(event.type === 'tool.updated')
       }
-    } else if ((event.type === 'notice' || event.type === 'session.gap') && sessionId !== undefined) {
+    } else if (isRetainedHostNotice(event) && sessionId !== undefined) {
       const scratch = reduceTimeline(empty(sessionId), {
         event,
         sequence: -++this.hostSequence,
@@ -642,7 +642,7 @@ export class TranscriptWindowService {
         : {}),
     })
     this.rememberLiveBodies(resident, event)
-    if (event.type === 'notice' || event.type === 'session.gap')
+    if (isRetainedHostNotice(event))
       this.rememberNotices(
         resident.sessionId,
         resident.timeline.nodes.filter((node) => !previous.includes(node)),
@@ -1351,6 +1351,15 @@ export function isTranscriptEvent(event: BackendEvent): boolean {
     'archived.sessions.changed',
     'remote.event',
   ].includes(event.type)
+}
+
+/** Native command receipts replay from the journal; retaining them as Host
+ * notices loses run/done pairing and appends them again on every reopen. */
+function isRetainedHostNotice(event: BackendEvent): boolean {
+  return (
+    event.type === 'session.gap' ||
+    (event.type === 'notice' && event.sequence === undefined && event.commandPhase === undefined)
+  )
 }
 
 export function isTranscriptOnlyEvent(event: BackendEvent): boolean {

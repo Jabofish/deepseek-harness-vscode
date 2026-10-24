@@ -856,6 +856,100 @@ describe('Host transcript windows', () => {
     ).toBe('First notice')
     client.service.dispose()
   })
+  it.each([false, true])(
+    'keeps mode acknowledgements out of opening, replayed and reopened transcripts, buffered=%s',
+    async (buffered) => {
+      const client = fixture()
+      const generation = buffered ? client.service.begin(sessionId) : undefined
+      const events: SessionHistoryEvent[] = []
+      // Pinned rc.3 command/done has commandId/kind/text, but no command name.
+      for (const [index, commandName] of ['permission', 'plan', 'permission'].entries()) {
+        const commandId = `mode-${index}`
+        const run = row(index * 2, {
+          type: 'notice',
+          sessionId,
+          sequence: index * 2,
+          level: 'info',
+          text: `${commandName} started.`,
+          commandId,
+          commandName,
+          commandPhase: 'run',
+          commandInput: `/${commandName}`,
+        })
+        const done = row(index * 2 + 1, {
+          type: 'notice',
+          sessionId,
+          sequence: index * 2 + 1,
+          level: 'info',
+          text: 'Mode applied.',
+          commandId,
+          commandPhase: 'done',
+        })
+        events.push(run, done)
+        client.service.accept(run.event)
+        client.service.accept(done.event)
+      }
+      const window = client.service.installPage(
+        sessionId,
+        { events, hasMore: false },
+        generation ?? client.service.begin(sessionId),
+      )
+      expect(window.nodes).toEqual([])
+      for (const entry of events) client.service.accept(entry.event)
+      client.service.setVisible(true)
+      await vi.waitFor(() => expect(client.posted.at(-1)?.nodes).toEqual([]))
+      expect(client.open(events).nodes).toEqual([])
+      client.service.dispose()
+    },
+  )
+
+  it.each([false, true])(
+    'preserves ordinary output and mode failures exactly once, buffered=%s',
+    (buffered) => {
+      const client = fixture()
+      const generation = buffered ? client.service.begin(sessionId) : undefined
+      const events: SessionHistoryEvent[] = []
+      for (const [index, commandName] of ['help', 'permission'].entries()) {
+        const commandId = `command-${index}`
+        const run: BackendEvent = {
+          type: 'notice',
+          sessionId,
+          sequence: index * 2,
+          level: 'info',
+          text: `${commandName} started.`,
+          commandName,
+          commandId,
+          commandPhase: 'run',
+        }
+        const done: BackendEvent = {
+          type: 'notice',
+          sessionId,
+          sequence: index * 2 + 1,
+          level: index === 0 ? 'info' : 'error',
+          text: index === 0 ? 'Command help' : 'Permission update failed',
+          commandId,
+          commandPhase: 'done',
+        }
+        events.push(row(index * 2, run), row(index * 2 + 1, done))
+        client.service.accept(run)
+        client.service.accept(done)
+      }
+      const window = client.service.installPage(
+        sessionId,
+        { events, hasMore: false },
+        generation ?? client.service.begin(sessionId),
+      )
+      expect(window.nodes).toHaveLength(2)
+      expect(window.nodes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: 'notice', level: 'info', text: 'Command help' }),
+          expect.objectContaining({ kind: 'notice', level: 'error', text: 'Permission update failed' }),
+        ]),
+      )
+      expect(client.open(events).nodes).toHaveLength(2)
+      client.service.dispose()
+    },
+  )
   it('retires prefixes already settled by the opening cut and preserves a newer retry attempt', () => {
     const client = fixture()
     const generation = client.service.begin(sessionId)

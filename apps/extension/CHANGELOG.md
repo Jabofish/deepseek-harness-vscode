@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 权限、计划模式切换的成功回执不再混入跨会话通知缓存，打开、重放和重开会话时不会重复出现在聊天中；普通命令输出、实际失败及扩展告警保留。
+- Permission and plan-mode receipts no longer enter the retained Host-notice cache, preventing repeated chat messages during opening and replay. Ordinary command output, actual failures and Host warnings remain available.
+
 - 窄面板在底部 Token 统计旁显示金额，宽面板仍使用独立费用区块。金额和详情共享计算缓存，用量、设置或连接变化后刷新，刷新失败保留上次结果并可重试。
 - Narrow panels show the cost beside token statistics; wider panels keep the separate cost pill. Shared estimates avoid recalculating on every disclosure and refresh for usage, settings or connection changes, retaining the previous result on failure.
 - 成功取得的汇率保存到本地，重启后继续复用；过期刷新失败时沿用上次报价及日期，无缓存时才使用默认 6.8。并发汇率读取合并，取消一个读取不会中断其他调用。
