@@ -76,14 +76,6 @@
   line-height: 1.2;
 }
 
-.dsh-session-switcher--headless .dsh-session-item__remove {
-  width: 26px;
-  min-width: 26px;
-  height: 28px;
-  min-height: 28px;
-  opacity: 0.68;
-}
-
 .dsh-session-switcher--headless .dsh-session-switcher__empty {
   padding: 6px 2px;
   font-size: var(--dsh-font-size-xs);

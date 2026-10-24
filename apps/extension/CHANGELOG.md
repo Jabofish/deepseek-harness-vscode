@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 会话列表每行改用单个操作菜单，悬停或聚焦时标题不再改变换行宽度，侧栏列表不再随鼠标移动反复重排。
+- Session rows use one actions menu instead of a hover-revealed button rail, so hovering or focusing a row no longer re-wraps its title or resizes the list.
+
 ## 0.4.0
 
 - 新增可选的会话费用估算，支持官方参考价匹配、手动选择模型、自定义单价，以及带缓存的人民币／美元换算。
