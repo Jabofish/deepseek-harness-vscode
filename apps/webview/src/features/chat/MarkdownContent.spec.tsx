@@ -45,15 +45,75 @@ describe('MarkdownContent', () => {
     expect(container.querySelector('pre')).toBeNull()
   })
 
-  it('requires an explicit gesture before delegating a Markdown link', () => {
+  it.each([
+    { markdown: '[Docs](https://example.com)', name: 'Docs', href: 'https://example.com' },
+    { markdown: '[.gitignore](.gitignore)', name: '.gitignore', href: '.gitignore' },
+  ])('requires an explicit gesture before delegating $markdown', ({ markdown, name, href }) => {
     const onOpenLink = vi.fn()
-    render(<MarkdownContent markdown={'[Docs](https://example.com)'} onOpenLink={onOpenLink} />)
+    render(<MarkdownContent markdown={markdown} onOpenLink={onOpenLink} />)
 
-    const link = screen.getByRole('link', { name: 'Docs' })
+    const link = screen.getByRole('link', { name })
     expect(onOpenLink).not.toHaveBeenCalled()
     fireEvent.click(link)
     expect(onOpenLink).toHaveBeenCalledOnce()
-    expect(onOpenLink).toHaveBeenCalledWith('https://example.com')
+    expect(onOpenLink).toHaveBeenCalledWith(href)
+  })
+
+  it.each([false, true])('opens complete links wrapped in inline code, streaming=%s', (streaming) => {
+    const onOpenLink = vi.fn()
+    render(
+      <MarkdownContent
+        markdown={'1. 要不要提交 `[.gitignore](.gitignore)`？\n\n`[Docs](https://example.com/docs)`'}
+        streaming={streaming}
+        onOpenLink={onOpenLink}
+      />,
+    )
+
+    const file = screen.getByRole('link', { name: '.gitignore' })
+    const docs = screen.getByRole('link', { name: 'Docs' })
+    expect(file.getAttribute('href')).toBeNull()
+    expect(docs.getAttribute('href')).toBeNull()
+    expect(onOpenLink).not.toHaveBeenCalled()
+    fireEvent.click(file)
+    expect(onOpenLink).toHaveBeenLastCalledWith('.gitignore')
+    fireEvent.keyDown(docs, { key: 'Enter' })
+    expect(onOpenLink).toHaveBeenLastCalledWith('https://example.com/docs')
+    fireEvent.keyDown(file, { key: ' ' })
+    expect(onOpenLink).toHaveBeenCalledTimes(3)
+    expect(onOpenLink).toHaveBeenLastCalledWith('.gitignore')
+  })
+
+  it.each(['[`report.html`](docs/source.html)', '`[report.html](docs/source.html)`'])(
+    'preserves an explicit link target when its code label is also a produced file: %s',
+    (markdown) => {
+      const onOpenLink = vi.fn()
+      const { container } = render(
+        <MarkdownContent markdown={markdown} producedFiles={['report.html']} onOpenLink={onOpenLink} />,
+      )
+
+      const link = screen.getByRole('link', { name: 'report.html' })
+      expect(container.querySelector('.dsh-inline-reference')).toBeNull()
+      fireEvent.click(link.querySelector('code') ?? link)
+      expect(onOpenLink).toHaveBeenCalledOnce()
+      expect(onOpenLink).toHaveBeenCalledWith('docs/source.html')
+    },
+  )
+
+  it('keeps fenced examples, code expressions, multiple links and unsafe links as code', () => {
+    const onOpenLink = vi.fn()
+    const examples = [
+      '`print("[Docs](https://example.com)")`',
+      '`[A](a.md) [B](b.md)`',
+      '`[Run](javascript:alert(1))`',
+      '```text\n[.gitignore](.gitignore)\n```',
+    ]
+    const { container } = render(<MarkdownContent markdown={examples.join('\n\n')} onOpenLink={onOpenLink} />)
+
+    expect(screen.queryByRole('link')).toBeNull()
+    expect(container.querySelector('pre code')?.textContent).toContain('[.gitignore](.gitignore)')
+    expect(container.querySelectorAll('code')).toHaveLength(4)
+    fireEvent.click(screen.getByText('[Run](javascript:alert(1))'))
+    expect(onOpenLink).not.toHaveBeenCalled()
   })
 
   it('does not allow raw HTML or remote image tags from model output', () => {

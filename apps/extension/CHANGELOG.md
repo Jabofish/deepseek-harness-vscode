@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 行内代码包裹的完整 Markdown 链接也可点击；文件引用不再覆盖已有链接的目标，避免一次点击打开两个位置。
+- Complete Markdown links wrapped in inline code remain clickable. Produced-file references preserve explicit link targets and avoid opening two locations from one click.
+
 - 上下文条以完整窗口为 100%，彩色分项仅占已用比例，剩余容量保留底色；总容量未知时仅显示数值。
 - Context bars use the full window as 100%, with colored categories confined to the occupied share and remaining capacity unfilled. Unknown capacity keeps the numeric details without a percentage bar.
 
