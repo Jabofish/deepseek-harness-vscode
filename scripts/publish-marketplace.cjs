@@ -2,6 +2,7 @@
 
 const path = require('node:path')
 const { createRequire } = require('node:module')
+const { isRetryableMarketplaceError, marketplaceRetryDelay } = require('./marketplace-retry.cjs')
 
 const repositoryRoot = path.resolve(__dirname, '..')
 const extensionRoot = path.join(repositoryRoot, 'apps', 'extension')
@@ -35,30 +36,6 @@ const { publishVSIX } = extensionRequire('@vscode/vsce')
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 
-function getErrorText(error) {
-  if (error instanceof Error) {
-    return `${error.name}\n${error.message}`
-  }
-
-  if (error && typeof error === 'object') {
-    const errorRecord = error
-    return [
-      typeof errorRecord.message === 'string' ? errorRecord.message : '',
-      typeof errorRecord.statusCode === 'number' ? String(errorRecord.statusCode) : '',
-      typeof errorRecord.code === 'string' ? errorRecord.code : '',
-      typeof errorRecord.result === 'string' ? errorRecord.result : '',
-    ].join('\n')
-  }
-
-  return String(error)
-}
-
-function isRetryableMarketplaceError(error) {
-  return /timeout|ETIMEDOUT|ESOCKETTIMEDOUT|ECONNRESET|502|503|504|bad gateway|gateway timeout|service(?:s)? (?:isn't|are not|unavailable)/i.test(
-    getErrorText(error),
-  )
-}
-
 async function publish() {
   let lastError
 
@@ -73,13 +50,16 @@ async function publish() {
     } catch (error) {
       lastError = error
       const retryable = isRetryableMarketplaceError(error)
+      const retryDelay = marketplaceRetryDelay(error, attempt)
 
-      if (!retryable || attempt === maxPublishAttempts) {
+      if (!retryable || retryDelay === undefined || attempt === maxPublishAttempts) {
         throw error
       }
 
-      console.warn(`Marketplace publish attempt ${attempt} failed; retrying in 30s.`)
-      await delay(30 * 1000)
+      console.warn(
+        `Marketplace publish attempt ${attempt} failed; retrying in ${Math.ceil(retryDelay / 1_000)}s.`,
+      )
+      await delay(retryDelay)
     }
   }
 
