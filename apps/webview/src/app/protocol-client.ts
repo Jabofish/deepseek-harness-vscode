@@ -39,7 +39,7 @@ interface FeatureBackendIdentity {
 // drops the version list the drawer was waiting for.
 const RUNTIME_UPDATE_CHECK_TIMEOUT_MS = 90_000
 // Covers metadata lookup, the ten-minute npm install, verification and connection.
-const RUNTIME_UPDATE_INSTALL_TIMEOUT_MS = 13 * 60_000
+const RUNTIME_UPDATE_INSTALL_TIMEOUT_MS = 24 * 60_000
 // Checkpoint work reads or writes every recorded file through the host file
 // API, which on a remote workspace is a round trip per file. Timing out
 // mid-restore reports a failure for work that is already overwriting workspace

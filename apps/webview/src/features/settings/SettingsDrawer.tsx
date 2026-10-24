@@ -86,7 +86,15 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
   const [busyField, setBusyField] = useState<string | undefined>(undefined)
   const [documentError, setDocumentError] = useState<string | undefined>(undefined)
   const [keyboardShortcutsError, setKeyboardShortcutsError] = useState<string | undefined>(undefined)
-  const [dshUpdateBusy, setDshUpdateBusy] = useState<'check' | 'install' | undefined>(undefined)
+  const [localDshUpdateBusy, setDshUpdateBusy] = useState<'check' | 'install' | undefined>(undefined)
+  const updatePhase = props.dshUpdateProgress?.phase
+  const dshUpdateBusy =
+    localDshUpdateBusy ??
+    (updatePhase !== undefined && updatePhase !== 'completed' && updatePhase !== 'failed'
+      ? props.dshUpdateProgress?.version === undefined
+        ? 'check'
+        : 'install'
+      : undefined)
   const [dshUpdateError, setDshUpdateError] = useState<string | undefined>(undefined)
   const [selectedDshVersion, setSelectedDshVersion] = useState<string | undefined>(undefined)
   const dshUpdateCheckStarted = useRef(false)
@@ -235,10 +243,13 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
       dshUpdateCheckStarted.current = false
       return
     }
-    if (dshUpdateCheckStarted.current || dshUpdate !== undefined || onCheckDshUpdates === undefined) return
+    if (dshUpdateCheckStarted.current || onCheckDshUpdates === undefined) return
     dshUpdateCheckStarted.current = true
-    void onCheckDshUpdates(false).catch(() => undefined)
-  }, [open, dshUpdate, onCheckDshUpdates])
+    setDshUpdateError(undefined)
+    void onCheckDshUpdates(false).catch((reason: unknown) =>
+      setDshUpdateError(reason instanceof Error ? reason.message : t('settings.dshUpdateFailed')),
+    )
+  }, [open, onCheckDshUpdates, t])
 
   const saveSetting = useStableCallback((path: string, value: unknown): void => {
     if (savingPath !== undefined) return

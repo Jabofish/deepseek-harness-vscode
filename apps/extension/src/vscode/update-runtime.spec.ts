@@ -41,6 +41,88 @@ function updater(
 }
 
 describe('DshRuntimeUpdater', () => {
+  it('ignores an old check completing after installation and shares concurrent installs', async () => {
+    let release!: (value: { stdout: string; stderr: string }) => void
+    let views = 0
+    let installs = 0
+    let installed = '0.1.0-rc.6'
+    const phases: string[] = []
+    const execute: ExecuteRuntimeCommand = async (_executable, args) => {
+      if (args[0] === 'view') {
+        if (++views === 1)
+          return new Promise((resolve) => {
+            release = resolve
+          })
+        return { stdout: metadata, stderr: '' }
+      }
+      if (args[0] === 'install') {
+        installs++
+        installed = '0.1.0-rc.8'
+      }
+      return {
+        stdout: JSON.stringify({ dependencies: { '@deepseek-ai/dsh': { version: installed } } }),
+        stderr: '',
+      }
+    }
+    const subject = updater(execute, runtime(), (progress) => phases.push(progress.phase))
+    const old = subject.checkForUpdates(true)
+    const installation = subject.installVersion('0.1.0-rc.8')
+    expect(subject.installVersion('0.1.0-rc.8')).toBe(installation)
+    expect(subject.checkForUpdates(true)).toBe(installation)
+    await expect(subject.installVersion('0.1.0-rc.7')).rejects.toMatchObject({ code: 'BACKEND_BUSY' })
+    await installation
+    const settledPhases = [...phases]
+    release({ stdout: metadata, stderr: '' })
+    expect((await old).globalVersion).toBe('0.1.0-rc.8')
+    expect((await subject.checkForUpdates()).globalVersion).toBe('0.1.0-rc.8')
+    expect((await subject.checkForUpdates()).updateAvailable).toBe(false)
+    expect(installs).toBe(1)
+    expect(phases).toEqual(settledPhases)
+  })
+
+  it('rechecks global state before a mutation and accepts npm list JSON on a nonzero exit', async () => {
+    let installed = '0.1.0-rc.6'
+    let installs = 0
+    const execute: ExecuteRuntimeCommand = async (_executable, args) => {
+      await Promise.resolve()
+      if (args[0] === 'view') return { stdout: metadata, stderr: '' }
+      if (args[0] === 'install') installs++
+      throw Object.assign(new Error('unrelated global dependency is invalid'), {
+        stdout: JSON.stringify({ dependencies: { '@deepseek-ai/dsh': { version: installed } } }),
+      })
+    }
+    const subject = updater(execute)
+    await subject.checkForUpdates()
+    installed = '0.1.0-rc.8'
+    expect((await subject.installVersion('0.1.0-rc.8')).globalVersion).toBe(installed)
+    expect(installs).toBe(0)
+  })
+
+  it('invalidates the old snapshot after a failed mutation and permits retry', async () => {
+    let installed = '0.1.0-rc.6'
+    let broken = true
+    const phases: string[] = []
+    const execute: ExecuteRuntimeCommand = async (_executable, args) => {
+      await Promise.resolve()
+      if (args[0] === 'view') return { stdout: metadata, stderr: '' }
+      if (args[0] === 'install') {
+        if (broken) throw Object.assign(new Error('network failed'), { code: 'ETIMEDOUT' })
+        installed = '0.1.0-rc.8'
+      }
+      return {
+        stdout: JSON.stringify({ dependencies: { '@deepseek-ai/dsh': { version: installed } } }),
+        stderr: '',
+      }
+    }
+    const subject = updater(execute, runtime(), (progress) => phases.push(progress.phase))
+    await subject.checkForUpdates()
+    await expect(subject.installVersion('0.1.0-rc.8')).rejects.toMatchObject({
+      context: { reason: 'install-failed' },
+    })
+    expect(phases.at(-1)).toBe('failed')
+    broken = false
+    expect((await subject.installVersion('0.1.0-rc.8')).globalVersion).toBe('0.1.0-rc.8')
+  })
   it('parses and sorts the real upstream version shape without trusting dist-tags for ordering', () => {
     const parsed = parseNpmMetadata(metadata)
 
@@ -106,7 +188,7 @@ describe('DshRuntimeUpdater', () => {
       nextTagVersion: '0.1.0-rc.8',
       updateAvailable: true,
     })
-    expect(calls).toContainEqual(['view', '@deepseek-ai/dsh', '--json'])
+    expect(calls).toContainEqual(['view', '@deepseek-ai/dsh', 'versions', 'dist-tags', '--json'])
     expect(calls).toContainEqual(['list', '--global', '@deepseek-ai/dsh', '--depth=0', '--json'])
     expect(calls.some((args) => args[0] === 'dsh')).toBe(false)
   })
@@ -135,7 +217,14 @@ describe('DshRuntimeUpdater', () => {
     expect(installed).toBe('0.1.0-rc.8')
     expect(snapshot.globalVersion).toBe('0.1.0-rc.8')
     expect(snapshot.restartRequired).toBe(true)
-    expect(calls).toContainEqual(['install', '--global', '@deepseek-ai/dsh@0.1.0-rc.8'])
+    expect(calls).toContainEqual([
+      'install',
+      '--global',
+      '@deepseek-ai/dsh@0.1.0-rc.8',
+      '--no-audit',
+      '--no-fund',
+      '--loglevel=http',
+    ])
   })
 
   it('does not reinstall a version that is already the global package', async () => {
@@ -159,7 +248,7 @@ describe('DshRuntimeUpdater', () => {
 
     expect(snapshot.globalVersion).toBe('0.1.0-rc.8')
     expect(calls.some((args) => args[0] === 'install')).toBe(false)
-    expect(phases).toEqual(['checking', 'checking', 'completed', 'completed'])
+    expect(phases).toEqual(['checking', 'completed'])
   })
 
   it('emits visible lifecycle phases while a real npm install is pending', async () => {
@@ -185,7 +274,7 @@ describe('DshRuntimeUpdater', () => {
     expect(phases).toEqual(expect.arrayContaining(['checking', 'downloading', 'verifying', 'completed']))
   })
 
-  it('preserves a bounded npm error detail without exposing a token', async () => {
+  it('returns an authored network failure without forwarding npm diagnostics', async () => {
     const execute: ExecuteRuntimeCommand = async (_executable, args) => {
       await Promise.resolve()
       if (args[0] === 'view') return { stdout: metadata, stderr: '' }
@@ -216,10 +305,9 @@ describe('DshRuntimeUpdater', () => {
       typeof failure === 'object' && failure !== null && 'context' in failure
         ? (failure as { readonly context?: { readonly detail?: unknown } }).context?.detail
         : undefined
-    expect(detail).toEqual(expect.stringContaining('[redacted]'))
-    expect(detail).toEqual(expect.stringContaining('npm error code EAI_AGAIN'))
-    expect(detail).not.toEqual(expect.stringContaining('deprecated'))
-    expect(detail).not.toEqual(expect.stringContaining('&#x20;'))
+    expect(detail).toBeUndefined()
+    expect((failure as Error).message).toContain('network')
+    expect((failure as Error).message).not.toContain('secret-value')
   })
 
   it('returns a bounded unavailable snapshot for malformed registry data', async () => {

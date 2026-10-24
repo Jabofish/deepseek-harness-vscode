@@ -29,7 +29,9 @@ export const connectionRequestSchemas = [
     .object({
       type: z.literal('runtime.action'),
       ...requestBase,
-      payload: z.object({ action: z.enum(['install', 'select', 'copy-command', 'open-docs']) }).strict(),
+      payload: z
+        .object({ action: z.enum(['install', 'select', 'copy-command', 'open-docs', 'show-output']) })
+        .strict(),
     })
     .strict(),
   z

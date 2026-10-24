@@ -3,7 +3,12 @@ import { gzipSync } from 'node:zlib'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { cacheCompanionArchive, inspectCompanionArchive, listCompanionArchives } from './companion-archive.js'
+import {
+  cacheCompanionArchive,
+  inspectCompanionArchive,
+  listCompanionArchives,
+  alternateCompanionArchive,
+} from './companion-archive.js'
 
 const roots: string[] = []
 afterEach(async () => {
@@ -29,6 +34,20 @@ async function root(): Promise<string> {
   return directory
 }
 describe('bounded companion archive inspection and recovery cache', () => {
+  it('keeps a bounded immutable alternate path for reinstalling the same artifact and refuses corruption', async () => {
+    const directory = await root()
+    const file = path.join(directory, 'bundle.tgz')
+    await writeFile(file, archive())
+    const cached = await cacheCompanionArchive(file, directory)
+    const alternate = await alternateCompanionArchive(cached, directory)
+    expect(alternate.file).not.toBe(cached.file)
+    expect(await readFile(alternate.file)).toEqual(await readFile(cached.file))
+    expect(await alternateCompanionArchive(cached, directory)).toEqual(alternate)
+    expect(await listCompanionArchives(directory)).toEqual([cached])
+    await writeFile(alternate.file, 'tampered')
+    await expect(alternateCompanionArchive(cached, directory)).rejects.toThrow()
+    expect(await inspectCompanionArchive(cached.file)).toEqual({ version: '0.2.0' })
+  })
   it('reads a package manifest without extracting files and retains an immutable verified recovery archive', async () => {
     const directory = await root()
     const file = path.join(directory, 'bundle.tgz')

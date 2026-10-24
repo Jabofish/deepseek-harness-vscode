@@ -43,6 +43,7 @@ export const editorIntegrationStatusSchema = z
     canCancelInstall: z.boolean().optional(),
     installationErrorCode: pluginBundleErrorCodeSchema.optional(),
     installationFailureKind: pluginBundleChangeResultSchema.shape.failureKind,
+    recovery: z.enum(['restoring', 'restored', 'failed', 'unknown']).optional(),
     installed: z.boolean().optional(),
     packageManager: z.enum(['ready', 'missing', 'broken']).optional(),
   })

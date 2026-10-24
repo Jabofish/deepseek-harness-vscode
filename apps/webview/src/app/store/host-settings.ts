@@ -118,6 +118,7 @@ export function parseDshUpdateSnapshot(value: unknown): DshUpdateSnapshot | unde
     checkedAt: snapshot.checkedAt,
     ...(failure === undefined ? {} : { failure }),
     ...(restartRequired === true ? { restartRequired: true } : {}),
+    ...(typeof snapshot.canRestart === 'boolean' ? { canRestart: snapshot.canRestart } : {}),
   }
 }
 
@@ -135,11 +136,23 @@ export function parseDshUpdateProgress(value: unknown): DshRuntimeUpdateProgress
   )
     return undefined
   const version = progress.version
+  const snapshot = phase === 'completed' ? parseDshUpdateSnapshot(progress.snapshot) : undefined
   if (version !== undefined && (typeof version !== 'string' || version.length === 0 || version.length > 128))
     return undefined
   return {
     phase,
+    ...(snapshot === undefined ? {} : { snapshot }),
     ...(version === undefined ? {} : { version }),
+    ...(typeof progress.startedAt === 'number' &&
+    Number.isSafeInteger(progress.startedAt) &&
+    progress.startedAt >= 0
+      ? { startedAt: progress.startedAt }
+      : {}),
+    ...(typeof progress.lastActivityAt === 'number' &&
+    Number.isSafeInteger(progress.lastActivityAt) &&
+    progress.lastActivityAt >= 0
+      ? { lastActivityAt: progress.lastActivityAt }
+      : {}),
   }
 }
 

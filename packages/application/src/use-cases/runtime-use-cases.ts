@@ -5,6 +5,7 @@ export interface RuntimeActionPort {
   selectExecutable(): Promise<void>
   copyInstallCommand(): Promise<void>
   openDocumentation(): Promise<void>
+  showOutput?(): Promise<void>
   checkForUpdates(force: boolean, signal?: AbortSignal): Promise<DshUpdateSnapshot>
   installVersion(version: string, signal?: AbortSignal): Promise<DshUpdateSnapshot>
 }
@@ -12,7 +13,7 @@ export interface RuntimeActionPort {
 export class RuntimeUseCases {
   public constructor(private readonly actions: RuntimeActionPort) {}
 
-  public execute(action: 'install' | 'select' | 'copy-command' | 'open-docs'): Promise<void> {
+  public execute(action: 'install' | 'select' | 'copy-command' | 'open-docs' | 'show-output'): Promise<void> {
     switch (action) {
       case 'install':
         return this.actions.install()
@@ -22,6 +23,8 @@ export class RuntimeUseCases {
         return this.actions.copyInstallCommand()
       case 'open-docs':
         return this.actions.openDocumentation()
+      case 'show-output':
+        return this.actions.showOutput?.() ?? Promise.resolve()
     }
   }
 

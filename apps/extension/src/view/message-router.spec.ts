@@ -4,6 +4,45 @@ import { Rc6CredentialRepository, type DshTransport } from '@dsh-vscode/dsh-adap
 import { featureResponseSchema, hostEnvelopeSchema } from '@dsh-vscode/webview-protocol'
 
 import { WebviewMessageRouter } from './message-router.js'
+import { runtimeInstallationFailureMessage } from '../vscode/runtime-installation.js'
+
+describe('runtime installation error feedback', () => {
+  it.each(['runtime.action', 'runtime.update.install'] as const)(
+    'preserves an authored proxy failure through %s',
+    async (type) => {
+      const postMessage = vi.fn().mockResolvedValue(true)
+      const message =
+        runtimeInstallationFailureMessage({ stderr: 'npm error code E407\nuser:secret@proxy.invalid' }) ?? ''
+      const router = new WebviewMessageRouter({
+        postMessage,
+        handleRequest: () =>
+          Promise.reject(
+            new AppError({
+              code: 'INVALID_CONFIGURATION',
+              message,
+              retryable: true,
+              context: {
+                operation: type === 'runtime.action' ? 'runtime.install' : 'runtime.update',
+                reason: 'install-failed',
+              },
+            }),
+          ),
+      })
+      await router.handle({
+        protocolVersion: 1,
+        message: {
+          type,
+          requestId: 'install-1',
+          payload: type === 'runtime.action' ? { action: 'install' } : { version: '0.2.1-rc.3' },
+        },
+      })
+      const result = JSON.stringify(postMessage.mock.calls)
+      expect(result).toContain('proxy requires authentication')
+      expect(result).not.toContain('secret')
+      expect(result).not.toContain('proxy.invalid')
+    },
+  )
+})
 
 describe('WebviewMessageRouter custom provider validation', () => {
   it.each([

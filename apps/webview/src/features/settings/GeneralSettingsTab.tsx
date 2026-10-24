@@ -1,4 +1,4 @@
-import type { Dispatch, ReactElement, SetStateAction } from 'react'
+import { useEffect, useState, type Dispatch, type ReactElement, type SetStateAction } from 'react'
 import type { ExtensionSettingsSummary } from '@dsh-vscode/domain'
 import {
   DSH_UI_SETTING_PATHS,
@@ -127,6 +127,27 @@ export function GeneralSettingsTab(input: GeneralSettingsTabProps): ReactElement
     keyboardShortcutsError,
   } = input
   const { onCheckDshUpdates, onInstallDshVersion, dshUpdate, dshUpdateProgress } = props
+  const [now, setNow] = useState(Date.now)
+  const [outputError, setOutputError] = useState<string>()
+  const [restarting, setRestarting] = useState(false)
+  useEffect(() => {
+    if (dshUpdateBusy === undefined) return
+    const timer = setInterval(() => setNow(Date.now()), 1_000)
+    return () => clearInterval(timer)
+  }, [dshUpdateBusy])
+  const elapsed = Math.max(0, Math.floor((now - (dshUpdateProgress?.startedAt ?? now)) / 1_000))
+  const showOutput = (): void => {
+    setOutputError(undefined)
+    void props.onShowDshUpdateOutput?.().catch(() => setOutputError(t('settings.dshUpdateOutputFailed')))
+  }
+  const restart = (): void => {
+    setOutputError(undefined)
+    setRestarting(true)
+    void props
+      .onRestartDsh?.()
+      .catch(() => setOutputError(t('settings.dshUpdateRestartFailed')))
+      .finally(() => setRestarting(false))
+  }
   return (
     <div
       className="dsh-settings__body"
@@ -324,51 +345,76 @@ export function GeneralSettingsTab(input: GeneralSettingsTabProps): ReactElement
               {dshUpdateBusy === 'check' ? t('settings.dshUpdateChecking') : t('settings.dshUpdateCheck')}
             </button>
           </div>
-          {dshUpdate === undefined ? (
-            <p className="dsh-settings__empty" role="status">
-              {t('settings.dshUpdateLoading')}
+          {dshUpdateBusy !== undefined ? (
+            <div className="dsh-settings__runtime-update-progress" role="status" aria-live="polite">
+              <div className="dsh-settings__runtime-update-progress-head">
+                <span>{dshUpdateProgressLabel(dshUpdateBusy, dshUpdateProgress, t)}</span>
+                <span>
+                  {t('settings.dshUpdateProgressStage', {
+                    current: dshUpdateProgressStage(dshUpdateBusy, dshUpdateProgress),
+                    total: DSH_UPDATE_PROGRESS_TOTAL_STAGES,
+                  })}
+                </span>
+              </div>
+              <div
+                className="dsh-settings__runtime-update-progress-track"
+                role="progressbar"
+                aria-label={t('settings.dshUpdateProgressLabel')}
+                aria-valuemin={0}
+                aria-valuemax={DSH_UPDATE_PROGRESS_TOTAL_STAGES}
+                aria-valuenow={dshUpdateProgressStage(dshUpdateBusy, dshUpdateProgress)}
+                aria-valuetext={dshUpdateProgressLabel(dshUpdateBusy, dshUpdateProgress, t)}
+              >
+                {Array.from({ length: DSH_UPDATE_PROGRESS_TOTAL_STAGES }, (_, index) => {
+                  const stage = index + 1
+                  const current = dshUpdateProgressStage(dshUpdateBusy, dshUpdateProgress)
+                  return (
+                    <span
+                      className={`dsh-settings__runtime-update-progress-step${stage < current ? ' dsh-settings__runtime-update-progress-step--complete' : ''}${stage === current ? ' dsh-settings__runtime-update-progress-step--active' : ''}`}
+                      key={stage}
+                    />
+                  )
+                })}
+              </div>
+              {dshUpdateProgress?.startedAt === undefined ? null : (
+                <span>{t('settings.dshUpdateElapsed', { seconds: elapsed })}</span>
+              )}
+            </div>
+          ) : null}
+          {props.onShowDshUpdateOutput !== undefined &&
+          (dshUpdateProgress?.version !== undefined || dshUpdateError !== undefined) ? (
+            <button
+              type="button"
+              className="dsh-button dsh-button--secondary dsh-button--compact"
+              onClick={showOutput}
+            >
+              {t('settings.dshUpdateShowOutput')}
+            </button>
+          ) : null}
+          {dshUpdateError !== undefined || outputError !== undefined ? (
+            <p className="dsh-settings__error" role="alert">
+              {dshUpdateError ?? outputError}
             </p>
+          ) : null}
+          {dshUpdateProgress?.phase === 'failed' &&
+          dshUpdateError === undefined &&
+          dshUpdate?.status !== 'unavailable' ? (
+            <p className="dsh-settings__error" role="alert">
+              {t('settings.dshUpdateProgressFailed')}
+            </p>
+          ) : null}
+          {dshUpdate === undefined ? (
+            dshUpdateBusy !== undefined || dshUpdateProgress?.phase === 'failed' ? null : (
+              <p className="dsh-settings__empty" role="status">
+                {t('settings.dshUpdateLoading')}
+              </p>
+            )
           ) : dshUpdate.status === 'unavailable' ? (
             <p className="dsh-settings__error" role="alert">
               {dshUpdateFailureMessage(dshUpdate.failure, t)}
             </p>
           ) : (
             <>
-              {dshUpdateBusy !== undefined ? (
-                <div className="dsh-settings__runtime-update-progress" role="status" aria-live="polite">
-                  <div className="dsh-settings__runtime-update-progress-head">
-                    <span>{dshUpdateProgressLabel(dshUpdateBusy, dshUpdateProgress, t)}</span>
-                    <span>
-                      {t('settings.dshUpdateProgressStage', {
-                        current: dshUpdateProgressStage(dshUpdateBusy, dshUpdateProgress),
-                        total: DSH_UPDATE_PROGRESS_TOTAL_STAGES,
-                      })}
-                    </span>
-                  </div>
-                  <div
-                    className="dsh-settings__runtime-update-progress-track"
-                    role="progressbar"
-                    aria-label={t('settings.dshUpdateProgressLabel')}
-                    aria-valuemin={0}
-                    aria-valuemax={DSH_UPDATE_PROGRESS_TOTAL_STAGES}
-                    aria-valuenow={dshUpdateProgressStage(dshUpdateBusy, dshUpdateProgress)}
-                    aria-valuetext={dshUpdateProgressLabel(dshUpdateBusy, dshUpdateProgress, t)}
-                  >
-                    {Array.from({ length: DSH_UPDATE_PROGRESS_TOTAL_STAGES }, (_, index) => {
-                      const stage = index + 1
-                      const current = dshUpdateProgressStage(dshUpdateBusy, dshUpdateProgress)
-                      return (
-                        <span
-                          className={`dsh-settings__runtime-update-progress-step${
-                            stage < current ? ' dsh-settings__runtime-update-progress-step--complete' : ''
-                          }${stage === current ? ' dsh-settings__runtime-update-progress-step--active' : ''}`}
-                          key={stage}
-                        />
-                      )
-                    })}
-                  </div>
-                </div>
-              ) : null}
               <dl className="dsh-settings__runtime-update-facts">
                 <dt>{t('settings.dshUpdateCurrent')}</dt>
                 <dd>{dshUpdate.currentVersion ?? t('settings.dshUpdateNotInstalled')}</dd>
@@ -429,13 +475,24 @@ export function GeneralSettingsTab(input: GeneralSettingsTabProps): ReactElement
                 </button>
               </div>
               {dshUpdate.restartRequired ? (
-                <p className="dsh-settings__note">{t('settings.dshUpdateRestart')}</p>
+                <>
+                  <p className="dsh-settings__note">
+                    {t(
+                      dshUpdate.canRestart ? 'settings.dshUpdateRestartManaged' : 'settings.dshUpdateRestart',
+                    )}
+                  </p>
+                  {dshUpdate.canRestart && props.onRestartDsh !== undefined ? (
+                    <button
+                      type="button"
+                      className="dsh-button dsh-button--secondary dsh-button--compact"
+                      disabled={restarting || dshUpdateBusy !== undefined}
+                      onClick={restart}
+                    >
+                      {t('settings.dshUpdateRestartAction')}
+                    </button>
+                  ) : null}
+                </>
               ) : null}
-              {dshUpdateError === undefined ? null : (
-                <p className="dsh-settings__error" role="alert">
-                  {dshUpdateError}
-                </p>
-              )}
             </>
           )}
         </section>

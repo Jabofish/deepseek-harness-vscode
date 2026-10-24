@@ -71,7 +71,28 @@ export function applyHostMessage(
   }
   if (message.name === 'runtime.update.progress') {
     const progress = parseDshUpdateProgress(message.payload)
-    if (progress !== undefined) setState({ ...state, dshUpdateProgress: progress })
+    if (progress !== undefined) {
+      const snapshot = progress.snapshot
+      const currentVersion = state.connectedDshVersion ?? snapshot?.currentVersion
+      setState({
+        ...state,
+        dshUpdateProgress: progress,
+        ...(snapshot === undefined
+          ? progress.phase === 'failed'
+            ? { dshUpdate: undefined }
+            : {}
+          : {
+              dshUpdate: {
+                ...snapshot,
+                ...(currentVersion === undefined ? {} : { currentVersion }),
+                restartRequired:
+                  currentVersion !== undefined &&
+                  snapshot.globalVersion !== undefined &&
+                  currentVersion !== snapshot.globalVersion,
+              },
+            }),
+      })
+    }
     return
   }
   if (message.name === 'connection.output') {
@@ -210,6 +231,17 @@ export function applyHostMessage(
             kind === 'connected' && typeof snapshot?.dshVersion === 'string'
               ? snapshot.dshVersion
               : undefined,
+          ...(kind === 'connected' && typeof snapshot?.dshVersion === 'string' && base.dshUpdate !== undefined
+            ? {
+                dshUpdate: {
+                  ...base.dshUpdate,
+                  currentVersion: snapshot.dshVersion,
+                  restartRequired:
+                    base.dshUpdate.globalVersion !== undefined &&
+                    base.dshUpdate.globalVersion !== snapshot.dshVersion,
+                },
+              }
+            : {}),
           sessionRestore: kind === 'connected' && snapshot?.sessionRestore === true,
           blankSessionReuse: kind === 'connected' && snapshot?.blankSessionReuse === true,
           jobControllerAvailable: kind === 'connected' && snapshot?.jobController === true,

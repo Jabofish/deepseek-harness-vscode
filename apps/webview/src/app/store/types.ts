@@ -413,7 +413,7 @@ export interface AppActions {
   rememberOpenFile(candidateId: string): void
   openLink(href: string): Promise<void>
   showInFolder(href: string): Promise<void>
-  runtimeAction(action: 'install' | 'select' | 'copy-command' | 'open-docs'): Promise<void>
+  runtimeAction(action: 'install' | 'select' | 'copy-command' | 'open-docs' | 'show-output'): Promise<void>
   configureConnection(mode: 'auto' | 'custom', endpoint?: string): Promise<void>
   checkDshUpdates(force?: boolean): Promise<DshUpdateSnapshot | undefined>
   installDshVersion(version: string): Promise<DshUpdateSnapshot | undefined>

@@ -121,6 +121,8 @@ export async function startManagedRuntime(options?: {
   /** Explicit test-only composition overlay, supplied with an isolated home. */
   readonly patchFile?: string
   readonly exportFileSystem?: ExportFileSystem
+  /** Exercise the production spawner without changing the test-owned process lifecycle. */
+  readonly spawn?: typeof spawnManagedChild
 }): Promise<ManagedLiveRuntime> {
   const runtimeExecutable = resolveLiveRuntime(
     options?.requestedRuntime?.trim() || process.env.DSH_LIVE_RUNTIME?.trim() || 'dsh',
@@ -139,7 +141,7 @@ export async function startManagedRuntime(options?: {
   let ownedLaunchUrl: string | undefined
   const supervisor = new DshProcessSupervisor({
     spawn: (executable, args, cwd, environment) =>
-      spawnManagedChild(
+      (options?.spawn ?? spawnManagedChild)(
         executable,
         [
           ...(options?.patchFile === undefined ? [] : ['--patch', options.patchFile]),

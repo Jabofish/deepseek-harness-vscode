@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { EditorIntegrationStatus } from '@dsh-vscode/domain'
 import type { FeatureRequest } from '@dsh-vscode/webview-protocol'
@@ -25,6 +25,93 @@ function mount(handle: (request: FeatureRequest) => Promise<unknown>): void {
   )
 }
 describe('editor integration in Webview settings', () => {
+  it('keeps an explicit update available after a manual restore disables automatic updates', async () => {
+    const handle = vi.fn<(request: FeatureRequest) => Promise<unknown>>().mockResolvedValue({
+      ...ready,
+      installed: true,
+      preferences: { ...ready.preferences, autoSetup: false },
+    })
+    mount(handle)
+    await screen.findByText('Editor tools ready')
+    fireEvent.click(screen.getByText('Recovery options'))
+    fireEvent.click(screen.getByRole('button', { name: 'Repair or update companion' }))
+    await waitFor(() =>
+      expect(handle).toHaveBeenCalledWith(expect.objectContaining({ payload: { action: 'setup' } })),
+    )
+  })
+  it('keeps the completed action result when an older in-flight status response arrives later', async () => {
+    let poll: (() => void) | undefined
+    const interval = vi.spyOn(globalThis, 'setInterval').mockImplementation((callback) => {
+      poll = callback as () => void
+      return 1 as unknown as ReturnType<typeof setInterval>
+    })
+    let finishAction: (value: unknown) => void = () => {}
+    let finishStatus: (value: unknown) => void = () => {}
+    let reads = 0
+    mount((request) => {
+      if (request.type === 'editor.companion.action')
+        return new Promise((resolve) => {
+          finishAction = resolve
+        })
+      if (reads++ === 0) return Promise.resolve({ ...ready, installed: false })
+      return new Promise((resolve) => {
+        finishStatus = resolve
+      })
+    })
+    try {
+      fireEvent.click(await screen.findByRole('button', { name: 'Install and enable companion' }))
+      await act(async () => {
+        poll?.()
+        await Promise.resolve()
+      })
+      await act(async () => {
+        finishAction({ ...ready, installed: true, installation: 'installed' })
+        await Promise.resolve()
+      })
+      await act(async () => {
+        finishStatus({ ...ready, installed: false, installation: 'installing' })
+        await Promise.resolve()
+      })
+      expect(screen.queryByRole('button', { name: 'Cancel installation' })).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Install and enable companion' })).toBeNull()
+    } finally {
+      interval.mockRestore()
+    }
+  })
+  it('shows recovery results and exposes cached-version recovery without adding instructions to the main view', async () => {
+    const handle = vi.fn<(request: FeatureRequest) => Promise<unknown>>().mockResolvedValue({
+      ...ready,
+      phase: 'limited',
+      reason: 'setup-failed',
+      installed: true,
+      installation: 'failed',
+      recovery: 'failed',
+    })
+    mount(handle)
+    await screen.findByText('Recovery failed. Repair the companion or restore a cached version.')
+    expect(screen.getByText('Recovery options').closest('details')?.open).toBe(false)
+    fireEvent.click(screen.getByText('Recovery options'))
+    fireEvent.click(screen.getByRole('button', { name: 'Restore a cached version' }))
+    await waitFor(() =>
+      expect(handle).toHaveBeenCalledWith(expect.objectContaining({ payload: { action: 'restore' } })),
+    )
+  })
+  it('keeps an installed companion waiting for a folder free of dependency and repair clutter', async () => {
+    mount(() =>
+      Promise.resolve({
+        ...ready,
+        installed: true,
+        packageManager: 'ready',
+        phase: 'waiting',
+        reason: 'workspace',
+      }),
+    )
+    await screen.findByRole('button', { name: 'Choose folder' })
+    expect(screen.queryByText('pnpm is available.')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Repair or update companion' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Restart DSH' })).toBeNull()
+    expect(screen.getAllByRole('switch')).toHaveLength(2)
+  })
   it('offers standard installation even while an old overlay still provides working tools', async () => {
     mount(() => Promise.resolve({ ...ready, installed: false, packageManager: 'ready' }))
     expect(
@@ -48,6 +135,10 @@ describe('editor integration in Webview settings', () => {
     await waitFor(() =>
       expect(handle).toHaveBeenCalledWith(expect.objectContaining({ payload: { action: 'prepare-pnpm' } })),
     )
+    const help = screen.getByText('Installation help').closest('details')
+    expect(help?.open).toBe(false)
+    fireEvent.click(screen.getByText('Installation help'))
+    expect(help?.open).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: 'Copy pnpm install command' }))
     await waitFor(() =>
       expect(handle).toHaveBeenCalledWith(

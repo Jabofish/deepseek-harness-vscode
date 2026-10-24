@@ -1,4 +1,5 @@
 import { AppError } from '@dsh-vscode/domain'
+import { RUNTIME_INSTALL_FAILURE_MESSAGES } from '../vscode/runtime-installation.js'
 import { redactText } from '@dsh-vscode/dsh-adapter'
 import {
   MAX_HOST_ERROR_MESSAGE_CHARS,
@@ -428,7 +429,10 @@ function publicErrorMessage(
       if (reason === 'verify-failed')
         return 'DSH installation finished, but the installed executable could not be verified. Check the runtime path.'
       if (reason === 'install-failed')
-        return 'The DSH installation command failed. Check the install output and try again.'
+        return (
+          installationFailureMessage(message) ??
+          'The DSH installation command failed. Check the install output and try again.'
+        )
     }
     if (context?.operation === 'runtime.select' && context.reason === 'invalid-executable')
       return 'The selected file is not a supported DeepSeek Harness executable.'
@@ -452,9 +456,12 @@ function publicErrorMessage(
           context.detail,
         )
       if (reason === 'install-failed')
-        return withRuntimeUpdateDetail(
-          'The selected DSH version could not be installed. Check the npm output and try again.',
-          context.detail,
+        return (
+          installationFailureMessage(message) ??
+          withRuntimeUpdateDetail(
+            'The selected DSH version could not be installed. Check the npm output and try again.',
+            context.detail,
+          )
         )
     }
   }
@@ -570,6 +577,11 @@ function withRuntimeUpdateDetail(base: string, value: string | number | boolean 
   if (typeof value !== 'string') return base
   const detail = safeCommandDiagnostic(value)
   return detail === undefined ? base : `${base} Detail: ${detail}`
+}
+
+/** Only authored failure summaries may cross the boundary, never npm output. */
+function installationFailureMessage(message: string): string | undefined {
+  return Object.values(RUNTIME_INSTALL_FAILURE_MESSAGES).find((allowed) => allowed === message)
 }
 
 /** Correlation ids are local to a Webview, never global Host authority. */

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   featureHostEventSchema,
+  editorIntegrationStatusSchema,
   featureRequestSchema,
   featureResponseSchema,
   featureWebviewEnvelopeSchema,
@@ -56,6 +57,33 @@ const contextItem = (index: number, sizeBytes = 1): Record<string, unknown> => (
 })
 
 describe('staged feature protocol contracts', () => {
+  it('accepts companion recovery controls and bounded recovery status without private data', () => {
+    const request = {
+      type: 'editor.companion.action',
+      requestId: 'restore-1',
+      payload: { action: 'restore' },
+    }
+    expect(featureRequestSchema.safeParse(request).success).toBe(true)
+    expect(
+      featureRequestSchema.safeParse({ ...request, payload: { ...request.payload, file: 'private path' } })
+        .success,
+    ).toBe(false)
+    const status = {
+      kind: 'editor.companion',
+      preferences: { enabled: true, autoSetup: true, allowEdits: true },
+      phase: 'limited',
+      capabilities: [],
+      canInstall: true,
+      canRestart: true,
+      canUndo: false,
+      recovery: 'failed',
+    }
+    expect(editorIntegrationStatusSchema.safeParse(status).success).toBe(true)
+    expect(editorIntegrationStatusSchema.safeParse({ ...status, recovery: 'raw diagnostic' }).success).toBe(
+      false,
+    )
+    expect(editorIntegrationStatusSchema.safeParse({ ...status, source: 'private path' }).success).toBe(false)
+  })
   it('accepts a bounded task invalidation without a fabricated task row or untyped payload', () => {
     const event = { type: 'feature.event', name: 'tasks.invalidated', identity, sessionId: 'session-1' }
     expect(featureHostEventSchema.safeParse(event).success).toBe(true)

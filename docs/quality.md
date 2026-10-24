@@ -102,7 +102,7 @@ $env:DSH_VSCODE_E2E_EXECUTABLE = '<path-to-Code.exe>'
 node --experimental-transform-types tests/vscode-e2e/run.ts
 ```
 
-按需设置 `DSH_VSCODE_E2E_MODE=managed` 与 `DSH_VSCODE_E2E_RUNTIME`；设置 `DSH_VSCODE_E2E_INVALID_SETTINGS=1` 验证错误配置不会阻止激活。套件已能观察激活、命令、Host 真实调用和连接错误；无法从稳定 VS Code API 观察到的焦点、侧栏、缺失运行时按钮、完整会话交互和重连状态，须另作人工验收并保留 `PARTIAL`。UI 改动还需检查亮/暗/高对比、Reduced Motion、长文本和窄侧栏。
+按需设置 `DSH_VSCODE_E2E_MODE=managed` 与 `DSH_VSCODE_E2E_RUNTIME`；加上 `DSH_VSCODE_E2E_COMPANION=1` 可验证支持标准插件管理器的 HMR 运行时首次安装、重复修复及重连后的实际配套文件。设置 `DSH_VSCODE_E2E_INVALID_SETTINGS=1` 验证错误配置不会阻止激活。套件已能观察激活、命令、Host 真实调用和连接错误；无法从稳定 VS Code API 观察到的焦点、侧栏、缺失运行时按钮、完整会话交互和重连状态，须另作人工验收并保留 `PARTIAL`。UI 改动还需检查亮/暗/高对比、Reduced Motion、长文本和窄侧栏。
 
 ### 性能与打包
 

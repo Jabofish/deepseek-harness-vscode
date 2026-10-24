@@ -11,6 +11,7 @@ import {
 import {
   EDITOR_COMPANION_PACKAGE,
   cacheCompanionArchive,
+  alternateCompanionArchive,
   listCompanionArchives,
   type CompanionArchive,
 } from './companion-archive.js'
@@ -26,16 +27,25 @@ interface Dependencies {
   readonly stop: () => Promise<void>
   readonly halt: () => Promise<void>
   readonly undo: () => Promise<void>
-  readonly checkPackageManager?: () => Promise<NonNullable<EditorIntegrationStatus['packageManager']>>
+  readonly checkPackageManager?: (
+    signal?: AbortSignal,
+  ) => Promise<NonNullable<EditorIntegrationStatus['packageManager']>>
 }
 interface RecoveryArchive extends CompanionArchive {
   readonly enabled: boolean
+}
+interface Restoration {
+  readonly archive: RecoveryArchive
+  readonly outcome: PluginBundleChangeResult
+  readonly silent: boolean
+  installed?: PluginBundleChangeResult
 }
 /** All installation and lifecycle actions originate in native user controls. */
 export class EditorCompanionManagement {
   private observed: Pick<EditorIntegrationStatus, 'installed' | 'packageManager'> = {}
   private observedBackend: DshBackend | undefined
   private observedAt = 0
+  private statusRevision = 0
   private refreshing: Promise<void> | undefined
   public get installationStatus(): typeof this.observed {
     return this.observedBackend !== undefined && this.deps.current(this.observedBackend) ? this.observed : {}
@@ -50,6 +60,7 @@ export class EditorCompanionManagement {
         Date.now() - this.observedAt < 30_000)
     )
       return
+    const revision = this.statusRevision
     const refresh = (async (): Promise<void> => {
       try {
         const backend = this.deps.backend()
@@ -61,9 +72,9 @@ export class EditorCompanionManagement {
         )
         const packageManager =
           backend.connection.ownership === 'managed' && vscode.workspace.isTrusted
-            ? await this.deps.checkPackageManager?.()
+            ? await this.deps.checkPackageManager?.(AbortSignal.timeout(10_000))
             : undefined
-        if (!this.deps.current(backend)) return
+        if (!this.deps.current(backend) || this.busy || revision !== this.statusRevision) return
         this.observedBackend = backend
         this.observedAt = Date.now()
         this.observed = { installed, ...(packageManager === undefined ? {} : { packageManager }) }
@@ -76,8 +87,10 @@ export class EditorCompanionManagement {
           this.installPhase = undefined
         }
       } catch {
-        this.observedAt = 0
-        this.observed = {}
+        if (revision === this.statusRevision && !this.busy) {
+          this.observedAt = 0
+          this.observed = {}
+        }
       }
     })()
     this.refreshing = refresh
@@ -90,8 +103,14 @@ export class EditorCompanionManagement {
   private installPhase: EditorIntegrationStatus['installation']
   private installBackend: DshBackend | undefined
   private failure: Pick<EditorIntegrationStatus, 'installationErrorCode' | 'installationFailureKind'> = {}
-  public get installationFailure(): typeof this.failure {
-    return this.installBackend !== undefined && !this.deps.current(this.installBackend) ? {} : this.failure
+  private recoveryPhase: EditorIntegrationStatus['recovery']
+  public get installationFailure(): typeof this.failure & Pick<EditorIntegrationStatus, 'recovery'> {
+    return this.installBackend !== undefined && !this.deps.current(this.installBackend)
+      ? {}
+      : {
+          ...this.failure,
+          ...(this.recoveryPhase === undefined ? {} : { recovery: this.recoveryPhase }),
+        }
   }
   public get installationState(): EditorIntegrationStatus['installation'] {
     if (this.installBackend !== undefined && !this.deps.current(this.installBackend)) return undefined
@@ -99,7 +118,21 @@ export class EditorCompanionManagement {
   }
   public get canCancelInstall(): boolean {
     const phase = this.installationState
-    return this.busy && (phase === 'installing' || phase === 'unknown')
+    return (
+      this.busy &&
+      this.uncertain?.restoration?.installed === undefined &&
+      (phase === 'installing' || phase === 'unknown')
+    )
+  }
+  private recoveryFailedBackend: DshBackend | undefined
+  private restartBackend: DshBackend | undefined
+  public get needsRestart(): boolean {
+    return this.restartBackend !== undefined && this.deps.current(this.restartBackend)
+  }
+  public get sharingBlocked(): boolean {
+    return (
+      this.busy || (this.recoveryFailedBackend !== undefined && this.deps.current(this.recoveryFailedBackend))
+    )
   }
   private controller: AbortController | undefined
   private installation:
@@ -111,7 +144,7 @@ export class EditorCompanionManagement {
         readonly repository: PluginBundleRepository
         readonly requestId: string
         readonly backup?: RecoveryArchive
-        readonly restoreEnabled?: boolean
+        readonly restoration?: Restoration
       }
     | undefined
   public constructor(private readonly deps: Dependencies) {}
@@ -201,13 +234,7 @@ export class EditorCompanionManagement {
           return
         }
         case 'restore': {
-          const archives =
-            this.deps.storageUri === undefined ? [] : await listCompanionArchives(this.deps.storageUri.fsPath)
-          const previous = await vscode.window.showQuickPick(
-            archives.map((archive) => ({ label: `Editor companion v${archive.version}`, archive })),
-            { title: 'Restore a cached editor companion bundle' },
-          )
-          if (previous !== undefined && this.deps.current(backend)) await this.install(previous.archive.file)
+          await this.restoreCached()
           return
         }
         case 'cancel':
@@ -237,7 +264,7 @@ export class EditorCompanionManagement {
       )
     }
   }
-  public async installBundled(options: { silent?: boolean } = {}): Promise<boolean> {
+  public async installBundled(options: { silent?: boolean; signal?: AbortSignal } = {}): Promise<boolean> {
     if (this.deps.extensionUri === undefined) {
       if (!options.silent)
         void vscode.window.showErrorMessage(
@@ -254,17 +281,22 @@ export class EditorCompanionManagement {
     if (this.installPhase === 'installed') return
     if (this.controller !== undefined || this.uncertain !== undefined) this.installPhase = 'cancelling'
     if (!keepResponse || this.installation === undefined) this.controller?.abort()
-    if (this.installation !== undefined)
-      void this.installation.repository
-        .cancelInstall(this.installation.requestId, AbortSignal.timeout(5_000))
-        .catch(() => {
-          if (this.installPhase === 'cancelling') this.installPhase = 'unknown'
+    const pending =
+      (this.uncertain !== undefined && this.deps.current(this.uncertain.backend)
+        ? this.uncertain
+        : undefined) ?? this.installation
+    const current = (): boolean =>
+      pending !== undefined &&
+      (this.installation?.requestId === pending.requestId || this.uncertain?.requestId === pending.requestId)
+    if (pending !== undefined)
+      void pending.repository
+        .cancelInstall(pending.requestId, AbortSignal.timeout(5_000))
+        .then((result) => {
+          if (this.installPhase === 'cancelling' && result.status === 'not-running' && current())
+            this.installPhase = this.operation === undefined ? 'unknown' : 'installing'
         })
-    else if (this.uncertain !== undefined && this.deps.current(this.uncertain.backend))
-      void this.uncertain.repository
-        .cancelInstall(this.uncertain.requestId, AbortSignal.timeout(5_000))
         .catch(() => {
-          if (this.installPhase === 'cancelling') this.installPhase = 'unknown'
+          if (this.installPhase === 'cancelling' && current()) this.installPhase = 'unknown'
         })
   }
   public async cancelInstallation(): Promise<void> {
@@ -280,11 +312,33 @@ export class EditorCompanionManagement {
     if (this.uncertain !== undefined && this.deps.current(this.uncertain.backend))
       await this.recover(this.uncertain.backend)
   }
+  public async restoreCached(): Promise<boolean | undefined> {
+    const backend = this.available()
+    if (this.busy) return
+    const archives =
+      this.deps.storageUri === undefined ? [] : await listCompanionArchives(this.deps.storageUri.fsPath)
+    if (!this.deps.current(backend)) return
+    if (archives.length === 0) {
+      void vscode.window.showInformationMessage(
+        'No cached companion version is available. Use Repair or update companion to install the bundled version.',
+      )
+      return
+    }
+    const previous = await vscode.window.showQuickPick(
+      archives.map((archive) => ({ label: `Editor companion v${archive.version}`, archive })),
+      { title: 'Restore a previously installed companion version' },
+    )
+    if (previous !== undefined && this.deps.current(backend)) return this.install(previous.archive.file)
+    return undefined
+  }
   public async dispose(): Promise<void> {
     this.cancel()
     await this.operation
   }
-  private async install(file: string, options: { silent?: boolean } = {}): Promise<boolean> {
+  private async install(
+    file: string,
+    options: { silent?: boolean; signal?: AbortSignal } = {},
+  ): Promise<boolean> {
     if (this.busy) {
       if (!options.silent)
         void vscode.window.showInformationMessage(
@@ -292,7 +346,7 @@ export class EditorCompanionManagement {
         )
       return false
     }
-    const operation = this.runInstall(file, options.silent === true)
+    const operation = this.runInstall(file, options.silent === true, options.signal)
     const tracked = operation.then(() => undefined)
     this.operation = tracked
     try {
@@ -301,15 +355,21 @@ export class EditorCompanionManagement {
       if (this.operation === tracked) this.operation = undefined
     }
   }
-  private async runInstall(file: string, silent: boolean): Promise<boolean> {
+  private async runInstall(file: string, silent: boolean, signal?: AbortSignal): Promise<boolean> {
+    this.statusRevision += 1
     this.installPhase = 'installing'
     this.failure = {}
+    this.recoveryPhase = undefined
     const controller = new AbortController()
     this.controller = controller
+    const cancel = (): void => this.cancel(true)
+    signal?.addEventListener('abort', cancel, { once: true })
+    if (signal?.aborted === true) cancel()
     try {
       const backend = this.available()
       this.installBackend = backend
-      const packageManager = await this.deps.checkPackageManager?.()
+      if (this.uncertain?.backend !== backend) this.uncertain = undefined
+      const packageManager = await this.deps.checkPackageManager?.(controller.signal)
       controller.signal.throwIfAborted()
       if (!this.deps.current(backend)) return false
       if (packageManager !== undefined) {
@@ -348,7 +408,12 @@ export class EditorCompanionManagement {
           {
             modal: true,
             detail:
-              'This installs code into the connected extension-managed DSH profile. Install only a trusted bundle. Existing editor access will be revoked. Replacing a version keeps a recovery archive and restores it after a confirmed installation failure or cancellation. Sharing must be enabled again.',
+              'Install trusted bundles only. Editor sharing will stop during installation.' +
+              (backup !== undefined
+                ? ' If the update fails or is cancelled, the previous version will be restored.'
+                : installed === undefined
+                  ? ''
+                  : ' No cached copy matches the installed version; automatic recovery is unavailable.'),
           },
           'Install',
         )
@@ -360,32 +425,20 @@ export class EditorCompanionManagement {
       controller.signal.throwIfAborted()
       this.available(backend)
       await this.deps.halt()
+      if (installed !== undefined) this.recoveryFailedBackend = backend
       const install = async (cancellation: { dispose(): void }): Promise<boolean> => {
-        const requestId = randomUUID()
-        this.installation = { repository, requestId }
         try {
           this.available(backend)
           // DSH's native add operation also replaces an existing tarball and rolls
           // its manifest/lockfile back on cancellation. Never uninstall first:
           // removal has no request identity or cancellation/recovery channel.
-          let result: PluginBundleChangeResult | null
-          this.uncertain = { backend, repository, requestId, ...(backup === undefined ? {} : { backup }) }
-          try {
-            result = await repository.installBundle(
-              archive.file,
-              { requestId, saveExact: true, approvedBuilds: [] },
-              controller.signal,
-            )
-          } catch (error) {
-            if (error instanceof AppError && error.code === 'PLUGIN_INSTALL_NOT_STARTED') {
-              this.uncertain = undefined
-              if (backup !== undefined) await this.restore(backend, repository, backup)
-              throw error
-            }
-            if (controller.signal.aborted)
-              await repository.cancelInstall(requestId, AbortSignal.timeout(5_000)).catch(() => undefined)
-            result = await repository.waitForInstall(requestId, AbortSignal.timeout(20_000))
-          }
+          const result = await this.requestInstall(
+            backend,
+            repository,
+            archive,
+            controller.signal,
+            backup === undefined ? {} : { backup },
+          )
           if (!this.deps.current(backend)) return false
           if (result === null) {
             if (!silent)
@@ -396,8 +449,8 @@ export class EditorCompanionManagement {
           }
           this.uncertain = undefined
           if (backup !== undefined && (result.application === 'failed' || result.application === 'cancelled'))
-            await this.restore(backend, repository, backup)
-          await this.result(backend, result, silent)
+            await this.restore(backend, repository, backup, result, silent)
+          else await this.result(backend, result, silent)
           return result.application === 'applied' || result.application === 'restart-required'
         } finally {
           cancellation.dispose()
@@ -425,6 +478,7 @@ export class EditorCompanionManagement {
         )
       return false
     } finally {
+      signal?.removeEventListener('abort', cancel)
       if (this.uncertain !== undefined) this.installPhase = 'unknown'
       if (this.controller === controller) this.controller = undefined
     }
@@ -436,51 +490,33 @@ export class EditorCompanionManagement {
       this.uncertain = undefined
       return
     }
-    let result: PluginBundleChangeResult | null
+    this.statusRevision += 1
+    const operation = this.runRecovery(backend, pending)
+    this.operation = operation
     try {
-      result = await pending.repository.waitForInstall(pending.requestId, AbortSignal.timeout(5_000))
-    } catch {
-      if (this.deps.current(backend)) this.installPhase = 'unknown'
-      return
+      await operation
+    } finally {
+      if (this.operation === operation) this.operation = undefined
     }
-    if (result === null || !this.deps.current(backend)) {
-      if (this.deps.current(backend)) this.installPhase = 'unknown'
-      return
-    }
-    if (
-      pending.restoreEnabled === false &&
-      (result.application === 'applied' || result.application === 'restart-required')
-    ) {
-      const disabled = await pending.repository.setBundleEnabled(
-        EDITOR_COMPANION_PACKAGE,
-        false,
-        AbortSignal.timeout(10_000),
-      )
-      if (disabled.application !== 'applied' && disabled.application !== 'restart-required')
-        throw new Error('Recovery state not restored')
-    }
-    this.uncertain = undefined
-    if (
-      pending.backup !== undefined &&
-      (result.application === 'failed' || result.application === 'cancelled')
-    )
-      await this.restore(backend, pending.repository, pending.backup)
-    await this.result(backend, result)
   }
-  private async restore(
+  private async requestInstall(
     backend: DshBackend,
     repository: PluginBundleRepository,
-    archive: RecoveryArchive,
-  ): Promise<void> {
-    if (!this.deps.current(backend)) return
-    const requestId = randomUUID()
-    const signal = AbortSignal.timeout(60_000)
-    try {
+    archive: CompanionArchive,
+    signal: AbortSignal,
+    recovery: { readonly backup?: RecoveryArchive; readonly restoration?: Restoration },
+  ): Promise<PluginBundleChangeResult | null> {
+    let selected = archive
+    for (let attempt = 0; ; attempt += 1) {
+      this.available(backend)
+      signal.throwIfAborted()
+      const requestId = randomUUID()
+      this.installation = { repository, requestId }
+      this.uncertain = { backend, repository, requestId, ...recovery }
       let result: PluginBundleChangeResult | null
-      this.uncertain = { backend, repository, requestId, restoreEnabled: archive.enabled }
       try {
         result = await repository.installBundle(
-          archive.file,
+          selected.file,
           { requestId, saveExact: true, approvedBuilds: [] },
           signal,
         )
@@ -489,27 +525,165 @@ export class EditorCompanionManagement {
           this.uncertain = undefined
           throw error
         }
-        result = await repository.waitForInstall(requestId, signal)
+        if (signal.aborted)
+          await repository.cancelInstall(requestId, AbortSignal.timeout(5_000)).catch(() => undefined)
+        result = await repository.waitForInstall(requestId, AbortSignal.timeout(20_000))
       }
-      if (result === null || (result.application !== 'applied' && result.application !== 'restart-required'))
-        throw new Error('Recovery installation failed')
-      if (!archive.enabled && this.deps.current(backend)) {
-        const disabled = await repository.setBundleEnabled(EDITOR_COMPANION_PACKAGE, false, signal)
-        if (disabled.application !== 'applied' && disabled.application !== 'restart-required')
-          throw new Error('Recovery state not restored')
-      }
+      // This native refusal occurs before pnpm or profile mutation. A different,
+      // verified path permits HMR repair without an uncancellable uninstall.
+      if (
+        attempt !== 0 ||
+        result?.application !== 'failed' ||
+        result.errorCode !== 'already-installed' ||
+        !this.deps.current(backend)
+      )
+        return result
       this.uncertain = undefined
+      this.installation = undefined
+      if (this.deps.storageUri === undefined) return result
+      selected = await alternateCompanionArchive(archive, this.deps.storageUri.fsPath)
+    }
+  }
+  private async runRecovery(
+    backend: DshBackend,
+    pending: NonNullable<EditorCompanionManagement['uncertain']>,
+  ): Promise<void> {
+    if (pending.restoration?.installed !== undefined) {
+      await this.finishRestoration(
+        backend,
+        pending.repository,
+        pending.restoration,
+        pending.restoration.installed,
+      )
+      return
+    }
+    let result: PluginBundleChangeResult | null
+    try {
+      result = await pending.repository.waitForInstall(pending.requestId, AbortSignal.timeout(5_000))
+    } catch {
       if (this.deps.current(backend)) {
-        void vscode.window.showInformationMessage(
-          `The previous editor companion v${archive.version} was restored${result.application === 'restart-required' ? '; reconnect to activate it' : ''}.`,
+        this.installPhase = 'unknown'
+        if (pending.restoration !== undefined) this.recoveryPhase = 'unknown'
+      }
+      return
+    }
+    if (result === null || !this.deps.current(backend)) {
+      if (this.deps.current(backend)) {
+        this.installPhase = 'unknown'
+        if (pending.restoration !== undefined) this.recoveryPhase = 'unknown'
+      }
+      return
+    }
+    if (pending.restoration !== undefined) {
+      await this.finishRestoration(backend, pending.repository, pending.restoration, result)
+      return
+    }
+    this.uncertain = undefined
+    if (
+      pending.backup !== undefined &&
+      (result.application === 'failed' || result.application === 'cancelled')
+    )
+      await this.restore(backend, pending.repository, pending.backup, result, false)
+    else await this.result(backend, result)
+  }
+  private async restore(
+    backend: DshBackend,
+    repository: PluginBundleRepository,
+    archive: RecoveryArchive,
+    outcome: PluginBundleChangeResult,
+    silent: boolean,
+  ): Promise<void> {
+    if (!this.deps.current(backend)) return
+    const previousController = this.controller
+    const controller = new AbortController()
+    this.controller = controller
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)])
+    const restoration: Restoration = { archive, outcome, silent }
+    this.recoveryFailedBackend = backend
+    this.installPhase = 'installing'
+    this.recoveryPhase = 'restoring'
+    try {
+      const result = await this.requestInstall(backend, repository, archive, signal, { restoration })
+      if (!this.deps.current(backend)) return
+      if (result === null) throw new Error('Recovery is still pending')
+      await this.finishRestoration(backend, repository, restoration, result)
+    } catch (error) {
+      if (this.deps.current(backend)) {
+        if (
+          this.uncertain === undefined ||
+          (error instanceof AppError && error.code === 'PLUGIN_INSTALL_NOT_STARTED')
+        ) {
+          this.uncertain = undefined
+          await this.result(backend, { ...outcome, application: 'failed' }, true)
+          this.recoveryFailed()
+          return
+        }
+        this.installPhase = 'unknown'
+        this.recoveryPhase = 'unknown'
+        void vscode.window.showWarningMessage(
+          'The recovery result is still unknown. Retry in editor integration settings to check it. If it cannot be confirmed, restart the extension-managed DSH before repairing or restoring a cached version.',
         )
       }
-    } catch {
-      if (this.deps.current(backend))
-        void vscode.window.showErrorMessage(
-          'Automatic recovery could not be confirmed. Refresh companion status and use Restore a previously installed companion version before enabling sharing.',
-        )
+    } finally {
+      if (this.controller === controller) this.controller = previousController
     }
+  }
+  private async finishRestoration(
+    backend: DshBackend,
+    repository: PluginBundleRepository,
+    restoration: Restoration,
+    result: PluginBundleChangeResult,
+  ): Promise<void> {
+    if (!this.deps.current(backend)) return
+    if (result.application !== 'applied' && result.application !== 'restart-required') {
+      this.uncertain = undefined
+      await this.result(backend, result, true)
+      this.recoveryFailed(result)
+      return
+    }
+    restoration.installed = result
+    let activation = result
+    if (!restoration.archive.enabled) {
+      try {
+        activation = await repository.setBundleEnabled(
+          EDITOR_COMPANION_PACKAGE,
+          false,
+          AbortSignal.timeout(10_000),
+        )
+        if (activation.application !== 'applied' && activation.application !== 'restart-required')
+          throw new Error('Recovery state not restored')
+      } catch {
+        if (this.deps.current(backend)) {
+          this.installPhase = 'unknown'
+          this.recoveryPhase = 'unknown'
+          void vscode.window.showWarningMessage(
+            'The previous companion was installed, but its disabled state could not be restored. Retry in editor integration settings to finish recovery. Sharing remains off.',
+          )
+        }
+        return
+      }
+    }
+    if (!this.deps.current(backend)) return
+    this.uncertain = undefined
+    this.recoveryFailedBackend = undefined
+    await this.result(backend, restoration.outcome, true)
+    this.recoveryPhase = 'restored'
+    void vscode.window.showInformationMessage(
+      `The previous editor companion v${restoration.archive.version} was restored.`,
+    )
+    if (result.application === 'restart-required' || activation.application === 'restart-required')
+      await this.reconnectAfterChange(backend, restoration.silent).catch(() => {
+        if (this.deps.current(backend))
+          void vscode.window.showWarningMessage(
+            'The previous companion was restored. Restart DSH to activate it.',
+          )
+      })
+  }
+  private recoveryFailed(result?: PluginBundleChangeResult): void {
+    this.recoveryPhase = 'failed'
+    void vscode.window.showErrorMessage(
+      `Automatic recovery failed (${result?.failureKind ?? result?.errorCode ?? 'operation-error'}). Use Repair or update companion, or Restore a cached version in editor integration settings. Sharing remains off.`,
+    )
   }
   private async mutate(backend: DshBackend, change: () => Promise<PluginBundleChangeResult>): Promise<void> {
     this.available(backend)
@@ -519,6 +693,7 @@ export class EditorCompanionManagement {
       )
       return
     }
+    this.statusRevision += 1
     const operation = (async (): Promise<void> => {
       await this.deps.halt()
       this.available(backend)
@@ -537,8 +712,10 @@ export class EditorCompanionManagement {
     if (
       result.stage !== 'remove' &&
       (result.application === 'applied' || result.application === 'restart-required')
-    )
+    ) {
       this.observed = { ...this.observed, installed: true }
+      this.recoveryFailedBackend = undefined
+    }
     this.failure = {
       ...(result.errorCode === undefined ? {} : { installationErrorCode: result.errorCode }),
       ...(result.failureKind === undefined ? {} : { installationFailureKind: result.failureKind }),
@@ -550,15 +727,7 @@ export class EditorCompanionManagement {
           ? 'cancelled'
           : 'failed'
     if (result.application === 'restart-required') {
-      if (silent) {
-        await this.deps.reconnect?.()
-        return
-      }
-      const choice = await vscode.window.showInformationMessage(
-        'The editor companion change requires reconnecting the extension-managed DSH.',
-        'Reconnect',
-      )
-      if (choice === 'Reconnect' && this.deps.current(backend)) await this.deps.reconnect?.()
+      await this.reconnectAfterChange(backend, silent)
       return
     }
     if (silent) return
@@ -583,6 +752,18 @@ export class EditorCompanionManagement {
       void vscode.window.showInformationMessage(
         'Editor companion change applied. Editor tools will turn on with the next session.',
       )
+  }
+  private async reconnectAfterChange(backend: DshBackend, silent: boolean): Promise<void> {
+    this.restartBackend = backend
+    if (silent) {
+      await this.deps.reconnect?.()
+      return
+    }
+    const choice = await vscode.window.showInformationMessage(
+      'The editor companion change requires reconnecting the extension-managed DSH.',
+      'Reconnect',
+    )
+    if (choice === 'Reconnect' && this.deps.current(backend)) await this.deps.reconnect?.()
   }
   private available(expected?: DshBackend, mutation = true): DshBackend {
     const backend = this.deps.backend()

@@ -36,6 +36,8 @@ export interface SettingsDrawerProps {
   readonly dshUpdateProgress?: DshRuntimeUpdateProgress | undefined
   readonly onCheckDshUpdates?: (force?: boolean) => Promise<DshUpdateSnapshot | undefined>
   readonly onInstallDshVersion?: (version: string) => Promise<DshUpdateSnapshot | undefined>
+  readonly onShowDshUpdateOutput?: () => Promise<void>
+  readonly onRestartDsh?: () => Promise<void>
   readonly theme: ThemePreference
   readonly onThemeChange: (value: ThemePreference) => void
   readonly locale: Locale

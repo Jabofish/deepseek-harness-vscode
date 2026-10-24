@@ -13,50 +13,80 @@ export const PNPM_INSTALL_GUIDE = 'https://pnpm.io/installation'
 /** Explicit user action: use Corepack's supported repair path, otherwise npm's installer. */
 export async function prepareCompanionPackageManager(signal: AbortSignal): Promise<void> {
   signal.throwIfAborted()
-  if ((await checkCompanionPackageManager()) === 'ready') return
+  if ((await checkCompanionPackageManager(signal)) === 'ready') return
   signal.throwIfAborted()
   const os = process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'macos' : 'linux'
   const entries = runtimePathEntries(os, process.env, homedir())
-  const find = (name: string): string | undefined =>
+  const find = (name: string): readonly string[] =>
     entries
       .flatMap((entry) =>
         (os === 'windows' ? [`${name}.exe`, `${name}.cmd`] : [name]).map((file) => path.join(entry, file)),
       )
-      .find(existsSync)
-  const corepack = find('corepack')
-  const executable = corepack ?? find('npm')
-  if (executable === undefined) throw new Error('No package manager is available to prepare pnpm.')
-  const resolved = resolveWindowsShim(executable, os, (file) => readFileSync(file, 'utf8'), {
-    pathEntries: entries,
-  })
+      .filter(existsSync)
   const environment = {
     ...process.env,
     PATH: entries.join(path.delimiter),
+    COREPACK_ENABLE_NETWORK: '1',
+    COREPACK_ENABLE_DOWNLOAD_PROMPT: '0',
     COREPACK_ENABLE_PROJECT_SPEC: '0',
   }
   if (os === 'windows') Reflect.deleteProperty(environment, 'Path')
-  await promisify(execFile)(
-    resolved?.executable ?? executable,
-    [...(resolved?.prefixArgs ?? []), 'install', '--global', 'pnpm@11.19.0'],
-    { cwd: homedir(), env: environment, signal, timeout: 120_000, maxBuffer: 1_048_576, windowsHide: true },
-  )
-  signal.throwIfAborted()
-  if ((await checkCompanionPackageManager()) !== 'ready')
-    throw new Error('pnpm could not be verified after preparation.')
+  const deadline = Date.now() + 120_000
+  for (const name of ['corepack', 'npm']) {
+    for (const executable of find(name)) {
+      signal.throwIfAborted()
+      if (Date.now() >= deadline) throw new Error('Timed out while preparing pnpm.')
+      const resolved = resolveWindowsShim(executable, os, (file) => readFileSync(file, 'utf8'), {
+        pathEntries: entries,
+      })
+      const run = (args: readonly string[]): Promise<unknown> =>
+        promisify(execFile)(resolved?.executable ?? executable, [...(resolved?.prefixArgs ?? []), ...args], {
+          cwd: homedir(),
+          env: environment,
+          signal,
+          timeout: Math.max(1, deadline - Date.now()),
+          maxBuffer: 1_048_576,
+          windowsHide: true,
+        })
+      try {
+        await run(['install', '--global', 'pnpm@11.19.0'])
+        signal.throwIfAborted()
+        if ((await checkCompanionPackageManager(signal)) === 'ready') return
+        // Installing Corepack's cached version does not create a missing pnpm launcher.
+        if (name === 'corepack') await run(['enable', 'pnpm'])
+        if ((await checkCompanionPackageManager(signal)) === 'ready') return
+      } catch {
+        signal.throwIfAborted()
+        // A stale Corepack or read-only installation directory must not prevent
+        // trying the remaining known installer locations.
+      }
+    }
+  }
+  throw new Error('pnpm could not be verified after preparation.')
 }
 
 /** Read-only probe: never let Corepack download or repair anything during detection. */
-export async function checkCompanionPackageManager(): Promise<
-  NonNullable<EditorIntegrationStatus['packageManager']>
-> {
+export async function checkCompanionPackageManager(
+  signal?: AbortSignal,
+): Promise<NonNullable<EditorIntegrationStatus['packageManager']>> {
+  return (await resolveCompanionPackageManager(signal)).status
+}
+
+/** Keep managed DSH's PATH consistent with the launcher that passed the read-only probe. */
+export async function resolveCompanionPackageManager(signal?: AbortSignal): Promise<{
+  readonly status: NonNullable<EditorIntegrationStatus['packageManager']>
+  readonly directory?: string
+}> {
   const os = process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'macos' : 'linux'
   const entries = runtimePathEntries(os, process.env, homedir())
-  const names = os === 'windows' ? ['pnpm.exe', 'pnpm.cmd', 'pnpm.bat'] : ['pnpm']
-  const executable = entries.flatMap((entry) => names.map((name) => path.join(entry, name))).find(existsSync)
-  if (executable === undefined) return 'missing'
-  const resolved = resolveWindowsShim(executable, os, (file) => readFileSync(file, 'utf8'), {
-    pathEntries: entries,
-  })
+  const names = os === 'windows' ? ['pnpm.exe', 'pnpm.bat', 'pnpm.cmd'] : ['pnpm']
+  signal?.throwIfAborted()
+  // DSH also picks the first launcher in a directory. A working secondary shim
+  // cannot make that directory usable when a broken executable shadows it.
+  const candidates = entries
+    .map((entry) => names.map((name) => path.join(entry, name)).find(existsSync))
+    .filter((file): file is string => file !== undefined)
+  if (candidates.length === 0) return { status: 'missing' }
   const environment = {
     ...process.env,
     PATH: entries.join(path.delimiter),
@@ -64,20 +94,37 @@ export async function checkCompanionPackageManager(): Promise<
     COREPACK_ENABLE_PROJECT_SPEC: '0',
   }
   if (os === 'windows') Reflect.deleteProperty(environment, 'Path')
-  try {
-    const { stdout } = await promisify(execFile)(
-      resolved?.executable ?? executable,
-      [...(resolved?.prefixArgs ?? []), '--version'],
-      {
-        cwd: homedir(),
-        env: environment,
-        timeout: 5_000,
-        maxBuffer: 8_192,
-        windowsHide: true,
-      },
-    )
-    return /^\d+\.\d+\.\d+(?:-[\w.-]+)?$/u.test(stdout.trim()) ? 'ready' : 'broken'
-  } catch {
-    return 'broken'
+  const deadline = Date.now() + 10_000
+  for (const executable of candidates) {
+    signal?.throwIfAborted()
+    if (Date.now() >= deadline) break
+    const resolved = resolveWindowsShim(executable, os, (file) => readFileSync(file, 'utf8'), {
+      pathEntries: entries,
+    })
+    try {
+      const { stdout } = await promisify(execFile)(
+        resolved?.executable ?? executable,
+        [...(resolved?.prefixArgs ?? []), '--version'],
+        {
+          cwd: homedir(),
+          env: environment,
+          timeout: Math.max(1, Math.min(5_000, deadline - Date.now())),
+          maxBuffer: 8_192,
+          windowsHide: true,
+          ...(signal === undefined ? {} : { signal }),
+        },
+      )
+      signal?.throwIfAborted()
+      if (/^\d+\.\d+\.\d+(?:-[\w.-]+)?$/u.test(stdout.trim()))
+        return {
+          status: 'ready',
+          directory: path.dirname(
+            resolved !== undefined && resolved.prefixArgs.length === 0 ? resolved.executable : executable,
+          ),
+        }
+    } catch {
+      signal?.throwIfAborted()
+    }
   }
+  return { status: 'broken' }
 }

@@ -28,6 +28,7 @@ export function runtimeEnvironment(overrides?: NodeJS.ProcessEnv, executable?: s
   environment.PATH = [prefix, ...entries]
     .filter((entry): entry is string => entry !== undefined)
     .join(path.delimiter)
+  if (platform() === 'windows') Reflect.deleteProperty(environment, 'Path')
   return environment
 }
 
@@ -58,6 +59,7 @@ export function spawnManagedChild(
   args: readonly string[],
   cwd?: string,
   environment?: NodeJS.ProcessEnv,
+  preferredPathEntries: readonly string[] = [],
 ): SpawnedChild {
   const childEnvironment = { ...process.env, ...(environment ?? {}) }
   const resolved = resolveWindowsShim(
@@ -69,9 +71,14 @@ export function spawnManagedChild(
   const resolvedExecutable = resolved?.executable ?? executable
   const executableDirectory = path.dirname(resolvedExecutable)
   const prefix = executableDirectory === '.' ? undefined : executableDirectory
-  childEnvironment.PATH = [prefix, ...extensionRuntimePathEntries(platform(), childEnvironment)]
+  childEnvironment.PATH = [
+    ...preferredPathEntries,
+    prefix,
+    ...extensionRuntimePathEntries(platform(), childEnvironment),
+  ]
     .filter((entry): entry is string => entry !== undefined)
     .join(path.delimiter)
+  if (platform() === 'windows') Reflect.deleteProperty(childEnvironment, 'Path')
   const child = spawn(
     resolved?.executable ?? executable,
     resolved ? [...resolved.prefixArgs, ...args] : [...args],

@@ -11,7 +11,31 @@
 - 连接丢失诊断现在记录最近的事件循环最大延迟，并计入尚未完成的采样延迟、忽略过期样本，避免断连时漏报刚发生的同步阻塞。
 - The connection-lost diagnostic now records the trailing event-loop lag, including an overdue sample timer and excluding expired samples, so a synchronous stall is visible even before the delayed sampler runs.
 
+- DSH 本体安装和更新提供阶段、耗时与原生实时输出，长输出不会中断安装。改进网络重试、超时清理、代理及证书错误回显，沿用 npm 配置，并在缺少环境代理时使用 VS Code 代理。安装后重新验证全局版本和运行时，防止旧检查覆盖新结果；重连后立即刷新正在运行的版本。
+- DSH installation and updates now show lifecycle stages, elapsed time and live native output without stopping on large npm logs. Improves retries, timeout cleanup, proxy fallback and certificate error feedback. Verifies installed versions, ignores stale checks and refreshes the running version after reconnecting.
+
+- 自动更新失败后，回滚重连不会重复触发更新；手动恢复缓存版本会暂停自动更新，仍可在恢复选项中主动更新。
+- A failed automatic update no longer retries itself after recovery reconnects DSH. Manually restoring a cached version pauses automatic updates; an explicit update remains available under Recovery options.
+
+- 原生安装命令现在显示可取消进度并返回实际状态，区分成功、失败、取消和结果未确认；安装完成后刷新插件状态，暂不重启时保留提示和重启按钮。
+- Native companion installation now shows cancellable progress and reports the actual success, failure, cancellation or unconfirmed outcome. It refreshes companion status before returning and retains the restart action when a required restart is deferred.
+
+- 修复 DSH 对同一路径重复安装返回 `already-installed` 后反复回滚的问题；使用经过校验的固定备用路径重装同一压缩包，不先卸载，安装和恢复均保留独立请求 ID 与取消操作。
+- Fixes repeated `already-installed` failures during companion repair and rollback. Reinstallation uses a verified immutable alternate tarball path without uninstalling first, preserving request identity and cancellation for each attempt.
+
+- 修复配套插件恢复流程：区分明确失败与结果未知，保留恢复后的启停状态和原更新结果，取消操作使用当前请求；恢复失败时停止共享。设置页增加折叠的缓存版本恢复入口，并防止迟到的状态覆盖操作结果；受管理的 DSH 优先使用检测通过的 pnpm。
+- Fixes companion recovery by distinguishing confirmed failure from unknown results, retaining disabled-state recovery and the original update outcome, and cancelling the current request. Sharing stays off after failed recovery. Settings adds cached-version recovery and ignores stale status responses; managed DSH prefers the verified pnpm launcher.
+
+- 精简编辑器集成设置：正常状态不再显示 pnpm 依赖说明，安装命令和故障排查默认折叠；等待选择文件夹时只保留相关操作。
+- Simplifies editor integration settings: hides pnpm guidance when dependencies are ready, collapses installation help, and shows only relevant actions while waiting for a workspace folder.
+
+- 修复 Windows 独立版 pnpm 被误判为无法运行的问题，跳过损坏的启动入口；依赖修复支持 Corepack 启动器补全、npm 回退和取消，重新检测成功后清除旧失败提示。修复插件更新期间旧状态覆盖、安装未开始却触发回滚，以及子进程 PATH 大小写冲突。
+- Fixes detection of standalone pnpm on Windows and skips broken launchers. Dependency repair enables missing Corepack launchers, falls back to npm, supports cancellation, and clears stale errors after a successful recheck. Fixes stale status reads during plugin updates, unnecessary rollback when installation never started, and conflicting PATH casing in child processes.
+
 ## 0.3.9
+
+- V4 会话历史快照分批校验和转换，定期让出事件循环并避免重复校验，降低大量历史加载时因心跳响应延迟而断线的风险；诊断日志增加脱敏断线原因与 WebSocket 关闭码。
+- Decodes V4 session history snapshots incrementally, yielding to the event loop and avoiding duplicate validation to reduce heartbeat disconnects while loading large histories. Diagnostics include sanitized connection-loss reasons and WebSocket close codes.
 
 - 编辑器配套包升级到 `0.2.2`，采用跨版本兼容声明与可选 Host peer；通过服务和协议协商决定能力，不以 DSH 版本枚举限制安装，也不额外安装一套核心服务。保留构建指纹更新与原有协议。
 - Updates the editor companion to `0.2.2` with broad runtime compatibility and optional Host peers. Services and protocol negotiation determine available capabilities without a DSH version allowlist or an extra core-service installation. Build fingerprint updates and the existing protocol remain available.

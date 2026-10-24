@@ -94,6 +94,7 @@ export async function run() {
       'the Extension Host must stop the owned runtime and connect again',
     )
     console.log(`[dsh-vscode-e2e] ${mode}: connect and reconnect both completed against the owned runtime`)
+    if (process.env.DSH_VSCODE_E2E_COMPANION === '1') await assertCompanionInstallation()
   } else {
     const port = settings['dsh.connection.attachPorts']?.[0]
     assert.equal(typeof port, 'number', 'attach-only mode must record the fixture port')
@@ -102,6 +103,50 @@ export async function run() {
       `[dsh-vscode-e2e] attached methods=[${observed.methods.join(',')}] mux=${observed.muxUpgrades} host=${observed.hostUpgrades}`,
     )
   }
+}
+
+/** Real commands and files in the disposable profile, separate from DOM feedback tests. */
+async function assertCompanionInstallation() {
+  const profile = vscode.Uri.file(path.join(process.env.DSH_HOME, 'profiles', 'web'))
+  const readJson = async (uri) =>
+    JSON.parse(new TextDecoder().decode(await vscode.workspace.fs.readFile(uri)))
+  const manifest = vscode.Uri.joinPath(profile, 'package.json')
+  const name = '@dsh-vscode/editor-bridge'
+  assert.equal(
+    (await readJson(manifest)).dependencies?.[name],
+    undefined,
+    'the isolated profile starts without a companion',
+  )
+  const installation = await vscode.commands.executeCommand('dsh.installEditorCompanion')
+  const first = (await readJson(manifest)).dependencies?.[name]
+  assert.equal(
+    typeof first,
+    'string',
+    `the first install must reach the actual DSH profile: ${JSON.stringify(installation)}`,
+  )
+  const repair = await vscode.commands.executeCommand('dsh.installEditorCompanion')
+  const repaired = (await readJson(manifest)).dependencies?.[name]
+  assert.equal(typeof repaired, 'string')
+  assert.equal(installation.installed, true, JSON.stringify(installation))
+  assert.equal(repair.installed, true, JSON.stringify(repair))
+  assert.notEqual(repair.reason, 'setup-failed', JSON.stringify(repair))
+  assert.notEqual(repair.installation, 'failed', JSON.stringify(repair))
+  assert.notEqual(repair.installation, 'unknown', JSON.stringify(repair))
+  assert.equal(repair.canInstall, true, JSON.stringify(repair))
+  const installed = await readJson(
+    vscode.Uri.joinPath(profile, 'node_modules', '@dsh-vscode', 'editor-bridge', 'package.json'),
+  )
+  assert.equal(installed.name, name)
+  assert.equal(typeof installed.version, 'string')
+  assert.deepEqual(await vscode.commands.executeCommand('dsh.reconnect'), { connected: true })
+  assert.equal(
+    (await readJson(manifest)).dependencies?.[name],
+    repaired,
+    'reconnection must retain the repaired companion',
+  )
+  console.log(
+    '[dsh-vscode-e2e] companion: first install, repeat repair, actual package files and reconnect passed',
+  )
 }
 
 /**

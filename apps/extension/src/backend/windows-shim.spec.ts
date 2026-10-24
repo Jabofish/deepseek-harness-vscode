@@ -40,6 +40,26 @@ IF EXIST "%NPM_PREFIX_NPM_CLI_JS%" (
 `
 
 describe('Windows npm shim resolution', () => {
+  it('resolves the pnpm 11 standalone executable without Node or a shell', () => {
+    const resolved = resolveWindowsShim(
+      'C:\\pnpm\\bin\\pnpm.cmd',
+      'windows',
+      () =>
+        '@GOTO #_undefined_# 2>NUL || TITLE %COMSPEC% & "%~dp0\\..\\global\\v11\\fixture\\node_modules\\pnpm\\pnpm.exe" %*',
+      { processExecutable: 'C:\\editor\\Code.exe' },
+    )
+    expect(resolved).toEqual({
+      executable: 'C:\\pnpm\\global\\v11\\fixture\\node_modules\\pnpm\\pnpm.exe',
+      prefixArgs: [],
+    })
+  })
+
+  it('does not expand unresolved environment variables into an executable', () => {
+    expect(
+      resolveWindowsShim('C:\\pnpm\\pnpm.cmd', 'windows', () => '"%UNKNOWN%\\pnpm.exe" %*'),
+    ).toBeUndefined()
+  })
+
   it('resolves the pnpm CommonJS entry without a shell', () => {
     const resolved = resolveWindowsShim(
       'C:\\npm\\pnpm.cmd',

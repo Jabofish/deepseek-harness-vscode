@@ -36,6 +36,9 @@ export function resolveWindowsShim(
   }
   const target = extractCmdShimTarget(content, windowsPath.dirname(executable))
   if (target === undefined) return undefined
+  // pnpm 11's standalone launcher forwards directly to a native executable.
+  // Starting the .cmd with shell:false fails with EINVAL; it is not a Node script.
+  if (/\.exe$/iu.test(target)) return { executable: target, prefixArgs: [] }
   return {
     // VS Code's extension host is an Electron process, so process.execPath is
     // commonly Code.exe rather than node.exe. npm's Windows shim uses a local
@@ -56,7 +59,7 @@ export function extractCmdShimTarget(content: string, shimDir: string): string |
       const rawTarget = matches[matchIndex]?.[1]
       if (rawTarget === undefined) continue
       const target = expandCmdValue(rawTarget, assignments, shimDir)
-      if (!/\.(?:c|m)?js$/iu.test(target) || target.includes('%')) continue
+      if (!/\.(?:(?:c|m)?js|exe)$/iu.test(target) || target.includes('%')) continue
       return windowsPath.resolve(target)
     }
   }

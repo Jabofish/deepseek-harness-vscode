@@ -22,8 +22,8 @@ export type DshUpdateFailure = 'npm-not-found' | 'registry-unavailable' | 'inval
 
 /**
  * Host-owned lifecycle facts for a DSH package update. npm does not expose a
- * stable byte percentage across versions, so the UI must show an indeterminate
- * progress bar instead of inventing one.
+ * stable byte percentage across versions. Display lifecycle stages and elapsed
+ * time; a stage count must never be presented as a download byte percentage.
  */
 export type DshRuntimeUpdatePhase =
   'checking' | 'downloading' | 'installing' | 'verifying' | 'completed' | 'failed'
@@ -31,6 +31,9 @@ export type DshRuntimeUpdatePhase =
 export interface DshRuntimeUpdateProgress {
   readonly phase: DshRuntimeUpdatePhase
   readonly version?: string
+  readonly startedAt?: number
+  readonly lastActivityAt?: number
+  readonly snapshot?: DshUpdateSnapshot
 }
 
 export interface DshUpdateSnapshot {
@@ -46,6 +49,7 @@ export interface DshUpdateSnapshot {
   readonly checkedAt: string
   readonly failure?: DshUpdateFailure
   readonly restartRequired?: boolean
+  readonly canRestart?: boolean
 }
 
 export interface BackendEndpoint {

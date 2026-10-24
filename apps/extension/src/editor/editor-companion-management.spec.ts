@@ -1,17 +1,23 @@
 import path from 'node:path'
 import type * as vscode from 'vscode'
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
-import type { DshBackend, PluginBundleRepository, PluginBundleChangeResult } from '@dsh-vscode/domain'
+import {
+  AppError,
+  type DshBackend,
+  type PluginBundleRepository,
+  type PluginBundleChangeResult,
+} from '@dsh-vscode/domain'
 import { EditorCompanionManagement } from './editor-companion-management.js'
 import { FixtureUri, native, resetCompanionFixture } from './test-fixtures/companion-vscode.js'
 vi.mock('vscode', async () =>
   (await import('./test-fixtures/companion-vscode.js')).createCompanionVscodeApi(),
 )
-const archives = vi.hoisted(() => ({ cache: vi.fn(), list: vi.fn() }))
+const archives = vi.hoisted(() => ({ cache: vi.fn(), list: vi.fn(), alternate: vi.fn() }))
 vi.mock('./companion-archive.js', () => ({
   EDITOR_COMPANION_PACKAGE: '@dsh-vscode/editor-bridge',
   cacheCompanionArchive: archives.cache,
   listCompanionArchives: archives.list,
+  alternateCompanionArchive: archives.alternate,
 }))
 const applied: PluginBundleChangeResult = {
   name: '@dsh-vscode/editor-bridge',
@@ -34,6 +40,9 @@ beforeEach(() => {
   resetCompanionFixture()
   archives.cache.mockReset().mockResolvedValue({ version: '0.2.0', file: nextFile })
   archives.list.mockReset().mockResolvedValue([])
+  archives.alternate
+    .mockReset()
+    .mockResolvedValue({ version: '0.2.0', file: path.resolve('companion-cache-fixture', 'alternate.tgz') })
   native.warning.mockResolvedValue('Install')
 })
 interface Fixture {
@@ -48,6 +57,7 @@ interface Fixture {
   stop: Mock<() => Promise<void>>
   enable: Mock<() => Promise<boolean>>
   checkPackageManager: Mock<() => Promise<'ready' | 'missing' | 'broken'>>
+  reconnect: Mock<() => Promise<void>>
 }
 function fixture(ownership: 'managed' | 'external' = 'managed'): Fixture {
   const listBundles = vi.fn<PluginBundleRepository['listBundles']>().mockResolvedValue([])
@@ -76,12 +86,13 @@ function fixture(ownership: 'managed' | 'external' = 'managed'): Fixture {
   const checkPackageManager = vi
     .fn<() => Promise<'ready' | 'missing' | 'broken'>>()
     .mockResolvedValue('ready')
+  const reconnect = vi.fn<() => Promise<void>>().mockResolvedValue(undefined)
   const manager = new EditorCompanionManagement({
     backend: () => backend,
     current: (candidate) => candidate === backend,
     extensionUri: FixtureUri.file(path.resolve('extension-fixture')) as unknown as vscode.Uri,
     storageUri: FixtureUri.file(path.resolve('storage-fixture')) as unknown as vscode.Uri,
-    reconnect: undefined,
+    reconnect,
     active: () => false,
     enable,
     stop,
@@ -101,9 +112,289 @@ function fixture(ownership: 'managed' | 'external' = 'managed'): Fixture {
     stop,
     enable,
     checkPackageManager,
+    reconnect,
   }
 }
 describe('native editor companion installation and recovery', () => {
+  it('retains the required restart when the user defers reconnecting', async () => {
+    const { manager, installBundle, reconnect } = fixture()
+    installBundle.mockResolvedValue({ ...applied, application: 'restart-required' })
+    expect(await manager.installBundled()).toBe(true)
+    expect(manager.needsRestart).toBe(true)
+    expect(reconnect).not.toHaveBeenCalled()
+  })
+  it('honors native progress cancellation before mutation and retains the final receipt after it starts', async () => {
+    const { manager, installBundle, cancelInstall } = fixture()
+    expect(await manager.installBundled({ silent: true, signal: AbortSignal.abort() })).toBe(false)
+    expect(installBundle).not.toHaveBeenCalled()
+    let finish: (result: PluginBundleChangeResult) => void = () => {}
+    installBundle.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        }),
+    )
+    cancelInstall.mockImplementationOnce(() => {
+      finish({ ...applied, application: 'cancelled' })
+      return Promise.resolve({ status: 'cancelled' })
+    })
+    const controller = new AbortController()
+    const installing = manager.installBundled({ silent: true, signal: controller.signal })
+    await vi.waitFor(() => expect(installBundle).toHaveBeenCalledOnce())
+    controller.abort()
+    await installing
+    expect(cancelInstall).toHaveBeenCalledWith(
+      installBundle.mock.calls[0]?.[1].requestId,
+      expect.any(AbortSignal),
+    )
+    expect(installBundle.mock.calls[0]?.[2]?.aborted).toBe(false)
+    expect(manager.installationState).toBe('cancelled')
+    expect(manager.busy).toBe(false)
+  })
+  it('keeps sharing off when a replacement fails without a verified previous archive', async () => {
+    const { manager, listBundles, installBundle } = fixture()
+    listBundles.mockResolvedValue([old])
+    installBundle.mockResolvedValueOnce({ ...applied, application: 'failed', failureKind: 'integrity' })
+    expect(await manager.installBundled({ silent: true })).toBe(false)
+    expect(manager.busy).toBe(false)
+    expect(manager.sharingBlocked).toBe(true)
+    expect(installBundle).toHaveBeenCalledOnce()
+    expect(await manager.installBundled({ silent: true })).toBe(true)
+    expect(manager.sharingBlocked).toBe(false)
+  })
+  it('repairs a native already-installed refusal with one verified alternate path and a new request ID', async () => {
+    const { manager, installBundle, removeBundle } = fixture()
+    installBundle.mockResolvedValueOnce({ ...applied, application: 'failed', errorCode: 'already-installed' })
+    expect(await manager.installBundled({ silent: true })).toBe(true)
+    expect(installBundle).toHaveBeenCalledTimes(2)
+    expect(installBundle.mock.calls[0]?.[0]).not.toBe(installBundle.mock.calls[1]?.[0])
+    expect(installBundle.mock.calls[0]?.[1].requestId).not.toBe(installBundle.mock.calls[1]?.[1].requestId)
+    expect(removeBundle).not.toHaveBeenCalled()
+    expect(manager.installationFailure.recovery).toBeUndefined()
+  })
+  it('stops after one alternate-path refusal and permits cancellation before the retry starts', async () => {
+    const { manager, installBundle } = fixture()
+    installBundle.mockResolvedValue({ ...applied, application: 'failed', errorCode: 'already-installed' })
+    expect(await manager.installBundled({ silent: true })).toBe(false)
+    expect(installBundle).toHaveBeenCalledTimes(2)
+    expect(manager.busy).toBe(false)
+    let finish: (archive: { version: string; file: string }) => void = () => {}
+    archives.alternate.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        }),
+    )
+    const installing = manager.installBundled({ silent: true })
+    await vi.waitFor(() => expect(archives.alternate).toHaveBeenCalledTimes(2))
+    await manager.cancelInstallation()
+    finish({ version: '0.2.0', file: oldFile })
+    await installing
+    expect(installBundle).toHaveBeenCalledTimes(3)
+    expect(manager.installationState).toBe('cancelled')
+    expect(manager.busy).toBe(false)
+  })
+  it('offers only verified cached files through native selection, confirms the choice and handles an empty cache', async () => {
+    const { manager, installBundle } = fixture()
+    await manager.restoreCached()
+    expect(native.info).toHaveBeenCalledWith(expect.stringContaining('No cached companion'))
+    expect(installBundle).not.toHaveBeenCalled()
+    archives.list.mockResolvedValue([{ version: '0.1.0', file: oldFile }])
+    archives.cache.mockResolvedValue({ version: '0.1.0', file: oldFile })
+    native.pick.mockResolvedValue({ archive: { version: '0.1.0', file: oldFile } })
+    await manager.restoreCached()
+    expect(archives.cache).toHaveBeenCalledWith(oldFile, expect.any(String))
+    expect(native.warning).toHaveBeenCalledOnce()
+    expect(installBundle).toHaveBeenCalledWith(oldFile, expect.anything(), expect.any(AbortSignal))
+  })
+  it('releases a failed recovery and reports its native failure without allowing sharing', async () => {
+    const { manager, listBundles, installBundle } = fixture()
+    archives.list.mockResolvedValue([{ version: '0.1.0', file: oldFile }])
+    listBundles.mockResolvedValue([old])
+    installBundle.mockResolvedValueOnce({ ...applied, application: 'failed' }).mockResolvedValueOnce({
+      ...applied,
+      application: 'failed',
+      errorCode: 'operation-error',
+      failureKind: 'network',
+    })
+    await manager.installBundled({ silent: true })
+    expect(manager.busy).toBe(false)
+    expect(manager.installationState).toBe('failed')
+    expect(manager.installationFailure.installationFailureKind).toBe('network')
+    expect(manager.sharingBlocked).toBe(true)
+    expect(JSON.stringify(native.error.mock.calls)).not.toContain('could not be confirmed')
+    await manager.installBundled({ silent: true })
+    expect(installBundle).toHaveBeenCalledTimes(3)
+    expect(manager.sharingBlocked).toBe(false)
+  })
+  it('uses a fresh signal to recover after the recovery install times out', async () => {
+    const { manager, listBundles, installBundle, waitForInstall } = fixture()
+    archives.list.mockResolvedValue([{ version: '0.1.0', file: oldFile }])
+    listBundles.mockResolvedValue([old])
+    const recovery = new AbortController()
+    installBundle.mockResolvedValueOnce({ ...applied, application: 'failed' }).mockImplementationOnce(() => {
+      recovery.abort()
+      return Promise.reject(new Error('timeout'))
+    })
+    waitForInstall.mockImplementation((_id, signal) => {
+      expect(signal?.aborted).toBe(false)
+      return Promise.resolve(applied)
+    })
+    const timeout = AbortSignal.timeout.bind(AbortSignal)
+    const timer = vi
+      .spyOn(AbortSignal, 'timeout')
+      .mockImplementation((ms) => (ms === 60_000 ? recovery.signal : timeout(ms)))
+    try {
+      await manager.installBundled({ silent: true })
+      expect(manager.busy).toBe(false)
+      expect(native.info).toHaveBeenCalledWith(expect.stringContaining('was restored'))
+    } finally {
+      timer.mockRestore()
+    }
+  })
+  it('recovers a delayed rollback receipt without claiming the failed upgrade succeeded', async () => {
+    const { manager, listBundles, installBundle, waitForInstall, reconnect } = fixture()
+    archives.list.mockResolvedValue([{ version: '0.1.0', file: oldFile }])
+    listBundles.mockResolvedValue([old])
+    installBundle
+      .mockResolvedValueOnce({ ...applied, application: 'failed', failureKind: 'integrity' })
+      .mockRejectedValueOnce(new Error('lost rollback receipt'))
+    await manager.installBundled({ silent: true })
+    expect(manager.installationState).toBe('unknown')
+    const restoreId = installBundle.mock.calls[1]?.[1].requestId
+    waitForInstall.mockResolvedValue({ ...applied, application: 'restart-required' })
+    await manager.recoverInstallation()
+    expect(waitForInstall).toHaveBeenLastCalledWith(restoreId, expect.any(AbortSignal))
+    expect(manager.busy).toBe(false)
+    expect(manager.installationState).toBe('failed')
+    expect(manager.installationFailure.installationFailureKind).toBe('integrity')
+    expect(reconnect).toHaveBeenCalledOnce()
+  })
+  it('retries restoring the disabled state without losing the completed install receipt', async () => {
+    const { manager, listBundles, installBundle, setBundleEnabled, waitForInstall } = fixture()
+    archives.list.mockResolvedValue([{ version: '0.1.0', file: oldFile }])
+    listBundles.mockResolvedValue([{ ...old, enabled: false }])
+    installBundle.mockResolvedValueOnce({ ...applied, application: 'failed' }).mockResolvedValueOnce(applied)
+    setBundleEnabled.mockRejectedValueOnce(new Error('connection interrupted'))
+    await manager.installBundled({ silent: true })
+    expect(manager.busy).toBe(true)
+    expect(manager.canCancelInstall).toBe(false)
+    await manager.recoverInstallation()
+    expect(setBundleEnabled).toHaveBeenCalledTimes(2)
+    expect(installBundle).toHaveBeenCalledTimes(2)
+    expect(waitForInstall).not.toHaveBeenCalled()
+    expect(manager.busy).toBe(false)
+  })
+  it('cancels the recovery request rather than the finished upgrade request', async () => {
+    const { manager, listBundles, installBundle, cancelInstall } = fixture()
+    archives.list.mockResolvedValue([{ version: '0.1.0', file: oldFile }])
+    listBundles.mockResolvedValue([old])
+    let finish: (result: PluginBundleChangeResult) => void = () => {}
+    installBundle.mockResolvedValueOnce({ ...applied, application: 'failed' }).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        }),
+    )
+    const installing = manager.installBundled({ silent: true })
+    await vi.waitFor(() => expect(installBundle).toHaveBeenCalledTimes(2))
+    await manager.cancelInstallation()
+    expect(cancelInstall).toHaveBeenLastCalledWith(
+      installBundle.mock.calls[1]?.[1].requestId,
+      expect.any(AbortSignal),
+    )
+    finish({ ...applied, application: 'cancelled' })
+    await installing
+    expect(manager.busy).toBe(false)
+  })
+  it('honors cancellation while preparing the alternate recovery path', async () => {
+    const { manager, listBundles, installBundle } = fixture()
+    archives.list.mockResolvedValue([{ version: '0.1.0', file: oldFile }])
+    listBundles.mockResolvedValue([old])
+    installBundle
+      .mockResolvedValueOnce({ ...applied, application: 'failed' })
+      .mockResolvedValueOnce({ ...applied, application: 'failed', errorCode: 'already-installed' })
+    let finish: (archive: { version: string; file: string }) => void = () => {}
+    archives.alternate.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        }),
+    )
+    const installing = manager.installBundled({ silent: true })
+    await vi.waitFor(() => expect(archives.alternate).toHaveBeenCalledOnce())
+    await manager.cancelInstallation()
+    finish({ version: '0.1.0', file: oldFile })
+    await installing
+    expect(installBundle).toHaveBeenCalledTimes(2)
+    expect(manager.busy).toBe(false)
+    expect(manager.sharingBlocked).toBe(true)
+  })
+  it('serializes repeated recovery requests', async () => {
+    const { manager, installBundle, waitForInstall } = fixture()
+    installBundle.mockRejectedValue(new Error('lost receipt'))
+    await manager.installBundled({ silent: true })
+    let finish: (result: PluginBundleChangeResult) => void = () => {}
+    waitForInstall.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        }),
+    )
+    const recovering = manager.recoverInstallation()
+    await manager.recoverInstallation()
+    expect(waitForInstall).toHaveBeenCalledTimes(2)
+    finish(applied)
+    await recovering
+    expect(manager.busy).toBe(false)
+  })
+  it('does not reinstall a previous bundle when the replacement never started', async () => {
+    const { manager, listBundles, installBundle } = fixture()
+    archives.list.mockResolvedValue([{ version: '0.1.0', file: oldFile }])
+    listBundles.mockResolvedValue([old])
+    installBundle.mockRejectedValue(
+      new AppError({ code: 'PLUGIN_INSTALL_NOT_STARTED', message: 'Not started', retryable: false }),
+    )
+    expect(await manager.installBundled({ silent: true })).toBe(false)
+    expect(installBundle).toHaveBeenCalledTimes(1)
+    expect(manager.busy).toBe(false)
+    expect(manager.installationState).toBe('failed')
+  })
+
+  it.each(['success', 'failure'])(
+    'does not let a stale status read overwrite a completed installation on %s',
+    async (outcome) => {
+      const { manager, listBundles, checkPackageManager, installBundle } = fixture()
+      let finishProbe: (status: 'ready') => void = () => {}
+      let failProbe: (error: Error) => void = () => {}
+      checkPackageManager.mockImplementationOnce(
+        () =>
+          new Promise((resolve, reject) => {
+            finishProbe = resolve
+            failProbe = reject
+          }),
+      )
+      const refresh = manager.refreshStatus(true)
+      await vi.waitFor(() => expect(checkPackageManager).toHaveBeenCalledOnce())
+      let finishInstall: (result: PluginBundleChangeResult) => void = () => {}
+      installBundle.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishInstall = resolve
+          }),
+      )
+      listBundles.mockResolvedValue([old])
+      const installing = manager.installBundled({ silent: true })
+      await vi.waitFor(() => expect(installBundle).toHaveBeenCalledOnce())
+      finishInstall(applied)
+      await installing
+      if (outcome === 'success') finishProbe('ready')
+      else failProbe(new Error('obsolete status read failed'))
+      await refresh
+      expect(manager.installationStatus.installed).toBe(true)
+    },
+  )
+
   it('reads native installed state independently from consent and blocks missing prerequisites before mutation', async () => {
     const { manager, checkPackageManager, installBundle, listBundles } = fixture()
     checkPackageManager.mockResolvedValue('missing')
@@ -169,6 +460,30 @@ describe('native editor companion installation and recovery', () => {
     installBundle.mockResolvedValueOnce({ ...applied, application: 'failed' }).mockResolvedValueOnce(applied)
     await manager.installBundled()
     expect(setBundleEnabled).toHaveBeenCalledWith('@dsh-vscode/editor-bridge', false, expect.any(AbortSignal))
+    expect(manager.busy).toBe(false)
+  })
+  it('allows cancellation to be retried when it reaches DSH before installation is registered', async () => {
+    const { manager, installBundle, cancelInstall } = fixture()
+    let finishInstall: (result: PluginBundleChangeResult) => void = () => {}
+    installBundle.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishInstall = resolve
+        }),
+    )
+    cancelInstall.mockResolvedValueOnce({ status: 'not-running' }).mockImplementationOnce(() => {
+      finishInstall({ ...applied, application: 'cancelled' })
+      return Promise.resolve({ status: 'cancelled' })
+    })
+    const installing = manager.installBundled({ silent: true })
+    await vi.waitFor(() => expect(installBundle).toHaveBeenCalledOnce())
+    await manager.cancelInstallation()
+    expect(manager.canCancelInstall).toBe(true)
+    await manager.cancelInstallation()
+    await installing
+    expect(cancelInstall).toHaveBeenCalledTimes(2)
+    expect(cancelInstall.mock.calls[0]?.[0]).toBe(cancelInstall.mock.calls[1]?.[0])
+    expect(manager.installationState).toBe('cancelled')
     expect(manager.busy).toBe(false)
   })
   it('installs silently without a modal when the host asks for it', async () => {

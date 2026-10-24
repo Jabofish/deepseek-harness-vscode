@@ -2,6 +2,8 @@ import * as vscode from 'vscode'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { access } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { stripVTControlCharacters } from 'node:util'
 import {
   AppError,
   type BackendEndpoint,
@@ -17,7 +19,8 @@ import {
   RuntimeUseCases,
   type ConnectionRequest,
 } from '@dsh-vscode/application'
-import { VersionedBackendFactory, VersionedBackendProbe } from '@dsh-vscode/dsh-adapter'
+import { VersionedBackendFactory, VersionedBackendProbe, redactText } from '@dsh-vscode/dsh-adapter'
+import { runtimeNpmEnvironment, streamRuntimeCommand } from '../vscode/runtime-command.js'
 import { createAdapterOptions } from '../backend/adapter-options.js'
 import { createVersionAdapters } from '../backend/version-adapters.js'
 import { CompanionRegistryDiscoveryProvider } from '../backend/discovery/companion-provider.js'
@@ -42,7 +45,12 @@ import {
   type ExecuteRuntimeCommand,
   type RuntimeCommandResult,
 } from '../vscode/update-runtime.js'
-import { RUNTIME_INSTALL_MAX_BUFFER, RUNTIME_INSTALL_TIMEOUT_MS } from '../vscode/runtime-installation.js'
+import {
+  RUNTIME_INSTALL_MAX_BUFFER,
+  RUNTIME_INSTALL_TIMEOUT_MS,
+  runtimeInstallationFailureMessage,
+  withNpmFetchDefaults,
+} from '../vscode/runtime-installation.js'
 import {
   endpointFromServerUrl,
   extensionRuntimePathEntries,
@@ -58,6 +66,7 @@ import { EndpointNetwork } from '../backend/endpoint-network.js'
 import { ExternalConnectionAccess } from '../backend/external-connection-access.js'
 import { createCredentialScope } from '../backend/credential-scope.js'
 import { hasLocalWorkspaceAuthority } from '../view/session-workspace-scope.js'
+import { resolveCompanionPackageManager } from '../editor/companion-prerequisites.js'
 
 const execFileAsync = promisify(execFile)
 const RUNTIME_PATH_STATE_KEY = 'dsh.runtime.lastKnownPath'
@@ -235,11 +244,24 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
   const adapters = createVersionAdapters(adapterOptions)
   const probe = new VersionedBackendProbe(adapters, { fetch: network.fetch })
   const factory = new VersionedBackendFactory(adapters)
+  let companionPackageManagerDirectory: string | undefined
   const supervisor = new DshProcessSupervisor({
     managedPort: () => (usesDevelopmentRuntime(context) ? 0 : configuration.read().connection.managedPort),
     workingDirectory: () => currentWorkspaceFolder()?.uri.fsPath ?? process.cwd(),
     toolMode: () => configuration.read().defaultAgent.toolMode,
-    spawn: spawnManagedChild,
+    additionalArguments: async (_runtime, signal) => {
+      const manager = await resolveCompanionPackageManager(signal)
+      companionPackageManagerDirectory = manager.directory
+      return []
+    },
+    spawn: (executable, args, cwd, environment) =>
+      spawnManagedChild(
+        executable,
+        args,
+        cwd,
+        environment,
+        companionPackageManagerDirectory === undefined ? [] : [companionPackageManagerDirectory],
+      ),
     onReadyEndpoint: rememberReadyEndpoint,
   })
   const coordinator = new DshConnectionCoordinator({
@@ -253,6 +275,14 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
   })
   const backendService = new BackendService()
   let runtimeInstall: { readonly key: string; readonly operation: Promise<RuntimeCommandResult> } | undefined
+  let installOutput: vscode.OutputChannel | undefined
+  const outputChannel = (): vscode.OutputChannel => {
+    if (installOutput === undefined) {
+      installOutput = vscode.window.createOutputChannel('DSH Installation')
+      context.subscriptions.push(installOutput)
+    }
+    return installOutput
+  }
   const executeRuntimeCommand: ExecuteRuntimeCommand = (executable, args, options) => {
     const installing = args[0] === 'install'
     const key = [executable, ...args].join('\0')
@@ -286,11 +316,79 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
             )
           : undefined
       const resolvedExecutable = resolved?.executable ?? executable
+      const http = vscode.workspace.getConfiguration('http')
+      const environment = runtimeNpmEnvironment(
+        runtimeEnvironment(options.env, resolvedExecutable),
+        http.get<string>('proxySupport') === 'off' ? undefined : http.get<string>('proxy'),
+      )
+      if (installing) {
+        installOutput = outputChannel()
+        installOutput.clear()
+        installOutput.show(true)
+        installOutput.appendLine(
+          'Downloading and installing DSH. npm handles registry access, proxy settings, retries and cached downloads.',
+        )
+        const pending = { stdout: '', stderr: '' }
+        const discarding = { stdout: false, stderr: false }
+        let logged = 0
+        let omitted = false
+        let outcome = 'npm finished. Verifying the installed version…'
+        const display = (line: string): void => {
+          if (logged >= 524_288) {
+            if (!omitted)
+              installOutput?.appendLine(
+                'Further npm output is omitted. Installation and version verification will continue.',
+              )
+            omitted = true
+            return
+          }
+          const safe = redactText(stripVTControlCharacters(line), 2_048)
+          if (safe !== '') {
+            installOutput?.appendLine(safe)
+            logged += safe.length
+          }
+        }
+        const output = (text: string, stream: 'stdout' | 'stderr'): void => {
+          options.onOutput?.(text, stream)
+          const lines = (pending[stream] + text).split(/\r\n|[\r\n]/u)
+          pending[stream] = lines.pop() ?? ''
+          for (const line of lines) {
+            if (!discarding[stream]) display(line)
+            discarding[stream] = false
+          }
+          if (pending[stream].length > 8_192) {
+            pending[stream] = ''
+            discarding[stream] = true
+          }
+        }
+        try {
+          return await streamRuntimeCommand(
+            resolvedExecutable,
+            [
+              ...(resolved?.prefixArgs ?? []),
+              ...args,
+              ...(!args.includes('--loglevel=http') ? ['--no-audit', '--no-fund', '--loglevel=http'] : []),
+            ],
+            { ...options, cwd: homedir(), env: withNpmFetchDefaults(environment), onOutput: output },
+          )
+        } catch (error) {
+          outcome =
+            runtimeInstallationFailureMessage(error) ??
+            'npm failed. Check the installation output above and retry.'
+          throw error
+        } finally {
+          for (const stream of ['stdout', 'stderr'] as const)
+            if (!discarding[stream]) display(pending[stream])
+          installOutput.appendLine(outcome)
+        }
+      }
       const result = await execFileAsync(resolvedExecutable, [...(resolved?.prefixArgs ?? []), ...args], {
         timeout: options.timeout,
         maxBuffer: options.maxBuffer,
         encoding: 'utf8',
-        env: runtimeEnvironment(options.env, resolvedExecutable),
+        cwd: homedir(),
+        env: environment,
+        windowsHide: true,
         // Closing a chat must not interrupt npm while it is replacing shared files.
         ...(!installing && options.signal !== undefined ? { signal: options.signal } : {}),
       })
@@ -331,7 +429,18 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
       const os = platform()
       return resolveNpmExecutable(os, extensionRuntimePathEntries(os, process.env))
     },
-    locateRuntime: async (signal) => (await runtimeLocator.locate(signal)).runtime,
+    locateRuntime: async (signal) => {
+      runtimeLocator.invalidate()
+      return (await runtimeLocator.locate(signal)).runtime
+    },
+    activeVersion: () => {
+      const state = coordinator.getState()
+      return state.kind === 'connected' ? state.backend.capabilities.dshVersion : undefined
+    },
+    canRestart: () => {
+      const state = coordinator.getState()
+      return state.kind === 'connected' && state.backend.ownership === 'managed'
+    },
     onProgress: (progress) => onRuntimeUpdateProgress(progress),
     execute: executeRuntimeCommand,
     environment: () => runtimeEnvironment(),
@@ -341,6 +450,10 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
     selectExecutable: () => runtimeInstaller.selectExecutable(),
     copyInstallCommand: () => Promise.resolve(runtimeInstaller.copyInstallCommand()),
     openDocumentation: () => Promise.resolve(runtimeInstaller.openDocumentation()).then(() => undefined),
+    showOutput: () => {
+      outputChannel().show(true)
+      return Promise.resolve()
+    },
     checkForUpdates: (force, signal) => runtimeUpdater.checkForUpdates(force, signal),
     installVersion: (version, signal) => runtimeUpdater.installVersion(version, signal),
   })

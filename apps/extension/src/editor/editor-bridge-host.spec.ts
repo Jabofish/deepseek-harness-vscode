@@ -13,6 +13,7 @@ import { EditorCompanionBroker } from '../../../../packages/dsh-editor-bridge/sr
 import { EditorBridgeHost } from './editor-bridge-host.js'
 import { EditorCompanionManagement } from './editor-companion-management.js'
 import { prepareCompanionPackageManager } from './companion-prerequisites.js'
+import { companionNeedsUpdate } from './companion-update.js'
 
 const ui = vi.hoisted(() => ({
   errors: vi.fn(),
@@ -30,6 +31,7 @@ const ui = vi.hoisted(() => ({
   workspaceOpen: true,
   workspaceFile: false,
   updateSettings: vi.fn(),
+  cancelProgress: (): void => {},
   changeConfiguration: (_event: { affectsConfiguration: (section: string) => boolean }): void => {},
 }))
 vi.mock('vscode', () => ({
@@ -58,6 +60,22 @@ vi.mock('vscode', () => ({
     onDidGrantWorkspaceTrust: () => ({ dispose() {} }),
   },
   window: {
+    withProgress: (
+      _options: unknown,
+      task: (
+        _progress: unknown,
+        token: { onCancellationRequested(callback: () => void): { dispose(): void } },
+      ) => Promise<unknown>,
+    ) =>
+      task(
+        {},
+        {
+          onCancellationRequested: (callback) => {
+            ui.cancelProgress = callback
+            return { dispose() {} }
+          },
+        },
+      ),
     showErrorMessage: ui.errors,
     showInformationMessage: ui.info,
     showQuickPick: ui.pick,
@@ -65,9 +83,16 @@ vi.mock('vscode', () => ({
     createStatusBarItem: () => ({ show: ui.show, hide: ui.hide, dispose: ui.dispose }),
   },
   StatusBarAlignment: { Right: 2 },
+  ProgressLocation: { Notification: 15 },
+  Uri: {
+    joinPath: (root: { fsPath: string }, ...parts: string[]) => ({
+      fsPath: path.join(root.fsPath, ...parts),
+    }),
+  },
   commands: { executeCommand: ui.command },
 }))
 vi.mock('./companion-host-proof.js', () => ({ verifyCompanionHost: ui.proof }))
+vi.mock('./companion-update.js', () => ({ companionNeedsUpdate: vi.fn(() => Promise.resolve(false)) }))
 vi.mock('./companion-prerequisites.js', () => ({
   checkCompanionPackageManager: () => Promise.resolve('ready'),
   prepareCompanionPackageManager: vi.fn(() => Promise.resolve()),
@@ -103,9 +128,12 @@ function harness(
   changeSelection: () => void
   disconnect: () => void
   connectionReady: () => void
-  reconnect: ReturnType<typeof vi.fn>
+  replaceBackend: () => void
+  backendService: BackendService
+  reconnect: ReturnType<typeof vi.fn<(signal?: AbortSignal) => Promise<unknown>>>
 } {
   ui.errors.mockClear()
+  vi.mocked(companionNeedsUpdate).mockReset().mockResolvedValue(false)
   ui.show.mockClear()
   ui.hide.mockClear()
   ui.trusted = true
@@ -141,10 +169,10 @@ function harness(
   }
   const attach = vi.fn().mockResolvedValue({ bindingId: 'fixture_binding_1234', protocolVersion: 1 })
   const detach = vi.fn().mockResolvedValue(undefined)
-  const backend = {
+  let backend = {
     connection: { ownership, endpoint: { baseUrl: 'http://127.0.0.1:3000', host: '127.0.0.1', port: 3000 } },
     sessions: { get: () => Promise.resolve({ id: 'session-a', cwd }) },
-    pluginBundles: {},
+    pluginBundles: { listBundles: vi.fn().mockResolvedValue([]) },
     events: { subscribe: () => () => undefined },
     editorBridge: {
       ...(rich
@@ -217,9 +245,11 @@ function harness(
       return { dispose() {} }
     },
   }
-  const reconnect = vi.fn().mockResolvedValue(undefined)
+  const reconnect = vi.fn<(signal?: AbortSignal) => Promise<unknown>>().mockResolvedValue(undefined)
   const dependencies = {
-    ...(withSetup ? { context: {}, reconnect } : {}),
+    ...(withSetup
+      ? { context: { extensionUri: { fsPath: path.resolve('extension-fixture') } }, reconnect }
+      : {}),
     backendService,
     coordinator: {
       getState: () => ({ kind: 'connected', backend: backend.connection }),
@@ -239,6 +269,12 @@ function harness(
     changeSelection: () => selection('selection'),
     disconnect: () => listener({ kind: 'idle' }),
     connectionReady: () => selection('connection'),
+    backendService,
+    replaceBackend: () => {
+      backend = { ...backend, connection: { ...backend.connection } }
+      backendService.attach(backend, () => undefined)
+      listener({ kind: 'connected', backend: backend.connection })
+    },
   }
 }
 describe('automatic editor sharing', () => {
@@ -307,6 +343,116 @@ describe('automatic editor sharing', () => {
       await host.dispose()
     }
   })
+  it('blocks sharing after failed recovery and routes restoration through the native manager', async () => {
+    const blocked = vi
+      .spyOn(EditorCompanionManagement.prototype, 'sharingBlocked', 'get')
+      .mockReturnValue(true)
+    const restore = vi
+      .spyOn(EditorCompanionManagement.prototype, 'restoreCached')
+      .mockResolvedValue(undefined)
+    const { host, attach } = harness('managed', true, undefined, undefined, true)
+    try {
+      expect(await host.enable()).toBe(false)
+      expect(attach).not.toHaveBeenCalled()
+      expect(host.snapshot()).toMatchObject({ phase: 'limited', reason: 'setup-failed' })
+      await host.action('restore')
+      expect(restore).toHaveBeenCalledOnce()
+    } finally {
+      await host.dispose()
+      blocked.mockRestore()
+      restore.mockRestore()
+    }
+  })
+  it('returns a safe installation result and reports native command failures', async () => {
+    const install = vi.spyOn(EditorCompanionManagement.prototype, 'installBundled').mockResolvedValue(false)
+    const { host } = harness('managed', true, undefined, undefined, true)
+    try {
+      expect(await host.install()).toMatchObject({ kind: 'editor.companion', reason: 'setup-failed' })
+      expect(ui.errors).toHaveBeenCalledWith(expect.stringContaining('Editor companion installation failed'))
+    } finally {
+      await host.dispose()
+      install.mockRestore()
+    }
+  })
+  it('keeps restart visible and avoids sharing the old loaded companion after a deferred restart', async () => {
+    const restart = vi.spyOn(EditorCompanionManagement.prototype, 'needsRestart', 'get').mockReturnValue(true)
+    const { host, attach } = harness('managed', true, undefined, undefined, true)
+    try {
+      expect(await host.enable()).toBe(false)
+      expect(host.snapshot()).toMatchObject({ phase: 'needs-restart', reason: 'restart', canRestart: true })
+      expect(attach).not.toHaveBeenCalled()
+    } finally {
+      await host.dispose()
+      restart.mockRestore()
+    }
+  })
+  it('honors native cancellation before the installation request starts', async () => {
+    const install = vi.spyOn(EditorCompanionManagement.prototype, 'installBundled').mockResolvedValue(true)
+    const { host } = harness('managed', true, undefined, undefined, true)
+    ui.updateSettings.mockImplementationOnce(() => {
+      ui.cancelProgress()
+      return Promise.resolve()
+    })
+    try {
+      expect(await host.install()).toMatchObject({ installation: 'cancelled' })
+      expect(install).not.toHaveBeenCalled()
+    } finally {
+      await host.dispose()
+      install.mockRestore()
+    }
+  })
+  it('cancels dependency preparation when the runtime disconnects', async () => {
+    vi.mocked(prepareCompanionPackageManager).mockImplementationOnce(
+      (signal) =>
+        new Promise((_resolve, reject) =>
+          signal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true }),
+        ),
+    )
+    const { host, disconnect, reconnect } = harness('managed', true, undefined, undefined, true)
+    try {
+      const preparing = host.action('prepare-pnpm')
+      disconnect()
+      await preparing
+      expect(reconnect).not.toHaveBeenCalled()
+      expect(host.snapshot().installation).toBe('cancelled')
+    } finally {
+      await host.dispose()
+    }
+  })
+
+  it('clears a dependency preparation failure after a successful recheck', async () => {
+    vi.mocked(prepareCompanionPackageManager).mockRejectedValueOnce(new Error('preparation failed'))
+    const status = vi.spyOn(EditorCompanionManagement.prototype, 'refreshStatus').mockResolvedValue(undefined)
+    const installation = vi
+      .spyOn(EditorCompanionManagement.prototype, 'installationStatus', 'get')
+      .mockReturnValue({ packageManager: 'ready' })
+    const { host } = harness('managed', true, undefined, undefined, true)
+    try {
+      await host.action('prepare-pnpm')
+      expect(host.snapshot().installation).toBe('dependencies-failed')
+      await host.action('check-dependencies')
+      expect(host.snapshot().installation).toBeUndefined()
+    } finally {
+      await host.dispose()
+      status.mockRestore()
+      installation.mockRestore()
+    }
+  })
+  it('does not cancel its own reconnect after preparing dependencies', async () => {
+    const { host, disconnect, reconnect } = harness('managed', true, undefined, undefined, true)
+    reconnect.mockImplementation((signal?: AbortSignal) => {
+      disconnect()
+      expect(signal?.aborted).toBe(false)
+      return Promise.resolve(undefined)
+    })
+    try {
+      await host.action('prepare-pnpm')
+      expect(reconnect).toHaveBeenCalledOnce()
+      expect(host.snapshot().installation).toBeUndefined()
+    } finally {
+      await host.dispose()
+    }
+  })
   it('does not install a missing plugin package in the background even with automatic updates enabled', async () => {
     const install = vi.spyOn(EditorCompanionManagement.prototype, 'installBundled').mockResolvedValue(false)
     const { host } = harness('managed', false, undefined, undefined, true)
@@ -316,6 +462,52 @@ describe('automatic editor sharing', () => {
       expect(install).not.toHaveBeenCalled()
     } finally {
       await host.dispose()
+      install.mockRestore()
+    }
+  })
+  it('does not retry a failed automatic update when recovery creates a new connection', async () => {
+    const install = vi.spyOn(EditorCompanionManagement.prototype, 'installBundled').mockResolvedValue(false)
+    const { host, backendService, replaceBackend } = harness('managed', true, undefined, undefined, true)
+    vi.mocked(companionNeedsUpdate).mockResolvedValue(true)
+    const repository = backendService.requireBackend().pluginBundles
+    if (repository === undefined) throw new Error('Missing fixture repository')
+    vi.spyOn(repository, 'listBundles').mockResolvedValue([
+      {
+        name: '@dsh-vscode/editor-bridge',
+        installed: true,
+        enabled: true,
+        optional: true,
+        removable: true,
+        rows: [],
+        overrides: [],
+      },
+    ])
+    install.mockImplementationOnce(() => {
+      replaceBackend()
+      return Promise.resolve(false)
+    })
+    try {
+      await host.prepareSession('session-a', new AbortController().signal)
+      await vi.waitFor(() => expect(install).toHaveBeenCalledOnce())
+      await host.action('retry')
+      expect(install).toHaveBeenCalledOnce()
+    } finally {
+      await host.dispose()
+      install.mockRestore()
+    }
+  })
+  it('keeps a manually restored version until the user explicitly requests an update', async () => {
+    const restore = vi.spyOn(EditorCompanionManagement.prototype, 'restoreCached').mockResolvedValue(true)
+    const install = vi.spyOn(EditorCompanionManagement.prototype, 'installBundled').mockResolvedValue(true)
+    const { host } = harness('managed', true, undefined, undefined, true)
+    try {
+      await host.action('restore')
+      expect(ui.settings.autoSetup).toBe(false)
+      await host.action('setup')
+      expect(ui.settings.autoSetup).toBe(true)
+    } finally {
+      await host.dispose()
+      restore.mockRestore()
       install.mockRestore()
     }
   })

@@ -54,7 +54,9 @@ export class EditorBridgeHost {
   private readonly companion: EditorCompanionService
   private readonly management: EditorCompanionManagement
   private readonly checkedUpdates = new WeakSet<DshBackend>()
+  private automaticUpdatesSuppressed = false
   private preparing: AbortController | undefined
+  private reconnectingPrerequisites: AbortController | undefined
   private prerequisiteOutcome: EditorIntegrationStatus['installation']
   private readonly ledger = new EditLedger()
   private readonly workspaceAccess = new EditorWorkspaceAccess(
@@ -115,6 +117,7 @@ export class EditorBridgeHost {
       {
         dispose: deps.coordinator.subscribe((state) => {
           if (state.kind !== 'connected') {
+            if (this.preparing !== this.reconnectingPrerequisites) this.preparing?.abort()
             this.management.cancel()
             void this.stop()
             this.phase = 'waiting'
@@ -156,6 +159,16 @@ export class EditorBridgeHost {
 
   public async enable(options: { silent?: boolean } = {}): Promise<boolean> {
     if (this.disposed || this.starting !== undefined || this.management.busy) return false
+    if (this.management.needsRestart) {
+      this.phase = 'needs-restart'
+      this.reason = 'restart'
+      return false
+    }
+    if (this.management.sharingBlocked) {
+      this.phase = 'limited'
+      this.reason = 'setup-failed'
+      return false
+    }
     if (!options.silent && !readEditorPreferences().enabled) await saveEditorPreferences({ enabled: true })
     if (!readEditorPreferences().enabled || (options.silent && this.suppressed)) {
       this.phase = 'off'
@@ -299,8 +312,51 @@ export class EditorBridgeHost {
   public manage(): Promise<void> {
     return Promise.resolve(vscode.commands.executeCommand('dsh.openSettings')).then(() => undefined)
   }
-  public install(): Promise<void> {
-    return this.action('setup').then(() => undefined)
+  public async install(): Promise<EditorIntegrationStatus> {
+    if (!this.snapshot().canInstall) {
+      void vscode.window.showWarningMessage(
+        'Companion installation is unavailable. Connect an extension-managed DSH and open editor integration settings to check its status.',
+      )
+      return this.snapshot()
+    }
+    return vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: 'Installing DSH editor companion',
+        cancellable: true,
+      },
+      async (_progress, token) => {
+        const controller = new AbortController()
+        const cancellation = token.onCancellationRequested(() => controller.abort())
+        if (token.isCancellationRequested) controller.abort()
+        try {
+          await this.action('setup', controller.signal)
+          await this.management.refreshStatus(true)
+          const status = this.snapshot()
+          if (status.installation === 'cancelled')
+            void vscode.window.showInformationMessage('Editor companion installation was cancelled.')
+          else if (status.installation === 'unknown')
+            void vscode.window.showWarningMessage(
+              'The companion installation result is not confirmed. Retry in editor integration settings before installing again.',
+            )
+          else if (status.reason === 'setup-failed' || status.installation === 'failed')
+            void vscode.window.showErrorMessage(
+              `Editor companion installation failed (${status.installationFailureKind ?? status.installationErrorCode ?? 'operation-error'}). Open editor integration settings to retry or repair.`,
+            )
+          else if (status.phase === 'needs-restart')
+            void vscode.window.showInformationMessage(
+              'Editor companion installed. Restart DSH to activate it.',
+            )
+          else if (status.installed === true)
+            void vscode.window.showInformationMessage(
+              'Editor companion installed. Editor tools connect when you select a session.',
+            )
+          return status
+        } finally {
+          cancellation.dispose()
+        }
+      },
+    )
   }
   public async undoLastEdit(): Promise<void> {
     const entry = this.ledger.lastApplied()
@@ -368,8 +424,17 @@ export class EditorBridgeHost {
     return {
       kind: 'editor.companion',
       preferences,
-      phase: !preferences.enabled || this.suppressed ? 'off' : this.phase,
-      ...(this.reason === undefined ? {} : { reason: this.reason }),
+      phase:
+        !preferences.enabled || this.suppressed
+          ? 'off'
+          : this.management.needsRestart
+            ? 'needs-restart'
+            : this.phase,
+      ...(this.management.needsRestart
+        ? { reason: 'restart' as const }
+        : this.reason === undefined
+          ? {}
+          : { reason: this.reason }),
       ...(this.version === undefined ? {} : { version: this.version }),
       capabilities: this.capabilities,
       canInstall:
@@ -405,6 +470,7 @@ export class EditorBridgeHost {
     action:
       | 'retry'
       | 'setup'
+      | 'restore'
       | 'cancel-install'
       | 'restart'
       | 'undo'
@@ -413,6 +479,7 @@ export class EditorBridgeHost {
       | 'copy-pnpm-command'
       | 'open-pnpm-guide'
       | 'prepare-pnpm',
+    signal?: AbortSignal,
   ): Promise<EditorIntegrationStatus> {
     if (action === 'prepare-pnpm') {
       if (!this.snapshot().canInstall || !vscode.workspace.isTrusted) return this.snapshot()
@@ -424,7 +491,12 @@ export class EditorBridgeHost {
         await prepareCompanionPackageManager(controller.signal)
         controller.signal.throwIfAborted()
         if (!this.currentBackend(backend)) throw new DOMException('Connection changed', 'AbortError')
-        await this.deps.reconnect?.(controller.signal)
+        this.reconnectingPrerequisites = controller
+        try {
+          await this.deps.reconnect?.(controller.signal)
+        } finally {
+          if (this.reconnectingPrerequisites === controller) this.reconnectingPrerequisites = undefined
+        }
         controller.signal.throwIfAborted()
         await this.management.refreshStatus(true)
       } catch {
@@ -443,7 +515,9 @@ export class EditorBridgeHost {
       return this.snapshot()
     }
     if (action === 'check-dependencies') {
+      await this.management.recoverInstallation()
       await this.management.refreshStatus(true)
+      if (this.management.installationStatus.packageManager === 'ready') this.prerequisiteOutcome = undefined
       return this.snapshot()
     }
     if (action === 'cancel-install') {
@@ -451,7 +525,17 @@ export class EditorBridgeHost {
       await this.management.cancelInstallation()
       return this.snapshot()
     }
-    if (action === 'undo') await this.undoLastEdit()
+    if (action === 'restore') {
+      if (this.snapshot().canInstall) {
+        this.prerequisiteOutcome = undefined
+        const previous = this.automaticUpdatesSuppressed
+        this.automaticUpdatesSuppressed = true
+        const restored = await this.management.restoreCached()
+        if (restored === true) await saveEditorPreferences({ autoSetup: false })
+        else if (restored === undefined) this.automaticUpdatesSuppressed = previous
+        await this.reconcile()
+      }
+    } else if (action === 'undo') await this.undoLastEdit()
     else if (action === 'start-managed') {
       if (vscode.workspace.isTrusted) {
         await vscode.workspace
@@ -471,6 +555,7 @@ export class EditorBridgeHost {
       }
       if (action === 'setup' && this.snapshot().canInstall) {
         this.prerequisiteOutcome = undefined
+        this.automaticUpdatesSuppressed = true
         this.phase = 'setup'
         this.reason = undefined
         try {
@@ -478,12 +563,20 @@ export class EditorBridgeHost {
           await saveEditorPreferences({ autoSetup: true, enabled: true })
           this.suppressed = false
           await this.stop()
-          if (!(await this.management.installBundled({ silent: true }))) {
+          signal?.throwIfAborted()
+          if (
+            !(await this.management.installBundled({
+              silent: true,
+              ...(signal === undefined ? {} : { signal }),
+            }))
+          ) {
             this.phase = this.management.installationState === 'installed' ? 'needs-restart' : 'limited'
             this.reason = this.management.installationState === 'installed' ? 'restart' : 'setup-failed'
             return this.snapshot()
           }
+          this.automaticUpdatesSuppressed = false
         } catch {
+          if (signal?.aborted === true) this.prerequisiteOutcome = 'cancelled'
           this.phase = 'limited'
           this.reason = 'setup-failed'
           return this.snapshot()
@@ -542,6 +635,7 @@ export class EditorBridgeHost {
     }
     if (
       preferences.autoSetup &&
+      !this.automaticUpdatesSuppressed &&
       backend.connection.ownership === 'managed' &&
       vscode.workspace.isTrusted &&
       this.deps.context?.extensionUri !== undefined &&
@@ -562,12 +656,16 @@ export class EditorBridgeHost {
       ) {
         if (!this.currentBackend(backend)) return
         this.phase = 'setup'
+        // A recovery may reconnect before installation returns. Do not turn
+        // that new connection into an automatic retry of the failed update.
+        this.automaticUpdatesSuppressed = true
         if (!(await this.management.installBundled({ silent: true }))) {
           this.phase = this.management.installationState === 'installed' ? 'needs-restart' : 'limited'
           this.reason = this.management.installationState === 'installed' ? 'restart' : 'setup-failed'
           if (this.management.installationState !== 'installed') await this.enable({ silent: true })
           return
         }
+        this.automaticUpdatesSuppressed = false
       }
     }
     if (this.deps.sessionNavigation.activeSessionId === undefined) {

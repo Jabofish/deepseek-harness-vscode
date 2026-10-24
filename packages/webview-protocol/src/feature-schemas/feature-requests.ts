@@ -72,6 +72,7 @@ export const featureRequestSchema = z.discriminatedUnion('type', [
           action: z.enum([
             'retry',
             'setup',
+            'restore',
             'cancel-install',
             'restart',
             'undo',

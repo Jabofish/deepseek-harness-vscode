@@ -117,6 +117,11 @@ export function AppSettingsDrawer({
       dshUpdateProgress={state.dshUpdateProgress}
       onCheckDshUpdates={(force) => store.checkDshUpdates(force)}
       onInstallDshVersion={(version) => store.installDshVersion(version)}
+      onShowDshUpdateOutput={() => store.runtimeAction('show-output')}
+      onRestartDsh={async () => {
+        await store.reconnect()
+        await store.checkDshUpdates(true)
+      }}
       theme={themePreference}
       onThemeChange={setThemePreference}
       locale={locale}

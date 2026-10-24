@@ -403,7 +403,7 @@ describe('ProtocolClient', () => {
         payload: { version: '0.1.1-rc.1' },
       })
 
-      expect(setTimeoutSpy.mock.calls.some(([, timeout]) => timeout === 13 * 60_000)).toBe(true)
+      expect(setTimeoutSpy.mock.calls.some(([, timeout]) => timeout === 24 * 60_000)).toBe(true)
       client.handle({
         protocolVersion: PROTOCOL_VERSION,
         message: { type: 'response', requestId: 'install-1', ok: true, payload: { status: 'ready' } },

@@ -5,27 +5,24 @@ import type {
   DshUpdateSnapshot,
 } from '@dsh-vscode/domain'
 import { AppError } from '@dsh-vscode/domain'
-import {
-  DSH_PACKAGE_NAME,
-  isDshPackageVersion as isDshSemVerVersion,
-  redactText,
-} from '@dsh-vscode/dsh-adapter'
+import { DSH_PACKAGE_NAME, isDshPackageVersion as isDshSemVerVersion } from '@dsh-vscode/dsh-adapter'
 
 import { isSupportedNodeVersion } from './install-runtime.js'
 import {
   RUNTIME_INSTALL_MAX_BUFFER,
   RUNTIME_INSTALL_TIMEOUT_MS,
   runtimeInstallationFailureMessage,
+  withNpmFetchDefaults,
 } from './runtime-installation.js'
 
-const UPDATE_CHECK_TIMEOUT_MS = 30_000
+const UPDATE_CHECK_TIMEOUT_MS = 60_000
 const UPDATE_MAX_BUFFER = RUNTIME_INSTALL_MAX_BUFFER
-const ANSI_ESCAPE_PATTERN = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, 'gu')
 export interface RuntimeCommandOptions {
   readonly timeout: number
   readonly maxBuffer: number
   readonly env?: NodeJS.ProcessEnv
   readonly signal?: AbortSignal
+  readonly onOutput?: (text: string, stream: 'stdout' | 'stderr') => void
 }
 
 export interface RuntimeCommandResult {
@@ -48,6 +45,8 @@ export interface DshRuntimeUpdaterDependencies {
   readonly environment?: () => NodeJS.ProcessEnv
   readonly now?: () => Date
   readonly nodeSupported?: () => boolean
+  readonly activeVersion?: () => string | undefined
+  readonly canRestart?: () => boolean
 }
 
 interface RegistryMetadata {
@@ -60,14 +59,29 @@ export class DshRuntimeUpdater {
   private cached: DshUpdateSnapshot | undefined
   private inFlight: Promise<DshUpdateSnapshot> | undefined
   private metadata: RegistryMetadata | undefined
+  private revision = 0
+  private installing: { readonly version: string; readonly operation: Promise<DshUpdateSnapshot> } | undefined
 
   public constructor(private readonly dependencies: DshRuntimeUpdaterDependencies) {}
 
   public checkForUpdates(force = false, signal?: AbortSignal): Promise<DshUpdateSnapshot> {
-    if (!force && this.cached !== undefined) return Promise.resolve(this.cached)
+    if (this.installing !== undefined) return this.installing.operation
+    if (
+      !force &&
+      this.cached?.status === 'ready' &&
+      (this.dependencies.now?.().getTime() ?? Date.now()) - Date.parse(this.cached.checkedAt) < 30_000
+    )
+      return Promise.resolve(this.cached)
     if (this.inFlight !== undefined) return this.inFlight
 
-    const operation = this.checkOnce(signal)
+    const revision = ++this.revision
+    const operation = this.checkOnce(signal, revision).catch((error: unknown) => {
+      if (revision === this.revision) {
+        this.cached = undefined
+        this.emitProgress({ phase: 'failed' })
+      }
+      throw error
+    })
     this.inFlight = operation
     void operation.then(
       () => {
@@ -80,7 +94,38 @@ export class DshRuntimeUpdater {
     return operation
   }
 
-  public async installVersion(version: string, signal?: AbortSignal): Promise<DshUpdateSnapshot> {
+  public installVersion(version: string, signal?: AbortSignal): Promise<DshUpdateSnapshot> {
+    if (this.installing !== undefined) {
+      if (this.installing.version === version.trim()) return this.installing.operation
+      return Promise.reject(
+        new AppError({
+          code: 'BACKEND_BUSY',
+          message: 'A DSH installation is already running.',
+          retryable: true,
+        }),
+      )
+    }
+    const revision = ++this.revision
+    this.inFlight = undefined
+    this.cached = undefined
+    const operation = this.runInstall(version, signal, revision).catch((error: unknown) => {
+      this.cached = undefined
+      this.emitProgress({ phase: 'failed', version: version.trim() })
+      throw error
+    })
+    this.installing = { version: version.trim(), operation }
+    const release = (): void => {
+      if (this.installing?.operation === operation) this.installing = undefined
+    }
+    void operation.then(release, release)
+    return operation
+  }
+
+  private async runInstall(
+    version: string,
+    signal: AbortSignal | undefined,
+    revision: number,
+  ): Promise<DshUpdateSnapshot> {
     const requested = version.trim()
     if (!isDshPackageVersion(requested))
       throw updateError(
@@ -96,15 +141,8 @@ export class DshRuntimeUpdater {
       )
 
     this.emitProgress({ phase: 'checking', version: requested })
-    let checked: DshUpdateSnapshot
-    try {
-      checked = await this.checkForUpdates(false, signal)
-    } catch (error) {
-      this.emitProgress({ phase: 'failed', version: requested })
-      throw error
-    }
+    const checked = await this.checkOnce(signal, revision, false)
     if (checked.status !== 'ready' || !checked.availableVersions.includes(requested)) {
-      this.emitProgress({ phase: 'failed', version: requested })
       throw updateError(
         'metadata-unavailable',
         'The selected DSH version could not be verified against the upstream registry.',
@@ -121,20 +159,39 @@ export class DshRuntimeUpdater {
         checked.currentVersion !== undefined && checked.currentVersion !== requested
           ? { ...checked, restartRequired: true }
           : checked
-      this.emitProgress({ phase: 'completed', version: requested })
+      this.emitProgress({ phase: 'completed', version: requested, snapshot: this.cached })
       return this.cached
     }
 
-    this.emitProgress({ phase: 'downloading', version: requested })
+    const startedAt = Date.now()
+    let lastPublished = 0
+    this.cached = undefined
+    this.emitProgress({ phase: 'downloading', version: requested, startedAt })
     try {
       await this.dependencies.execute(
         this.dependencies.npmExecutable(),
-        ['install', '--global', `${DSH_PACKAGE_NAME}@${requested}`],
-        this.commandOptions(RUNTIME_INSTALL_TIMEOUT_MS, signal),
+        [
+          'install',
+          '--global',
+          `${DSH_PACKAGE_NAME}@${requested}`,
+          '--no-audit',
+          '--no-fund',
+          '--loglevel=http',
+        ],
+        {
+          ...this.commandOptions(RUNTIME_INSTALL_TIMEOUT_MS, signal),
+          onOutput: () => {
+            const now = Date.now()
+            if (revision === this.revision && now - lastPublished >= 1_000) {
+              lastPublished = now
+              this.emitProgress({ phase: 'downloading', version: requested, startedAt, lastActivityAt: now })
+            }
+          },
+        },
       )
     } catch (error) {
+      this.cached = undefined
       if (error instanceof AppError && error.code === 'BACKEND_BUSY') throw error
-      this.emitProgress({ phase: 'failed', version: requested })
       if (isCancellation(error, signal)) throw cancelledError(error)
       if (isMissingExecutable(error))
         throw updateError(
@@ -150,14 +207,12 @@ export class DshRuntimeUpdater {
           'The selected DSH version could not be installed. Check the npm install log and try again.',
         true,
         error,
-        failureMessage === undefined ? runtimeCommandFailureDetail(error) : undefined,
       )
     }
 
-    this.emitProgress({ phase: 'verifying', version: requested })
-    const globalVersion = await this.readGlobalVersion(signal)
+    this.emitProgress({ phase: 'verifying', version: requested, startedAt })
+    const globalVersion = await this.readGlobalVersion()
     if (globalVersion !== requested) {
-      this.emitProgress({ phase: 'failed', version: requested })
       throw updateError(
         'verify-failed',
         'DSH installation finished, but the selected global version could not be verified.',
@@ -166,9 +221,8 @@ export class DshRuntimeUpdater {
     }
     let runtime: DshRuntime | undefined
     try {
-      runtime = await this.dependencies.locateRuntime(signal)
-    } catch (error) {
-      if (isCancellation(error, signal)) throw cancelledError(error)
+      runtime = await this.dependencies.locateRuntime()
+    } catch {
       // The package was verified through npm global state. A separately
       // configured executable may still be broken, so do not turn a completed
       // package update into a false install failure.
@@ -176,44 +230,61 @@ export class DshRuntimeUpdater {
     }
     const metadata = this.metadata ?? metadataFromSnapshot(checked)
     const snapshot = this.snapshot('ready', runtime, globalVersion, metadata)
-    this.cached = {
-      ...snapshot,
-      ...(runtime !== undefined && runtime.version !== requested ? { restartRequired: true } : {}),
-    }
-    this.emitProgress({ phase: 'completed', version: requested })
+    this.cached = snapshot
+    this.emitProgress({ phase: 'completed', version: requested, startedAt, snapshot: this.cached })
     return this.cached
   }
 
-  private async checkOnce(signal?: AbortSignal): Promise<DshUpdateSnapshot> {
-    this.emitProgress({ phase: 'checking' })
+  private async checkOnce(
+    signal: AbortSignal | undefined,
+    revision: number,
+    progress = true,
+  ): Promise<DshUpdateSnapshot> {
+    if (progress) this.emitProgress({ phase: 'checking' })
     const checkedAt = this.timestamp()
-    const [runtimeResult, metadataResult] = await Promise.allSettled([
+    const [runtimeResult, metadataResult, globalResult] = await Promise.allSettled([
       this.dependencies.locateRuntime(signal),
       this.readMetadata(signal),
+      this.readGlobalVersion(signal),
     ])
-    if (isRejectedCancellation(runtimeResult, signal) || isRejectedCancellation(metadataResult, signal))
+    // Another surface may have installed DSH while this registry request was pending.
+    if (revision !== this.revision)
+      return this.installing?.operation ?? this.cached ?? this.checkForUpdates(true, signal)
+    if (
+      signal?.aborted === true ||
+      isRejectedCancellation(runtimeResult, signal) ||
+      isRejectedCancellation(metadataResult, signal) ||
+      isRejectedCancellation(globalResult, signal)
+    )
       throw cancelledError(signal?.reason)
 
     const runtime = runtimeResult.status === 'fulfilled' ? runtimeResult.value : undefined
+    const currentVersion = this.dependencies.activeVersion?.() ?? runtime?.version
+    const globalVersion = globalResult.status === 'fulfilled' ? globalResult.value : undefined
     if (metadataResult.status !== 'fulfilled') {
       const snapshot: DshUpdateSnapshot = {
         status: 'unavailable',
-        ...(runtime === undefined ? {} : { currentVersion: runtime.version, currentSource: runtime.source }),
+        ...(currentVersion === undefined ? {} : { currentVersion }),
+        ...(runtime === undefined ? {} : { currentSource: runtime.source }),
+        ...(globalVersion === undefined ? {} : { globalVersion }),
         availableVersions: [],
         updateAvailable: false,
         checkedAt,
         failure: failureFor(metadataResult.reason),
       }
-      this.cached = snapshot
-      this.emitProgress({ phase: 'failed' })
+      if (revision === this.revision) {
+        this.cached = undefined
+        if (progress) this.emitProgress({ phase: 'failed' })
+      }
       return snapshot
     }
 
-    this.metadata = metadataResult.value
-    const globalVersion = await this.readGlobalVersion(signal)
+    if (revision === this.revision) this.metadata = metadataResult.value
     const snapshot = this.snapshot('ready', runtime, globalVersion, metadataResult.value, checkedAt)
-    this.cached = snapshot
-    this.emitProgress({ phase: 'completed' })
+    if (revision === this.revision) {
+      this.cached = snapshot
+      if (progress) this.emitProgress({ phase: 'completed' })
+    }
     return snapshot
   }
 
@@ -228,7 +299,7 @@ export class DshRuntimeUpdater {
   private async readMetadata(signal?: AbortSignal): Promise<RegistryMetadata> {
     const result = await this.dependencies.execute(
       this.dependencies.npmExecutable(),
-      ['view', DSH_PACKAGE_NAME, '--json'],
+      ['view', DSH_PACKAGE_NAME, 'versions', 'dist-tags', '--json'],
       this.commandOptions(UPDATE_CHECK_TIMEOUT_MS, signal),
     )
     return parseNpmMetadata(result.stdout)
@@ -239,12 +310,17 @@ export class DshRuntimeUpdater {
       const result = await this.dependencies.execute(
         this.dependencies.npmExecutable(),
         ['list', '--global', DSH_PACKAGE_NAME, '--depth=0', '--json'],
-        this.commandOptions(UPDATE_CHECK_TIMEOUT_MS, signal),
+        this.commandOptions(15_000, signal),
       )
       return parseGlobalVersion(result.stdout)
     } catch (error) {
       if (isCancellation(error, signal)) throw error
-      return undefined
+      return typeof error === 'object' &&
+        error !== null &&
+        'stdout' in error &&
+        typeof error.stdout === 'string'
+        ? parseGlobalVersion(error.stdout)
+        : undefined
     }
   }
 
@@ -256,15 +332,16 @@ export class DshRuntimeUpdater {
     checkedAt = this.timestamp(),
   ): DshUpdateSnapshot {
     const latestVersion = metadata.versions[0]
-    const currentVersion = runtime?.version
+    const currentVersion = this.dependencies.activeVersion?.() ?? runtime?.version
+    const installedVersion = globalVersion ?? currentVersion
     const updateAvailable =
       latestVersion !== undefined &&
-      [currentVersion, globalVersion].some(
-        (installed) => installed !== undefined && compareVersions(latestVersion, installed) > 0,
-      )
+      installedVersion !== undefined &&
+      compareVersions(latestVersion, installedVersion) > 0
     return {
       status,
-      ...(runtime === undefined ? {} : { currentVersion: runtime.version, currentSource: runtime.source }),
+      ...(currentVersion === undefined ? {} : { currentVersion }),
+      ...(runtime === undefined ? {} : { currentSource: runtime.source }),
       ...(globalVersion === undefined ? {} : { globalVersion }),
       ...(latestVersion === undefined ? {} : { latestVersion }),
       ...(metadata.latestTagVersion === undefined ? {} : { latestTagVersion: metadata.latestTagVersion }),
@@ -272,14 +349,19 @@ export class DshRuntimeUpdater {
       availableVersions: metadata.versions,
       updateAvailable,
       checkedAt,
+      ...(this.dependencies.canRestart === undefined ? {} : { canRestart: this.dependencies.canRestart() }),
+      ...(globalVersion !== undefined && currentVersion !== undefined && globalVersion !== currentVersion
+        ? { restartRequired: true }
+        : {}),
     }
   }
 
   private commandOptions(timeout: number, signal?: AbortSignal): RuntimeCommandOptions {
+    const checking = timeout < RUNTIME_INSTALL_TIMEOUT_MS
     return {
       timeout,
       maxBuffer: UPDATE_MAX_BUFFER,
-      ...(this.dependencies.environment === undefined ? {} : { env: this.dependencies.environment() }),
+      env: withNpmFetchDefaults(this.dependencies.environment?.() ?? {}, checking),
       ...(signal === undefined ? {} : { signal }),
     }
   }
@@ -474,29 +556,4 @@ function updateError(
       ...(detail === undefined ? {} : { detail }),
     },
   })
-}
-
-/** Keep npm failure output useful without forwarding credentials or a log dump. */
-function runtimeCommandFailureDetail(error: unknown): string | undefined {
-  const record = asRecord(error)
-  const candidates = [record?.stderr, record?.stdout, error instanceof Error ? error.message : undefined]
-  for (const candidate of candidates) {
-    if (typeof candidate !== 'string') continue
-    const actionableLines = candidate
-      .replace(ANSI_ESCAPE_PATTERN, '')
-      .replace(/&#x20;/giu, ' ')
-      .replace(/&#32;/gu, ' ')
-      .replace(/\\@/gu, '@')
-      .split(/\r?\n/gu)
-      .map((line) => line.trim())
-      .filter((line) => line !== '' && !isNpmWarningLine(line))
-    const compact = actionableLines.join(' ').replace(/\s+/gu, ' ').trim()
-    if (compact === '') continue
-    return redactText(compact, 480)
-  }
-  return undefined
-}
-
-function isNpmWarningLine(line: string): boolean {
-  return /^(?:npm\s+warn|npm\s+WARN)\b/iu.test(line) || /^warning\b.*\bdeprecated\b/iu.test(line)
 }

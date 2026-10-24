@@ -166,6 +166,7 @@ export async function run(): Promise<void> {
         // through makes Code.exe execute the workspace path as a Node script.
         ELECTRON_RUN_AS_NODE: undefined,
         ...(invalidSettings ? { DSH_VSCODE_E2E_INVALID_SETTINGS: '1' } : {}),
+        ...(process.env.DSH_VSCODE_E2E_COMPANION === '1' ? { DSH_VSCODE_E2E_COMPANION: '1' } : {}),
         // The Extension Host passes its environment to the DSH it starts, and
         // the suite refuses to connect unless both point at the same
         // test-owned home.

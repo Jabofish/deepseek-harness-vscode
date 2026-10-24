@@ -1,4 +1,5 @@
-import { readFile, stat, mkdir, readdir, writeFile } from 'node:fs/promises'
+import { readFile, stat, mkdir, readdir, writeFile, copyFile } from 'node:fs/promises'
+import { constants } from 'node:fs'
 import { createHash } from 'node:crypto'
 import path from 'node:path'
 import { gunzip } from 'node:zlib'
@@ -54,6 +55,26 @@ export async function listCompanionArchives(storage: string): Promise<readonly C
     }
   }
   return result
+}
+/** HMR rejects the currently saved tarball path. Keep one immutable alternate per hash for repair. */
+export async function alternateCompanionArchive(
+  archive: CompanionArchive,
+  storage: string,
+): Promise<CompanionArchive> {
+  const cached = await cacheCompanionArchive(archive.file, storage)
+  const directory = path.join(storage, 'editor-companion', 'reinstall')
+  await mkdir(directory, { recursive: true })
+  const file = path.join(directory, path.basename(cached.file))
+  try {
+    await copyFile(cached.file, file, constants.COPYFILE_EXCL)
+  } catch (error) {
+    if (!(typeof error === 'object' && error !== null && 'code' in error && error.code === 'EEXIST'))
+      throw error
+  }
+  const bytes = await readFile(file)
+  if (createHash('sha256').update(bytes).digest('hex') !== path.basename(cached.file, '.tgz'))
+    throw new EditorCompanionError('invalid-response')
+  return { file, ...(await inspectCompanionArchive(file)) }
 }
 /** Read only the bounded package manifest; never extract files or run package code. */
 export async function inspectCompanionArchive(file: string): Promise<{ readonly version: string }> {
