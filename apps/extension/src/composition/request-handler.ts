@@ -113,6 +113,7 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     stopJobFollow,
     stopAllJobFollows,
     editorContextProvider,
+    sessionWatch,
   } = deps
   const publicValue = (value: unknown): unknown =>
     projectPublicValue(value, [
@@ -195,6 +196,16 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
   // Assigned after the router exists (the manager routes panel messages through
   // it); no request can arrive before the gateway has finished composing.
   const editorChatSurfaces: { current?: EditorChatSurfaceManager } = {}
+  const selectionRequests = new Map<string, object>()
+  const syncSessionDisplay = (surfaceId: string): void => {
+    const surface = surfaces.get(surfaceId)
+    sessionWatch.surfaceVisibilityChanged(surfaceId, surface?.visible === true && surface.isReady)
+  }
+  const selectDisplayedSession = (surfaceId: string, sessionId: string): void => {
+    const surface = surfaces.get(surfaceId)
+    if (surface === undefined) return
+    sessionWatch.surfaceDisplaysSession(surfaceId, sessionId, surface.visible && surface.isReady)
+  }
   const surfaceRoutesUnavailable = (): AppError =>
     new AppError({
       code: 'FEATURE_DISABLED',
@@ -339,7 +350,11 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
         if (surfaceId === undefined || surfaces.get(surfaceId)?.kind !== 'editor')
           throw surfaceRoutesUnavailable()
         manager.bind(surfaceId, request.payload.sessionId, editorTabTitle(request.payload.title))
-      } else manager.open(request.payload.sessionId, editorTabTitle(request.payload.title))
+        selectDisplayedSession(surfaceId, request.payload.sessionId)
+      } else {
+        const surface = manager.open(request.payload.sessionId, editorTabTitle(request.payload.title))
+        selectDisplayedSession(surface.surfaceId, request.payload.sessionId)
+      }
       return { surface: 'editor' as const }
     }
     if (request.type === 'surface.moveToSidebar') {
@@ -347,6 +362,11 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
       return { surface: 'sidebar' as const }
     }
     if (isSessionRequest(request)) {
+      const selection = ['session.open', 'session.create', 'session.fork'].includes(request.type)
+        ? {}
+        : undefined
+      const targetSurface = surfaceId ?? SIDEBAR_SURFACE_ID
+      if (selection !== undefined) selectionRequests.set(targetSurface, selection)
       const result = await sessionRequestFor(surfaceId)(request, signal)
       // A rename is the one session mutation that changes a tab label while the
       // tab is open; the Host applies the accepted title so a second Webview
@@ -360,15 +380,29 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
         if (typeof title === 'string')
           void postEvent('session.title', { sessionId: request.payload.sessionId, title })
       }
-      if (request.type === 'session.open') sessionNavigation.select(request.payload.sessionId)
+      // Only an accepted current selection owns display demand; an obsolete
+      // open reply must not replace the session a rapid switch already chose.
+      const currentSelection =
+        selection !== undefined &&
+        selectionRequests.get(targetSurface) === selection &&
+        !signal.aborted &&
+        surfaces.get(targetSurface) !== undefined
+      if (request.type === 'session.open' && currentSelection) {
+        selectDisplayedSession(targetSurface, request.payload.sessionId)
+        sessionNavigation.select(request.payload.sessionId)
+      }
       if (
         (request.type === 'session.create' || request.type === 'session.fork') &&
         typeof result === 'object' &&
         result !== null &&
         'id' in result &&
         typeof result.id === 'string'
-      )
-        sessionNavigation.select(result.id)
+      ) {
+        if (currentSelection) {
+          selectDisplayedSession(targetSurface, result.id)
+          sessionNavigation.select(result.id)
+        }
+      }
       if (
         [
           'session.create',
@@ -797,6 +831,8 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     editorContextProvider.dispose()
   }
   const onSurfaceWorkCancelled = (disposedSurfaceId: string): void => {
+    selectionRequests.delete(disposedSurfaceId)
+    sessionWatch.surfaceReleased(disposedSurfaceId)
     deps.transcript.remove(disposedSurfaceId)
     router.cancelSurface(disposedSurfaceId)
     runSharedSurfaceTeardownIfIdle()
@@ -835,14 +871,21 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     },
     onBecameReady: () => {
       deps.transcript.setVisible(SIDEBAR_SURFACE_ID, provider.visible)
+      syncSessionDisplay(SIDEBAR_SURFACE_ID)
     },
     onViewDisposed: () => {
       openingConnection?.abort.abort()
       openingConnection = undefined
       onSurfaceWorkCancelled(SIDEBAR_SURFACE_ID)
     },
-    onSurfaceClosed: () => surfaces.unregister(SIDEBAR_SURFACE_ID),
-    onVisibilityChanged: (visible) => deps.transcript.setVisible(SIDEBAR_SURFACE_ID, visible),
+    onSurfaceClosed: () => {
+      surfaces.unregister(SIDEBAR_SURFACE_ID)
+      sessionWatch.surfaceReleased(SIDEBAR_SURFACE_ID)
+    },
+    onVisibilityChanged: (visible) => {
+      deps.transcript.setVisible(SIDEBAR_SURFACE_ID, visible)
+      syncSessionDisplay(SIDEBAR_SURFACE_ID)
+    },
     onMessageError: logWebviewMessageError,
   })
   const editorSurfaceManager = new EditorChatSurfaceManager({
@@ -852,10 +895,13 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     onMessageError: logWebviewMessageError,
     onBecameReady: (surface) => {
       deps.transcript.setVisible(surface.surfaceId, surface.visible)
+      syncSessionDisplay(surface.surfaceId)
     },
     onDisposed: (surface) => onSurfaceWorkCancelled(surface.surfaceId),
-    onVisibilityChanged: (surface) =>
-      deps.transcript.setVisible(surface.surfaceId, surface.visible && surface.isReady),
+    onVisibilityChanged: (surface) => {
+      deps.transcript.setVisible(surface.surfaceId, surface.visible && surface.isReady)
+      syncSessionDisplay(surface.surfaceId)
+    },
     onCountChanged: (count) => {
       // Tab counts are advisory and never take over sidebar navigation.
       void postEvent('ui.surface.handoff', { editorChats: count })
@@ -872,7 +918,8 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     if (coordinator.getState().kind !== 'connected') await connect(signal)
     const session = await requireCurrentWorkspaceSession(sessionId, signal)
     if (signal.aborted) return
-    editorSurfaceManager.open(sessionId, editorTabTitle(session.title), column)
+    const surface = editorSurfaceManager.open(sessionId, editorTabTitle(session.title), column)
+    selectDisplayedSession(surface.surfaceId, sessionId)
   }
   const sessionNavigation = createSessionNavigation(
     {

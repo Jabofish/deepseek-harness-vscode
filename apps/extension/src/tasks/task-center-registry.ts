@@ -261,19 +261,20 @@ export class TaskCenterRegistry implements TaskRepository {
     signal?: AbortSignal,
   ): Promise<readonly TaskSummary[]> {
     const backend = this.requireBackend()
-    const [session, jobs, goals, subagents] = await Promise.all([
-      backend.sessions.get(summary.id, signal),
+    // Directory summaries already carry every session field used below. A full
+    // get also opens a durable follow stream and replays history on alpha+;
+    // viewing workspace tasks must not follow every historical conversation.
+    const [jobs, goals, subagents] = await Promise.all([
       backend.jobs.list(summary.id, signal),
       backend.goals.list(summary.id, signal),
       backend.subagents.list(summary.id, signal),
     ])
-    if (session.id !== summary.id) throw unavailable('the workspace session identity')
     return [
-      this.sessionTask(session, workspaceFolderId, subagents),
-      ...goals.map((goal) => this.goalTask(goal, session, workspaceFolderId)),
-      ...jobs.map((job) => this.jobTask(job, session, workspaceFolderId)),
-      ...this.subagentTasks(subagents, session, workspaceFolderId),
-      ...this.interactionTasks(session, workspaceFolderId),
+      this.sessionTask(summary, workspaceFolderId, subagents),
+      ...goals.map((goal) => this.goalTask(goal, summary, workspaceFolderId)),
+      ...jobs.map((job) => this.jobTask(job, summary, workspaceFolderId)),
+      ...this.subagentTasks(subagents, summary, workspaceFolderId),
+      ...this.interactionTasks(summary, workspaceFolderId),
     ]
   }
 

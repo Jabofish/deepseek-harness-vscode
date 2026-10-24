@@ -32,7 +32,6 @@ function backend(
     readonly interrupt?: ReturnType<typeof vi.fn>
     readonly subagentMode?: 'one-shot' | 'continuable'
     readonly sessions?: readonly SessionSummary[]
-    readonly sessionErrors?: readonly string[]
   } = {},
 ): TestBackend {
   const session =
@@ -63,9 +62,7 @@ function backend(
   const interrupt = overrides.interrupt ?? vi.fn().mockResolvedValue(undefined)
   const sessionItems = overrides.sessions ?? [session]
   const sessionById = new Map(sessionItems.map((item) => [item.id, item]))
-  const sessionErrors = new Set(overrides.sessionErrors ?? [])
   const getSession = vi.fn().mockImplementation((sessionId: string) => {
-    if (sessionErrors.has(sessionId)) return Promise.reject(new Error(`Cannot read ${sessionId}`))
     const found = sessionById.get(sessionId)
     return Promise.resolve(found ?? session)
   })
@@ -176,7 +173,7 @@ describe('TaskCenterRegistry', () => {
     expect(tasks.every((task) => task.workspaceFolderId === 'folder-1')).toBe(true)
   })
 
-  it('composes a bounded workspace view from authoritative session repositories', async () => {
+  it('composes workspace tasks from directory summaries without reading every conversation history', async () => {
     const background: SessionSummary = {
       id: 'session-2',
       workspaceId: 'dsh-workspace-1',
@@ -221,6 +218,7 @@ describe('TaskCenterRegistry', () => {
       true,
     )
     expect(Reflect.get(current.sessions, 'list')).toHaveBeenCalledWith({}, undefined)
+    expect(Reflect.get(current.sessions, 'get')).not.toHaveBeenCalled()
 
     const backgroundTask = snapshot.items.find((task) => task.taskId === 'session:session-2')
     if (backgroundTask === undefined) throw new Error('workspace session task was not projected')
@@ -229,7 +227,7 @@ describe('TaskCenterRegistry', () => {
     expect(Reflect.get(current.sessions, 'cancel')).toHaveBeenCalledWith('session-2', undefined)
   })
 
-  it('keeps readable workspace tasks bounded when one session read fails', async () => {
+  it('keeps readable workspace tasks bounded when one task metadata read fails', async () => {
     const background: SessionSummary = {
       id: 'session-2',
       workspaceId: 'dsh-workspace-1',
@@ -239,7 +237,8 @@ describe('TaskCenterRegistry', () => {
       createdAt: '2026-08-29T00:02:00.000Z',
       updatedAt: '2026-08-29T00:03:00.000Z',
     }
-    const current = backend({ sessions: [background], sessionErrors: ['session-2'] })
+    const current = backend({ sessions: [background] })
+    vi.spyOn(current.jobs, 'list').mockRejectedValue(new Error('Cannot read background tasks'))
     const registry = new TaskCenterRegistry({
       resolveSessionWorkspaceFolderId: () => 'folder-1',
       workspaceFolderIds: () => ['folder-1'],

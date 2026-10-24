@@ -24,6 +24,7 @@
     "../apps/extension/src/backend/path-safety.ts",
     "../apps/extension/src/backend/skill-documents.ts",
     "../apps/extension/src/backend/process-supervisor.ts",
+    "../apps/extension/src/backend/session-watch-coordinator.ts",
     "../apps/extension/src/backend/endpoint-network.ts",
     "../apps/extension/src/backend/external-connection-access.ts",
     "../apps/extension/src/backend/credential-scope.ts",

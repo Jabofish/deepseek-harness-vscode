@@ -1,4 +1,4 @@
-import { transcriptWindowFixture } from '../view/transcript-window.fixture.js'
+import { transcriptWindowFixture, sessionWatchFixture } from '../view/transcript-window.fixture.js'
 import { describe, expect, it, vi } from 'vitest'
 import { AppError } from '@dsh-vscode/domain'
 import type * as EditorFiles from './editor-files.js'
@@ -58,6 +58,7 @@ describe('open-file context route', () => {
       postEventTo: () => Promise.resolve(true),
       surfaces: new WebviewSurfaceRegistry(),
       transcript: transcriptWindowFixture(),
+      sessionWatch: sessionWatchFixture(),
       post: (message: unknown) => {
         sent.push(message)
         return Promise.resolve(true)
@@ -106,6 +107,7 @@ describe('open-file context route', () => {
       postEventTo: () => Promise.resolve(true),
       surfaces: new WebviewSurfaceRegistry(),
       transcript: transcriptWindowFixture(),
+      sessionWatch: sessionWatchFixture(),
       post: (message: unknown) => {
         sent.push(message)
         return Promise.resolve(true)

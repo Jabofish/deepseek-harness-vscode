@@ -5,6 +5,7 @@ import { AccountLifecycleHost } from '../account/account-lifecycle-host.js'
 import { projectPluginInstallProgress } from '../plugins/plugin-manager-event-projection.js'
 import type { ChangeSetTracker } from '../changes/change-set-tracker.js'
 import type { TaskCenterRegistry } from '../tasks/task-center-registry.js'
+import type { SessionWatchController } from '../backend/session-watch-coordinator.js'
 import type { EditorContextProvider } from '../editor/editor-context-provider.js'
 import type { RedactedDiagnostics } from '../backend/diagnostics.js'
 import type { EventLoopLagMonitor } from '../backend/event-loop-lag.js'
@@ -22,6 +23,7 @@ export interface BackendAttachDependencies {
   readonly invalidateCurrentWorkspaceSessionDetails: (this: void) => void
   readonly changeTracker: ChangeSetTracker
   readonly taskRegistry: TaskCenterRegistry
+  readonly sessionWatch: SessionWatchController
   readonly editorContextProvider: EditorContextProvider
   readonly currentWorkspaceFolderId: (this: void) => string | undefined
   readonly taskFocus: TaskFocusState
@@ -56,6 +58,7 @@ export function createBackendAttach(deps: BackendAttachDependencies): BackendAtt
     invalidateCurrentWorkspaceSessionDetails,
     changeTracker,
     taskRegistry,
+    sessionWatch,
     editorContextProvider,
     currentWorkspaceFolderId,
     taskFocus,
@@ -73,10 +76,11 @@ export function createBackendAttach(deps: BackendAttachDependencies): BackendAtt
     accountLifecycleHost = undefined
     await previous?.dispose()
   }
-  const detachSessionAdapters = (): void => {
+  const detachSessionAdapters = (preserveSessionWatch = false): void => {
     attachedBackend = undefined
     changeTracker.detach()
     taskRegistry.detach()
+    if (!preserveSessionWatch) sessionWatch.detach()
     editorContextProvider.dispose()
     taskFocus.clearSessionId()
   }
@@ -88,6 +92,7 @@ export function createBackendAttach(deps: BackendAttachDependencies): BackendAtt
     invalidateCurrentWorkspaceSessionDetails()
     changeTracker.attach(backend, currentWorkspaceFolderId)
     taskRegistry.attach(backend, currentWorkspaceFolderId)
+    sessionWatch.attach(backend)
     backendService.attach(backend, (event) => {
       if (event.type === 'connection.restored') {
         // The Adapter already owns bounded transport retries. A valid frame
@@ -142,7 +147,10 @@ export function createBackendAttach(deps: BackendAttachDependencies): BackendAtt
         })
         void disposeAccountLifecycleHost()
         invalidateCurrentWorkspaceSessionDetails()
-        detachSessionAdapters()
+        // Keep the policy listening across the transport's own retry: restored
+        // and its first interaction can arrive before async attach completes.
+        // Explicit disconnect/backend replacement still detaches everything.
+        detachSessionAdapters(true)
       }
       void postBackendEvent(backend, event)
     })

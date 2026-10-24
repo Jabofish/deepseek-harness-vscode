@@ -36,6 +36,7 @@ import { createHostEventPipeline, isBulkEvent } from './composition/host-event-p
 import { createChangeCheckpointTaskAssembly } from './composition/change-checkpoint-task-assembly.js'
 import { createJobFollowHost } from './composition/job-follow-host.js'
 import { createBackendAttach } from './composition/backend-attach.js'
+import { createSessionWatchController } from './backend/session-watch-coordinator.js'
 import { createFeatureContext } from './composition/feature-context.js'
 import { createFeatureRequestHandler } from './composition/feature-request-handler.js'
 import { createRequestGateway } from './composition/request-handler.js'
@@ -279,6 +280,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     diagnostics,
     requireCurrentWorkspaceSession,
   })
+  const sessionWatch = createSessionWatchController()
   const { attach, disposeAccountLifecycleHost, getAccountLifecycleHost, detachSessionAdapters } =
     createBackendAttach({
       backendService,
@@ -290,6 +292,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       invalidateCurrentWorkspaceSessionDetails,
       changeTracker,
       taskRegistry,
+      sessionWatch,
       editorContextProvider,
       currentWorkspaceFolderId,
       taskFocus,
@@ -384,6 +387,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     runtimeUseCases,
     runtimeLocator,
     coordinator,
+    sessionWatch,
     extensionVersion,
     configuration,
     backendService,
@@ -471,6 +475,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     dispose: () => {
       eventLoopLag.dispose()
       transcript.dispose()
+      sessionWatch.dispose()
       disposeHostEventPipeline()
       return commands.dispose()
     },

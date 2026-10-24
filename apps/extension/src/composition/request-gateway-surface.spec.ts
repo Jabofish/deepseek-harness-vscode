@@ -1,9 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { SessionDetail } from '@dsh-vscode/domain'
 
 const host = vi.hoisted(() => {
   const panels: {
     readonly title: string
     disposeCount: number
+    receive(message: unknown): void
+    setVisible(visible: boolean): void
   }[] = []
   return {
     panels,
@@ -14,6 +17,8 @@ const host = vi.hoisted(() => {
     focusFails: false,
     deliveryFails: false,
     sessionGate: undefined as Promise<void> | undefined,
+    createGate: undefined as Promise<void> | undefined,
+    createStarted: false,
     connectCount: 0,
   }
 })
@@ -36,6 +41,8 @@ vi.mock('vscode', () => ({
     createWebviewPanel: (viewType: string, title: string) => {
       void viewType
       const listeners = new Set<() => void>()
+      const visibilityListeners = new Set<() => void>()
+      let receive: ((message: unknown) => void) | undefined
       const panel = {
         title,
         disposeCount: 0,
@@ -46,13 +53,24 @@ vi.mock('vscode', () => ({
           cspSource: 'vscode-resource:',
           asWebviewUri: (uri: unknown) => uri,
           postMessage: () => Promise.resolve(true),
-          onDidReceiveMessage: () => ({ dispose: () => undefined }),
+          onDidReceiveMessage: (listener: (message: unknown) => void) => {
+            receive = listener
+            return { dispose: () => undefined }
+          },
         },
         onDidDispose: (listener: () => void) => {
           listeners.add(listener)
           return { dispose: () => listeners.delete(listener) }
         },
-        onDidChangeViewState: () => ({ dispose: () => undefined }),
+        onDidChangeViewState: (listener: () => void) => {
+          visibilityListeners.add(listener)
+          return { dispose: () => visibilityListeners.delete(listener) }
+        },
+        receive: (message: unknown) => receive?.(message),
+        setVisible: (visible: boolean) => {
+          panel.visible = visible
+          for (const listener of visibilityListeners) listener()
+        },
         reveal: () => undefined,
         dispose: () => {
           panel.disposeCount += 1
@@ -93,9 +111,33 @@ interface Harness {
   readonly events: Sent[]
   readonly surfaces: WebviewSurfaceRegistry
   readonly teardowns: string[]
+  readonly watchShown: { readonly surfaceId: string; readonly sessionId: string }[]
+  readonly watchReleased: string[]
+  readonly watchVisibility: { readonly surfaceId: string; readonly visible: boolean }[]
   readonly openSidebar: () => void
+  readonly setSidebarVisible: (visible: boolean) => void
   readonly receive: (message: unknown) => void
   readonly rejectSession: (sessionId: string) => void
+}
+
+function detail(id: string): SessionDetail {
+  return {
+    id,
+    workspaceId: 'w1',
+    title: 'Session title',
+    blank: true,
+    status: 'idle',
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-01-01T00:00:00Z',
+    history: [],
+    configuration: {
+      preset: 'default',
+      toolMode: 'native',
+      permissionPreset: 'default',
+      planMode: false,
+      model: { providerId: 'fixture', modelId: 'fixture' },
+    },
+  }
 }
 
 function buildGateway(): Harness {
@@ -106,6 +148,8 @@ function buildGateway(): Harness {
   host.focusFails = false
   host.deliveryFails = false
   host.sessionGate = undefined
+  host.createGate = undefined
+  host.createStarted = false
   host.connectCount = 0
   const sent: Sent[] = []
   const events: Sent[] = []
@@ -123,6 +167,10 @@ function buildGateway(): Harness {
     })
   }
   const transcript = transcriptWindowFixture()
+  const watchShown: { readonly surfaceId: string; readonly sessionId: string }[] = []
+  const watchReleased: string[] = []
+  const watchVisibility: { readonly surfaceId: string; readonly visible: boolean }[] = []
+  let sidebarVisible: ((visible: boolean) => void) | undefined
   const gateway = createRequestGateway({
     transcript,
     post: (message: unknown) => {
@@ -150,6 +198,20 @@ function buildGateway(): Harness {
     },
     currentWorkspaceFolders: () => [{ uri: { fsPath: '/project' }, name: 'project', index: 0 }],
     stopAllJobFollows: () => teardowns.push('job-follows'),
+    sessionWatch: {
+      surfaceDisplaysSession: (surfaceId: string, sessionId: string) => {
+        watchShown.push({ surfaceId, sessionId })
+      },
+      surfaceReleased: (surfaceId: string) => {
+        watchReleased.push(surfaceId)
+      },
+      surfaceVisibilityChanged: (surfaceId: string, visible: boolean) => {
+        watchVisibility.push({ surfaceId, visible })
+      },
+      attach: () => undefined,
+      detach: () => undefined,
+      dispose: () => undefined,
+    },
     backendService: {
       replayEvents: () => [],
       requireBackend: () => ({ sessions: { rename: () => Promise.resolve(host.renamedTitle) } }),
@@ -160,14 +222,26 @@ function buildGateway(): Harness {
       return Promise.resolve()
     },
     coordinator: { getState: () => ({ kind: 'idle' }) },
+    workspaceFolderIdForSession: () => undefined,
+    temporaryWorkspaceManager: {},
+    ensureCurrentWorkspace: () => Promise.resolve({ id: 'w1' }),
+    modelUseCases: { resolveSessionConfiguration: () => Promise.resolve(detail('new').configuration) },
+    sessionUseCases: {
+      create: async () => {
+        host.createStarted = true
+        await host.createGate
+        return detail('created')
+      },
+    },
     requireCurrentWorkspaceSession: (sessionId: string) =>
       Promise.resolve(host.sessionGate).then(() => {
         if (rejected.has(sessionId)) throw new Error('the session is not owned by this workspace')
-        return { id: sessionId, title: 'Session title' }
+        return detail(sessionId)
       }),
   } as never)
   const openSidebar = (): void => {
-    gateway.provider.resolveWebviewView({
+    let changed: (() => void) | undefined
+    const view = {
       webview: {
         cspSource: 'vscode-resource:',
         asWebviewUri: (uri: unknown) => uri,
@@ -179,8 +253,16 @@ function buildGateway(): Harness {
       },
       visible: true,
       onDidDispose: () => ({ dispose: () => undefined }),
-      onDidChangeVisibility: () => ({ dispose: () => undefined }),
-    } as never)
+      onDidChangeVisibility: (listener: () => void) => {
+        changed = listener
+        return { dispose: () => undefined }
+      },
+    }
+    sidebarVisible = (visible) => {
+      view.visible = visible
+      changed?.()
+    }
+    gateway.provider.resolveWebviewView(view as never)
     for (const listener of [...listeners]) {
       listener({ protocolVersion: 1, message: { type: 'app.ready', requestId: 'ready-1' } })
     }
@@ -192,7 +274,11 @@ function buildGateway(): Harness {
     events,
     surfaces,
     teardowns,
+    watchShown,
+    watchReleased,
+    watchVisibility,
     openSidebar,
+    setSidebarVisible: (visible) => sidebarVisible?.(visible),
     receive: (message: unknown) => {
       for (const listener of [...listeners]) listener(message)
     },
@@ -301,6 +387,28 @@ describe('request gateway editor surface routes', () => {
     expect(harness.gateway.editorSurfaces.count).toBe(1)
   })
 
+  it('tracks actual editor visibility and readiness independently of tab lifetime', async () => {
+    const signal = new AbortController().signal
+    await harness.gateway.openDroppedSession('session-1', 2, signal)
+    expect(harness.watchShown).toEqual([{ surfaceId: 'editor:session-1', sessionId: 'session-1' }])
+    expect(harness.watchReleased).toEqual([])
+
+    const panel = host.panels[0]!
+    panel.receive(request('app.ready', 'editor-ready'))
+    await vi.waitFor(() =>
+      expect(harness.watchVisibility).toContainEqual({ surfaceId: 'editor:session-1', visible: true }),
+    )
+    panel.setVisible(false)
+    expect(harness.watchVisibility.at(-1)).toEqual({ surfaceId: 'editor:session-1', visible: false })
+    panel.setVisible(true)
+    expect(harness.watchVisibility.at(-1)).toEqual({ surfaceId: 'editor:session-1', visible: true })
+    expect(harness.watchReleased).toEqual([])
+
+    harness.gateway.editorSurfaces.close('editor:session-1')
+    expect(harness.watchReleased).toEqual(['editor:session-1'])
+    expect(harness.watchShown).toEqual([{ surfaceId: 'editor:session-1', sessionId: 'session-1' }])
+  })
+
   it('does not open a native drop cancelled during ownership validation', async () => {
     const abort = new AbortController()
     let finish = (): void => undefined
@@ -312,6 +420,34 @@ describe('request gateway editor surface routes', () => {
     finish()
     await pending
     expect(harness.gateway.editorSurfaces.count).toBe(0)
+  })
+
+  it('does not replace a newer selection when an older create request finishes late', async () => {
+    harness.openSidebar()
+    let finish!: () => void
+    host.createGate = new Promise<void>((done) => {
+      finish = done
+    })
+    const pending = harness.gateway.router.handle(
+      request('session.create', 'slow-create', { configuration: detail('new').configuration }),
+      'sidebar',
+    )
+    await vi.waitFor(() => expect(host.createStarted).toBe(true))
+    await harness.gateway.router.handle(
+      request('session.open', 'fast-open', { sessionId: 'current' }),
+      'sidebar',
+    )
+    expect(harness.sent.find((entry) => entry.requestId === 'fast-open')?.error).toBeUndefined()
+    expect(harness.watchShown).toEqual([{ surfaceId: 'sidebar', sessionId: 'current' }])
+    finish()
+    await pending
+    expect(harness.sent).toContainEqual(expect.objectContaining({ requestId: 'slow-create', ok: true }))
+    expect(harness.watchShown).toEqual([{ surfaceId: 'sidebar', sessionId: 'current' }])
+    expect(harness.gateway.sessionNavigation.activeSessionId).toBe('current')
+    harness.setSidebarVisible(false)
+    expect(harness.watchVisibility.at(-1)).toEqual({ surfaceId: 'sidebar', visible: false })
+    harness.setSidebarVisible(true)
+    expect(harness.watchVisibility.at(-1)).toEqual({ surfaceId: 'sidebar', visible: true })
   })
 
   it('opens a native-list selection in the sidebar without closing editor chats', async () => {

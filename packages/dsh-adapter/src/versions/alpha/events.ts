@@ -84,13 +84,21 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
 
   /** Start the durable follow stream for a Session the first time it is read. */
   public watchSession(sessionId: string): void {
-    if (
-      this.closed ||
-      sessionId.trim() === '' ||
-      this.archivedSessions.has(sessionId) ||
-      this.sessions.has(sessionId)
-    )
-      return
+    if (this.closed || sessionId.trim() === '' || this.archivedSessions.has(sessionId)) return
+    // A partial unwatch (`keepJobRows`) left this session's Job stream alive.
+    // Re-following must reuse it: replacing the map entry would strand the
+    // still-subscribed controller and its listeners for the rest of the
+    // connection instead of sharing one Job stream per session.
+    if (this.jobRows !== undefined && !this.jobSessions.has(sessionId)) {
+      const jobs = new DshStreamController(this.transport, (event) => this.handleObserved(event), undefined, {
+        streamSource: (signal) => this.jobRows!(sessionId, signal),
+        normalizeEvent: (frame) => normalizeJobRowsEvent(frame, sessionId),
+        closeTransport: false,
+      })
+      this.jobSessions.set(sessionId, jobs)
+      for (const listener of this.listeners) this.attach(jobs, listener, sessionId)
+    }
+    if (this.sessions.has(sessionId)) return
     const normalizeEvent = this.createSessionNormalizer?.()
     const controller = new DshStreamController(
       this.transport,
@@ -104,15 +112,6 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
     )
     this.sessions.set(sessionId, controller)
     for (const listener of this.listeners) this.attach(controller, listener, sessionId)
-    if (this.jobRows !== undefined) {
-      const jobs = new DshStreamController(this.transport, (event) => this.handleObserved(event), undefined, {
-        streamSource: (signal) => this.jobRows!(sessionId, signal),
-        normalizeEvent: (frame) => normalizeJobRowsEvent(frame, sessionId),
-        closeTransport: false,
-      })
-      this.jobSessions.set(sessionId, jobs)
-      for (const listener of this.listeners) this.attach(jobs, listener, sessionId)
-    }
   }
 
   /** Re-baseline a watched session so process-local assistant chunks are replayed. */
@@ -172,7 +171,16 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
             if (event.type === 'session.subscribed') failures.delete(sessionId)
             listener(event)
           }
-        : listener
+        : (event: BackendEvent): void => {
+            // Only the host-wide controller owns connection health. A workspace
+            // projection interruption must not invalidate live interaction ids.
+            if (
+              controller !== this.global &&
+              (event.type === 'connection.lost' || event.type === 'connection.restored')
+            )
+              return
+            listener(event)
+          }
     entries.set(
       listener,
       controller.subscribe((event) => deliverRaw(this.mapEvent(event))),
@@ -187,15 +195,16 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
     } catch {
       // Cache maintenance cannot suppress delivery or session-stream cleanup.
     }
-    // Existing sessions are lazily watched by SessionRepository.get(). A new
-    // session announced by the host must also become live immediately so its
-    // durable events are not missed between list refreshes.
-    if (mapped.type === 'session.added') this.watchSession(mapped.sessionId)
+    // Session follow streams are opened on demand: the application layer's
+    // watch policy (panels, running work, pending interactions) decides which
+    // sessions are followed. Eagerly following every `session.added` would
+    // replay each session's full history on connect and starve the transport
+    // heartbeat in workspaces with many sessions.
     if (mapped.type === 'archived.sessions.changed') {
       this.archivedSessions.clear()
       for (const sessionId of mapped.sessionIds) this.archivedSessions.add(sessionId)
-      for (const sessionId of this.sessions.keys())
-        if (this.archivedSessions.has(sessionId)) void this.unwatchSession(sessionId)
+      for (const sessionId of new Set([...this.sessions.keys(), ...this.jobSessions.keys()]))
+        if (this.archivedSessions.has(sessionId)) this.unwatchSession(sessionId)
     }
     // Symmetric lifecycle: a session the host removed must not keep a follow
     // stream. Its server stream is gone, so the abandoned controller would
@@ -203,7 +212,7 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
     // no longer exists. SessionRepository.get() re-watches on later access.
     if (mapped.type === 'session.removed') {
       this.archivedSessions.delete(mapped.sessionId)
-      void this.unwatchSession(mapped.sessionId)
+      this.unwatchSession(mapped.sessionId)
     }
     return mapped
   }
@@ -214,19 +223,36 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
     return undefined
   }
 
-  private async unwatchSession(sessionId: string): Promise<void> {
+  /**
+   * Stop following a session. The application layer owns the lifecycle policy
+   * (display, running work, pending interactions); `keepJobRows` releases only
+   * the conversation follow stream while background jobs are still running.
+   */
+  public unwatchSession(sessionId: string, options: { readonly keepJobRows?: boolean } = {}): void {
+    if (this.closed) return
+    void this.closeSessionStreams(sessionId, options)
+  }
+
+  private async closeSessionStreams(
+    sessionId: string,
+    options: { readonly keepJobRows?: boolean },
+  ): Promise<void> {
     this.clearSessionFailureNotices(sessionId)
     const controller = this.sessions.get(sessionId)
-    const jobs = this.jobSessions.get(sessionId)
     if (controller !== undefined) {
       this.sessions.delete(sessionId)
       this.subscriptions.delete(controller)
     }
-    if (jobs !== undefined) {
-      this.jobSessions.delete(sessionId)
-      this.subscriptions.delete(jobs)
+    if (options.keepJobRows !== true) {
+      const jobs = this.jobSessions.get(sessionId)
+      if (jobs !== undefined) {
+        this.jobSessions.delete(sessionId)
+        this.subscriptions.delete(jobs)
+        await Promise.all([controller?.close(), jobs.close()])
+        return
+      }
     }
-    await Promise.all([controller?.close(), jobs?.close()])
+    await controller?.close()
   }
 
   private clearSessionFailureNotices(sessionId: string): void {

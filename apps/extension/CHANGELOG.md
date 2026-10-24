@@ -20,6 +20,9 @@
 - npm 警告不再触发额外的 Node 版本拦截，以进程退出结果和安装后版本验证判断成败。安装脚本、耗时和最终验证结果显示到输出窗口，设置页显示安装完成及已安装版本；收到完成通知即可结束等待，不依赖单条请求回复。
 - npm warnings do not trigger an additional Node version gate. Installation follows the process exit result and installed-version verification. Script output, timing and final verification appear in the output window; settings show the installed version and settle on verified completion events even if the request reply is lost.
 
+- 会话改为按需订阅，减少连接时的历史回放：保留可见面板、运行中和等待用户应答的会话，空闲且不可见后延迟 30 秒取消订阅，重开时重新加载历史。多个面板共享同一订阅；后台任务单独保留进度流，重连后恢复任务跟踪。已结束的子会话不会仅因父会话打开而回放历史。
+- Sessions follow on demand to reduce history replay on connect. Visible, running and actionable sessions remain followed; hidden idle sessions release after 30 seconds and reload history when reopened. Panels share a subscription, background jobs retain progress streams and are rediscovered on reconnect, and completed children do not replay merely because their parent is open.
+
 - 减少长会话中的重复计算：已显示的代码高亮不因全局缓存淘汰而重复请求；历史片段按组一次性合并文本和覆盖序列；经典布局复用组内工具与正文数组，保持原有显示、顺序和交互。
 - Reduces repeated work in long conversations: displayed code highlights survive shared-cache eviction without new requests, history chunks assemble text and sequence coverage once per group, and classic layout reuses tool and content arrays while preserving presentation, ordering and interactions.
 

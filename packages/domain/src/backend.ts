@@ -53,6 +53,18 @@ export interface AsyncEventSource<T> {
   close(): Promise<void>
   /** Local settlement from a request made by this client, when the wire omits its own echo. */
   publish?(event: T): void
+  /**
+   * Start (or confirm) the durable follow stream for one session. Optional:
+   * single-stream backends carry every session on one connection and need no
+   * per-session subscription management.
+   */
+  watchSession?(sessionId: string): void
+  /**
+   * Stop following one session. `keepJobRows` preserves the session's Job row
+   * stream so running background jobs keep publishing progress while the
+   * conversation follow stream is released. Idempotent for unknown sessions.
+   */
+  unwatchSession?(sessionId: string, options?: { readonly keepJobRows?: boolean }): void
 }
 
 export interface SessionRepository {

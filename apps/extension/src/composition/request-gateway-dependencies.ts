@@ -16,6 +16,7 @@ import type {
 } from '@dsh-vscode/application'
 import type { FeatureRequest } from '@dsh-vscode/webview-protocol'
 import type { DshRuntimeLocator } from '../backend/runtime-locator.js'
+import type { SessionWatchController } from '../backend/session-watch-coordinator.js'
 import type { TemporaryWorkspaceManager } from '../backend/temporary-workspace.js'
 import type { VsCodeConfigurationSource } from '../config/configuration-source.js'
 import type { RedactedDiagnostics } from '../backend/diagnostics.js'
@@ -51,6 +52,8 @@ export interface RequestGatewayDependencies {
   readonly runtimeUseCases: RuntimeUseCases
   readonly runtimeLocator: DshRuntimeLocator
   readonly coordinator: DshConnectionCoordinator
+  /** Bounds per-session follow streams to displayed, running, or actionable sessions. */
+  readonly sessionWatch: SessionWatchController
   readonly extensionVersion: string
   readonly configuration: VsCodeConfigurationSource
   readonly backendService: BackendService
