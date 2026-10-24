@@ -204,6 +204,10 @@ describe('native editor companion installation and recovery', () => {
     native.pick.mockResolvedValue({ archive: { version: '0.1.0', file: oldFile } })
     await manager.restoreCached()
     expect(archives.cache).toHaveBeenCalledWith(oldFile, expect.any(String))
+    expect(native.pick).toHaveBeenLastCalledWith(
+      [expect.objectContaining({ label: 'Editor companion v0.1.0', description: 'Build old' })],
+      expect.anything(),
+    )
     expect(native.warning).toHaveBeenCalledOnce()
     expect(installBundle).toHaveBeenCalledWith(oldFile, expect.anything(), expect.any(AbortSignal))
   })

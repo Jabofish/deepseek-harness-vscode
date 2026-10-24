@@ -1,4 +1,5 @@
-import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, writeFile, readFile, rm, mkdir, readdir, utimes } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { gzipSync } from 'node:zlib'
 import os from 'node:os'
 import path from 'node:path'
@@ -14,13 +15,19 @@ const roots: string[] = []
 afterEach(async () => {
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true })
 })
-function archive(name = '@dsh-vscode/editor-bridge', corrupt = false): Buffer {
+function archive(
+  name = '@dsh-vscode/editor-bridge',
+  corrupt = false,
+  mtime = 0,
+  description = 'fixture',
+): Buffer {
   const body = Buffer.from(
-    JSON.stringify({ name, version: '0.2.0', dsh: { bundle: { patch: './cordis.patch.yml' } } }),
+    JSON.stringify({ name, version: '0.2.0', description, dsh: { bundle: { patch: './cordis.patch.yml' } } }),
   )
   const header = Buffer.alloc(512)
   header.write('package/package.json')
   header.write(body.length.toString(8).padStart(11, '0') + '\0', 124)
+  header.write(mtime.toString(8).padStart(11, '0') + '\0', 136)
   header.fill(32, 148, 156)
   header.write('0', 156)
   const checksum = [...header].reduce((sum, byte) => sum + byte, 0)
@@ -34,6 +41,47 @@ async function root(): Promise<string> {
   return directory
 }
 describe('bounded companion archive inspection and recovery cache', () => {
+  it('reuses one immutable cache path across repackaging timestamps and concurrent identical requests', async () => {
+    const directory = await root()
+    const first = path.join(directory, 'first.tgz')
+    const second = path.join(directory, 'second.tgz')
+    await writeFile(first, archive(undefined, false, 1))
+    await writeFile(second, archive(undefined, false, 2))
+    const [a, b] = await Promise.all([
+      cacheCompanionArchive(first, directory),
+      cacheCompanionArchive(second, directory),
+    ])
+    expect(a).toEqual(b)
+    expect(await readdir(path.join(directory, 'editor-companion', 'archives'))).toEqual([
+      path.basename(a.file),
+    ])
+    await writeFile(second, archive(undefined, false, 3, 'different build'))
+    expect((await cacheCompanionArchive(second, directory)).file).not.toBe(a.file)
+    expect(await listCompanionArchives(directory)).toHaveLength(2)
+  })
+
+  it('preserves existing profile paths while grouping legacy repacks and sorting builds newest first', async () => {
+    const directory = await root()
+    const cache = path.join(directory, 'editor-companion', 'archives')
+    await mkdir(cache, { recursive: true })
+    const copies = [
+      archive(undefined, false, 1),
+      archive(undefined, false, 2),
+      archive(undefined, false, 3, 'different build'),
+    ]
+    const files: string[] = []
+    for (let index = 0; index < copies.length; index++) {
+      const contents = copies[index]!
+      const file = path.join(cache, `${createHash('sha256').update(contents).digest('hex')}.tgz`)
+      await writeFile(file, contents)
+      await utimes(file, index + 1, index + 1)
+      files.push(file)
+    }
+    const listed = await listCompanionArchives(directory)
+    expect(listed.map((item) => item.file)).toEqual([files[2], files[1]])
+    expect(await cacheCompanionArchive(files[0]!, directory)).toEqual(listed[1])
+    expect(await readdir(cache)).toHaveLength(3)
+  })
   it('keeps a bounded immutable alternate path for reinstalling the same artifact and refuses corruption', async () => {
     const directory = await root()
     const file = path.join(directory, 'bundle.tgz')

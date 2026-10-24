@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 配套插件缓存按包内容去重，重复打包不再产生多份缓存；缓存列表优先显示较新的包，并区分同版本的不同构建，保留已有安装路径和回滚包。
+- Companion archives deduplicate package contents across repackaging, list newer copies first and distinguish different builds of the same version, while preserving existing installation paths and rollback archives.
+
 - 减少长回复逐段追加时的重复序列化，并避免对未变节点重复扫描、建立索引和排序。大小计算包含字段变化及跨片段 Unicode，保留脱敏、协议校验和及时的统计更新。
 - Reduces repeated serialization during long replies and avoids rescanning, indexing and sorting unchanged rows. Size accounting includes metadata changes and Unicode split across chunks, while preserving redaction, protocol validation and current statistics.
 

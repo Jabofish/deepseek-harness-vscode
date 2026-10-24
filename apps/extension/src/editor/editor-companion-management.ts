@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import path from 'node:path'
 import * as vscode from 'vscode'
 import {
   AppError,
@@ -325,7 +326,11 @@ export class EditorCompanionManagement {
       return
     }
     const previous = await vscode.window.showQuickPick(
-      archives.map((archive) => ({ label: `Editor companion v${archive.version}`, archive })),
+      archives.map((archive) => ({
+        label: `Editor companion v${archive.version}`,
+        description: `Build ${path.basename(archive.file, '.tgz').slice(0, 8)}`,
+        archive,
+      })),
       { title: 'Restore a previously installed companion version' },
     )
     if (previous !== undefined && this.deps.current(backend)) return this.install(previous.archive.file)

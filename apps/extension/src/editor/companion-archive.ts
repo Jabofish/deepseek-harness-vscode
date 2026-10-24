@@ -2,7 +2,7 @@ import { readFile, stat, mkdir, readdir, writeFile, copyFile } from 'node:fs/pro
 import { constants } from 'node:fs'
 import { createHash } from 'node:crypto'
 import path from 'node:path'
-import { gunzip } from 'node:zlib'
+import { gunzip, gzip } from 'node:zlib'
 import { promisify } from 'node:util'
 import { EditorCompanionError } from '@dsh-vscode/domain'
 
@@ -12,13 +12,23 @@ export interface CompanionArchive {
   readonly file: string
 }
 export async function cacheCompanionArchive(file: string, storage: string): Promise<CompanionArchive> {
-  await inspectCompanionArchive(file)
-  const contents = await readFile(file)
-  if (contents.length > 20_971_520) throw new EditorCompanionError('limit')
+  const inspected = await canonicalCompanionArchive(file)
+  const contents = inspected.contents
   const directory = path.join(storage, 'editor-companion', 'archives')
   await mkdir(directory, { recursive: true })
   const hash = createHash('sha256').update(contents).digest('hex')
   const destination = path.join(directory, `${hash}.tgz`)
+  // Reuse legacy cache paths too: a profile may still refer to one of them.
+  // Comparing canonical archives ignores packaging timestamps and compression
+  // metadata, but preserves every packaged file, mode, link and file order.
+  for (const cached of await listCompanionArchives(storage)) {
+    try {
+      const candidate = await canonicalCompanionArchive(cached.file, path.basename(cached.file, '.tgz'))
+      if (createHash('sha256').update(candidate.contents).digest('hex') === hash) return cached
+    } catch {
+      /* Another cache operation may have removed a previously listed file. */
+    }
+  }
   const existing = await readdir(directory)
   if (existing.length >= 32 && !existing.includes(`${hash}.tgz`)) throw new EditorCompanionError('limit')
   try {
@@ -30,8 +40,7 @@ export async function cacheCompanionArchive(file: string, storage: string): Prom
   const cached = await readFile(destination)
   if (createHash('sha256').update(cached).digest('hex') !== hash)
     throw new EditorCompanionError('invalid-response')
-  const manifest = await inspectCompanionArchive(destination)
-  return { file: destination, version: manifest.version }
+  return { file: destination, version: inspected.version }
 }
 export async function listCompanionArchives(storage: string): Promise<readonly CompanionArchive[]> {
   const directory = path.join(storage, 'editor-companion', 'archives')
@@ -41,20 +50,29 @@ export async function listCompanionArchives(storage: string): Promise<readonly C
   } catch {
     return []
   }
-  const result: CompanionArchive[] = []
+  const result: { archive: CompanionArchive; modified: number; identity: string }[] = []
   for (const name of names.filter((name) => /^[a-f0-9]{64}\.tgz$/u.test(name)).slice(0, 32)) {
     const file = path.join(directory, name)
     try {
       const info = await stat(file)
       if (!info.isFile() || info.size > 20_971_520) continue
-      const bytes = await readFile(file)
-      if (createHash('sha256').update(bytes).digest('hex') !== name.slice(0, 64)) continue
-      result.push({ file, ...(await inspectCompanionArchive(file)) })
+      const inspected = await canonicalCompanionArchive(file, name.slice(0, 64))
+      result.push({
+        archive: { file, version: inspected.version },
+        modified: info.mtimeMs,
+        identity: createHash('sha256').update(inspected.contents).digest('hex'),
+      })
     } catch {
       /* Ignore incomplete/corrupt cached artifacts; never install them. */
     }
   }
-  return result
+  result.sort((a, b) => b.modified - a.modified || a.archive.file.localeCompare(b.archive.file))
+  const seen = new Set<string>()
+  return result.flatMap((item) => {
+    if (seen.has(item.identity)) return []
+    seen.add(item.identity)
+    return [item.archive]
+  })
 }
 /** HMR rejects the currently saved tarball path. Keep one immutable alternate per hash for repair. */
 export async function alternateCompanionArchive(
@@ -76,14 +94,26 @@ export async function alternateCompanionArchive(
     throw new EditorCompanionError('invalid-response')
   return { file, ...(await inspectCompanionArchive(file)) }
 }
-/** Read only the bounded package manifest; never extract files or run package code. */
+/** Validate a bounded companion tarball; never extract files or run package code. */
 export async function inspectCompanionArchive(file: string): Promise<{ readonly version: string }> {
+  return { version: (await canonicalCompanionArchive(file)).version }
+}
+
+async function canonicalCompanionArchive(
+  file: string,
+  expectedHash?: string,
+): Promise<{ version: string; contents: Buffer }> {
   const info = await stat(file)
   if (!info.isFile() || info.size > 20_971_520) throw new EditorCompanionError('limit')
-  const tar = await promisify(gunzip)(await readFile(file), { maxOutputLength: 8_388_608 })
+  const bytes = await readFile(file)
+  if (bytes.length > 20_971_520) throw new EditorCompanionError('limit')
+  if (expectedHash !== undefined && createHash('sha256').update(bytes).digest('hex') !== expectedHash)
+    throw new EditorCompanionError('invalid-response')
+  const tar = await promisify(gunzip)(bytes, { maxOutputLength: 8_388_608 })
   let manifest: unknown
   let offset = 0
   let entries = 0
+  const canonical: Buffer[] = []
   while (offset + 512 <= tar.length) {
     const header = tar.subarray(offset, offset + 512)
     if (header.every((byte) => byte === 0)) break
@@ -113,6 +143,21 @@ export async function inspectCompanionArchive(file: string): Promise<{ readonly 
         throw new EditorCompanionError('invalid-response')
       manifest = JSON.parse(tar.subarray(offset + 512, offset + 512 + size).toString('utf8')) as unknown
     }
+    const normalized = Buffer.from(header)
+    // Ownership and modification times are packaging metadata, not build
+    // identity. Recompute the TAR checksum after normalizing those fields.
+    normalized.write('0000000\0', 108, 8)
+    normalized.write('0000000\0', 116, 8)
+    normalized.write('00000000000\0', 136, 12)
+    normalized.fill(0, 265, 329)
+    normalized.fill(32, 148, 156)
+    const normalizedChecksum = [...normalized].reduce((sum, byte) => sum + byte, 0)
+    normalized.write(normalizedChecksum.toString(8).padStart(6, '0') + '\0 ', 148, 8)
+    canonical.push(
+      normalized,
+      tar.subarray(offset + 512, offset + 512 + size),
+      Buffer.alloc((512 - (size % 512)) % 512),
+    )
     offset += 512 + Math.ceil(size / 512) * 512
   }
   if (
@@ -126,7 +171,8 @@ export async function inspectCompanionArchive(file: string): Promise<{ readonly 
     typeof manifest.dsh.bundle.patch !== 'string'
   )
     throw new EditorCompanionError('invalid-response')
-  return { version: manifest.version }
+  canonical.push(Buffer.alloc(1024))
+  return { version: manifest.version, contents: await promisify(gzip)(Buffer.concat(canonical)) }
 }
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
