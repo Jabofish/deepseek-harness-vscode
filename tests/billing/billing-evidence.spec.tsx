@@ -20,7 +20,7 @@ import {
 } from '../../apps/extension/src/billing/models-dev-price-source.js'
 import { WebviewMessageRouter } from '../../apps/extension/src/view/message-router.js'
 import { ProtocolClient } from '../../apps/webview/src/app/protocol-client.js'
-import { BillingCost } from '../../apps/webview/src/features/billing/BillingCost.js'
+import { BillingCost, formatBillingAmount } from '../../apps/webview/src/features/billing/BillingCost.js'
 import { BillingSettings } from '../../apps/webview/src/features/billing/BillingSettings.js'
 import { StatsLine } from '../../apps/webview/src/features/chat/StatsLine.js'
 import { setActiveLocale } from '../../apps/webview/src/i18n.js'
@@ -422,20 +422,21 @@ async function verify(
         nodes={[]}
         cacheHit={0}
         usage={plain}
-        cost={
+        cost={(details) => (
           <BillingCost
+            details={details}
             request={(request) => client.featureRequest(request)}
             subscribe={(listener) => client.subscribeFeature(listener)}
             sessionId={trace.name}
             usageKey="settled"
           />
-        }
+        )}
       />,
     )
     const label =
       result.totals.length === 0
         ? 'Cost unpriced'
-        : `Cost ≈ ${result.totals.map((total) => `${total.currency} ${total.amount}`).join(' / ')}${result.pricedRequests !== result.requests || !result.historyComplete ? ' · Partial' : ''}`
+        : `Cost ≈ ${result.totals.map((total) => `${total.currency} ${formatBillingAmount(total.amount)}`).join(' / ')}${result.pricedRequests !== result.requests || !result.historyComplete ? ' · Partial' : ''}`
     await screen.findByText(label)
     expect(document.body.textContent).not.toContain('×')
     reports.push({

@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, type ReactElement } from 'react'
+import { useEffect, useId, useRef, type ReactElement, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 import { useViewportMenuPosition } from '../../components/common/useViewportMenuPosition.js'
@@ -12,6 +12,7 @@ export function StatsPopover(props: {
   readonly rows: readonly { readonly label: string; readonly value: string }[]
   readonly open: boolean
   readonly onOpenChange: (open: boolean) => void
+  readonly children?: ReactNode
 }): ReactElement {
   const { t } = useI18n()
   const id = useId()
@@ -36,7 +37,7 @@ export function StatsPopover(props: {
       if (panel?.contains(document.activeElement)) anchor?.focus()
     }
   }, [props.open])
-  if (props.rows.length === 0)
+  if (props.rows.length === 0 && props.children == null)
     return (
       <span className="dsh-stats-pill">
         <Icon name={props.icon} />
@@ -78,6 +79,7 @@ export function StatsPopover(props: {
                   </div>
                 ))}
               </dl>
+              {props.children}
             </div>,
             document.body,
           )

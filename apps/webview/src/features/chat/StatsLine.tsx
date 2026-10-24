@@ -1,4 +1,4 @@
-import { memo, useMemo, useState, type ReactElement } from 'react'
+import { memo, useEffect, useMemo, useState, type ReactElement } from 'react'
 import type { SessionStatsProjection, TokenUsage } from '@dsh-vscode/domain'
 import { billedInputTokens, cacheHitPercent } from '@dsh-vscode/timeline'
 import type { TimelineNode } from '@dsh-vscode/timeline'
@@ -10,7 +10,7 @@ import { useConversationLayout } from '../../app/ConversationLayoutProvider.js'
 
 export interface StatsLineProps {
   /** Optional independent reading; this renderer does not own its calculation or I/O. */
-  readonly cost?: ReactElement
+  readonly cost?: (details: boolean) => ReactElement
   readonly sessionId?: string | undefined
   readonly nodes: readonly TimelineNode[]
   /** Optional reducer boundary for incremental fallback statistics. */
@@ -61,6 +61,17 @@ export const StatsLine = memo(function StatsLine(props: StatsLineProps): ReactEl
   const { t } = useI18n()
   const focused = useConversationLayout()?.layout === 'focused'
   const presentation = props.performanceUsage ?? 'detailed'
+  const [element, setElement] = useState<HTMLDivElement | null>(null)
+  const [narrow, setNarrow] = useState(false)
+  useEffect(() => {
+    if (element === null || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width
+      if (width !== undefined && width > 0) setNarrow(width <= 560)
+    })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [element])
   const statsProjector = useMemo(() => createStatsProjector(), [])
   const stats = useMemo(
     () => props.sessionStats ?? statsProjector(props.nodes, props.nodeChangeStart, props.nodeChangeBase),
@@ -91,6 +102,7 @@ export const StatsLine = memo(function StatsLine(props: StatsLineProps): ReactEl
     // numbers, and a status role would re-read the whole line each time.
     return (
       <div
+        ref={setElement}
         className="dsh-stats-line"
         role="group"
         aria-label={t('stats.aria')}
@@ -101,7 +113,13 @@ export const StatsLine = memo(function StatsLine(props: StatsLineProps): ReactEl
         {props.usage === undefined ? null : (
           <span title={t('stats.cache')}>{t('stats.cacheShort', { percent: cachePercent })}</span>
         )}
-        {props.cost}
+        {narrow && props.cost !== undefined ? (
+          <StatsDetails stats={stats} usage={props.usage}>
+            {props.cost(true)}
+          </StatsDetails>
+        ) : (
+          props.cost?.(false)
+        )}
       </div>
     )
   }
@@ -125,18 +143,23 @@ export const StatsLine = memo(function StatsLine(props: StatsLineProps): ReactEl
         usageLabel={usageLabel}
         stats={stats}
         usage={props.usage}
+        narrow={narrow}
+        onContainer={setElement}
         {...(props.cost === undefined ? {} : { cost: props.cost })}
       />
     )
   }
   return (
     <div
+      ref={setElement}
       className="dsh-stats-line"
       role="group"
       aria-label={t('stats.aria')}
       data-performance-usage="detailed"
     >
-      <StatsDetails stats={stats} usage={props.usage} />
+      <StatsDetails stats={stats} usage={props.usage}>
+        {narrow ? props.cost?.(true) : null}
+      </StatsDetails>
       {props.sessionStats === undefined ? <span>{t('stats.loadedWindow')}</span> : null}
       <span>{t(stats.turns === 1 ? 'stats.turns' : 'stats.turns.plural', { count: stats.turns })}</span>
       <span aria-hidden="true">·</span>
@@ -171,13 +194,23 @@ export const StatsLine = memo(function StatsLine(props: StatsLineProps): ReactEl
           )}
         </>
       )}
-      {props.cost}
+      {narrow ? null : props.cost?.(false)}
     </div>
   )
 })
 
-function FocusedStatsLine(props: {
-  readonly cost?: ReactElement
+function FocusedStatsLine({
+  cost,
+  narrow,
+  onContainer,
+  counts,
+  usageLabel,
+  stats,
+  usage,
+}: {
+  readonly cost?: (details: boolean) => ReactElement
+  readonly narrow: boolean
+  readonly onContainer: (element: HTMLDivElement | null) => void
   readonly counts: string
   readonly usageLabel: string
   readonly stats: WindowStats
@@ -186,24 +219,33 @@ function FocusedStatsLine(props: {
   const { t, locale } = useI18n()
   const [openDetail, setOpenDetail] = useState<'time' | 'tokens' | undefined>()
   return (
-    <div className="dsh-stats-line dsh-stats-line--focused" role="group" aria-label={t('stats.aria')}>
+    <div
+      ref={onContainer}
+      className="dsh-stats-line dsh-stats-line--focused"
+      role="group"
+      aria-label={t('stats.aria')}
+    >
       <StatsPopover
-        label={props.counts}
+        label={counts}
         icon="clock"
-        rows={statisticsRows(props.stats, undefined, t, locale, 'time')}
+        rows={statisticsRows(stats, undefined, t, locale, 'time')}
         open={openDetail === 'time'}
         onOpenChange={(open) => setOpenDetail(open ? 'time' : undefined)}
-      />
-      {props.usage === undefined ? null : (
+      >
+        {narrow && usage === undefined ? cost?.(true) : null}
+      </StatsPopover>
+      {usage === undefined ? null : (
         <StatsPopover
-          label={props.usageLabel}
+          label={usageLabel}
           icon="box"
-          rows={statisticsRows(props.stats, props.usage, t, locale, 'tokens')}
+          rows={statisticsRows(stats, usage, t, locale, 'tokens')}
           open={openDetail === 'tokens'}
           onOpenChange={(open) => setOpenDetail(open ? 'tokens' : undefined)}
-        />
+        >
+          {narrow ? cost?.(true) : null}
+        </StatsPopover>
       )}
-      {props.cost}
+      {narrow ? null : cost?.(false)}
     </div>
   )
 }

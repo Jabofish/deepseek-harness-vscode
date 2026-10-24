@@ -1,16 +1,115 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, beforeEach, expect, it } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { FeatureHostEvent, FeatureRequest } from '@dsh-vscode/webview-protocol'
 import { estimateBillingEntry, type BillingEstimate } from '@dsh-vscode/domain'
 import { setActiveLocale } from '../../i18n.js'
 import { BillingSettings } from './BillingSettings.js'
-import { BillingCost } from './BillingCost.js'
+import { BillingCost, formatBillingAmount } from './BillingCost.js'
 import { StatsLine } from '../chat/StatsLine.js'
 import type { BillingClient } from './billing-client.js'
+import { ConversationLayoutProvider } from '../../app/ConversationLayoutProvider.js'
 
 beforeEach(() => setActiveLocale('en'))
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+})
+
+it.each([
+  ['0.003946662', '0.0039'],
+  ['0.00681', '0.0068'],
+  ['1.23456', '1.2346'],
+  ['0.99999', '1'],
+  ['0.000000000000001', '< 0.0001'],
+  ['0.00005', '0.0001'],
+  ['0', '0'],
+  ['9007199254740993.12345', '9007199254740993.1235'],
+])('formats %s as %s without changing the accounting precision', (amount, formatted) => {
+  expect(formatBillingAmount(amount)).toBe(formatted)
+})
+
+it('moves cost inside focused token details when the stats container narrows and restores it on resize', async () => {
+  let resize: ResizeObserverCallback | undefined
+  let observed: Element | undefined
+  const disconnect = vi.fn()
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      constructor(private readonly callback: ResizeObserverCallback) {}
+      observe(element: Element): void {
+        if (element.matches('.dsh-stats-line')) {
+          observed = element
+          resize = this.callback
+        }
+      }
+      disconnect = disconnect
+    },
+  )
+  const request: BillingClient = <T,>(): Promise<T> =>
+    Promise.resolve({
+      kind: 'billing.estimate',
+      estimate: {
+        sessionId: 's',
+        enabled: true,
+        supported: true,
+        historyComplete: true,
+        scannedEvents: 1,
+        requests: 1,
+        pricedRequests: 1,
+        partialRequests: 0,
+        unpricedRequests: 0,
+        priceRevision: 1,
+        totals: [{ currency: 'USD', amount: '0.003946662' }],
+        entries: [],
+        detailsTruncated: false,
+      },
+    } as T)
+  const view = render(
+    <ConversationLayoutProvider initialLayout="focused">
+      <StatsLine
+        nodes={[]}
+        cacheHit={0}
+        usage={{ inputTokens: 100, outputTokens: 20, totalTokens: 120 }}
+        cost={(details) => (
+          <BillingCost
+            details={details}
+            request={request}
+            subscribe={() => () => {}}
+            sessionId="s"
+            usageKey="one"
+          />
+        )}
+      />
+    </ConversationLayoutProvider>,
+  )
+  await screen.findByText('Cost ≈ USD 0.0039')
+  act(() =>
+    resize?.(
+      [{ target: observed!, contentRect: new DOMRect(0, 0, 486, 24) } as ResizeObserverEntry],
+      {} as ResizeObserver,
+    ),
+  )
+  expect(screen.queryByText('Cost ≈ USD 0.0039')).toBeNull()
+  const tokens = screen.getByRole('button', { name: /Statistics details:.*120 tokens/ })
+  fireEvent.click(tokens)
+  const cost = await screen.findByText('Cost ≈ USD 0.0039')
+  expect(cost.closest('[role="dialog"]')).toBe(screen.getByRole('dialog'))
+  expect(cost.closest('button')).toBeNull()
+  expect(view.container.querySelectorAll('.dsh-stats-pill')).toHaveLength(2)
+  fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+  expect(screen.queryByText('Cost ≈ USD 0.0039')).toBeNull()
+  expect(document.activeElement).toBe(tokens)
+  act(() =>
+    resize?.(
+      [{ target: observed!, contentRect: new DOMRect(0, 0, 900, 24) } as ResizeObserverEntry],
+      {} as ResizeObserver,
+    ),
+  )
+  await screen.findByRole('button', { name: /Statistics details: Cost ≈ USD 0.0039/ })
+  view.unmount()
+  expect(disconnect).toHaveBeenCalled()
+})
 function open(label: string, value = true): void {
   const details = screen.getByText(label).closest('details')!
   act(() => {
@@ -127,12 +226,14 @@ it('shows only the cost in existing session statistics and refreshes when prices
       nodes={[]}
       cacheHit={0}
       usage={{ inputTokens: 100, outputTokens: 20 }}
-      cost={<BillingCost request={request} subscribe={subscribe} sessionId="s" usageKey="one" />}
+      cost={(details) => (
+        <BillingCost details={details} request={request} subscribe={subscribe} sessionId="s" usageKey="one" />
+      )}
     />,
   )
   expect(calls).toHaveLength(0)
-  await screen.findByText('Cost ≈ USD 0.00681 · Partial')
-  expect(screen.getByRole('group', { name: 'Session statistics' }).textContent).toContain('USD 0.00681')
+  await screen.findByText('Cost ≈ USD 0.0068 · Partial')
+  expect(screen.getByRole('group', { name: 'Session statistics' }).textContent).toContain('USD 0.0068')
   expect(document.body.textContent).not.toContain('×')
   expect(calls).toHaveLength(1)
   expect(document.querySelector('small')).toBeNull()
@@ -202,7 +303,7 @@ it.each([true, false])(
     fireEvent.click(await screen.findByRole('button', { name: 'Retry cost estimate' }))
     await waitFor(() => expect(attempts).toBe(2))
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry cost estimate' })).toBeNull())
-    if (enabled) expect(await screen.findByText('Cost ≈ USD 0.000014')).toBeDefined()
+    if (enabled) expect(await screen.findByText('Cost ≈ USD < 0.0001')).toBeDefined()
     else expect(screen.queryByText(/Cost ≈/)).toBeNull()
     expect(document.body.textContent).not.toContain('PRIVATE_HISTORY_FAILURE')
   },

@@ -100,6 +100,15 @@ button.dsh-stats-pill[aria-expanded='true'] {
   margin: 0;
   text-align: end;
   font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.dsh-stats-billing {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--dsh-border-color);
+}
+.dsh-stats-billing > strong {
+  overflow-wrap: anywhere;
 }
 .dsh-stats-dialog:focus-visible {
   outline: 2px solid var(--dsh-focus);

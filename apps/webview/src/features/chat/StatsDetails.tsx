@@ -1,14 +1,15 @@
-import type { ReactElement } from 'react'
+import type { ReactElement, ReactNode } from 'react'
 import type { SessionStatsProjection, TokenUsage } from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
 import './stats-details.css'
 export function StatsDetails(props: {
   readonly stats: SessionStatsProjection
   readonly usage: TokenUsage | undefined
+  readonly children?: ReactNode
 }): ReactElement | null {
   const { t, locale } = useI18n()
   const rows = statisticsRows(props.stats, props.usage, t, locale)
-  if (rows.length === 0) return null
+  if (rows.length === 0 && props.children == null) return null
   return (
     <details className="dsh-stats-details">
       <summary>{t('stats.details')}</summary>
@@ -20,6 +21,7 @@ export function StatsDetails(props: {
           </div>
         ))}
       </dl>
+      {props.children}
     </details>
   )
 }

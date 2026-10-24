@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 费用最多显示四位小数，极小金额显示为小于阈值；窄面板下将计费收进统计详情。
+- Cost estimates show up to four decimal places with a threshold for tiny amounts; narrow panels include billing inside statistics details.
+
 - 参考价格优先匹配官方模型，支持官方账号别名、大小写及完整模型标识；同一模型且价格相同的目录别名合并处理。模糊候选之外可搜索完整参考目录并手动选择，用户选择与自定义单价优先保留。模型和候选可展开查看各项单价、缓存、时间／上下文及服务等级规则；MiniMax 等服务等级定价不再被整体丢弃。
 - Reference pricing prefers official model identities, including account aliases, case variants and canonical IDs, and consolidates equivalent catalog aliases. Users can search the full reference catalog, inspect rates and conditions before choosing, and retain their explicit mapping or custom prices. Service-tier prices are preserved instead of discarding the entire reference.
 
