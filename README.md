@@ -18,10 +18,11 @@
 - Use local prompt templates, checkpoints, a Changes view, and a task center when their prerequisites are available.
 - Use the DSH-style focused layout with collapsible process details and a compact composer. Choose the focused or classic layout in **Settings → General → Conversation layout**; the choice is saved locally.
 - Open sessions in editor tabs alongside the side bar, with independent navigation and restored sessions after a window reload.
+- Enable optional session cost estimates in **Settings → Models → Model billing**. Inspect input, output and cache costs, choose a reference model, or enter custom rates. Chinese uses CNY and English uses USD; saved exchange quotes remain available when a refresh fails.
 
 The connected DSH version determines which advanced capabilities are available. Unsupported operations show a clear unavailable state. The [compatibility contract](docs/dsh-contract.md) lists exact adapter boundaries; the [capability matrix](docs/capability-matrix.md) summarizes supported functions, limitations and completion status.
 
-The optional [editor integration](packages/dsh-editor-bridge/README.md) is installed only when you choose **Settings → General → Editor integration → Install and enable companion**. Once enabled, it follows your selected session and extension updates, including F5 builds. It provides unsaved text/selection, diagnostics, language services, navigation and undoable edits. Settings offers off/read-only switches, retry, repair, restart and Undo. Runtime capabilities are negotiated independently; chat and manual context attachment remain available without the companion.
+The optional [editor integration](packages/dsh-editor-bridge/README.md) is installed only when you choose **Settings → General → Editor integration → Install and enable companion**. Once enabled, it follows your selected session and extension updates, including F5 builds. It provides unsaved text/selection, diagnostics, language services, navigation and undoable edits. Settings offers off/read-only switches, retry, repair, restart, cached-version recovery and Undo. Runtime capabilities are negotiated independently; chat and manual context attachment remain available without the companion.
 
 ## Install and start
 

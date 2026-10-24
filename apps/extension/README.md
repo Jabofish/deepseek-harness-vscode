@@ -10,26 +10,16 @@ Bring local or remote [DeepSeek Harness](https://github.com/deepseek-ai/deepseek
 - Open produced files through VS Code, and use local templates, checkpoints, Changes, and task views when available.
 - Use the compact DSH-style focused layout, or switch to the classic layout in **Settings → General → Conversation layout**.
 - Open sessions in editor tabs alongside the side bar, with independent navigation and restored sessions after a window reload.
+- Enable optional session cost estimates in **Settings → Models → Model billing**. Inspect input, output and cache costs, choose a reference model, or enter custom rates. Chinese uses CNY and English uses USD; saved exchange quotes remain available when a refresh fails.
 
 Available operations depend on the connected DSH runtime. Unsupported capabilities are shown explicitly; [exact compatibility and current limitations](https://github.com/Jabofish/deepseek-harness-vscode/tree/main/docs) are documented in the repository.
 
-Editor integration loads with extension-managed DSH and follows the selected session
-automatically. Open **Settings → General → Editor integration** to see status,
-turn it off, keep tools read-only, retry, repair, restart or undo the last agent
-edit. No separate plugin installation or permission picker is needed. Ten tools
-cover unsaved text/selection, cached diagnostics, symbols/definitions/references,
-navigation and immediate, automatically saved, undoable edits. The last edit can be reverted
-after a session switch; unrelated typing is preserved when it can be distinguished
-from the agent's edit. Runtime capabilities are negotiated independently. An
-unsupported editor capability leaves ordinary chat and manual context attachment
-usable. External processes are never stopped; a dedicated instance can be started
-from settings when an attached instance lacks the companion. Remote and real-model
-acceptance remain separate checks.
+The optional [editor integration](https://github.com/Jabofish/deepseek-harness-vscode/tree/main/packages/dsh-editor-bridge) is installed only when you choose **Settings → General → Editor integration → Install and enable companion**. Once enabled, it follows your selected session and extension updates, including F5 builds. It provides unsaved text/selection, diagnostics, language services, navigation and undoable edits. Settings offers off/read-only switches, retry, repair, restart, cached-version recovery and Undo. Runtime capabilities are negotiated independently; chat and manual context attachment remain available without the companion. External processes are never stopped.
 
 ## Get started
 
 1. Open the **DeepSeek Harness** view.
-2. If DSH is missing, use the guided installer or copy its exact install command. You can also select an existing executable.
+2. If DSH is missing, use the guided installer, select an existing executable, or copy the exact install command shown in the view. The installer shows npm output and verifies the installed version; npm warnings alone do not fail the installation.
 3. Choose or create a workspace, start a session, and send a task.
 
 The Chat view is registered in VS Code's Secondary Side Bar by default (on the right in the default workbench layout). VS Code may keep a previously saved view location after an upgrade.
