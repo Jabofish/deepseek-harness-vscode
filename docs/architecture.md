@@ -1,5 +1,7 @@
 # 架构、协议与信任边界
 
+> 英文版：[Architecture (English)](architecture.en.md)
+
 本文件定义跨能力必须保持的结构。DSH 的具体版本、RPC 和事件形状只在 [上游契约](dsh-contract.md) 维护；能力完成度只在 [能力矩阵](capability-matrix.md) 维护。
 
 ## 依赖方向
