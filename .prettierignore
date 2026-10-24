@@ -3,6 +3,8 @@ dist
 coverage
 .vscode-test
 .codegraph
+# Sandbox-local package-manager home (Corepack/pnpm content store).
+.pnpm-home
 .workbuddy-ai
 apps/extension/media
 apps/extension/resources/editor-companion-runtime.mjs

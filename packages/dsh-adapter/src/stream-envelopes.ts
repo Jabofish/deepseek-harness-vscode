@@ -256,7 +256,9 @@ export function safeReason(error: unknown): string {
       return `DSH event stream request ${method} failed (HTTP ${status}).`
     if (error.context?.timedOut === true && typeof method === 'string')
       return `DSH event stream request ${method} timed out.`
-    return `DSH event stream disconnected (${error.code}).`
+    const closeCode = error.context?.closeCode
+    const close = typeof closeCode === 'number' ? `, WebSocket close ${closeCode}` : ''
+    return `DSH event stream disconnected (${error.code}${close}).`
   }
   const detail = safeErrorDetail(error)
   return detail === undefined ? 'DSH event stream disconnected.' : `DSH event stream disconnected: ${detail}`

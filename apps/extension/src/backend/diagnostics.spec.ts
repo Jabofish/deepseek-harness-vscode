@@ -191,4 +191,20 @@ describe('RedactedDiagnostics', () => {
     expect(lines[0]).not.toContain(privateEvent)
     diagnostics.dispose()
   })
+
+  it('logs connection-lost with its sanitized reason and redacts any residual secret', () => {
+    const { lines, channel } = fakeChannel()
+    const diagnostics = new RedactedDiagnostics(channel)
+    diagnostics.log('warn', 'connection-lost', {
+      reason: 'DSH event stream disconnected (BACKEND_UNREACHABLE). token=super-secret',
+    })
+
+    expect(lines).toHaveLength(1)
+    const entry = JSON.parse(lines[0] ?? '') as { event: string; fields: Record<string, string> }
+    expect(entry.event).toBe('connection-lost')
+    expect(entry.fields.reason).toContain('BACKEND_UNREACHABLE')
+    expect(entry.fields.reason).not.toContain('super-secret')
+    expect(entry.fields.reason).toContain('token=[redacted]')
+    diagnostics.dispose()
+  })
 })

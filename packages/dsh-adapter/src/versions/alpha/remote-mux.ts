@@ -312,13 +312,15 @@ export class AlphaRemoteMux {
         if (!opened) failBeforeOpen(error)
         else this.failSocket(socket, error, removeListeners)
       }
-      const handleClose = (): void => {
+      const handleClose = (event: unknown): void => {
+        const closeCode = socketCloseCode(event)
         const error = new AppError({
           code: 'BACKEND_UNREACHABLE',
           message: opened
             ? 'The alpha DSH multiplexed stream closed unexpectedly.'
             : 'The alpha DSH multiplexed stream closed before it became ready.',
           retryable: true,
+          ...(closeCode === undefined ? {} : { context: { closeCode } }),
         })
         if (!opened) failBeforeOpen(error)
         else this.failSocket(socket, error, removeListeners)
@@ -341,7 +343,7 @@ export class AlphaRemoteMux {
         this.options.requestTimeoutMs,
       )
       if (socket.readyState === 1) queueMicrotask(handleOpen)
-      else if (socket.readyState === 3) queueMicrotask(handleClose)
+      else if (socket.readyState === 3) queueMicrotask(() => handleClose(undefined))
     })
   }
 
@@ -671,4 +673,9 @@ function textOfSocketData(event: unknown): string {
 function socketError(event: unknown): Error {
   const error = asRecord(event)?.error
   return error instanceof Error ? error : new Error('The alpha DSH WebSocket failed.')
+}
+
+function socketCloseCode(event: unknown): number | undefined {
+  const code = asRecord(event)?.code
+  return typeof code === 'number' && Number.isSafeInteger(code) ? code : undefined
 }
