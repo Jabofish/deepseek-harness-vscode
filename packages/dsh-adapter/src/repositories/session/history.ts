@@ -25,76 +25,70 @@ export function compactHistoryEvents(events: readonly SessionHistoryEvent[]): re
 
   const compacted: SessionHistoryEvent[] = []
   let previousDeltaKey: string | undefined
-  let previousDeltaIndex = -1
+  let pending: SessionHistoryEvent | undefined
+  let fragments: string[] = []
+  let covered = new Set<number>()
+  let sequence = 0
+  const flush = (): void => {
+    if (pending === undefined) return
+    if (
+      fragments.length === 1 ||
+      (pending.event.type !== 'message.delta' && pending.event.type !== 'reasoning.delta')
+    ) {
+      compacted.push(pending)
+    } else {
+      const coveredSequences = [...covered].sort((first, second) => first - second)
+      compacted.push({
+        ...pending,
+        // Keep the newest durable sequence as the replay watermark, even if
+        // the mapper supplies chunks out of sequence order.
+        sequence,
+        event: { ...pending.event, delta: fragments.join(''), sequence },
+        ...(coveredSequences.length > 1 ? { coveredSequences } : {}),
+      })
+    }
+    pending = undefined
+    previousDeltaKey = undefined
+  }
   for (const entry of events) {
     const event = entry.event
     // block/tool/usage/finish chunks are stream bookkeeping. Visible tool
     // calls/results and the completed assistant message are mapped separately;
     // retaining every bookkeeping row would recreate the protocol overflow.
     if (event.type === 'unknown' && event.name.startsWith('assistant/chunk')) {
-      previousDeltaKey = undefined
-      previousDeltaIndex = -1
+      flush()
       continue
     }
     if (event.type !== 'message.delta' && event.type !== 'reasoning.delta') {
+      flush()
       compacted.push(entry)
-      previousDeltaKey = undefined
-      previousDeltaIndex = -1
       continue
     }
     if (completedMessages.has(event.messageId)) {
-      previousDeltaKey = undefined
-      previousDeltaIndex = -1
+      flush()
       continue
     }
 
     const key = `${event.type}:${event.messageId}`
     if (key !== previousDeltaKey) {
+      flush()
       previousDeltaKey = key
-      previousDeltaIndex = compacted.length
-      compacted.push(entry)
-      continue
+      pending = entry
+      fragments = []
+      covered = new Set<number>()
+      sequence = entry.sequence
     }
-    const existing = compacted[previousDeltaIndex]
-    if (existing === undefined) continue
-    if (existing.event.type === 'message.delta' && event.type === 'message.delta') {
-      const sequence = Math.max(existing.sequence, entry.sequence)
-      const coveredSequences = mergeCoveredSequences(existing, entry)
-      compacted[previousDeltaIndex] = {
-        ...existing,
-        // Keep the newest durable sequence on the compacted row. The Webview
-        // uses it as its replay watermark; retaining the first sequence would
-        // let a live delta already covered by history be appended twice.
-        sequence,
-        event: { ...existing.event, delta: `${existing.event.delta}${event.delta}`, sequence },
-        ...(coveredSequences.length > 1 ? { coveredSequences } : {}),
-      }
-    } else if (existing.event.type === 'reasoning.delta' && event.type === 'reasoning.delta') {
-      const sequence = Math.max(existing.sequence, entry.sequence)
-      const coveredSequences = mergeCoveredSequences(existing, entry)
-      compacted[previousDeltaIndex] = {
-        ...existing,
-        sequence,
-        event: { ...existing.event, delta: `${existing.event.delta}${event.delta}`, sequence },
-        ...(coveredSequences.length > 1 ? { coveredSequences } : {}),
-      }
-    }
+    fragments.push(event.delta)
+    sequence = Math.max(sequence, entry.sequence)
+    for (const value of entry.coveredSequences ?? [entry.sequence]) covered.add(value)
   }
+  flush()
   // Keep the public page ordered even if a future mapper supplies a
   // non-monotonic sequence; the index tie-breaker preserves source order.
   return compacted
     .map((entry, index) => ({ entry, index }))
     .sort((left, right) => left.entry.sequence - right.entry.sequence || left.index - right.index)
     .map(({ entry }) => entry)
-}
-
-function mergeCoveredSequences(left: SessionHistoryEvent, right: SessionHistoryEvent): readonly number[] {
-  return [
-    ...new Set([
-      ...(left.coveredSequences ?? [left.sequence]),
-      ...(right.coveredSequences ?? [right.sequence]),
-    ]),
-  ].sort((first, second) => first - second)
 }
 
 export function sequenceRanges(sequences: readonly number[]): readonly SessionSequenceRange[] {

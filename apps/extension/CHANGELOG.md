@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 减少长会话中的重复计算：已显示的代码高亮不因全局缓存淘汰而重复请求；历史片段按组一次性合并文本和覆盖序列；经典布局复用组内工具与正文数组，保持原有显示、顺序和交互。
+- Reduces repeated work in long conversations: displayed code highlights survive shared-cache eviction without new requests, history chunks assemble text and sequence coverage once per group, and classic layout reuses tool and content arrays while preserving presentation, ordering and interactions.
+
 - 修复打开大历史会话时连接反复中断的问题：快照回放逐条去重使用 O(n²) 扫描并反复序列化，长会话会阻塞事件循环超过 DSH 的 WebSocket 心跳，导致连接被异常断开。改为基于序列化身份集合的 O(n) 去重；V4 解码、投影记账、控制器回放与重连补发按条数和同步耗时分批让出事件循环，保持事件顺序，取消或重启会释放待投递批次。
 - Fixes repeated connection drops when opening a session with a large history: the snapshot replay deduplicated records with an O(n²) scan that reserialized each pair, stalling the event loop past DSH's WebSocket heartbeat on long histories. Dedupe now uses an O(n) serialized-identity set. V4 decode, projection bookkeeping, controller replay, and reconnect delivery yield on both row-count and elapsed-work budgets while preserving event order; cancellation or restart releases the pending replay.
 
