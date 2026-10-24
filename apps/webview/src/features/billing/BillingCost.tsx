@@ -61,13 +61,14 @@ export function BillingCost(props: {
         }).catch(() => undefined)
     }
   }, [request, sessionId, usageKey, revision, send])
-  if (estimate?.enabled !== true || estimate.sessionId !== sessionId) return null
-  if (failed)
+  const disabled = estimate?.sessionId === sessionId && !estimate.enabled
+  if (failed && !disabled)
     return (
       <button type="button" className="dsh-stats-pill" onClick={() => setRevision((value) => value + 1)}>
         {t('billing.retry')}
       </button>
     )
+  if (estimate?.enabled !== true || estimate.sessionId !== sessionId) return null
   const incomplete = !estimate.historyComplete || estimate.pricedRequests !== estimate.requests
   const label = !estimate.supported
     ? t('billing.unavailable')

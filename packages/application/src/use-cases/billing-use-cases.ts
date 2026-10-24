@@ -8,6 +8,8 @@ import type {
 } from '@dsh-vscode/domain'
 import type { BillingPriceResolver, BillingSettingsPort } from '../ports/billing-ports.js'
 
+const MAX_BILLING_EVENTS = 100_000
+
 /** No chat state, VS Code, HTTP or DSH wire dependencies. Reprices the chosen scope explicitly. */
 export class BillingUseCases {
   public constructor(
@@ -44,12 +46,14 @@ export class BillingUseCases {
     let scannedEvents = 0
     let coverage = true
     let complete = false
-    for (let index = 0; index < 20; index += 1) {
+    for (let index = 0; index < 20 && scannedEvents < MAX_BILLING_EVENTS; index += 1) {
       signal.throwIfAborted()
       const page = await repository.readBillingPage(sessionId, before, signal)
       signal.throwIfAborted()
-      if (page.eventCount < 0 || page.eventCount > 5000 || !Number.isSafeInteger(page.eventCount))
-        throw protocolError()
+      if (page.eventCount < 0 || !Number.isSafeInteger(page.eventCount)) throw protocolError()
+      // DSH limits messages per page, not intervening tool/turn events. The
+      // accounting budget limits total work; exhausting it is partial coverage.
+      if (page.eventCount > MAX_BILLING_EVENTS - scannedEvents) break
       scannedEvents += page.eventCount
       coverage &&= page.contiguous
       if (before !== undefined && page.toSequence !== before - 1) coverage = false

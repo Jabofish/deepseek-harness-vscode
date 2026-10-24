@@ -171,3 +171,72 @@ it('cancels its own pending history request when the session leaves', async () =
     ).toBe(true),
   )
 })
+
+it.each([true, false])(
+  'retries the first estimate failure and respects enabled=%s after recovery',
+  async (enabled) => {
+    let attempts = 0
+    const request: BillingClient = <T,>(input: FeatureRequest): Promise<T> => {
+      if (input.type === 'feature.request.cancel') return Promise.resolve({ kind: 'empty' } as T)
+      if (++attempts === 1) return Promise.reject(new Error('PRIVATE_HISTORY_FAILURE'))
+      return Promise.resolve({
+        kind: 'billing.estimate',
+        estimate: {
+          sessionId: 's',
+          enabled,
+          supported: true,
+          historyComplete: true,
+          scannedEvents: 1,
+          requests: 1,
+          pricedRequests: 1,
+          partialRequests: 0,
+          unpricedRequests: 0,
+          priceRevision: 1,
+          totals: [{ currency: 'USD', amount: '0.000014' }],
+          entries: [],
+          detailsTruncated: false,
+        },
+      } as T)
+    }
+    render(<BillingCost request={request} subscribe={() => () => {}} sessionId="s" usageKey="one" />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry cost estimate' }))
+    await waitFor(() => expect(attempts).toBe(2))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry cost estimate' })).toBeNull())
+    if (enabled) expect(await screen.findByText('Cost ≈ USD 0.000014')).toBeDefined()
+    else expect(screen.queryByText(/Cost ≈/)).toBeNull()
+    expect(document.body.textContent).not.toContain('PRIVATE_HISTORY_FAILURE')
+  },
+)
+
+it('keeps a confirmed disabled estimate hidden if a later refresh fails', async () => {
+  let attempts = 0
+  const request: BillingClient = <T,>(input: FeatureRequest): Promise<T> => {
+    if (input.type === 'feature.request.cancel') return Promise.resolve({ kind: 'empty' } as T)
+    if (++attempts > 1) return Promise.reject(new Error('PRIVATE_HISTORY_FAILURE'))
+    return Promise.resolve({
+      kind: 'billing.estimate',
+      estimate: {
+        sessionId: 's',
+        enabled: false,
+        supported: true,
+        historyComplete: false,
+        scannedEvents: 0,
+        requests: 0,
+        pricedRequests: 0,
+        partialRequests: 0,
+        unpricedRequests: 0,
+        priceRevision: 1,
+        totals: [],
+        entries: [],
+        detailsTruncated: false,
+      },
+    } as T)
+  }
+  const subscribe = () => () => {}
+  const view = render(<BillingCost request={request} subscribe={subscribe} sessionId="s" usageKey="one" />)
+  await waitFor(() => expect(attempts).toBe(1))
+  view.rerender(<BillingCost request={request} subscribe={subscribe} sessionId="s" usageKey="two" />)
+  await waitFor(() => expect(attempts).toBe(2))
+  expect(view.container.textContent).toBe('')
+  expect(screen.queryByRole('button', { name: 'Retry cost estimate' })).toBeNull()
+})

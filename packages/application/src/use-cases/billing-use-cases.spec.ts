@@ -19,6 +19,72 @@ const useCases = new BillingUseCases({
 const usage = { inputTokens: 10, outputTokens: 2, totalTokens: 12 }
 
 describe('billing history use case', () => {
+  it('prices a valid page containing more than 5000 raw events', async () => {
+    const result = await useCases.estimate(
+      's',
+      {
+        readBillingPage: () =>
+          Promise.resolve({
+            eventCount: 5001,
+            contiguous: true,
+            hasMore: false,
+            fromSequence: 0,
+            toSequence: 5000,
+            facts: [{ kind: 'message', sequence: 5000, route, usage }],
+          }),
+      },
+      signal(),
+    )
+    expect(result).toMatchObject({
+      historyComplete: true,
+      scannedEvents: 5001,
+      requests: 1,
+      pricedRequests: 1,
+      totals: [{ currency: 'USD', amount: '0.000014' }],
+    })
+  })
+
+  it.each([60_000, 100_000])(
+    'keeps a partial estimate when the total event budget is reached after %i events',
+    async (count) => {
+      let calls = 0
+      const result = await useCases.estimate(
+        's',
+        {
+          readBillingPage: () =>
+            Promise.resolve(
+              ++calls === 1
+                ? {
+                    eventCount: count,
+                    contiguous: true,
+                    hasMore: true,
+                    fromSequence: 60_000,
+                    toSequence: 60_000 + count - 1,
+                    facts: [{ kind: 'message', sequence: 60_000, route, usage }],
+                  }
+                : {
+                    eventCount: 60_000,
+                    contiguous: true,
+                    hasMore: false,
+                    fromSequence: 0,
+                    toSequence: 59_999,
+                    facts: [{ kind: 'message', sequence: 0, route, usage }],
+                  },
+            ),
+        },
+        signal(),
+      )
+      expect(result).toMatchObject({
+        historyComplete: false,
+        scannedEvents: count,
+        requests: 1,
+        pricedRequests: 1,
+        totals: [{ currency: 'USD', amount: '0.000014' }],
+      })
+      expect(calls).toBe(count === 100_000 ? 1 : 2)
+    },
+  )
+
   it('selects historical manual price periods and leaves uncovered requests unpriced', async () => {
     const split = Date.parse('2026-10-01T00:00:00Z')
     const settings: BillingSettings = {

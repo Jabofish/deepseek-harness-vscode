@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 可选模型计费按实际请求路由估算会话费用；合法长历史页不再误报协议错误，达到总读取预算时保留部分统计。首次读取失败显示重试入口，已关闭计费的会话保持隐藏。
+- Optional model billing estimates session costs from actual request routes. Valid large history pages no longer fail as malformed; reaching the total read budget retains a partial estimate. The first failed read offers retry, while confirmed disabled estimates remain hidden.
+
 ## 0.3.9
 
 - 编辑器配套包升级到 `0.2.2`，采用跨版本兼容声明与可选 Host peer；通过服务和协议协商决定能力，不以 DSH 版本枚举限制安装，也不额外安装一套核心服务。保留构建指纹更新与原有协议。
