@@ -17,6 +17,7 @@ export {
 export { createManagedEndpointLoginHandler } from './composition/connection-assembly.js'
 import { PluginInstallRequestCoordinator } from './plugins/plugin-bundle-feature-handler.js'
 import { diagnosticLevel, RedactedDiagnostics } from './backend/diagnostics.js'
+import { EventLoopLagMonitor } from './backend/event-loop-lag.js'
 import { VsCodeConfigurationSource } from './config/configuration-source.js'
 import { OUTPUT_CHANNEL_NAME } from './constants.js'
 import { workspaceFolderId } from './editor/workspace-path-guard.js'
@@ -60,6 +61,8 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const diagnostics = new RedactedDiagnostics(channel, () =>
     diagnosticLevel(vscode.workspace.getConfiguration('dsh.developer').get<string>('logLevel')),
   )
+  const eventLoopLag = new EventLoopLagMonitor()
+  eventLoopLag.start()
   const currentWorkspaceFolders = (): readonly vscode.WorkspaceFolder[] => {
     const folders = vscode.workspace.workspaceFolders
     if (folders !== undefined && folders.length > 0) return folders
@@ -279,6 +282,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       sessionUseCases,
       extensionVersion,
       diagnostics,
+      eventLoopLag,
       stopAllJobFollows,
       invalidateCurrentWorkspaceSessionDetails,
       changeTracker,
@@ -451,6 +455,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const root: CompositionRoot = {
     start: commands.start,
     dispose: () => {
+      eventLoopLag.dispose()
       transcript.dispose()
       disposeHostEventPipeline()
       return commands.dispose()

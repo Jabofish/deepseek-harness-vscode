@@ -45,6 +45,7 @@ import {
   validAlphaEventEmit,
   validAlphaEventReady,
   validAlphaEventWaterfall,
+  yieldToEventLoop,
 } from './session-wire.js'
 import { readAlpha171SessionSnapshotEnvelope } from '../alpha171/session-wire.js'
 import {
@@ -902,7 +903,18 @@ export class AlphaLoopbackApiClient implements DshTransport {
               }
             }
             if (projector !== undefined) for (const event of events) projector.rememberDurable(event)
-            for (const event of events) yield { type: 'session/event', sessionId, event }
+            // The snapshot's decoded events are delivered back-to-back through
+            // one async-iterator microtask chain: every consumer of each
+            // `session/event` runs before the next frame is read, so a long
+            // snapshot replays as one uninterrupted stall that starves the
+            // WebSocket heartbeat. Yield to the event loop periodically so a
+            // large history cannot be terminated.
+            let delivered = 0
+            for (const event of events) {
+              yield { type: 'session/event', sessionId, event }
+              delivered++
+              if ((delivered & 63) === 0) await yieldToEventLoop()
+            }
             if (queueFrame !== undefined) yield queueFrame
             yield {
               type: 'session/subscribed',

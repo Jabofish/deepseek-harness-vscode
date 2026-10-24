@@ -7,6 +7,7 @@ import type { ChangeSetTracker } from '../changes/change-set-tracker.js'
 import type { TaskCenterRegistry } from '../tasks/task-center-registry.js'
 import type { EditorContextProvider } from '../editor/editor-context-provider.js'
 import type { RedactedDiagnostics } from '../backend/diagnostics.js'
+import type { EventLoopLagMonitor } from '../backend/event-loop-lag.js'
 import type { PostFeatureEvent, PublishAccountError } from './host-event-pipeline.js'
 import type { TaskFocusState } from './change-checkpoint-task-assembly.js'
 
@@ -15,6 +16,7 @@ export interface BackendAttachDependencies {
   readonly sessionUseCases: SessionUseCases
   readonly extensionVersion: string
   readonly diagnostics: RedactedDiagnostics
+  readonly eventLoopLag: EventLoopLagMonitor
   readonly publishRecoveredState?: (backend: DshBackend) => void
   readonly stopAllJobFollows: (this: void) => void
   readonly invalidateCurrentWorkspaceSessionDetails: (this: void) => void
@@ -49,6 +51,7 @@ export function createBackendAttach(deps: BackendAttachDependencies): BackendAtt
     sessionUseCases,
     extensionVersion,
     diagnostics,
+    eventLoopLag,
     stopAllJobFollows,
     invalidateCurrentWorkspaceSessionDetails,
     changeTracker,
@@ -131,7 +134,12 @@ export function createBackendAttach(deps: BackendAttachDependencies): BackendAtt
         // The reason is pre-sanitized by the adapter (`safeReason`), so it is
         // safe to surface on the diagnostics channel and pin down why a stream
         // dropped (socket close vs protocol error vs logical stream end).
-        diagnostics.log('warn', 'connection-lost', { reason: event.reason })
+        // The trailing event-loop lag distinguishes a synchronous host stall
+        // (which starves the WebSocket heartbeat) from a transport-level reset.
+        diagnostics.log('warn', 'connection-lost', {
+          reason: event.reason,
+          eventLoopLagMs: eventLoopLag.recentMaxLagMs(),
+        })
         void disposeAccountLifecycleHost()
         invalidateCurrentWorkspaceSessionDetails()
         detachSessionAdapters()

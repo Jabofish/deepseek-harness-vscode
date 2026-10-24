@@ -414,19 +414,25 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
     // previous watermark; otherwise a restarted DSH process loses the new
     // epoch before the lower session/subscribed cursor can reset delivery.
     if (previous === undefined || event.lastSequence < previous) {
-      const emittedSnapshot: BackendEvent[] = []
+      // A retried follow page can repeat an identical durable row before the
+      // cursor marker arrives. Dedupe exact records only: distinct projection
+      // keys or distinct events sharing one DSH sequence are still valid.
+      // Keep a set of serialized identities so a large snapshot does not
+      // rescan every prior row per candidate (an O(n^2) `sameBackendEvent`
+      // sweep that stalled the heartbeat for thousands of records).
+      const emittedKeys = new Set<string>()
       for (const candidate of orderedSnapshot) {
-        // A retried follow page can repeat an identical durable row before the
-        // cursor marker arrives. Dedupe exact records only: distinct projection
-        // keys or distinct events sharing one DSH sequence are still valid.
-        if (emittedSnapshot.some((existing) => sameBackendEvent(existing, candidate))) continue
+        const key = backendEventKey(candidate)
+        if (key !== undefined) {
+          if (emittedKeys.has(key)) continue
+          emittedKeys.add(key)
+        }
         if (
           candidate.type === 'session.projection' &&
           (candidate.sequence === undefined ||
             !this.rememberProjectionSequence(event.sessionId, candidate.key, candidate.sequence))
         )
           continue
-        emittedSnapshot.push(candidate)
         this.emit({ ...candidate, replayed: true })
       }
       this.lastSequences.set(event.sessionId, event.lastSequence)
@@ -748,5 +754,14 @@ function sameBackendEvent(left: BackendEvent, right: BackendEvent): boolean {
     return JSON.stringify(left) === JSON.stringify(right)
   } catch {
     return false
+  }
+}
+
+/** Serialized identity for exact-record dedupe; undefined when it cannot be encoded. */
+function backendEventKey(event: BackendEvent): string | undefined {
+  try {
+    return JSON.stringify(event)
+  } catch {
+    return undefined
   }
 }

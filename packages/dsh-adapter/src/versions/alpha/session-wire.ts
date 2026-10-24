@@ -160,7 +160,7 @@ export function expandHistoryRecords(
  * runs in the check phase, after the poll phase has had a chance to deliver the
  * inbound ping frame.
  */
-function yieldToEventLoop(): Promise<void> {
+export function yieldToEventLoop(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve))
 }
 
@@ -199,6 +199,9 @@ export async function expandV4HistoryRecordsIncremental(
       await yieldToEventLoop()
     }
   }
+  // Flush any deferred heartbeat pong before the final order-by-sequence pass,
+  // which is the one remaining synchronous phase of this incremental decode.
+  await yieldToEventLoop()
   return out
     .sort((left, right) => {
       const sequenceDelta = (left.event.seq as number) - (right.event.seq as number)
