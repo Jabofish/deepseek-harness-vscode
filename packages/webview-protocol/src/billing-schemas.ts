@@ -6,6 +6,7 @@ import {
   type BillingCondition,
   type BillingPrice,
   type BillingSettings,
+  type BillingCandidate,
 } from '@dsh-vscode/domain'
 
 const id = z.string().min(1).max(256).refine(isBillingIdentifier)
@@ -174,7 +175,24 @@ export const billingReferenceResponseSchema = z
     fetchedAt: z.string().datetime(),
   })
   .strict()
-const candidate = route.extend({ label: z.string().min(1).max(512) }).strict()
+const candidate = route
+  .extend({ label: z.string().min(1).max(512), official: z.boolean().optional() })
+  .strict()
+  .transform((value): BillingCandidate => ({
+    providerId: value.providerId,
+    modelId: value.modelId,
+    label: value.label,
+    ...(value.official === undefined ? {} : { official: value.official }),
+  }))
+export const billingReferencesResponseSchema = z
+  .object({
+    kind: z.literal('billing.references'),
+    entries: z.array(candidate).max(50),
+    hasMore: z.boolean(),
+    nextOffset: integer,
+    fetchedAt: z.string().datetime(),
+  })
+  .strict()
 export const billingCatalogResponseSchema = z
   .object({
     kind: z.literal('billing.catalog'),
@@ -198,6 +216,13 @@ export const billingCatalogResponseSchema = z
   })
   .strict()
 export const billingRequestSchemas = [
+  z
+    .object({
+      type: z.literal('billing.reference.search'),
+      requestId: id,
+      payload: z.object({ query: z.string().max(128), offset: integer.optional() }).strict(),
+    })
+    .strict(),
   z
     .object({
       type: z.literal('billing.catalog.read'),
@@ -236,3 +261,4 @@ export type BillingSettingsResponse = z.infer<typeof billingSettingsResponseSche
 export type BillingCatalogResponse = z.infer<typeof billingCatalogResponseSchema>
 export type BillingReferenceResponse = z.infer<typeof billingReferenceResponseSchema>
 export type BillingEstimateResponse = z.infer<typeof billingEstimateResponseSchema>
+export type BillingReferencesResponse = z.infer<typeof billingReferencesResponseSchema>

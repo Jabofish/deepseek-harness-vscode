@@ -23,11 +23,11 @@ export class BillingCatalog {
     const base = { ...ids, label: label.slice(0, 512) || route.modelId, candidates: [] }
     const manual = this.settings.prices.find((price) => billingRouteKey(price) === billingRouteKey(route))
     if (manual !== undefined) return { ...base, status: 'manual', price: manual }
-    if (this.settings.automatic === false) return { ...base, status: 'missing' }
-    if (this.unavailable) return { ...base, status: 'unavailable' }
     const mapping = this.settings.mappings?.find(
       (mapping) => billingRouteKey(mapping) === billingRouteKey(route),
     )
+    if (this.settings.automatic === false && mapping === undefined) return { ...base, status: 'missing' }
+    if (this.unavailable) return { ...base, status: 'unavailable' }
     try {
       const match =
         mapping === undefined

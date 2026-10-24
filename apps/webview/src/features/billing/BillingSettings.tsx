@@ -512,6 +512,7 @@ function BillingPriceEditor(props: {
               </p>
             ) : null}
             <BillingModelList
+              request={props.request}
               entries={entries}
               prices={prices}
               onEdit={(entry, price) =>

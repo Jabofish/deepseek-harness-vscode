@@ -24,6 +24,7 @@ export type BillingCondition =
   | { readonly utcHours: { readonly gte?: string; readonly lt?: string } }
   | { readonly utcDays: readonly number[] }
   | { readonly holiday: string }
+  | { readonly serviceTier: { readonly equals: string } }
   | {
       readonly context: {
         readonly gt?: number
@@ -61,6 +62,16 @@ export function isBillingCondition(value: unknown): value is BillingCondition {
     }
     if (keys[0] === 'not') return read(data.not, depth + 1)
     if (keys[0] === 'holiday') return typeof data.holiday === 'string' && /^[A-Z]{2}$/.test(data.holiday)
+    if (keys[0] === 'serviceTier') {
+      const tier = data.serviceTier
+      if (typeof tier !== 'object' || tier === null || Array.isArray(tier)) return false
+      const record = tier as Record<string, unknown>
+      return (
+        Object.keys(record).length === 1 &&
+        typeof record.equals === 'string' &&
+        /^[\w.-]{1,64}$/u.test(record.equals)
+      )
+    }
     if (keys[0] === 'context' || keys[0] === 'date') {
       const field = data[keys[0]]
       if (typeof field !== 'object' || field === null || Array.isArray(field)) return false
@@ -113,6 +124,7 @@ export interface BillingMapping extends BillingRoute {
 }
 export interface BillingCandidate extends BillingRoute {
   readonly label: string
+  readonly official?: boolean
 }
 export interface BillingCatalogEntry extends BillingRoute {
   readonly label: string
@@ -146,6 +158,7 @@ export type BillingFact =
       readonly invalidUsage?: true
       readonly time?: number
       readonly startedAt?: number
+      readonly serviceTier?: string
     }
 
 export interface BillingUsagePage {

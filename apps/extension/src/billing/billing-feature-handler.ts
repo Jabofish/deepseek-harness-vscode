@@ -72,6 +72,17 @@ export class BillingFeatureHost {
       assertCurrent()
       return { kind: 'billing.reference', ...result }
     }
+    if (request.type === 'billing.reference.search') {
+      if (this.source.search === undefined)
+        throw new AppError({
+          code: 'FEATURE_DISABLED',
+          message: 'Reference model search is unavailable.',
+          retryable: false,
+        })
+      const result = await this.source.search(request.payload.query, request.payload.offset ?? 0, signal)
+      assertCurrent()
+      return { kind: 'billing.references', ...result }
+    }
     const settings = await store.read()
     assertCurrent()
     const catalog = new BillingCatalog(this.source, settings, assertCurrent)

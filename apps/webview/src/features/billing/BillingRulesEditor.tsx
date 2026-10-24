@@ -3,11 +3,13 @@ import type { BillingCondition, BillingPrice } from '@dsh-vscode/domain'
 import { useI18n, type Translate } from '../../i18n.js'
 
 export type BillingRules = Pick<BillingPrice, 'multipliers' | 'overrides' | 'validFrom' | 'validUntil'>
-function description(c: BillingCondition, t: Translate): string {
+export function billingConditionDescription(c: BillingCondition, t: Translate): string {
+  const description = billingConditionDescription
   if ('all' in c) return c.all.map((v) => description(v, t)).join(t('billing.and'))
   if ('any' in c) return `(${c.any.map((v) => description(v, t)).join(t('billing.or'))})`
   if ('not' in c) return t('billing.except', { condition: description(c.not, t) })
   if ('holiday' in c) return t('billing.holiday', { region: c.holiday })
+  if ('serviceTier' in c) return t('billing.serviceTier', { tier: c.serviceTier.equals })
   if ('utcDays' in c) return c.utcDays.map((day) => t(`billing.day.${day}`)).join(', ')
   if ('utcHours' in c) return `UTC ${c.utcHours.gte ?? '00:00'} – ${c.utcHours.lt ?? '24:00'}`
   if ('date' in c) return `${c.date.gte ?? '…'} – ${c.date.lt ?? '…'} UTC`
@@ -37,7 +39,7 @@ export function BillingRulesEditor({
           </summary>
           {(rules.multipliers ?? []).map((rule, index) => (
             <fieldset key={index}>
-              <legend>{description(rule.when, t)}</legend>
+              <legend>{billingConditionDescription(rule.when, t)}</legend>
               <label>
                 {t('billing.ruleFactor', { index: index + 1 })}
                 <input
@@ -59,7 +61,7 @@ export function BillingRulesEditor({
           ))}
           {(rules.overrides ?? []).map((rule, index) => (
             <fieldset key={index}>
-              <legend>{description(rule.when, t)}</legend>
+              <legend>{billingConditionDescription(rule.when, t)}</legend>
               <div className="dsh-billing__rates">
                 {Object.entries(rule.rates).map(([category, value]) => (
                   <label key={category}>

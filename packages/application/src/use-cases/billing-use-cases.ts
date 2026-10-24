@@ -77,7 +77,10 @@ export class BillingUseCases {
       const key = JSON.stringify([price.providerId, price.modelId])
       prices.set(key, [...(prices.get(key) ?? []), price])
     }
-    if (settings.automatic !== false && this.automatic !== undefined) {
+    if (
+      (settings.automatic !== false || (settings.mappings?.length ?? 0) > 0) &&
+      this.automatic !== undefined
+    ) {
       const routes = new Map<string, BillingRoute>()
       for (const fact of facts.values())
         if (fact.route !== undefined) {

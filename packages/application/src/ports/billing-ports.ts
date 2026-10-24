@@ -14,6 +14,13 @@ export interface BillingReference {
 export interface BillingReferenceSource {
   read(providerId: string, modelId: string, signal: AbortSignal): Promise<BillingReference>
   match?(route: BillingRoute, signal: AbortSignal, label?: string): Promise<BillingMatch>
+  search?(query: string, offset: number, signal: AbortSignal): Promise<BillingReferenceList>
+}
+export interface BillingReferenceList {
+  readonly entries: readonly BillingCandidate[]
+  readonly hasMore: boolean
+  readonly nextOffset: number
+  readonly fetchedAt: string
 }
 export interface BillingMatch extends BillingReference {
   readonly candidates: readonly BillingCandidate[]

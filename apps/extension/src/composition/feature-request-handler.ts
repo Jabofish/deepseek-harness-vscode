@@ -119,7 +119,8 @@ export function createFeatureRequestHandler(deps: FeatureRequestHandlerDependenc
       request.type === 'billing.settings.save' ||
       request.type === 'billing.estimate' ||
       request.type === 'billing.catalog.read' ||
-      request.type === 'billing.reference.read'
+      request.type === 'billing.reference.read' ||
+      request.type === 'billing.reference.search'
     ) {
       if (deps.billing === undefined)
         throw new AppError({ code: 'FEATURE_DISABLED', message: 'Billing is unavailable.', retryable: false })

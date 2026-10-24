@@ -596,7 +596,30 @@ it('requires confirmation for a custom reseller and enumerates large catalogs wi
       details.open = true
       fireEvent(details, new Event('toggle'))
     })
-    fireEvent.click(await screen.findByRole('button', { name: 'Use synthetic / model-a prices' }))
+    const modelRow = (await screen.findByRole('button', { name: 'Use synthetic / model-a prices' })).closest(
+      'li',
+    )!
+    const picker = within(modelRow).getByText('Choose another reference model').closest('details')!
+    act(() => {
+      picker.open = true
+      fireEvent(picker, new Event('toggle'))
+    })
+    const search = within(modelRow).getByRole('region', { name: 'Reference models' })
+    fireEvent.change(within(search).getByRole('textbox'), { target: { value: 'SYNTHETIC MODEL_A' } })
+    await waitFor(() =>
+      expect(within(search).getByRole<HTMLButtonElement>('button', { name: 'Search' }).disabled).toBe(false),
+    )
+    fireEvent.click(within(search).getByRole('button', { name: 'Search' }))
+    const choice = (
+      await within(search).findByRole('button', { name: 'Use synthetic / model-a prices' })
+    ).closest('li')!
+    const pricing = within(choice).getByText('Pricing details').closest('details')!
+    act(() => {
+      pricing.open = true
+      fireEvent(pricing, new Event('toggle'))
+    })
+    expect(await within(choice).findByText('USD 1')).toBeDefined()
+    fireEvent.click(within(choice).getByRole('button', { name: 'Use synthetic / model-a prices' }))
     await screen.findByText('Automatic reference')
     const result = billingEstimateResponseSchema.parse(
       await connection.client.featureRequest({
@@ -619,6 +642,73 @@ it('requires confirmation for a custom reseller and enumerates large catalogs wi
     modelGroups = []
   }
 })
+
+it.skipIf(process.env.DSH_BILLING_LIVE_PRICES !== '1')(
+  'matches official screenshot routes against the live catalog and expands their pricing in the UI',
+  async () => {
+    const source = new ModelsDevPriceSource()
+    const signal = new AbortController().signal
+    for (const providerId of ['deepseek', 'deepseek-official', 'deepseek-account']) {
+      for (const modelId of [
+        'deepseek-flash',
+        'deepseek/deepseek-v4.1-flash-1017',
+        'DEEPSEEK/DEEPSEEK-V4.1-FLASH-1017',
+      ]) {
+        const result = await source.match({ providerId, modelId }, signal)
+        expect(result).toMatchObject({
+          status: 'found',
+          reference: { providerId: 'deepseek', official: true },
+        })
+        expect(result.price?.input).toBeDefined()
+      }
+    }
+    const minimax = await source.match({ providerId: 'minimax-cn', modelId: 'minimax-m3' }, signal)
+    expect(minimax.status).toBe('found')
+    expect(minimax.price?.multipliers).toContainEqual({
+      when: { serviceTier: { equals: 'priority' } },
+      factor: '1.5',
+    })
+    const references = await source.search('DeepSeek V4.1', 0, signal)
+    expect(references.entries[0]).toMatchObject({ providerId: 'deepseek', official: true })
+    modelGroups = [
+      {
+        id: 'deepseek-account',
+        name: 'DeepSeek Account',
+        models: [{ id: 'deepseek-flash', name: 'DeepSeek-V4.1-Flash' }],
+      },
+      { id: 'minimax-cn', name: 'MiniMax CN', models: [{ id: 'minimax-m3', name: 'MiniMax-M3' }] },
+    ]
+    const connection = connect('official-pricing-ui', [], 500, source)
+    try {
+      await configure(connection.client, [])
+      render(<BillingSettings request={(request) => connection.client.featureRequest(request)} models={[]} />)
+      const panel = screen.getByText('Model billing').closest('details')!
+      act(() => {
+        panel.open = true
+        fireEvent(panel, new Event('toggle'))
+      })
+      const row = (await screen.findByText('MiniMax-M3')).closest('li')!
+      const details = within(row).getByText('Pricing details').closest('details')!
+      act(() => {
+        details.open = true
+        fireEvent(details, new Event('toggle'))
+      })
+      expect(await within(details).findByText(/Service tier: priority/)).toBeDefined()
+      expect(screen.queryByText('Unsupported pricing conditions')).toBeNull()
+      expect(screen.getAllByText('Official reference')).toHaveLength(2)
+      reports.push({
+        name: 'live-official-aliases-and-price-details',
+        passed: true,
+        boundary:
+          'Live public models.dev catalog; synthetic DSH model directory and actual Host/protocol/UI. No provider invoice.',
+      })
+    } finally {
+      cleanup()
+      connection.dispose()
+      modelGroups = []
+    }
+  },
+)
 
 it.skipIf(process.env.DSH_BILLING_LIVE_PRICES !== '1')(
   'reads the real models.dev catalog, saves a reference price and prices a synthetic session in the DOM',

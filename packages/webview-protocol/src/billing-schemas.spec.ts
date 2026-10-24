@@ -1,7 +1,44 @@
 import { describe, expect, it } from 'vitest'
-import { billingConfigurationSchema, featureRequestSchema, billingEstimateResponseSchema } from './index.js'
+import {
+  billingConfigurationSchema,
+  featureRequestSchema,
+  billingEstimateResponseSchema,
+  billingReferencesResponseSchema,
+} from './index.js'
 
 describe('billing protocol limits', () => {
+  it('bounds reference search and rejects endpoints or credentials in its results', () => {
+    const request = {
+      type: 'billing.reference.search',
+      requestId: 'search',
+      payload: { query: 'minimax m3', offset: 50 },
+    }
+    expect(featureRequestSchema.safeParse(request).success).toBe(true)
+    expect(featureRequestSchema.safeParse({ ...request, payload: { query: 'x'.repeat(129) } }).success).toBe(
+      false,
+    )
+    expect(featureRequestSchema.safeParse({ ...request, payload: { query: '', offset: -1 } }).success).toBe(
+      false,
+    )
+    const result = {
+      kind: 'billing.references',
+      fetchedAt: '2026-10-24T00:00:00.000Z',
+      hasMore: false,
+      nextOffset: 1,
+      entries: [{ providerId: 'vendor', modelId: 'model', label: 'Model', official: true }],
+    }
+    expect(billingReferencesResponseSchema.safeParse(result).success).toBe(true)
+    expect(
+      billingReferencesResponseSchema.safeParse({
+        ...result,
+        entries: [{ ...result.entries[0], endpoint: 'https://private.invalid', apiKey: 'secret' }],
+      }).success,
+    ).toBe(false)
+    expect(
+      billingReferencesResponseSchema.safeParse({ ...result, entries: Array(51).fill(result.entries[0]) })
+        .success,
+    ).toBe(false)
+  })
   it('allows disjoint historical prices but rejects overlaps and malformed conditions', () => {
     const price = { providerId: 'p', modelId: 'm', currency: 'USD', input: '1', output: '2' }
     const split = Date.parse('2026-10-01T00:00:00Z')

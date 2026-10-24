@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 参考价格优先匹配官方模型，支持官方账号别名、大小写及完整模型标识；同一模型且价格相同的目录别名合并处理。模糊候选之外可搜索完整参考目录并手动选择，用户选择与自定义单价优先保留。模型和候选可展开查看各项单价、缓存、时间／上下文及服务等级规则；MiniMax 等服务等级定价不再被整体丢弃。
+- Reference pricing prefers official model identities, including account aliases, case variants and canonical IDs, and consolidates equivalent catalog aliases. Users can search the full reference catalog, inspect rates and conditions before choosing, and retain their explicit mapping or custom prices. Service-tier prices are preserved instead of discarding the entire reference.
+
 - 可选模型计费按实际请求路由估算会话费用；合法长历史页不再误报协议错误，达到总读取预算时保留部分统计。首次读取失败显示重试入口，已关闭计费的会话保持隐藏。
 - Optional model billing estimates session costs from actual request routes. Valid large history pages no longer fail as malformed; reaching the total read budget retains a partial estimate. The first failed read offers retry, while confirmed disabled estimates remain hidden.
 

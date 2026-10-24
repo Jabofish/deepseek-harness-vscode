@@ -1,5 +1,24 @@
 import { describe, expect, it } from 'vitest'
 import { estimateBillingEntry, type BillingPrice, type BillingCondition } from './billing.js'
+
+it('applies recorded service tiers and leaves an unrecorded tier unknown', () => {
+  const route = { providerId: 'fixture', modelId: 'tiered' }
+  const price: BillingPrice = {
+    ...route,
+    currency: 'USD',
+    input: '1',
+    output: '2',
+    multipliers: [{ when: { serviceTier: { equals: 'priority' } }, factor: '1.5' }],
+  }
+  const fact = {
+    kind: 'message' as const,
+    sequence: 0,
+    usage: { inputTokens: 1_000_000, outputTokens: 0, totalTokens: 1_000_000 },
+  }
+  expect(estimateBillingEntry({ ...fact, serviceTier: 'standard' }, route, price).amount).toBe('1')
+  expect(estimateBillingEntry({ ...fact, serviceTier: 'priority' }, route, price).amount).toBe('1.5')
+  expect(estimateBillingEntry(fact, route, price).issues).toEqual(['unknown-price-period'])
+})
 const route = { providerId: 'fixture', modelId: 'scheduled' }
 const condition: BillingCondition = {
   all: [

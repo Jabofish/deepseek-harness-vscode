@@ -17,16 +17,24 @@ type Truth = boolean | undefined
 function every(values: readonly Truth[]): Truth {
   return values.includes(false) ? false : values.includes(undefined) ? undefined : true
 }
-export function billingConditionAt(condition: BillingCondition, time?: number, context?: number): Truth {
-  if ('all' in condition) return every(condition.all.map((value) => billingConditionAt(value, time, context)))
+export function billingConditionAt(
+  condition: BillingCondition,
+  time?: number,
+  context?: number,
+  serviceTier?: string,
+): Truth {
+  if ('all' in condition)
+    return every(condition.all.map((value) => billingConditionAt(value, time, context, serviceTier)))
   if ('any' in condition) {
-    const values = condition.any.map((value) => billingConditionAt(value, time, context))
+    const values = condition.any.map((value) => billingConditionAt(value, time, context, serviceTier))
     return values.includes(true) ? true : values.includes(undefined) ? undefined : false
   }
   if ('not' in condition) {
-    const value = billingConditionAt(condition.not, time, context)
+    const value = billingConditionAt(condition.not, time, context, serviceTier)
     return value === undefined ? undefined : !value
   }
+  if ('serviceTier' in condition)
+    return serviceTier === undefined ? undefined : serviceTier === condition.serviceTier.equals
   if ('context' in condition) {
     if (context === undefined) return undefined
     const c = condition.context
@@ -64,7 +72,12 @@ function rateUnits(rate: string): bigint {
   const [whole = '0', fraction = ''] = rate.split('.')
   return BigInt(whole) * scale + BigInt(fraction.padEnd(9, '0'))
 }
-function effective(price: BillingPrice, time?: number, context?: number): BillingPrice | undefined {
+function effective(
+  price: BillingPrice,
+  time?: number,
+  context?: number,
+  serviceTier?: string,
+): BillingPrice | undefined {
   if (
     (price.validFrom !== undefined && (time === undefined || time < price.validFrom)) ||
     (price.validUntil !== undefined && (time === undefined || time >= price.validUntil))
@@ -72,7 +85,7 @@ function effective(price: BillingPrice, time?: number, context?: number): Billin
     return undefined
   const selected: { -readonly [K in keyof BillingPrice]: BillingPrice[K] } = { ...price }
   for (const rule of price.overrides ?? []) {
-    const match = billingConditionAt(rule.when, time, context)
+    const match = billingConditionAt(rule.when, time, context, serviceTier)
     if (match === undefined) return undefined
     if (match) {
       Object.assign(selected, rule.rates)
@@ -84,7 +97,7 @@ function effective(price: BillingPrice, time?: number, context?: number): Billin
   }
   let factor = scale
   for (const rule of price.multipliers ?? []) {
-    const match = billingConditionAt(rule.when, time, context)
+    const match = billingConditionAt(rule.when, time, context, serviceTier)
     if (match === undefined && rateUnits(rule.factor) !== scale) return undefined
     if (match) {
       const product = factor * rateUnits(rule.factor)
@@ -125,7 +138,7 @@ export function billingPriceForFact(
       : undefined
   const end = fact.time
   const start = fact.startedAt
-  if (end === undefined || start === undefined) return effective(price, undefined, context)
+  if (end === undefined || start === undefined) return effective(price, undefined, context, fact.serviceTier)
   if (
     !Number.isSafeInteger(start) ||
     !Number.isSafeInteger(end) ||
@@ -134,10 +147,10 @@ export function billingPriceForFact(
     end - start > 86_400_000
   )
     return undefined
-  const result = effective(price, start, context)
+  const result = effective(price, start, context, fact.serviceTier)
   if (result === undefined) return undefined
   const same = (time: number): boolean => {
-    const candidate = effective(price, time, context)
+    const candidate = effective(price, time, context, fact.serviceTier)
     return (
       candidate !== undefined &&
       ['input', 'output', 'cacheRead', 'cacheWrite', 'reasoning'].every(

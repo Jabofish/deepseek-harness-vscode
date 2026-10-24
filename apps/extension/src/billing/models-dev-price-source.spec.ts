@@ -23,7 +23,7 @@ describe('models.dev price source', () => {
       {
         text: {
           ...plain.text,
-          input: { price: 0.1, overrides: [{ when: { service_tier: { equals: 'priority' } }, price: 0.2 }] },
+          input: { price: 0.1, overrides: [{ when: { unknown_tier: { equals: 'priority' } }, price: 0.2 }] },
         },
       },
       { ...plain, audio: {} },
@@ -33,6 +33,51 @@ describe('models.dev price source', () => {
     ])
       expect(read(cost).status).toBe('unsupported')
     expect(readModelsDevPrice({}, 'fixture', 'model', fetchedAt).status).toBe('missing')
+  })
+  it('preserves MiniMax service-tier pricing and reads case variants instead of rejecting the model', async () => {
+    const data = {
+      'minimax-cn': {
+        models: {
+          'MiniMax-M3': {
+            family: 'minimax',
+            cost: {
+              text: {
+                input: {
+                  price: 0.3137,
+                  cache: { read: 0.0627 },
+                  overrides: [{ when: { context: { gt: 512000 } }, price: 0.6275 }],
+                },
+                output: { price: 1.2549 },
+              },
+              multipliers: [{ when: { service_tier: { equals: 'priority' } }, factor: 1.5 }],
+            },
+          },
+        },
+      },
+    }
+    const source = new ModelsDevPriceSource(() =>
+      Promise.resolve(
+        new Response(JSON.stringify(data), { headers: { 'content-type': 'application/json' } }),
+      ),
+    )
+    const result = await source.match(
+      { providerId: 'MINIMAX-CN', modelId: 'minimax-m3' },
+      new AbortController().signal,
+    )
+    expect(result).toMatchObject({
+      status: 'found',
+      price: {
+        input: '0.3137',
+        output: '1.2549',
+        cacheRead: '0.0627',
+        multipliers: [{ when: { serviceTier: { equals: 'priority' } }, factor: '1.5' }],
+      },
+    })
+    expect((await source.read('minimax-cn', 'MINIMAX-M3', new AbortController().signal)).status).toBe('found')
+    expect(readModelsDevPrice(data, 'MINIMAX-CN', 'minimax-m3', fetchedAt).status).toBe('found')
+    expect((await source.search('minimax m3', 0, new AbortController().signal)).entries).toMatchObject([
+      { providerId: 'minimax-cn', modelId: 'MiniMax-M3' },
+    ])
   })
   it('preserves supported schedules and context tiers and leaves unknown cache TTL writes unpriced', () => {
     const result = read({

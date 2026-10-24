@@ -7,7 +7,12 @@ import {
   type BillingRateOverride,
   type BillingCategory,
 } from '@dsh-vscode/domain'
-import type { BillingMatch, BillingReference, BillingReferenceSource } from '@dsh-vscode/application'
+import type {
+  BillingMatch,
+  BillingReference,
+  BillingReferenceList,
+  BillingReferenceSource,
+} from '@dsh-vscode/application'
 import { ModelsDevCatalogIndex } from './models-dev-matcher.js'
 
 const SOURCE = 'https://models.dev/experimental/v2.0/api.json'
@@ -97,7 +102,19 @@ export class ModelsDevPriceSource implements BillingReferenceSource {
   }
   public async read(providerId: string, modelId: string, signal: AbortSignal): Promise<BillingReference> {
     const catalog = await this.catalog(signal)
-    return readModelsDevPrice(catalog.value, providerId, modelId, catalog.fetchedAt)
+    const match = this.index!.match({ providerId, modelId }, undefined, false)
+    return match.selected === undefined
+      ? { status: 'missing', fetchedAt: catalog.fetchedAt }
+      : readModelsDevPrice(
+          catalog.value,
+          match.selected.providerId,
+          match.selected.modelId,
+          catalog.fetchedAt,
+        )
+  }
+  public async search(query: string, offset: number, signal: AbortSignal): Promise<BillingReferenceList> {
+    const catalog = await this.catalog(signal)
+    return { ...this.index!.search(query, offset), fetchedAt: catalog.fetchedAt }
   }
   public async match(route: BillingRoute, signal: AbortSignal, label?: string): Promise<BillingMatch> {
     const catalog = await this.catalog(signal)
@@ -154,8 +171,8 @@ function condition(value: unknown, depth = 0): BillingCondition | undefined {
       if (holiday === undefined || !only(holiday, ['equals']) || typeof holiday.equals !== 'string')
         return undefined
       parts.push({ holiday: holiday.equals })
-    } else if (key === 'context' || key === 'date') {
-      const part = { [key]: value }
+    } else if (key === 'context' || key === 'date' || key === 'service_tier') {
+      const part = { [key === 'service_tier' ? 'serviceTier' : key]: value }
       if (!isBillingCondition(part)) return undefined
       parts.push(part)
     } else return undefined
@@ -171,9 +188,16 @@ export function readModelsDevPrice(
   modelId: string,
   fetchedAt: string,
 ): BillingReference {
-  const provider = Object.hasOwn(value, providerId) ? object(value[providerId]) : undefined
+  const findKey = (record: Record<string, unknown>, key: string): string | undefined => {
+    if (Object.hasOwn(record, key)) return key
+    const matches = Object.keys(record).filter((candidate) => candidate.toLowerCase() === key.toLowerCase())
+    return matches.length === 1 ? matches[0] : undefined
+  }
+  const providerKey = findKey(value, providerId)
+  const provider = providerKey === undefined ? undefined : object(value[providerKey])
   const models = object(provider?.models)
-  const model = models !== undefined && Object.hasOwn(models, modelId) ? object(models[modelId]) : undefined
+  const modelKey = models === undefined ? undefined : findKey(models, modelId)
+  const model = models !== undefined && modelKey !== undefined ? object(models[modelKey]) : undefined
   if (model === undefined) return { status: 'missing', fetchedAt }
   const cost = object(model.cost)
   const text = object(cost?.text)

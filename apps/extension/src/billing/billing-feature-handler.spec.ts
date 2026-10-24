@@ -2,8 +2,13 @@ import { describe, expect, it, vi } from 'vitest'
 import type { BillingUsageRepository, DshBackend } from '@dsh-vscode/domain'
 import { billingEstimateResponseSchema, billingSettingsResponseSchema } from '@dsh-vscode/webview-protocol'
 import { BillingFeatureHost } from './billing-feature-handler.js'
+import type { BillingReferenceSource } from '@dsh-vscode/application'
 
-function harness(): {
+function harness(
+  source: BillingReferenceSource = {
+    read: () => Promise.resolve({ status: 'missing', fetchedAt: '2026-10-24T00:00:00.000Z' }),
+  },
+): {
   readonly host: BillingFeatureHost
   readonly readPage: ReturnType<typeof vi.fn<BillingUsageRepository['readBillingPage']>>
   readonly requireSession: ReturnType<typeof vi.fn>
@@ -34,7 +39,7 @@ function harness(): {
       changed,
       isTrusted: () => true,
     },
-    { read: () => Promise.resolve({ status: 'missing', fetchedAt: '2026-10-24T00:00:00.000Z' }) },
+    source,
   )
   return {
     host,
@@ -54,6 +59,104 @@ function harness(): {
 }
 
 describe('billing feature boundary', () => {
+  it('keeps a user-selected reference in control even with automatic matching disabled', async () => {
+    const read = vi.fn<BillingReferenceSource['read']>().mockResolvedValue({
+      status: 'found',
+      fetchedAt: '2026-10-24T00:00:00.000Z',
+      price: { providerId: 'reference', modelId: 'chosen', currency: 'USD', input: '1', output: '2' },
+    })
+    const match = vi.fn<NonNullable<BillingReferenceSource['match']>>()
+    const { host, readPage } = harness({ read, match })
+    const signal = new AbortController().signal
+    const snapshot = billingSettingsResponseSchema.parse(
+      await host.handle({ type: 'billing.settings.read', requestId: 'r', payload: {} }, signal),
+    )
+    await host.handle(
+      {
+        type: 'billing.settings.save',
+        requestId: 's',
+        payload: {
+          scopeId: snapshot.scopeId,
+          expectedRevision: 0,
+          settings: {
+            enabled: true,
+            automatic: false,
+            prices: [],
+            mappings: [
+              {
+                providerId: 'work',
+                modelId: 'alias',
+                referenceProviderId: 'reference',
+                referenceModelId: 'chosen',
+              },
+            ],
+          },
+        },
+      },
+      signal,
+    )
+    readPage.mockResolvedValue({
+      eventCount: 1,
+      contiguous: true,
+      hasMore: false,
+      fromSequence: 0,
+      toSequence: 0,
+      facts: [
+        {
+          kind: 'message',
+          sequence: 0,
+          route: { providerId: 'work', modelId: 'alias' },
+          usage: { inputTokens: 10, outputTokens: 2, totalTokens: 12 },
+        },
+      ],
+    })
+    const result = billingEstimateResponseSchema.parse(
+      await host.handle(
+        { type: 'billing.estimate', requestId: 'e', payload: { sessionId: 'owned' } },
+        signal,
+      ),
+    )
+    expect(result.estimate).toMatchObject({
+      pricedRequests: 1,
+      totals: [{ currency: 'USD', amount: '0.000014' }],
+    })
+    expect(read).toHaveBeenCalledWith('reference', 'chosen', signal)
+    expect(match).not.toHaveBeenCalled()
+  })
+
+  it('searches the reference catalog and discards results from an obsolete connection', async () => {
+    const search = vi.fn<NonNullable<BillingReferenceSource['search']>>().mockResolvedValue({
+      entries: [{ providerId: 'reference', modelId: 'model', label: 'Model' }],
+      fetchedAt: '2026-10-24T00:00:00.000Z',
+      nextOffset: 1,
+      hasMore: false,
+    })
+    const { host, swapBackend } = harness({
+      read: () => Promise.resolve({ status: 'missing', fetchedAt: '2026-10-24T00:00:00.000Z' }),
+      search,
+    })
+    const signal = new AbortController().signal
+    const request = {
+      type: 'billing.reference.search' as const,
+      requestId: 'r',
+      payload: { query: 'MODEL', offset: 0 },
+    }
+    await expect(host.handle(request, signal)).resolves.toMatchObject({
+      kind: 'billing.references',
+      entries: [{ modelId: 'model' }],
+    })
+    expect(search).toHaveBeenCalledWith('MODEL', 0, signal)
+    search.mockImplementation(() => {
+      swapBackend()
+      return Promise.resolve({
+        entries: [],
+        fetchedAt: '2026-10-24T00:00:00.000Z',
+        nextOffset: 0,
+        hasMore: false,
+      })
+    })
+    await expect(host.handle(request, signal)).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
+  })
   it('validates ownership before and after accounting, and strictly projects its response', async () => {
     const { host, requireSession, changed } = harness()
     const signal = new AbortController().signal

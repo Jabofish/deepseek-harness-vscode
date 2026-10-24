@@ -3,6 +3,7 @@ import {
   billingEstimateResponseSchema,
   billingCatalogResponseSchema,
   billingReferenceResponseSchema,
+  billingReferencesResponseSchema,
   billingSettingsResponseSchema,
 } from '../billing-schemas.js'
 import { editorIntegrationStatusSchema } from './feature-editor.js'
@@ -47,6 +48,7 @@ export const featureResponsePayloadSchema = z.discriminatedUnion('kind', [
   billingEstimateResponseSchema,
   billingCatalogResponseSchema,
   billingReferenceResponseSchema,
+  billingReferencesResponseSchema,
   billingSettingsResponseSchema,
   editorIntegrationStatusSchema,
   z

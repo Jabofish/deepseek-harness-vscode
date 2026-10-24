@@ -3,6 +3,9 @@ import type { BillingPrice } from '@dsh-vscode/domain'
 import type { BillingCatalogResponse } from '@dsh-vscode/webview-protocol'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
+import type { BillingClient } from './billing-client.js'
+import { BillingReferenceDetails } from './BillingPriceDetails.js'
+import { BillingReferencePicker } from './BillingReferencePicker.js'
 
 type ModelRow = BillingCatalogResponse['entries'][number]
 
@@ -13,6 +16,7 @@ export function BillingModelList({
   onRestore,
   onReference,
   onRemove,
+  request,
 }: {
   readonly entries: readonly ModelRow[]
   readonly prices: readonly BillingPrice[]
@@ -20,6 +24,7 @@ export function BillingModelList({
   readonly onRestore: (entry: ModelRow) => void
   readonly onReference: (entry: ModelRow, candidate: ModelRow['candidates'][number]) => void
   readonly onRemove: (price: BillingPrice) => void
+  readonly request: BillingClient
 }): ReactElement {
   const { t } = useI18n()
   return (
@@ -28,16 +33,19 @@ export function BillingModelList({
         const periods = prices.filter((p) => p.providerId === entry.providerId && p.modelId === entry.modelId)
         const ruleCount = (entry.price?.multipliers?.length ?? 0) + (entry.price?.overrides?.length ?? 0)
         const candidates = entry.candidates.map((candidate) => (
-          <button
-            type="button"
-            className="dsh-billing__candidate"
-            key={JSON.stringify([candidate.providerId, candidate.modelId])}
-            onClick={() => onReference(entry, candidate)}
-          >
-            <Icon name="branch" />
-            {t('billing.useReference', { provider: candidate.providerId, model: candidate.modelId })}
-            <Icon name="chevron-right" />
-          </button>
+          <div key={JSON.stringify([candidate.providerId, candidate.modelId])}>
+            <button
+              type="button"
+              className="dsh-billing__candidate"
+              key={JSON.stringify([candidate.providerId, candidate.modelId])}
+              onClick={() => onReference(entry, candidate)}
+            >
+              <Icon name="branch" />
+              {t('billing.useReference', { provider: candidate.providerId, model: candidate.modelId })}
+              <Icon name="chevron-right" />
+            </button>
+            <BillingReferenceDetails reference={candidate} request={request} />
+          </div>
         ))
         return (
           <li className="dsh-billing__model" key={JSON.stringify([entry.providerId, entry.modelId])}>
@@ -49,7 +57,11 @@ export function BillingModelList({
                 </span>
               </div>
               <span className={`dsh-billing__badge dsh-billing__badge--${entry.status}`}>
-                {t(`billing.match.${entry.status}`)}
+                {t(
+                  entry.status === 'automatic' && entry.reference?.official === true
+                    ? 'billing.match.official'
+                    : `billing.match.${entry.status}`,
+                )}
               </span>
               <button
                 type="button"
@@ -77,6 +89,19 @@ export function BillingModelList({
                 </span>
               </div>
             )}
+            {entry.price === undefined ? null : (
+              <BillingReferenceDetails
+                reference={
+                  entry.reference ?? {
+                    providerId: entry.providerId,
+                    modelId: entry.modelId,
+                    label: entry.label,
+                  }
+                }
+                request={request}
+                price={entry.price}
+              />
+            )}
             {ruleCount > 0 ? (
               <span className="dsh-billing__rule-label">
                 <Icon name="clock" />
@@ -101,6 +126,10 @@ export function BillingModelList({
             ) : candidates.length === 0 ? null : (
               <div className="dsh-billing__candidates">{candidates}</div>
             )}
+            <BillingReferencePicker
+              request={request}
+              onSelect={(candidate) => onReference(entry, candidate)}
+            />
             {periods.length > 1 ? (
               <details className="dsh-billing__disclosure">
                 <summary>{t('billing.pricePeriods', { count: periods.length })}</summary>
