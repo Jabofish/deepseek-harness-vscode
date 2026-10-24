@@ -23,7 +23,12 @@ const route = { providerId: 'fixture', modelId: 'scheduled' }
 const condition: BillingCondition = {
   all: [
     { utcDays: [1, 2, 3, 4, 5] },
-    { any: [{ utcHours: { gte: '01:00', lt: '04:00' } }, { utcHours: { gte: '06:00', lt: '10:00' } }] },
+    {
+      any: [
+        { all: [{ utcHours: { gte: '01:00' } }, { utcHours: { lt: '04:00' } }] },
+        { all: [{ utcHours: { gte: '06:00' } }, { utcHours: { lt: '10:00' } }] },
+      ],
+    },
     { not: { holiday: 'CN' } },
   ],
 }
@@ -47,7 +52,9 @@ describe('conditional exact billing', () => {
     ['2026-10-22T01:00:00Z', '5.28'],
     ['2026-10-22T03:59:59Z', '5.28'],
     ['2026-10-22T04:00:00Z', '2.64'],
+    ['2026-10-22T05:59:59Z', '2.64'],
     ['2026-10-22T06:00:00Z', '5.28'],
+    ['2026-10-22T09:59:59Z', '5.28'],
     ['2026-10-22T10:00:00Z', '2.64'],
     ['2026-10-24T02:00:00Z', '2.64'],
     ['2026-10-01T02:00:00Z', '2.64'],

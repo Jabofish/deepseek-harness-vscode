@@ -16,6 +16,7 @@ import './billing.css'
 import { BillingRulesEditor, type BillingRules } from './BillingRulesEditor.js'
 import { BillingModelList } from './BillingModelList.js'
 import { Icon } from '../../ui/Icon.js'
+import { billingDateLabel } from './billing-time.js'
 
 type Draft = {
   [
@@ -79,7 +80,7 @@ function BillingPriceEditor(props: {
   readonly request: BillingClient
   readonly models: readonly ModelDescriptor[]
 }): ReactElement {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const { send, isAlive } = useBillingClient(props.request)
   const [snapshot, setSnapshot] = useState<BillingSettingsResponse>()
   const [enabled, setEnabled] = useState(false)
@@ -449,7 +450,10 @@ function BillingPriceEditor(props: {
               </button>
               {reference === undefined ? null : (
                 <p className="dsh-billing__message" role="status">
-                  {t(`billing.reference.${reference}`)} {referenceTime}
+                  {t(`billing.reference.${reference}`)}{' '}
+                  {referenceTime === undefined
+                    ? ''
+                    : `${t('billing.timeZone')} ${billingDateLabel(Date.parse(referenceTime), locale)}`}
                 </p>
               )}
             </details>

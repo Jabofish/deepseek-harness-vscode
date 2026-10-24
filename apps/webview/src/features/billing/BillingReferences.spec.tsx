@@ -3,13 +3,22 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, beforeEach, expect, it } from 'vitest'
 import type { BillingPrice } from '@dsh-vscode/domain'
 import type { FeatureRequest } from '@dsh-vscode/webview-protocol'
-import { setActiveLocale } from '../../i18n.js'
+import { I18nProvider, setActiveLocale } from '../../i18n.js'
 import { BillingReferenceDetails } from './BillingPriceDetails.js'
 import { BillingSettings } from './BillingSettings.js'
 import type { BillingClient } from './billing-client.js'
+import { BillingRulesEditor, type BillingRules } from './BillingRulesEditor.js'
 
-beforeEach(() => setActiveLocale('en'))
-afterEach(cleanup)
+beforeEach(() => {
+  setActiveLocale('en')
+  localStorage.clear()
+  document.documentElement.lang = 'en'
+})
+afterEach(() => {
+  cleanup()
+  localStorage.clear()
+  document.documentElement.lang = 'en'
+})
 function open(label: string): HTMLElement {
   const details = screen.getByText(label).closest('details')!
   act(() => {
@@ -46,6 +55,30 @@ it('expands rates, cache prices and conditions without changing or fetching know
   expect(details.getByText(/512000/)).toBeDefined()
   expect(details.getAllByText('Not configured')).toHaveLength(2)
 })
+
+it.each(['en', 'zh'] as const)(
+  'edits validity in the displayed %s timezone and stores the UTC instant',
+  (locale) => {
+    setActiveLocale(locale)
+    document.documentElement.lang = locale
+    const changed: BillingRules[] = []
+    render(
+      <I18nProvider>
+        <BillingRulesEditor
+          rules={{ validFrom: Date.parse('2026-12-31T22:30:00Z') }}
+          onChange={(rules) => changed.push(rules)}
+        />
+      </I18nProvider>,
+    )
+    open(locale === 'zh' ? '价格生效区间' : 'Price validity period')
+    const input = screen.getByLabelText<HTMLInputElement>(
+      locale === 'zh' ? '生效时间（北京时间）' : 'Effective from (UTC)',
+    )
+    expect(input.value).toBe(locale === 'zh' ? '2027-01-01T06:30' : '2026-12-31T22:30')
+    fireEvent.change(input, { target: { value: locale === 'zh' ? '2027-01-01T07:30' : '2026-12-31T23:30' } })
+    expect(changed).toEqual([{ validFrom: Date.parse('2026-12-31T23:30:00Z') }])
+  },
+)
 
 it('searches beyond automatic suggestions, previews a reference and saves the exact user selection', async () => {
   const calls: FeatureRequest[] = []

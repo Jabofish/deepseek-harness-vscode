@@ -6,6 +6,7 @@ import { Icon } from '../../ui/Icon.js'
 import type { BillingClient } from './billing-client.js'
 import { BillingReferenceDetails } from './BillingPriceDetails.js'
 import { BillingReferencePicker } from './BillingReferencePicker.js'
+import { billingDateLabel } from './billing-time.js'
 
 type ModelRow = BillingCatalogResponse['entries'][number]
 
@@ -26,7 +27,7 @@ export function BillingModelList({
   readonly onRemove: (price: BillingPrice) => void
   readonly request: BillingClient
 }): ReactElement {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   return (
     <ul className="dsh-billing__models">
       {entries.map((entry) => {
@@ -139,14 +140,8 @@ export function BillingModelList({
                     key={JSON.stringify([price.validFrom, price.validUntil])}
                   >
                     <span>
-                      {price.validFrom === undefined
-                        ? '…'
-                        : new Date(price.validFrom).toISOString().slice(0, 16)}{' '}
-                      –{' '}
-                      {price.validUntil === undefined
-                        ? '…'
-                        : new Date(price.validUntil).toISOString().slice(0, 16)}{' '}
-                      UTC
+                      {t('billing.timeZone')} {billingDateLabel(price.validFrom, locale)} –{' '}
+                      {billingDateLabel(price.validUntil, locale)}
                     </span>
                     <button
                       type="button"

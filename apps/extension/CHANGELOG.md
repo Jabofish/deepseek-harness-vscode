@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 分时规则合并上下限，中文显示北京时间、英文显示 UTC；跨日同步星期，有效期输入按同一时区换算，原始计价数据保持不变。
+- Pricing schedules show complete intervals in Beijing time for Chinese and UTC for English, shifting weekdays and validity inputs consistently while preserving original pricing data.
+
 - 保留没有历史序号的普通命令回显，切换或重读会话时不丢失；无名称的模式成功回执仍不进入通知缓存。
 - Preserves named Host command output across session switches and rereads without retaining orphan mode acknowledgements.
 

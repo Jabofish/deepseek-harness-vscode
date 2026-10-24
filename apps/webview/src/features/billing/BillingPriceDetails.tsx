@@ -4,7 +4,7 @@ import { billingReferenceResponseSchema, type BillingReferenceResponse } from '@
 import { useI18n } from '../../i18n.js'
 import { requestId } from '../../app/store/ids.js'
 import { useBillingClient, type BillingClient } from './billing-client.js'
-import { billingConditionDescription } from './BillingRulesEditor.js'
+import { billingConditionDescription, billingDateLabel } from './billing-time.js'
 
 const categories = ['input', 'cacheRead', 'cacheWrite', 'output', 'reasoning'] as const
 function hasServiceTier(condition: BillingCondition): boolean {
@@ -16,9 +16,7 @@ function hasServiceTier(condition: BillingCondition): boolean {
 
 /** Read-only prices and predicates; opening this never modifies the chosen route. */
 export function BillingPriceDetails({ price }: { readonly price: BillingPrice }): ReactElement {
-  const { t } = useI18n()
-  const time = (value: number | undefined): string =>
-    value === undefined || !Number.isFinite(new Date(value).getTime()) ? '…' : new Date(value).toISOString()
+  const { t, locale } = useI18n()
   return (
     <div className="dsh-billing__price-details">
       <p>
@@ -40,12 +38,12 @@ export function BillingPriceDetails({ price }: { readonly price: BillingPrice })
         <ul className="dsh-billing__price-rules">
           {price.multipliers?.map((rule, index) => (
             <li key={`multiplier-${index}`}>
-              {billingConditionDescription(rule.when, t)} · × {rule.factor}
+              {billingConditionDescription(rule.when, t, locale)} · × {rule.factor}
             </li>
           ))}
           {price.overrides?.map((rule, index) => (
             <li key={`override-${index}`}>
-              <p>{billingConditionDescription(rule.when, t)}</p>
+              <p>{billingConditionDescription(rule.when, t, locale)}</p>
               <dl className="dsh-billing__price-facts">
                 {Object.entries(rule.rates).map(([category, rate]) => (
                   <div key={category}>
@@ -67,7 +65,8 @@ export function BillingPriceDetails({ price }: { readonly price: BillingPrice })
       ) : null}
       {price.validFrom === undefined && price.validUntil === undefined ? null : (
         <p>
-          {t('billing.validity')}: {time(price.validFrom)} – {time(price.validUntil)}
+          {t('billing.validity')}: {t('billing.timeZone')} {billingDateLabel(price.validFrom, locale)} –{' '}
+          {billingDateLabel(price.validUntil, locale)}
         </p>
       )}
     </div>
@@ -106,7 +105,7 @@ function ReferencePrices({
   readonly reference: BillingCandidate
   readonly request: BillingClient
 }): ReactElement {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const { send, isAlive } = useBillingClient(request)
   const [result, setResult] = useState<BillingReferenceResponse>()
   const [failed, setFailed] = useState(false)
@@ -155,7 +154,11 @@ function ReferencePrices({
       ) : (
         <BillingPriceDetails price={result.price} />
       )}
-      <p>{t('billing.retrievedAt', { time: result.fetchedAt })}</p>
+      <p>
+        {t('billing.retrievedAt', {
+          time: `${t('billing.timeZone')} ${billingDateLabel(Date.parse(result.fetchedAt), locale)}`,
+        })}
+      </p>
     </>
   )
 }

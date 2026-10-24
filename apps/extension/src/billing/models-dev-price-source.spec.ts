@@ -93,7 +93,10 @@ describe('models.dev price source', () => {
         {
           when: {
             utc_days: { in: ['mon'] },
-            utc_hours: { gte: '01:00', lt: '04:00' },
+            any: [
+              { all: [{ utc_hours: { gte: '01:00' } }, { utc_hours: { lt: '04:00' } }] },
+              { all: [{ utc_hours: { gte: '06:00' } }, { utc_hours: { lt: '10:00' } }] },
+            ],
             not: { holiday: { equals: 'CN' } },
           },
           factor: 2,
@@ -104,6 +107,18 @@ describe('models.dev price source', () => {
     expect(result.price?.cacheWrite).toBeUndefined()
     expect(result.price?.overrides).toHaveLength(2)
     expect(result.price?.multipliers).toHaveLength(1)
+    expect(result.price?.multipliers?.[0]?.when).toEqual({
+      all: [
+        { utcDays: [1] },
+        {
+          any: [
+            { all: [{ utcHours: { gte: '01:00' } }, { utcHours: { lt: '04:00' } }] },
+            { all: [{ utcHours: { gte: '06:00' } }, { utcHours: { lt: '10:00' } }] },
+          ],
+        },
+        { not: { holiday: 'CN' } },
+      ],
+    })
   })
   it('fetches only the fixed source without credentials or redirects, reusing its bounded cache', async () => {
     const fetcher = vi
