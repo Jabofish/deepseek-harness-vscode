@@ -46,8 +46,13 @@ export class EventLoopLagMonitor implements vscode.Disposable {
 
   /** Largest lag observed within the trailing window, in whole milliseconds. */
   public recentMaxLagMs(): number {
-    let max = 0
-    for (const sample of this.samples) if (sample.lagMs > max) max = sample.lagMs
+    if (this.timer === undefined || this.disposed) return 0
+    const now = this.now()
+    const cutoff = now - this.windowMs
+    // A socket's close microtask may run before our overdue timer callback.
+    // Include that still-pending lateness rather than misclassifying it as zero.
+    let max = Math.max(0, now - this.expected)
+    for (const sample of this.samples) if (sample.time >= cutoff && sample.lagMs > max) max = sample.lagMs
     return Math.round(max)
   }
 

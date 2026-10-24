@@ -2,11 +2,11 @@
 
 ## Unreleased
 
-- 修复打开大历史会话时连接反复中断的问题：快照回放逐条去重使用 O(n²) 扫描并反复序列化，长会话会阻塞事件循环超过 DSH 的 WebSocket 心跳，导致连接被异常断开。改为基于序列化身份集合的 O(n) 去重，并在快照投递与 V4 解码的同步阶段定期让出事件循环以保持心跳存活。
-- Fixes repeated connection drops when opening a session with a large history: the snapshot replay deduplicated records with an O(n²) scan that reserialized each pair, stalling the event loop past DSH's WebSocket heartbeat on long histories. Dedupe now uses an O(n) serialized-identity set, and snapshot delivery plus V4 decode yield to the event loop so the heartbeat stays alive.
+- 修复打开大历史会话时连接反复中断的问题：快照回放逐条去重使用 O(n²) 扫描并反复序列化，长会话会阻塞事件循环超过 DSH 的 WebSocket 心跳，导致连接被异常断开。改为基于序列化身份集合的 O(n) 去重；V4 解码、投影记账、控制器回放与重连补发按条数和同步耗时分批让出事件循环，保持事件顺序，取消或重启会释放待投递批次。
+- Fixes repeated connection drops when opening a session with a large history: the snapshot replay deduplicated records with an O(n²) scan that reserialized each pair, stalling the event loop past DSH's WebSocket heartbeat on long histories. Dedupe now uses an O(n) serialized-identity set. V4 decode, projection bookkeeping, controller replay, and reconnect delivery yield on both row-count and elapsed-work budgets while preserving event order; cancellation or restart releases the pending replay.
 
-- 连接丢失诊断现在记录最近的事件循环最大延迟，用于区分同步阻塞（心跳饥饿）与传输层重置。
-- The connection-lost diagnostic now records the trailing event-loop lag to distinguish a synchronous stall (heartbeat starvation) from a transport-level reset.
+- 连接丢失诊断现在记录最近的事件循环最大延迟，并计入尚未完成的采样延迟、忽略过期样本，避免断连时漏报刚发生的同步阻塞。
+- The connection-lost diagnostic now records the trailing event-loop lag, including an overdue sample timer and excluding expired samples, so a synchronous stall is visible even before the delayed sampler runs.
 
 ## 0.3.9
 

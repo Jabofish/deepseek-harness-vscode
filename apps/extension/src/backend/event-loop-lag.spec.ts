@@ -61,4 +61,46 @@ describe('EventLoopLagMonitor', () => {
     vi.advanceTimersByTime(100)
     expect(monitor.recentMaxLagMs()).toBe(0)
   })
+
+  it('includes an overdue tick before the sampler can run', () => {
+    let now = 0
+    const monitor = new EventLoopLagMonitor({ intervalMs: 100, now: () => now })
+    try {
+      monitor.start()
+      // A connection-lost microtask can run before the delayed timer callback.
+      now = 3_000
+      expect(monitor.recentMaxLagMs()).toBe(2_900)
+      now += 100
+      expect(monitor.recentMaxLagMs()).toBe(3_000)
+      vi.advanceTimersByTime(100)
+      expect(monitor.recentMaxLagMs()).toBe(3_000)
+    } finally {
+      monitor.dispose()
+    }
+  })
+
+  it('expires old samples when read before the next tick', () => {
+    let now = 0
+    const monitor = new EventLoopLagMonitor({ intervalMs: 100, windowMs: 1_000, now: () => now })
+    try {
+      monitor.start()
+      now = 3_000
+      vi.advanceTimersByTime(100)
+      expect(monitor.recentMaxLagMs()).toBe(2_900)
+      now = 4_100
+      expect(monitor.recentMaxLagMs()).toBe(1_000)
+    } finally {
+      monitor.dispose()
+    }
+  })
+
+  it('reports no pending lag before start or after disposal', () => {
+    let now = 3_000
+    const monitor = new EventLoopLagMonitor({ now: () => now })
+    expect(monitor.recentMaxLagMs()).toBe(0)
+    monitor.start()
+    monitor.dispose()
+    now += 3_000
+    expect(monitor.recentMaxLagMs()).toBe(0)
+  })
 })

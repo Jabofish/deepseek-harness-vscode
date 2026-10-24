@@ -2,6 +2,7 @@ import type { AsyncEventSource, BackendEvent } from '@dsh-vscode/domain'
 
 import type { DshTransport } from './contracts.js'
 import { eventSessionId, eventTransientSequence, normalizeEnvelope, safeReason } from './stream-envelopes.js'
+import { STREAM_BATCH_SIZE, STREAM_TIME_SLICE_MS, yieldToEventLoop } from './stream-scheduling.js'
 
 export interface DshStreamControllerOptions {
   /** Optional version-specific logical stream (for example alpha Remote mux). */
@@ -28,6 +29,8 @@ interface OrderedSessionDelivery {
   draining: boolean
   drainSignal?: AbortSignal
   readonly abort: AbortController
+  emittedSinceYield: number
+  workMsSinceYield: number
 }
 
 /** One shared mux/host reader for every consumer in an Extension Host. */
@@ -222,7 +225,8 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
               this.emit({ type: 'connection.restored' })
             }
           }
-          this.accept(event, signal)
+          const replay = this.accept(event, signal)
+          if (replay !== undefined) await replay
         }
       }
       if (!this.closed && !signal.aborted) throw new Error('DSH event stream ended.')
@@ -231,7 +235,7 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
     }
   }
 
-  private accept(event: BackendEvent, signal: AbortSignal): void {
+  private accept(event: BackendEvent, signal: AbortSignal): void | Promise<void> {
     if (signal.aborted) return
     if (event.type === 'session.removed') {
       this.lastSequences.delete(event.sessionId)
@@ -271,8 +275,7 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
       const snapshot = this.pendingSessionSnapshots.get(event.sessionId)
       if (snapshot !== undefined) {
         this.pendingSessionSnapshots.delete(event.sessionId)
-        this.acceptSessionSnapshot(event, snapshot, signal)
-        return
+        return this.acceptSessionSnapshot(event, snapshot, signal)
       }
       this.subscribedSessions.add(event.sessionId)
       this.lastTransientSequences.delete(event.sessionId)
@@ -386,11 +389,12 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
   }
 
   /** Reconcile a bounded Session/follow snapshot with the retained watermark. */
-  private acceptSessionSnapshot(
+  private async acceptSessionSnapshot(
     event: Extract<BackendEvent, { readonly type: 'session.subscribed' }>,
     snapshot: readonly BackendEvent[],
     signal: AbortSignal,
-  ): void {
+  ): Promise<void> {
+    let yieldDeadline = performance.now() + STREAM_TIME_SLICE_MS
     this.subscribedSessions.add(event.sessionId)
     // A new Session/follow baseline starts a new process-local projection
     // epoch even when the durable log happens to reuse lower sequence values.
@@ -421,7 +425,16 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
       // rescan every prior row per candidate (an O(n^2) `sameBackendEvent`
       // sweep that stalled the heartbeat for thousands of records).
       const emittedKeys = new Set<string>()
-      for (const candidate of orderedSnapshot) {
+      for (let index = 0; index < orderedSnapshot.length; index++) {
+        // Transport yields only while filling this buffer. The actual observer
+        // and subscriber work must yield here, without letting live frames pass
+        // the baseline. The reader awaits this replay before accepting more.
+        if (index > 0 && (index % STREAM_BATCH_SIZE === 0 || performance.now() >= yieldDeadline)) {
+          await yieldToEventLoop(signal)
+          yieldDeadline = performance.now() + STREAM_TIME_SLICE_MS
+        }
+        if (signal.aborted || this.closed) return
+        const candidate = orderedSnapshot[index]!
         const key = backendEventKey(candidate)
         if (key !== undefined) {
           if (emittedKeys.has(key)) continue
@@ -435,6 +448,7 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
           continue
         this.emit({ ...candidate, replayed: true })
       }
+      if (signal.aborted || this.closed) return
       this.lastSequences.set(event.sessionId, event.lastSequence)
       if (previous === undefined)
         this.orderedDeliveries.set(event.sessionId, createOrderedDelivery(event.lastSequence + 1))
@@ -454,7 +468,13 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
         this.orderedDeliveries.set(event.sessionId, created)
         return created
       })()
-    for (const candidate of orderedSnapshot) {
+    for (let index = 0; index < orderedSnapshot.length; index++) {
+      if (index > 0 && (index % STREAM_BATCH_SIZE === 0 || performance.now() >= yieldDeadline)) {
+        await yieldToEventLoop(signal)
+        yieldDeadline = performance.now() + STREAM_TIME_SLICE_MS
+      }
+      if (signal.aborted || this.closed || this.orderedDeliveries.get(event.sessionId) !== delivery) return
+      const candidate = orderedSnapshot[index]!
       const sequence = candidate.sequence
       if (sequence === undefined || sequence < delivery.nextSequence) continue
       if (
@@ -469,6 +489,7 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
       pending.push(candidate)
       delivery.pending.set(sequence, pending)
     }
+    if (signal.aborted || this.closed) return
     this.lastSequences.set(event.sessionId, Math.max(previous, event.lastSequence))
     delivery.recoveryThrough = Math.max(delivery.recoveryThrough ?? -1, event.lastSequence)
     this.retryAttempt = 0
@@ -516,6 +537,15 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
       const next = delivery.nextSequence
       const pending = delivery.pending.get(next)
       if (pending !== undefined && pending.length > 0) {
+        if (
+          delivery.emittedSinceYield >= STREAM_BATCH_SIZE ||
+          delivery.workMsSinceYield >= STREAM_TIME_SLICE_MS
+        ) {
+          delivery.emittedSinceYield = 0
+          delivery.workMsSinceYield = 0
+          await yieldToEventLoop(AbortSignal.any([signal, delivery.abort.signal]))
+          continue
+        }
         this.emitPendingSequence(sessionId, delivery, next)
         continue
       }
@@ -584,6 +614,15 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
       const next = delivery.nextSequence
       const pending = delivery.pending.get(next)
       if (pending !== undefined && pending.length > 0) {
+        if (
+          delivery.emittedSinceYield >= STREAM_BATCH_SIZE ||
+          delivery.workMsSinceYield >= STREAM_TIME_SLICE_MS
+        ) {
+          delivery.emittedSinceYield = 0
+          delivery.workMsSinceYield = 0
+          await yieldToEventLoop(AbortSignal.any([signal, delivery.abort.signal]))
+          continue
+        }
         delivery.skippedSequences.delete(next)
         this.emitPendingSequence(sessionId, delivery, next)
         continue
@@ -666,11 +705,17 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
     if (pending === undefined || pending.length === 0) return
     delivery.pending.delete(sequence)
     delivery.nextSequence = sequence + 1
+    const started = performance.now()
     for (const event of pending) {
       if (this.closed || delivery.abort.signal.aborted || this.orderedDeliveries.get(sessionId) !== delivery)
         break
       this.emit(event)
+      // Keep each same-sequence bucket atomic, including across cancellation.
+      // The drain yields before starting the next bucket once the budget is used.
+      delivery.emittedSinceYield++
     }
+    // Measure actual callback work, excluding idle time between live frames.
+    delivery.workMsSinceYield += performance.now() - started
   }
 
   private replaceOrderedDelivery(sessionId: string, nextSequence: number): void {
@@ -719,6 +764,8 @@ function createOrderedDelivery(nextSequence: number): OrderedSessionDelivery {
     skippedSequences: new Set(),
     draining: false,
     abort: new AbortController(),
+    emittedSinceYield: 0,
+    workMsSinceYield: 0,
   }
 }
 

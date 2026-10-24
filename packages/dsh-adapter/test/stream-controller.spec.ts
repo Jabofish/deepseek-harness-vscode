@@ -151,6 +151,150 @@ describe('DshStreamController', () => {
     expect(received.find((event) => event.type === 'turn.ended')).not.toHaveProperty('replayed')
   })
 
+  it('yields while delivering a reconnect snapshot tail and keeps later live events ordered', async () => {
+    const first = new ControlledStream()
+    const second = new ControlledStream()
+    const controller = new DshStreamController(streamTransport([]), undefined, undefined, {
+      streamSource: controlledGenerationSource([first, second]),
+      closeTransport: false,
+    })
+    controllers.push(controller)
+    const received: number[] = []
+    let callback: NodeJS.Immediate | undefined
+    let deliveredAtCallback = 0
+    controller.subscribe((event) => {
+      if (event.type !== 'turn.started' || event.sequence === undefined) return
+      received.push(event.sequence)
+      if (event.sequence === 2)
+        callback = setImmediate(() => {
+          deliveredAtCallback = received.length
+        })
+    })
+    try {
+      first.push(subscribeFrame('s1', 0))
+      first.push(canonicalFrame('s1', 1, 'turn/start', { turn: 1 }))
+      await waitFor(() => received.length === 1)
+      first.end()
+      await waitForAtMost(() => second.signal !== undefined && !second.signal.aborted, 2_000)
+
+      for (let sequence = 2; sequence <= 130; sequence++)
+        second.push(canonicalFrame('s1', sequence, 'turn/start', { turn: sequence }))
+      second.push(subscribeFrame('s1', 130))
+      second.push(canonicalFrame('s1', 131, 'turn/start', { turn: 131 }))
+      await waitForAtMost(() => received.length === 131, 1_000)
+
+      expect(deliveredAtCallback).toBeGreaterThan(1)
+      expect(deliveredAtCallback).toBeLessThan(130)
+      expect(received).toEqual(Array.from({ length: 131 }, (_, index) => index + 1))
+    } finally {
+      clearImmediate(callback)
+    }
+  })
+
+  it('cancels a paused snapshot replay and clears its immediate without advancing timers', async () => {
+    const stream = new ControlledStream()
+    const controller = new DshStreamController(streamTransport([]), undefined, undefined, {
+      streamSource: stream.source,
+      closeTransport: false,
+    })
+    controllers.push(controller)
+    const received: BackendEvent[] = []
+    controller.subscribe((event) => received.push(event))
+    for (let sequence = 0; sequence < 129; sequence++)
+      stream.push(canonicalFrame('s1', sequence, 'turn/start', { turn: sequence + 1 }))
+    stream.push(subscribeFrame('s1', 128))
+
+    await waitFor(() => received.length > 0)
+    expect(received.length).toBeLessThan(129)
+    expect(vi.getTimerCount()).toBe(1)
+    await controller.close()
+    expect(vi.getTimerCount()).toBe(0)
+    expect(received.every((event) => event.type === 'turn.started')).toBe(true)
+  })
+
+  it('serializes each snapshot row once as the history grows', async () => {
+    const stringify = vi.spyOn(JSON, 'stringify')
+    try {
+      for (const records of [128, 256]) {
+        const stream = new ControlledStream()
+        const controller = new DshStreamController(streamTransport([]), undefined, undefined, {
+          streamSource: stream.source,
+          closeTransport: false,
+        })
+        controllers.push(controller)
+        let subscribed = false
+        controller.subscribe((event) => {
+          if (event.type === 'session.subscribed') subscribed = true
+        })
+        stringify.mockClear()
+        for (let sequence = 0; sequence < records; sequence++)
+          stream.push(canonicalFrame('s1', sequence, 'turn/start', { turn: sequence + 1 }))
+        stream.push(subscribeFrame('s1', records - 1))
+        await waitForAtMost(() => subscribed, 1_000)
+        const serializedRows = stringify.mock.calls.filter((call) => {
+          const value: unknown = call[0]
+          return (
+            typeof value === 'object' && value !== null && 'type' in value && value.type === 'turn.started'
+          )
+        })
+        expect(serializedRows).toHaveLength(records)
+        await controller.close()
+      }
+    } finally {
+      stringify.mockRestore()
+    }
+  })
+
+  it.each(['opening', 'reconnect'] as const)(
+    'yields when %s replay exhausts the time budget',
+    async (mode) => {
+      let clock = 0
+      const now = vi.spyOn(performance, 'now').mockImplementation(() => clock)
+      const first = new ControlledStream()
+      const second = new ControlledStream()
+      const controller = new DshStreamController(streamTransport([]), undefined, undefined, {
+        streamSource: controlledGenerationSource([first, second]),
+        closeTransport: false,
+      })
+      controllers.push(controller)
+      const received: number[] = []
+      let subscribed = false
+      let callback: NodeJS.Immediate | undefined
+      let deliveredAtCallback = 0
+      controller.subscribe((event) => {
+        if (event.type === 'session.subscribed') subscribed = true
+        if (event.type !== 'turn.started' || event.sequence === undefined) return
+        received.push(event.sequence)
+        clock += 10
+        if (received.length === 1)
+          callback = setImmediate(() => {
+            deliveredAtCallback = received.length
+          })
+      })
+      try {
+        if (mode === 'reconnect') {
+          first.push(subscribeFrame('s1', 0))
+          await waitFor(() => subscribed)
+          first.end()
+          await waitForAtMost(() => second.signal !== undefined && !second.signal.aborted, 2_000)
+          subscribed = false
+        }
+        const stream = mode === 'opening' ? first : second
+        const offset = mode === 'opening' ? 0 : 1
+        for (let index = 0; index < 5; index++)
+          stream.push(canonicalFrame('s1', index + offset, 'turn/start', { turn: index + 1 }))
+        stream.push(subscribeFrame('s1', offset + 4))
+        await waitForAtMost(() => received.length === 5 && subscribed, 1_000)
+        expect(deliveredAtCallback).toBeGreaterThan(0)
+        expect(deliveredAtCallback).toBeLessThan(5)
+        expect(received).toEqual(Array.from({ length: 5 }, (_, index) => index + offset))
+      } finally {
+        clearImmediate(callback)
+        now.mockRestore()
+      }
+    },
+  )
+
   it('does not drop the final assistant message when it is in the opening snapshot', async () => {
     const stream = new ControlledStream()
     const controller = new DshStreamController(streamTransport([]), undefined, undefined, {

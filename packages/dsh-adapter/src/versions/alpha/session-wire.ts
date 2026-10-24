@@ -10,6 +10,8 @@ import {
   recordOrUndefined,
 } from './remote-mux.js'
 import type { AlphaSessionWireVersion } from './remote-mux.js'
+import { STREAM_BATCH_SIZE, STREAM_TIME_SLICE_MS, yieldToEventLoop } from '../../stream-scheduling.js'
+export { yieldToEventLoop } from '../../stream-scheduling.js'
 import { validAlpha151SessionEventFrame, validAlpha151SessionSnapshot } from '../alpha151/session-wire.js'
 import {
   normalizeAlpha171Event,
@@ -153,20 +155,8 @@ export function expandHistoryRecords(
 }
 
 /**
- * Yield to the event loop so a long synchronous decode cannot starve the mux's
- * WebSocket heartbeat. With `allowSynchronousEvents` disabled the `ws` pong is
- * deferred behind `setImmediate`, so a single long-running decode delays every
- * pong and lets DSH terminate the socket (abnormal 1006 close). `setImmediate`
- * runs in the check phase, after the poll phase has had a chance to deliver the
- * inbound ping frame.
- */
-export function yieldToEventLoop(): Promise<void> {
-  return new Promise((resolve) => setImmediate(resolve))
-}
-
-/**
- * Incrementally decode + normalize a V4 snapshot's history records, yielding to
- * the event loop at least every ~100ms of synchronous work. This is the
+ * Incrementally decode + normalize a V4 snapshot's history records, yielding
+ * after 64 rows or approximately 8ms of synchronous work. This is the
  * streaming-path replacement for `expandHistoryRecords` on `v4`: it also applies
  * the `seq <= cursor` admission that `readAlpha171SessionSnapshot` would otherwise
  * perform synchronously, so a snapshot's records are not decoded twice.
@@ -177,10 +167,12 @@ export async function expandV4HistoryRecordsIncremental(
   cursor: number,
   autoReviewDenialContract: boolean,
   profile?: AlphaV4SessionProfile,
+  signal?: AbortSignal,
 ): Promise<readonly Record<string, unknown>[]> {
   const out: { event: Record<string, unknown>; index: number }[] = []
-  let lastYield = Date.now()
+  let lastYield = performance.now()
   for (let index = 0; index < records.length; index++) {
+    if (signal?.aborted === true) return []
     const readable = readAlpha171HistoryRecord(records[index], profile)
     if (readable !== undefined && readable.event.seq <= cursor)
       out.push({
@@ -193,15 +185,15 @@ export async function expandV4HistoryRecordsIncremental(
         },
         index,
       })
-    const now = Date.now()
-    if (now - lastYield >= 100) {
-      lastYield = now
-      await yieldToEventLoop()
+    if ((index + 1) % STREAM_BATCH_SIZE === 0 || performance.now() - lastYield >= STREAM_TIME_SLICE_MS) {
+      await yieldToEventLoop(signal)
+      lastYield = performance.now()
     }
   }
   // Flush any deferred heartbeat pong before the final order-by-sequence pass,
   // which is the one remaining synchronous phase of this incremental decode.
-  await yieldToEventLoop()
+  await yieldToEventLoop(signal)
+  if (signal?.aborted === true) return []
   return out
     .sort((left, right) => {
       const sequenceDelta = (left.event.seq as number) - (right.event.seq as number)
