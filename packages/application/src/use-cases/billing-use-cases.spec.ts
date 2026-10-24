@@ -19,6 +19,96 @@ const useCases = new BillingUseCases({
 const usage = { inputTokens: 10, outputTokens: 2, totalTokens: 12 }
 
 describe('billing history use case', () => {
+  it('projects the requested currency, leaves native prices intact and degrades safely when exchange reads fail', async () => {
+    let calls = 0
+    let fail = false
+    const scoped = new BillingUseCases(
+      { read: () => Promise.resolve(settings), save: () => Promise.resolve(settings) },
+      undefined,
+      {
+        read: () => {
+          calls++
+          return fail
+            ? Promise.reject(new Error('NETWORK'))
+            : Promise.resolve({ usdCny: '7', date: '2026-10-23' })
+        },
+      },
+    )
+    const repository: BillingUsageRepository = {
+      readBillingPage: () =>
+        Promise.resolve({
+          facts: [{ kind: 'message', sequence: 0, route, usage }],
+          eventCount: 1,
+          contiguous: true,
+          hasMore: false,
+          fromSequence: 0,
+          toSequence: 0,
+        }),
+    }
+    const cny = await scoped.estimate('s', repository, signal(), 'CNY')
+    expect(cny.totals).toEqual([{ currency: 'USD', amount: '0.000014' }])
+    expect(cny.display).toMatchObject({
+      currency: 'CNY',
+      status: 'converted',
+      totals: [{ currency: 'CNY', amount: '0.000098' }],
+    })
+    expect((await scoped.estimate('s', repository, signal(), 'USD')).display?.status).toBe('native')
+    expect(calls).toBe(1)
+    fail = true
+    expect((await scoped.estimate('s', repository, signal(), 'CNY')).display).toMatchObject({
+      status: 'converted',
+      exchange: { usdCny: '6.8', fallback: true },
+      totals: [{ currency: 'CNY', amount: '0.0000952' }],
+    })
+  })
+  it('keeps cost breakdown and unpriced reasons from before the latest 100 request details', async () => {
+    const result = await useCases.estimate(
+      's',
+      {
+        readBillingPage: () =>
+          Promise.resolve({
+            facts: [
+              { kind: 'route', sequence: 0, route },
+              { kind: 'attempt', sequence: 1 },
+              ...Array.from({ length: 101 }, (_, index) => ({
+                kind: 'message' as const,
+                sequence: index + 2,
+                route,
+                usage,
+              })),
+            ],
+            eventCount: 103,
+            contiguous: true,
+            hasMore: false,
+            fromSequence: 0,
+            toSequence: 102,
+          }),
+      },
+      signal(),
+    )
+    expect(result.entries).toHaveLength(100)
+    expect(result.entries.some((entry) => entry.kind === 'attempt')).toBe(false)
+    expect(result.issueCounts).toEqual([{ issue: 'missing-usage', count: 1, attempts: 1 }])
+    expect(result.breakdown).toEqual([
+      {
+        category: 'input',
+        currency: 'USD',
+        tokens: '1010',
+        amount: '0.00101',
+        rates: [{ rate: '1', tokens: '1010', amount: '0.00101' }],
+        ratesTruncated: false,
+      },
+      {
+        category: 'output',
+        currency: 'USD',
+        tokens: '202',
+        amount: '0.000404',
+        rates: [{ rate: '2', tokens: '202', amount: '0.000404' }],
+        ratesTruncated: false,
+      },
+    ])
+    expect(result.totals).toEqual([{ currency: 'USD', amount: '0.001414' }])
+  })
   it('prices a valid page containing more than 5000 raw events', async () => {
     const result = await useCases.estimate(
       's',

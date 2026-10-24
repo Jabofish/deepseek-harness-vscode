@@ -1,4 +1,14 @@
-import type { BillingCandidate, BillingPrice, BillingRoute, BillingSettings } from '@dsh-vscode/domain'
+import type {
+  BillingCandidate,
+  BillingExchangeRate,
+  BillingPrice,
+  BillingRoute,
+  BillingSettings,
+} from '@dsh-vscode/domain'
+
+export interface BillingExchangeSource {
+  read(signal: AbortSignal): Promise<BillingExchangeRate>
+}
 
 export interface BillingSettingsPort {
   read(): Promise<BillingSettings>

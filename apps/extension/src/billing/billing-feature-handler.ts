@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto'
 import { AppError } from '@dsh-vscode/domain'
-import { BillingUseCases, type BackendService, type BillingReferenceSource } from '@dsh-vscode/application'
+import {
+  BillingUseCases,
+  type BackendService,
+  type BillingReferenceSource,
+  type BillingExchangeSource,
+} from '@dsh-vscode/application'
 import type { FeatureRequest } from '@dsh-vscode/webview-protocol'
 import { BillingSettingsStore, type BillingStateStorage } from './billing-settings-store.js'
 import { BillingCatalog } from './billing-catalog.js'
@@ -20,6 +25,7 @@ export class BillingFeatureHost {
   public constructor(
     private readonly deps: BillingHostDependencies,
     private readonly source: BillingReferenceSource,
+    private readonly exchange?: BillingExchangeSource,
   ) {
     this.store = new BillingSettingsStore(deps.storage)
   }
@@ -124,6 +130,7 @@ export class BillingFeatureHost {
           return prices
         },
       },
+      this.exchange,
     ).estimate(
       request.payload.sessionId,
       read === undefined
@@ -137,6 +144,7 @@ export class BillingFeatureHost {
             },
           },
       signal,
+      request.payload.currency,
     )
     await this.deps.requireSession(request.payload.sessionId, signal)
     assertCurrent()

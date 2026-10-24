@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- 会话费用跟随界面语言：中文显示人民币，英文显示美元；汇总和明细按同一份 ECB 每日参考汇率换算并显示日期，保留原始单价与费用。汇率读取失败时默认按 1 USD = 6.8 CNY 换算并标注。
+- Session cost estimates use CNY in Chinese and USD in English. Totals and charge details share a dated ECB reference quote, while original prices and accounting remain intact; failed exchange reads use a labeled default of 1 USD = 6.8 CNY.
+
+- 会话费用详情显示输入、输出和缓存的分项费用，省去冗长计算过程；未计价部分显示缺少用量、价格或适用条件等原因，完整汇总不受最近 100 条请求明细限制。
+- Session cost details show input, output and cache subtotals without lengthy calculations. Unpriced usage includes reasons, and full cost summaries remain available beyond the latest 100 request details.
+
 - 费用最多显示四位小数，极小金额显示为小于阈值；窄面板下将计费收进统计详情。
 - Cost estimates show up to four decimal places with a threshold for tiny amounts; narrow panels include billing inside statistics details.
 

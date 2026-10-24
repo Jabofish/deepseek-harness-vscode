@@ -2,12 +2,13 @@ import { describe, expect, it, vi } from 'vitest'
 import type { BillingUsageRepository, DshBackend } from '@dsh-vscode/domain'
 import { billingEstimateResponseSchema, billingSettingsResponseSchema } from '@dsh-vscode/webview-protocol'
 import { BillingFeatureHost } from './billing-feature-handler.js'
-import type { BillingReferenceSource } from '@dsh-vscode/application'
+import type { BillingReferenceSource, BillingExchangeSource } from '@dsh-vscode/application'
 
 function harness(
   source: BillingReferenceSource = {
     read: () => Promise.resolve({ status: 'missing', fetchedAt: '2026-10-24T00:00:00.000Z' }),
   },
+  exchange?: BillingExchangeSource,
 ): {
   readonly host: BillingFeatureHost
   readonly readPage: ReturnType<typeof vi.fn<BillingUsageRepository['readBillingPage']>>
@@ -40,6 +41,7 @@ function harness(
       isTrusted: () => true,
     },
     source,
+    exchange,
   )
   return {
     host,
@@ -66,7 +68,10 @@ describe('billing feature boundary', () => {
       price: { providerId: 'reference', modelId: 'chosen', currency: 'USD', input: '1', output: '2' },
     })
     const match = vi.fn<NonNullable<BillingReferenceSource['match']>>()
-    const { host, readPage } = harness({ read, match })
+    const exchange = vi
+      .fn<BillingExchangeSource['read']>()
+      .mockResolvedValue({ usdCny: '7', date: '2026-10-23' })
+    const { host, readPage } = harness({ read, match }, { read: exchange })
     const signal = new AbortController().signal
     const snapshot = billingSettingsResponseSchema.parse(
       await host.handle({ type: 'billing.settings.read', requestId: 'r', payload: {} }, signal),
@@ -112,16 +117,18 @@ describe('billing feature boundary', () => {
     })
     const result = billingEstimateResponseSchema.parse(
       await host.handle(
-        { type: 'billing.estimate', requestId: 'e', payload: { sessionId: 'owned' } },
+        { type: 'billing.estimate', requestId: 'e', payload: { sessionId: 'owned', currency: 'CNY' } },
         signal,
       ),
     )
     expect(result.estimate).toMatchObject({
       pricedRequests: 1,
       totals: [{ currency: 'USD', amount: '0.000014' }],
+      display: { currency: 'CNY', status: 'converted', totals: [{ currency: 'CNY', amount: '0.000098' }] },
     })
     expect(read).toHaveBeenCalledWith('reference', 'chosen', signal)
     expect(match).not.toHaveBeenCalled()
+    expect(exchange).toHaveBeenCalledWith(signal)
   })
 
   it('searches the reference catalog and discards results from an obsolete connection', async () => {

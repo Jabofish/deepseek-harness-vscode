@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { FeatureHostEvent, FeatureRequest } from '@dsh-vscode/webview-protocol'
-import { estimateBillingEntry, type BillingEstimate } from '@dsh-vscode/domain'
+import { estimateBillingEntry, summarizeBillingEntries, type BillingEstimate } from '@dsh-vscode/domain'
 import { setActiveLocale } from '../../i18n.js'
 import { BillingSettings } from './BillingSettings.js'
 import { BillingCost, formatBillingAmount } from './BillingCost.js'
@@ -61,6 +61,8 @@ it('moves cost inside focused token details when the stats container narrows and
         unpricedRequests: 0,
         priceRevision: 1,
         totals: [{ currency: 'USD', amount: '0.003946662' }],
+        breakdown: [],
+        issueCounts: [],
         entries: [],
         detailsTruncated: false,
       },
@@ -207,6 +209,10 @@ it('shows only the cost in existing session statistics and refreshes when prices
     priceRevision: 2,
     totals: [{ currency: 'USD', amount: '0.00681' }],
     entries: [entry, { sequence: 8, kind: 'attempt', charges: [], issues: ['missing-usage'] }],
+    ...summarizeBillingEntries([
+      entry,
+      { sequence: 8, kind: 'attempt', charges: [], issues: ['missing-usage'] },
+    ]),
     detailsTruncated: false,
   }
   const calls: FeatureRequest[] = []
@@ -237,6 +243,17 @@ it('shows only the cost in existing session statistics and refreshes when prices
   expect(document.body.textContent).not.toContain('×')
   expect(calls).toHaveLength(1)
   expect(document.querySelector('small')).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: /Statistics details: Cost/ }))
+  const dialog = screen.getByRole('dialog')
+  expect(dialog.textContent).toContain('Uncached inputUSD 0.0024')
+  expect(dialog.textContent).toContain('Cache readUSD 0.0002')
+  expect(dialog.textContent).not.toContain('tokens ×')
+  expect(dialog.textContent).toContain('Token usage was not returned; the cost cannot be estimated')
+  expect(dialog.textContent).toContain('Includes 1 failed or interrupted requests')
+  expect(dialog.textContent).not.toContain('Priced requests')
+  expect(dialog.textContent.indexOf('Pricing details')).toBeLessThan(
+    dialog.textContent.indexOf('Unpriced reasons'),
+  )
   act(() =>
     listener?.({
       type: 'feature.event',
@@ -294,6 +311,8 @@ it.each([true, false])(
           unpricedRequests: 0,
           priceRevision: 1,
           totals: [{ currency: 'USD', amount: '0.000014' }],
+          breakdown: [],
+          issueCounts: [],
           entries: [],
           detailsTruncated: false,
         },
@@ -328,6 +347,8 @@ it('keeps a confirmed disabled estimate hidden if a later refresh fails', async 
         unpricedRequests: 0,
         priceRevision: 1,
         totals: [],
+        breakdown: [],
+        issueCounts: [],
         entries: [],
         detailsTruncated: false,
       },

@@ -71,14 +71,16 @@ export function StatsPopover(props: {
               tabIndex={0}
             >
               <strong>{t('stats.details')}</strong>
-              <dl>
-                {props.rows.map((row) => (
-                  <div key={row.label}>
-                    <dt>{row.label}</dt>
-                    <dd>{row.value}</dd>
-                  </div>
-                ))}
-              </dl>
+              {props.rows.length === 0 ? null : (
+                <dl>
+                  {props.rows.map((row) => (
+                    <div key={row.label}>
+                      <dt>{row.label}</dt>
+                      <dd>{row.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              )}
               {props.children}
             </div>,
             document.body,

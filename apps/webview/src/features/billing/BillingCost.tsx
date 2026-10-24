@@ -1,5 +1,10 @@
 import { useEffect, useState, type ReactElement } from 'react'
 import {
+  billingCurrencyDisplay,
+  type BillingDisplayCurrency,
+  type BillingCurrencyDisplay,
+} from '@dsh-vscode/domain'
+import {
   billingEstimateResponseSchema,
   type BillingEstimateResponse,
   type FeatureHostEvent,
@@ -29,13 +34,15 @@ export function BillingCost(props: {
   readonly usageKey: string
   readonly details?: boolean
 }): ReactElement | null {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
+  const currency: BillingDisplayCurrency = locale === 'zh' ? 'CNY' : 'USD'
   const { request, subscribe, sessionId, usageKey } = props
   const { send } = useBillingClient(request)
   const [estimate, setEstimate] = useState<BillingEstimateResponse['estimate']>()
   const [revision, setRevision] = useState(0)
   const [failed, setFailed] = useState(false)
   const [open, setOpen] = useState(false)
+  const [settledCurrency, setSettledCurrency] = useState<BillingDisplayCurrency>()
   useEffect(
     () =>
       subscribe((event) => {
@@ -49,15 +56,19 @@ export function BillingCost(props: {
     const timer = window.setTimeout(() => {
       const id = requestId()
       pending = id
-      void send({ type: 'billing.estimate', requestId: id, payload: { sessionId } })
+      void send({ type: 'billing.estimate', requestId: id, payload: { sessionId, currency } })
         .then((value) => {
           const result = billingEstimateResponseSchema.parse(value)
           if (!current || result.estimate.sessionId !== sessionId) return
           setEstimate(result.estimate)
+          setSettledCurrency(currency)
           setFailed(false)
         })
         .catch(() => {
-          if (current) setFailed(true)
+          if (current) {
+            setSettledCurrency(currency)
+            setFailed(true)
+          }
         })
         .finally(() => {
           pending = undefined
@@ -73,39 +84,96 @@ export function BillingCost(props: {
           payload: { targetRequestId: pending },
         }).catch(() => undefined)
     }
-  }, [request, sessionId, usageKey, revision, send])
+  }, [request, sessionId, usageKey, revision, send, currency])
   const disabled = estimate?.sessionId === sessionId && !estimate.enabled
-  if (failed && !disabled)
+  if (failed && !disabled && settledCurrency === currency)
     return (
       <button type="button" className="dsh-stats-pill" onClick={() => setRevision((value) => value + 1)}>
         {t('billing.retry')}
       </button>
     )
   if (estimate?.enabled !== true || estimate.sessionId !== sessionId) return null
+  if (settledCurrency !== currency)
+    return <span className="dsh-stats-pill">{t('billing.convertingCurrency')}</span>
+  const display =
+    estimate.display?.currency === currency ? estimate.display : billingCurrencyDisplay(estimate, currency)
   const incomplete = !estimate.historyComplete || estimate.pricedRequests !== estimate.requests
   const label = !estimate.supported
     ? t('billing.unavailable')
-    : estimate.totals.length === 0
+    : display.totals.length === 0
       ? t('billing.unpricedCost')
-      : `${t('billing.cost')} ≈ ${estimate.totals.map((total) => `${total.currency} ${formatBillingAmount(total.amount)}`).join(' / ')}${incomplete ? ` · ${t('billing.partial')}` : ''}`
-  const rows = [
-    { label: t('billing.pricedRequests'), value: `${estimate.pricedRequests} / ${estimate.requests}` },
-    { label: t('billing.unpriced'), value: String(estimate.unpricedRequests + estimate.partialRequests) },
-    ...(estimate.historyComplete ? [] : [{ label: t('billing.history'), value: t('billing.partial') }]),
-  ]
+      : `${t('billing.cost')} ≈ ${display.totals.map((total) => `${total.currency} ${formatBillingAmount(total.amount)}`).join(' / ')}${incomplete ? ` · ${t('billing.partial')}` : ''}${display.status === 'unavailable' ? ` · ${t('billing.originalCurrency')}` : ''}`
+  const details = <BillingCostDetails estimate={estimate} display={display} />
   return props.details ? (
     <section className="dsh-stats-billing" aria-label={t('billing.cost')}>
       <strong>{label}</strong>
-      <dl>
-        {rows.map((row) => (
-          <div key={row.label}>
-            <dt>{row.label}</dt>
-            <dd>{row.value}</dd>
-          </div>
-        ))}
-      </dl>
+      {details}
     </section>
   ) : (
-    <StatsPopover label={label} icon="wallet" rows={rows} open={open} onOpenChange={setOpen} />
+    <StatsPopover label={label} icon="wallet" rows={[]} open={open} onOpenChange={setOpen}>
+      {details}
+    </StatsPopover>
+  )
+}
+
+function BillingCostDetails({
+  estimate,
+  display,
+}: {
+  readonly estimate: BillingEstimateResponse['estimate']
+  readonly display: BillingCurrencyDisplay
+}): ReactElement {
+  const { t, locale } = useI18n()
+  const count = (value: string | number): string => new Intl.NumberFormat(locale).format(BigInt(value))
+  const categories = ['input', 'cacheRead', 'cacheWrite', 'output', 'reasoning'] as const
+  const affected = estimate.unpricedRequests + estimate.partialRequests
+  return (
+    <div className="dsh-billing-cost-details">
+      <strong>{t('billing.priceDetails')}</strong>
+      <dl className="dsh-billing-cost-breakdown">
+        {[...display.breakdown]
+          .sort(
+            (a, b) =>
+              a.currency.localeCompare(b.currency) ||
+              categories.indexOf(a.category) - categories.indexOf(b.category),
+          )
+          .map((group) => (
+            <div key={JSON.stringify([group.currency, group.category])}>
+              <dt>{t(`billing.rate.${group.category}`)}</dt>
+              <dd>
+                {group.currency} {formatBillingAmount(group.amount)}
+              </dd>
+            </div>
+          ))}
+      </dl>
+      {display.breakdown.length === 0 ? <p>{t('billing.noPricedUsage')}</p> : null}
+      {display.status === 'converted' && display.exchange !== undefined ? (
+        <p>
+          {display.exchange.fallback === true
+            ? t('billing.defaultExchangeRate', { rate: display.exchange.usdCny })
+            : t('billing.exchangeRate', { rate: display.exchange.usdCny, date: display.exchange.date })}
+        </p>
+      ) : null}
+      {display.status === 'unavailable' ? <p>{t('billing.exchangeUnavailable')}</p> : null}
+      {affected > 0 ? (
+        <section
+          className="dsh-billing-cost-issues"
+          aria-label={t('billing.unpricedReasons', { count: affected })}
+        >
+          <strong>{t('billing.unpricedReasons', { count: affected })}</strong>
+          <ul>
+            {estimate.issueCounts.map((issue) => (
+              <li key={issue.issue}>
+                {t(`billing.issue.${issue.issue}`)} · {count(issue.count)}
+                {issue.issue === 'missing-usage' && issue.attempts > 0 ? (
+                  <p>{t('billing.incompleteAttempts', { count: issue.attempts })}</p>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+      {estimate.historyComplete ? null : <p>{t('billing.historyPartial')}</p>}
+    </div>
   )
 }

@@ -1,6 +1,7 @@
 import * as vscode from 'vscode'
 import { BillingFeatureHost } from './billing/billing-feature-handler.js'
 import { ModelsDevPriceSource } from './billing/models-dev-price-source.js'
+import { FrankfurterExchangeSource } from './billing/frankfurter-exchange-source.js'
 import type { DshRuntimeUpdateProgress, EditorContextOwner, SessionSummary } from '@dsh-vscode/domain'
 import {
   featureHostEnvelopeSchema,
@@ -336,6 +337,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
         changed: () => postFeatureEvent('billing.settings.changed', {}),
       },
       new ModelsDevPriceSource(),
+      new FrankfurterExchangeSource(),
     ),
     editorCompanion: () => commands.editorCompanion,
     getAccountLifecycleHost,

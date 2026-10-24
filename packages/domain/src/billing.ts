@@ -1,5 +1,6 @@
 import type { TokenUsage } from './models.js'
 import { billingPriceForFact } from './billing-periods.js'
+import type { BillingCurrencyDisplay } from './billing-currency.js'
 
 /** Money is a decimal string in its original currency. Prices are per million tokens. */
 export interface BillingPrice {
@@ -201,7 +202,24 @@ export interface BillingEntry {
   readonly issues: readonly BillingIssue[]
 }
 
+export interface BillingCostBreakdown {
+  readonly category: BillingCategory
+  readonly currency: string
+  /** Aggregate token counts stay exact even when their sum exceeds Number.MAX_SAFE_INTEGER. */
+  readonly tokens: string
+  readonly amount: string
+  readonly rates: readonly { readonly rate: string; readonly tokens: string; readonly amount: string }[]
+  readonly ratesTruncated: boolean
+}
+
+export interface BillingIssueCount {
+  readonly issue: BillingIssue
+  readonly count: number
+  readonly attempts: number
+}
+
 export interface BillingEstimate {
+  readonly display?: BillingCurrencyDisplay
   readonly sessionId: string
   readonly enabled: boolean
   readonly supported: boolean
@@ -214,6 +232,8 @@ export interface BillingEstimate {
   readonly unpricedRequests: number
   readonly priceRevision: number
   readonly totals: readonly { readonly currency: string; readonly amount: string }[]
+  readonly breakdown: readonly BillingCostBreakdown[]
+  readonly issueCounts: readonly BillingIssueCount[]
   readonly entries: readonly BillingEntry[]
   readonly detailsTruncated: boolean
 }
@@ -251,6 +271,68 @@ function money(value: bigint): string {
 
 export function addBillingAmounts(values: readonly string[]): string {
   return money(values.reduce((sum, value) => sum + units(value), 0n))
+}
+
+/** Summarize the entire scanned history before the request-detail display is bounded. */
+export function summarizeBillingEntries(
+  entries: readonly BillingEntry[],
+): Pick<BillingEstimate, 'breakdown' | 'issueCounts'> {
+  type Sum = { tokens: bigint; amount: bigint }
+  const groups = new Map<
+    string,
+    {
+      category: BillingCategory
+      currency: string
+      total: Sum
+      rates: Map<string, Sum>
+      ratesTruncated: boolean
+    }
+  >()
+  const issues = new Map<BillingIssue, { count: number; attempts: number }>()
+  for (const entry of entries) {
+    for (const issue of new Set(entry.issues)) {
+      const previous = issues.get(issue) ?? { count: 0, attempts: 0 }
+      previous.count++
+      if (entry.kind === 'attempt') previous.attempts++
+      issues.set(issue, previous)
+    }
+    if (entry.currency === undefined) continue
+    for (const charge of entry.charges) {
+      const key = JSON.stringify([entry.currency, charge.category])
+      const group = groups.get(key) ?? {
+        category: charge.category,
+        currency: entry.currency,
+        total: { tokens: 0n, amount: 0n },
+        rates: new Map<string, Sum>(),
+        ratesTruncated: false,
+      }
+      group.total.tokens += BigInt(charge.tokens)
+      group.total.amount += units(charge.amount)
+      const rateKey = money(units(charge.rate))
+      const rate = group.rates.get(rateKey)
+      if (rate !== undefined || group.rates.size < 32) {
+        const sum = rate ?? { tokens: 0n, amount: 0n }
+        sum.tokens += BigInt(charge.tokens)
+        sum.amount += units(charge.amount)
+        group.rates.set(rateKey, sum)
+      } else group.ratesTruncated = true
+      groups.set(key, group)
+    }
+  }
+  const value = (sum: Sum): { tokens: string; amount: string } => ({
+    tokens: String(sum.tokens),
+    amount: money(sum.amount),
+  })
+  return {
+    breakdown: [...groups.values()].map((group) => ({
+      category: group.category,
+      currency: group.currency,
+      ...value(group.total),
+      rates: [...group.rates].map(([rate, sum]) => ({ rate, ...value(sum) })),
+      ratesTruncated: group.ratesTruncated,
+    })),
+    issueCounts: [...issues].map(([issue, counts]) => ({ issue, ...counts })),
+  }
 }
 
 function charge(category: BillingCategory, tokens: number, rate: string): BillingCharge {

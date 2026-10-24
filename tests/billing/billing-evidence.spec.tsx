@@ -6,6 +6,7 @@ import { transferableAbortController } from 'node:util'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { BillingPrice, DshBackend, TokenUsage } from '../../packages/domain/src/index.js'
+import { billingCurrencyDisplay } from '../../packages/domain/src/index.js'
 import type { DshTransport } from '../../packages/dsh-adapter/src/contracts.js'
 import { Rc213SessionRepository } from '../../packages/dsh-adapter/src/versions/rc213/session-repository.js'
 import { Rc6ModelRepository } from '../../packages/dsh-adapter/src/repositories/model-repository.js'
@@ -342,6 +343,7 @@ function connect(
       requireSession: (id) => (id === sessionId ? Promise.resolve() : Promise.reject(new Error('Not owned'))),
     },
     source,
+    { read: () => Promise.resolve({ usdCny: '7', date: '2026-10-23' }) },
   )
   const router = new WebviewMessageRouter({
     postMessage: (message) => {
@@ -433,12 +435,25 @@ async function verify(
         )}
       />,
     )
+    const display = billingCurrencyDisplay(result, 'USD', { usdCny: '7', date: '2026-10-23' })
     const label =
-      result.totals.length === 0
+      display.totals.length === 0
         ? 'Cost unpriced'
-        : `Cost ≈ ${result.totals.map((total) => `${total.currency} ${formatBillingAmount(total.amount)}`).join(' / ')}${result.pricedRequests !== result.requests || !result.historyComplete ? ' · Partial' : ''}`
+        : `Cost ≈ ${display.totals.map((total) => `${total.currency} ${formatBillingAmount(total.amount)}`).join(' / ')}${result.pricedRequests !== result.requests || !result.historyComplete ? ' · Partial' : ''}`
     await screen.findByText(label)
     expect(document.body.textContent).not.toContain('×')
+    fireEvent.click(screen.getByText(label).closest('button')!)
+    const costDetails = within(screen.getByRole('dialog'))
+    expect(costDetails.getByText('Pricing details')).toBeDefined()
+    expect(costDetails.queryByText('Priced requests')).toBeNull()
+    if (result.issueCounts.some((issue) => issue.issue === 'missing-usage'))
+      expect(costDetails.getByText(/Token usage was not returned/)).toBeDefined()
+    for (const group of display.breakdown)
+      expect(
+        costDetails.getAllByText(`${group.currency} ${formatBillingAmount(group.amount)}`, { selector: 'dd' })
+          .length,
+      ).toBeGreaterThan(0)
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
     reports.push({
       name: trace.name,
       rawRecords: trace.rows.length,

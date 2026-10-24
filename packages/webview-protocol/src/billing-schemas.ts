@@ -7,6 +7,7 @@ import {
   type BillingPrice,
   type BillingSettings,
   type BillingCandidate,
+  type BillingCurrencyDisplay,
 } from '@dsh-vscode/domain'
 
 const id = z.string().min(1).max(256).refine(isBillingIdentifier)
@@ -22,6 +23,16 @@ const amount = z
 const currency = z.string().regex(/^[A-Z]{3}$/)
 const route = z.object({ providerId: id, modelId: id }).strict()
 const category = z.enum(['input', 'cacheRead', 'cacheWrite', 'output', 'reasoning'])
+const issue = z.enum([
+  'missing-route',
+  'missing-price',
+  'missing-usage',
+  'invalid-usage',
+  'unknown-cache',
+  'unknown-reasoning',
+  'unknown-price-period',
+])
+const tokenSum = z.string().regex(/^\d{1,24}$/u)
 const condition = z.custom<BillingCondition>(isBillingCondition)
 export const billingPriceSchema = route
   .extend({
@@ -132,21 +143,51 @@ const entry = z
     currency: currency.optional(),
     amount: amount.optional(),
     charges: z.array(charge).max(5),
-    issues: z
-      .array(
-        z.enum([
-          'missing-route',
-          'missing-price',
-          'missing-usage',
-          'invalid-usage',
-          'unknown-cache',
-          'unknown-reasoning',
-          'unknown-price-period',
-        ]),
-      )
-      .max(7),
+    issues: z.array(issue).max(7),
   })
   .strict()
+const breakdown = z
+  .object({
+    currency,
+    category,
+    tokens: tokenSum,
+    amount,
+    rates: z.array(z.object({ rate, tokens: tokenSum, amount }).strict()).max(32),
+    ratesTruncated: z.boolean(),
+  })
+  .strict()
+const display = z
+  .object({
+    currency: z.enum(['CNY', 'USD']),
+    status: z.enum(['native', 'converted', 'unavailable']),
+    exchange: z
+      .union([
+        z
+          .object({
+            usdCny: rate.refine((value) => Number(value) > 0),
+            date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u),
+          })
+          .strict(),
+        z.object({ usdCny: z.literal('6.8'), fallback: z.literal(true) }).strict(),
+      ])
+      .optional(),
+    totals: z.array(z.object({ currency, amount }).strict()).max(256),
+    breakdown: z
+      .array(
+        breakdown.extend({
+          rates: z.array(z.object({ rate: amount, tokens: tokenSum, amount }).strict()).max(32),
+        }),
+      )
+      .max(1280),
+  })
+  .strict()
+  .transform((value): BillingCurrencyDisplay => ({
+    currency: value.currency,
+    status: value.status,
+    totals: value.totals,
+    breakdown: value.breakdown,
+    ...(value.exchange === undefined ? {} : { exchange: value.exchange }),
+  }))
 export const billingEstimateSchema = z
   .object({
     sessionId: id,
@@ -160,6 +201,9 @@ export const billingEstimateSchema = z
     unpricedRequests: integer,
     priceRevision: integer,
     totals: z.array(z.object({ currency, amount }).strict()).max(256),
+    breakdown: z.array(breakdown).max(1280),
+    display: display.optional(),
+    issueCounts: z.array(z.object({ issue, count: integer, attempts: integer }).strict()).max(7),
     entries: z.array(entry).max(100),
     detailsTruncated: z.boolean(),
   })
@@ -246,7 +290,7 @@ export const billingRequestSchemas = [
     .object({
       type: z.literal('billing.estimate'),
       requestId: id,
-      payload: z.object({ sessionId: id }).strict(),
+      payload: z.object({ sessionId: id, currency: z.enum(['CNY', 'USD']).optional() }).strict(),
     })
     .strict(),
   z

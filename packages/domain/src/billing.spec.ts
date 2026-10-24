@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { addBillingAmounts, estimateBillingEntry, isBillingRate, type BillingPrice } from './billing.js'
+import {
+  addBillingAmounts,
+  estimateBillingEntry,
+  isBillingRate,
+  summarizeBillingEntries,
+  type BillingEntry,
+  type BillingPrice,
+} from './billing.js'
 
 const route = { providerId: 'fixture-provider', modelId: 'fixture-model' }
 const price: BillingPrice = {
@@ -18,6 +25,46 @@ const estimate = (
   estimateBillingEntry({ kind: 'message', sequence: 1, usage: { ...usage, ...patch } }, route, p)
 
 describe('independent billing rules', () => {
+  it('summarizes full costs by currency, category and numeric rate without rounding token or monetary sums', () => {
+    const base = estimate()
+    const result = summarizeBillingEntries([
+      base,
+      { ...base, currency: 'CNY' },
+      { ...base, charges: [{ category: 'input', tokens: 10, rate: '2.0', amount: '0.00002' }] },
+      { sequence: 99, kind: 'attempt', charges: [], issues: ['missing-usage'] },
+    ])
+    expect(result.breakdown.find((group) => group.currency === 'USD' && group.category === 'input')).toEqual({
+      currency: 'USD',
+      category: 'input',
+      tokens: '1210',
+      amount: '0.00242',
+      ratesTruncated: false,
+      rates: [{ rate: '2', tokens: '1210', amount: '0.00242' }],
+    })
+    expect(result.breakdown.filter((group) => group.currency === 'CNY')).toHaveLength(4)
+    expect(result.issueCounts).toEqual([{ issue: 'missing-usage', count: 1, attempts: 1 }])
+    const large: BillingEntry = {
+      sequence: 0,
+      kind: 'message',
+      currency: 'USD',
+      charges: [{ category: 'input', tokens: Number.MAX_SAFE_INTEGER, rate: '0', amount: '0' }],
+      issues: [],
+    }
+    expect(summarizeBillingEntries([large, large]).breakdown[0]?.tokens).toBe('18014398509481982')
+  })
+  it('bounds the rate preview while retaining the entire category subtotal and all issue counts', () => {
+    const entries: BillingEntry[] = Array.from({ length: 33 }, (_, index) => ({
+      sequence: index,
+      kind: 'message',
+      currency: 'USD',
+      charges: [{ category: 'output', rate: String(index), tokens: 1, amount: '0.000001' }],
+      issues: ['unknown-cache'],
+    }))
+    const result = summarizeBillingEntries(entries)
+    expect(result.breakdown[0]).toMatchObject({ tokens: '33', amount: '0.000033', ratesTruncated: true })
+    expect(result.breakdown[0]?.rates).toHaveLength(32)
+    expect(result.issueCounts).toEqual([{ issue: 'unknown-cache', count: 33, attempts: 0 }])
+  })
   it('prices disjoint buckets exactly and replaces reasoning within output', () => {
     expect(estimate().amount).toBe('0.00681')
     expect(estimate({ reasoningTokens: 60 }).amount).toBe('0.00681')

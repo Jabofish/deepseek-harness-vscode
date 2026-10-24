@@ -7,6 +7,94 @@ import {
 } from './index.js'
 
 describe('billing protocol limits', () => {
+  it('accepts requested display currencies and rejects unsupported currencies or rate endpoints', () => {
+    const request = {
+      type: 'billing.estimate',
+      requestId: 'fx',
+      payload: { sessionId: 's', currency: 'CNY' },
+    }
+    expect(featureRequestSchema.safeParse(request).success).toBe(true)
+    expect(
+      featureRequestSchema.safeParse({ ...request, payload: { sessionId: 's', currency: 'USD' } }).success,
+    ).toBe(true)
+    expect(
+      featureRequestSchema.safeParse({ ...request, payload: { sessionId: 's', currency: 'EUR' } }).success,
+    ).toBe(false)
+    expect(
+      featureRequestSchema.safeParse({
+        ...request,
+        payload: { ...request.payload, endpoint: 'https://private.invalid' },
+      }).success,
+    ).toBe(false)
+  })
+  it('accepts bounded billing breakdowns and rejects unsafe token totals or raw diagnostic fields', () => {
+    const group = {
+      category: 'input',
+      currency: 'USD',
+      tokens: '18014398509481982',
+      amount: '0.2',
+      rates: [{ rate: '1', tokens: '18014398509481982', amount: '0.2' }],
+      ratesTruncated: false,
+    }
+    const estimate = {
+      sessionId: 's',
+      enabled: true,
+      supported: true,
+      historyComplete: true,
+      scannedEvents: 1,
+      requests: 1,
+      pricedRequests: 0,
+      partialRequests: 1,
+      unpricedRequests: 0,
+      priceRevision: 1,
+      totals: [{ currency: 'USD', amount: '0.2' }],
+      breakdown: [group],
+      issueCounts: [{ issue: 'unknown-cache', count: 1, attempts: 0 }],
+      entries: [],
+      detailsTruncated: false,
+    }
+    expect(billingEstimateResponseSchema.safeParse({ kind: 'billing.estimate', estimate }).success).toBe(true)
+    const display = {
+      currency: 'CNY',
+      status: 'converted',
+      exchange: { usdCny: '6.8', fallback: true },
+      totals: [{ currency: 'CNY', amount: '1.36' }],
+      breakdown: [],
+    }
+    expect(
+      billingEstimateResponseSchema.safeParse({
+        kind: 'billing.estimate',
+        estimate: { ...estimate, display },
+      }).success,
+    ).toBe(true)
+    expect(
+      billingEstimateResponseSchema.safeParse({
+        kind: 'billing.estimate',
+        estimate: { ...estimate, display: { ...display, exchange: { usdCny: '7', fallback: true } } },
+      }).success,
+    ).toBe(false)
+    for (const breakdown of [
+      [{ ...group, tokens: '-1' }],
+      [{ ...group, tokens: '9'.repeat(25) }],
+      [{ ...group, rates: Array(33).fill(group.rates[0]) }],
+      [{ ...group, endpoint: 'https://private.invalid' }],
+    ])
+      expect(
+        billingEstimateResponseSchema.safeParse({
+          kind: 'billing.estimate',
+          estimate: { ...estimate, breakdown },
+        }).success,
+      ).toBe(false)
+    expect(
+      billingEstimateResponseSchema.safeParse({
+        kind: 'billing.estimate',
+        estimate: {
+          ...estimate,
+          issueCounts: [{ issue: 'unknown-cache', count: 1, attempts: 0, body: 'private' }],
+        },
+      }).success,
+    ).toBe(false)
+  })
   it('bounds reference search and rejects endpoints or credentials in its results', () => {
     const request = {
       type: 'billing.reference.search',

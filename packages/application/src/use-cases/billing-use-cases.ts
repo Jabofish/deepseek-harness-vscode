@@ -1,12 +1,23 @@
-import { AppError, addBillingAmounts, estimateBillingEntry } from '@dsh-vscode/domain'
+import {
+  AppError,
+  addBillingAmounts,
+  estimateBillingEntry,
+  summarizeBillingEntries,
+  billingCurrencyDisplay,
+} from '@dsh-vscode/domain'
 import type {
   BillingEstimate,
+  BillingDisplayCurrency,
   BillingFact,
   BillingPrice,
   BillingRoute,
   BillingUsageRepository,
 } from '@dsh-vscode/domain'
-import type { BillingPriceResolver, BillingSettingsPort } from '../ports/billing-ports.js'
+import type {
+  BillingExchangeSource,
+  BillingPriceResolver,
+  BillingSettingsPort,
+} from '../ports/billing-ports.js'
 
 const MAX_BILLING_EVENTS = 100_000
 
@@ -15,12 +26,14 @@ export class BillingUseCases {
   public constructor(
     private readonly settings: BillingSettingsPort,
     private readonly automatic?: BillingPriceResolver,
+    private readonly exchange?: BillingExchangeSource,
   ) {}
 
   public async estimate(
     sessionId: string,
     repository: BillingUsageRepository | undefined,
     signal: AbortSignal,
+    currency?: BillingDisplayCurrency,
   ): Promise<BillingEstimate> {
     signal.throwIfAborted()
     const settings = await this.settings.read()
@@ -37,10 +50,12 @@ export class BillingUseCases {
       unpricedRequests: 0,
       priceRevision: settings.revision,
       totals: [],
+      breakdown: [],
+      issueCounts: [],
       entries: [],
       detailsTruncated: false,
     }
-    if (!settings.enabled || repository === undefined) return empty
+    if (!settings.enabled || repository === undefined) return this.display(empty, currency, signal)
     const facts = new Map<number, BillingFact>()
     let before: number | undefined
     let scannedEvents = 0
@@ -123,17 +138,45 @@ export class BillingUseCases {
         totals.set(entry.currency, values)
       }
     }
-    return {
-      ...empty,
-      historyComplete: complete,
-      scannedEvents,
-      requests: entries.length,
-      pricedRequests,
-      partialRequests,
-      unpricedRequests: entries.length - pricedRequests - partialRequests,
-      totals: [...totals].map(([currency, values]) => ({ currency, amount: addBillingAmounts(values) })),
-      entries: entries.slice(-100).reverse(),
-      detailsTruncated: entries.length > 100,
+    return this.display(
+      {
+        ...empty,
+        historyComplete: complete,
+        scannedEvents,
+        requests: entries.length,
+        pricedRequests,
+        partialRequests,
+        unpricedRequests: entries.length - pricedRequests - partialRequests,
+        totals: [...totals].map(([currency, values]) => ({ currency, amount: addBillingAmounts(values) })),
+        ...summarizeBillingEntries(entries),
+        entries: entries.slice(-100).reverse(),
+        detailsTruncated: entries.length > 100,
+      },
+      currency,
+      signal,
+    )
+  }
+
+  private async display(
+    result: BillingEstimate,
+    currency: BillingDisplayCurrency | undefined,
+    signal: AbortSignal,
+  ): Promise<BillingEstimate> {
+    if (currency === undefined) return result
+    const fallback = billingCurrencyDisplay(result, currency)
+    if (
+      fallback.status === 'native' ||
+      this.exchange === undefined ||
+      result.totals.some((total) => total.currency !== 'USD' && total.currency !== 'CNY')
+    )
+      return { ...result, display: fallback }
+    try {
+      const exchange = await this.exchange.read(signal)
+      signal.throwIfAborted()
+      return { ...result, display: billingCurrencyDisplay(result, currency, exchange) }
+    } catch {
+      signal.throwIfAborted()
+      return { ...result, display: fallback }
     }
   }
 }
