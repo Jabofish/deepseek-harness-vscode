@@ -165,7 +165,7 @@ describe.skipIf(!enabled)('real DSH question lifecycle in an isolated profile', 
       })
       const events: BackendEvent[] = []
       unsubscribe = backend.events.subscribe((event) => events.push(event))
-      expect(backend.events.setSessionPreview).toBeTypeOf('function')
+      expect(typeof backend.events.setSessionPreview).toBe('function')
       backend.events.setSessionPreview?.(session.id, false)
       backend.events.watchSession?.(session.id)
       await vi.waitFor(
