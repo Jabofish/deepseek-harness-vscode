@@ -7,6 +7,7 @@ const docsRoot = path.join(root, 'docs')
 const expectedDocs = new Set([
   'README.md',
   'architecture.md',
+  'architecture.en.md',
   'dsh-contract.md',
   'capability-matrix.md',
   'ui.md',
