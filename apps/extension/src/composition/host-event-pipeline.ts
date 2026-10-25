@@ -1,3 +1,4 @@
+import { ControlDelivery } from '../view/control-delivery.js'
 import * as vscode from 'vscode'
 import type {
   AccountLifecycleSnapshot,
@@ -31,6 +32,49 @@ const BULK_EVENT_NAMES = new Set([
 ])
 export function isBulkEvent(name: string): boolean {
   return BULK_EVENT_NAMES.has(name)
+}
+
+const ACTIVE_SESSION_ONLY_EVENT_NAMES = new Set([
+  'session.configuration',
+  'session.system',
+  'goal.updated',
+  'jobs.updated',
+  'job.follow.updated',
+  'job.follow.failed',
+])
+
+// Unknown projection keys stay global: titles, session-list metadata and
+// interaction snapshots are consumed outside the currently opened transcript.
+const ACTIVE_SESSION_PROJECTION_KEYS = new Set(['todoList', 'plan', 'context', 'checkpoints', 'rollback'])
+
+function coalesceSlotKey(surfaceScope: string, name: string, payload: unknown): string | undefined {
+  if (name === 'runtime.update.progress') return JSON.stringify([surfaceScope, name])
+  if (typeof payload !== 'object' || payload === null) return undefined
+  const record = payload as Record<string, unknown>
+  const sessionId = typeof record.sessionId === 'string' ? record.sessionId : undefined
+  if (sessionId === undefined) return undefined
+  switch (name) {
+    case 'session.status':
+    case 'session.activity':
+    case 'session.title':
+    case 'session.system':
+    case 'jobs.updated':
+    case 'goal.updated':
+    case 'subagent.catalog.updated':
+      return JSON.stringify([surfaceScope, name, sessionId])
+    case 'session.projection':
+      return typeof record.key === 'string' && record.key !== 'userQuestions'
+        ? JSON.stringify([surfaceScope, name, sessionId, record.key])
+        : undefined
+    default:
+      return undefined
+  }
+}
+
+function payloadSequence(payload: unknown): number | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined
+  const seq = (payload as { readonly sequence?: unknown }).sequence
+  return typeof seq === 'number' && Number.isSafeInteger(seq) ? seq : undefined
 }
 
 /** Executed tool context shares the reserved control capacity, in source order. */
@@ -94,7 +138,10 @@ export type PublishAccountError = (
 ) => void
 
 export interface HostEventPipelineDependencies {
-  readonly transcript: Pick<TranscriptWindowService, 'accept' | 'dispose'>
+  readonly surfaceIds?: () => readonly string[]
+  readonly transcript: Pick<TranscriptWindowService, 'accept' | 'dispose'> & {
+    readonly surfacesForSession?: (sessionId: string) => readonly string[] | undefined
+  }
   readonly post: PostHostMessage
   readonly postTo: PostHostMessageTo
   /** Host consumers must not wait for delivery to a hidden or busy renderer. */
@@ -110,6 +157,8 @@ export interface HostEventPipelineDependencies {
 }
 
 export interface HostEventPipeline {
+  readonly acknowledgeEvents: (surfaceId: string, sequence: number) => void
+  readonly forgetSurface: (surfaceId: string) => void
   readonly dispose: () => void
   readonly postFeatureEvent: PostFeatureEvent
   readonly publishAccountSnapshot: (snapshot: AccountLifecycleSnapshot) => void
@@ -295,68 +344,159 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
     return availabilityRun
   }
   let sequence = 0
-  const eventPostQueue = new BoundedEventQueue(async () => {
+  let eventOrder = 0
+  type ResolvedEvent = { readonly name: string; readonly payload: unknown } | undefined
+  let eventEpoch = 0
+  const surfaceEpochs = new Map<string, object>()
+  let eventBackend: DshBackend | undefined
+  const broadcastReceipts = new Map<
+    string,
+    {
+      readonly receipts: readonly Promise<boolean>[]
+      readonly result: Promise<boolean>
+    }
+  >()
+  const combineReceipts = (
+    key: string | undefined,
+    receipts: readonly Promise<boolean>[],
+  ): Promise<boolean> => {
+    const previous = key === undefined ? undefined : broadcastReceipts.get(key)
+    if (
+      previous !== undefined &&
+      previous.receipts.length === receipts.length &&
+      receipts.every((receipt, index) => receipt === previous.receipts[index])
+    )
+      return previous.result
+    const result = Promise.all(receipts)
+      .then((results) => results.some(Boolean))
+      .finally(() => {
+        if (key !== undefined && broadcastReceipts.get(key)?.result === result) broadcastReceipts.delete(key)
+      })
+    if (key !== undefined) broadcastReceipts.set(key, { receipts, result })
+    return result
+  }
+  const controlDelivery =
+    deps.surfaceIds === undefined
+      ? undefined
+      : new ControlDelivery(
+          postTo,
+          () => ++sequence,
+          (surfaceId) => deps.surfaceIds?.().includes(surfaceId) === true,
+        )
+  const eventPostQueue = new BoundedEventQueue(async (info) => {
+    if (info?.priority === false || controlDelivery !== undefined) return
     await post({ type: 'event', name: 'ui.resync', sequence: ++sequence, payload: {} })
   })
   const enqueueEvent = (
-    resolve: () => Promise<{ readonly name: string; readonly payload: unknown } | undefined>,
+    resolve: () => ResolvedEvent,
     chars: number,
     surfaceId?: string,
     priority = false,
+    coalesceKey?: string,
+    coalesceSequence?: number,
   ): Promise<boolean> => {
-    return eventPostQueue.enqueue(
-      async () => {
-        const nextEvent = await resolve()
-        if (nextEvent === undefined) return true
-        const nextSequence = ++sequence
-        const message = {
-          type: 'event' as const,
-          name: nextEvent.name,
-          sequence: nextSequence,
-          payload: nextEvent.payload,
-        }
-        // A surface-directed event is that surface's own state; it must not leak
-        // another surface's kind, session or count.
-        const delivered = surfaceId === undefined ? await post(message) : await postTo(surfaceId, message)
-        if (!delivered && priority) {
-          // A control frame the Webview never received must not be followed by
-          // a contiguously numbered stream: consume its sequence and ask for
-          // the reread a rejected frame already triggers.
-          if (surfaceId === undefined) eventPostQueue.invalidate()
-          else if (nextEvent.name !== 'ui.resync') {
-            // Recovery belongs to the failed surface. Never repeatedly retry
-            // the recovery frame itself when that surface has gone away.
-            const recoverySequence = ++sequence
-            await postTo(surfaceId, {
-              type: 'event',
-              name: 'ui.resync',
-              sequence: recoverySequence,
-              payload: {},
-            })
+    if (surfaceId === undefined && deps.surfaceIds !== undefined) {
+      return combineReceipts(
+        coalesceKey === undefined ? undefined : JSON.stringify([eventEpoch, coalesceKey]),
+        deps
+          .surfaceIds()
+          .map((id) =>
+            enqueueEvent(
+              resolve,
+              chars,
+              id,
+              priority,
+              coalesceKey === undefined ? undefined : JSON.stringify([id, coalesceKey]),
+              coalesceSequence,
+            ),
+          ),
+      )
+    }
+    const epoch = eventEpoch
+    let surfaceEpoch = surfaceId === undefined ? undefined : surfaceEpochs.get(surfaceId)
+    if (surfaceId !== undefined && surfaceEpoch === undefined) {
+      surfaceEpoch = {}
+      surfaceEpochs.set(surfaceId, surfaceEpoch)
+    }
+    const assignedSequence = ++eventOrder
+    const resolveMessage = (): Extract<HostMessage, { type: 'event' }> | undefined => {
+      if (epoch !== eventEpoch || (surfaceId !== undefined && surfaceEpochs.get(surfaceId) !== surfaceEpoch))
+        return undefined
+      const nextEvent = resolve()
+      return nextEvent === undefined
+        ? undefined
+        : {
+            type: 'event',
+            name: nextEvent.name,
+            sequence: assignedSequence,
+            payload: nextEvent.payload,
           }
+    }
+    if (controlDelivery !== undefined && surfaceId !== undefined && priority) {
+      const message = resolveMessage()
+      return message === undefined
+        ? Promise.resolve(true)
+        : controlDelivery.enqueue(surfaceId, message, coalesceKey, () => resolveMessage() !== undefined)
+    }
+    const run = async (): Promise<boolean> => {
+      if (epoch !== eventEpoch) return true
+      const pending = resolveMessage()
+      const message = pending === undefined ? undefined : { ...pending, sequence: ++sequence }
+      if (message === undefined) return true
+      const delivered = surfaceId === undefined ? await post(message) : await postTo(surfaceId, message)
+      if (!delivered && priority) {
+        // A control frame the Webview never received must not be followed by
+        // a contiguously numbered stream: consume its sequence and ask for
+        // the reread a rejected frame already triggers.
+        if (surfaceId === undefined) eventPostQueue.invalidate()
+        else if (message.name !== 'ui.resync') {
+          // Recovery belongs to the failed surface. Never repeatedly retry
+          // the recovery frame itself when that surface has gone away.
+          const recoverySequence = ++sequence
+          await postTo(surfaceId, {
+            type: 'event',
+            name: 'ui.resync',
+            sequence: recoverySequence,
+            payload: {},
+          })
         }
-        return delivered
-      },
-      chars,
-      priority,
-    )
+      }
+      return delivered
+    }
+    return coalesceKey === undefined
+      ? eventPostQueue.enqueue(run, chars, priority)
+      : eventPostQueue.enqueueLatest(
+          JSON.stringify([epoch, surfaceId, coalesceKey]),
+          run,
+          chars,
+          priority,
+          coalesceSequence,
+        )
   }
+
   const postEvent = (name: string, payload: unknown): Promise<boolean> => {
     deps.onEvent?.(name, payload)
+    const priority = !isBulkEvent(name) || hasActiveToolContext(payload)
     return enqueueEvent(
-      () => Promise.resolve({ name, payload }),
+      () => ({ name, payload }),
       eventPayloadCharacters(payload),
       undefined,
-      !isBulkEvent(name) || hasActiveToolContext(payload),
+      priority,
+      coalesceSlotKey('*', name, payload),
+      payloadSequence(payload),
     )
   }
-  const postEventTo: PostSurfaceEvent = (surfaceId, name, payload, isCurrent) =>
-    enqueueEvent(
-      () => Promise.resolve(isCurrent?.() === false ? undefined : { name, payload }),
+  const postEventTo: PostSurfaceEvent = (surfaceId, name, payload, isCurrent) => {
+    const priority = !isBulkEvent(name) || hasActiveToolContext(payload)
+    return enqueueEvent(
+      () => (isCurrent?.() === false ? undefined : { name, payload }),
       eventPayloadCharacters(payload),
       surfaceId,
-      !isBulkEvent(name) || hasActiveToolContext(payload),
+      priority,
+      coalesceSlotKey(surfaceId, name, payload),
+      payloadSequence(payload),
     )
+  }
   const publicControlEvent = (event: BackendEvent): unknown =>
     sanitizePublicValue(event, undefined, [
       ...currentWorkspaceFolders().map((folder) => folder.uri.fsPath),
@@ -374,21 +514,58 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
     } catch {
       return Promise.resolve(false)
     }
+    if (eventBackend !== backend) {
+      eventBackend = backend
+      eventEpoch++
+      controlDelivery?.reset()
+    }
     deps.onEvent?.(event.type, event)
     if (deps.transcript.accept(event)) return Promise.resolve(true)
+    const targetSurfaces =
+      (ACTIVE_SESSION_ONLY_EVENT_NAMES.has(event.type) ||
+        (event.type === 'session.projection' && ACTIVE_SESSION_PROJECTION_KEYS.has(event.key))) &&
+      'sessionId' in event &&
+      typeof event.sessionId === 'string'
+        ? deps.transcript.surfacesForSession?.(event.sessionId)
+        : undefined
+    if (targetSurfaces !== undefined && targetSurfaces.length === 0) {
+      return Promise.resolve(true)
+    }
+    const targetSurfaceId = targetSurfaces?.length === 1 ? targetSurfaces[0] : undefined
+    const priority = !isBulkEvent(event.type)
+    const resolvePayload = (): ResolvedEvent => {
+      try {
+        if (backendService.requireBackend() !== backend) return undefined
+      } catch {
+        return undefined
+      }
+      const payload = publicControlEvent(event)
+      return payload === undefined ? undefined : { name: event.type, payload }
+    }
+    if (targetSurfaces !== undefined && targetSurfaces.length > 1) {
+      const chars = eventPayloadCharacters(event)
+      const seq = payloadSequence(event)
+      return combineReceipts(
+        coalesceSlotKey(`targets:${eventEpoch}:${targetSurfaces.join(',')}`, event.type, event),
+        targetSurfaces.map((surfaceId) =>
+          enqueueEvent(
+            resolvePayload,
+            chars,
+            surfaceId,
+            priority,
+            coalesceSlotKey(surfaceId, event.type, event),
+            seq,
+          ),
+        ),
+      )
+    }
     return enqueueEvent(
-      () => {
-        try {
-          if (backendService.requireBackend() !== backend) return Promise.resolve(undefined)
-        } catch {
-          return Promise.resolve(undefined)
-        }
-        const payload = publicControlEvent(event)
-        return Promise.resolve(payload === undefined ? undefined : { name: event.type, payload })
-      },
+      resolvePayload,
       eventPayloadCharacters(event),
-      undefined,
-      !isBulkEvent(event.type),
+      targetSurfaceId,
+      priority,
+      coalesceSlotKey(targetSurfaceId ?? '*', event.type, event),
+      payloadSequence(event),
     )
   }
   runtimeUpdateProgress.current = (progress) => {
@@ -398,7 +575,12 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
     // A new connection/view baseline must receive its own availability event.
     availabilityEpoch++
     publishedAvailabilityKinds = undefined
-    if (state.kind !== 'connected') deps.transcript?.dispose()
+    if (state.kind !== 'connected') {
+      eventEpoch++
+      eventBackend = undefined
+      controlDelivery?.reset()
+      deps.transcript?.dispose()
+    }
     void updateContextKeys(vscode.commands, state)
     diagnostics.log('info', 'connection-state', { state: state.kind })
     const payload = publicState(state, diagnostics.connectionOutput?.())
@@ -409,7 +591,17 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
     return featureLocalSequence
   }
   return {
-    dispose: () => eventPostQueue.dispose(),
+    acknowledgeEvents: (surfaceId, sequence) => controlDelivery?.acknowledge(surfaceId, sequence),
+    forgetSurface: (surfaceId) => {
+      surfaceEpochs.delete(surfaceId)
+      controlDelivery?.forget(surfaceId)
+    },
+    dispose: () => {
+      eventEpoch++
+      controlDelivery?.dispose()
+      broadcastReceipts.clear()
+      eventPostQueue.dispose()
+    },
     postFeatureEvent,
     publishAccountSnapshot,
     publishAccountSessionExpired,

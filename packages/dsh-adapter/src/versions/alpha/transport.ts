@@ -247,8 +247,8 @@ export class AlphaLoopbackApiClient implements DshTransport {
   }
 
   /** Logical durable session stream used by the alpha event source. */
-  public openSessionStream(sessionId: string, signal: AbortSignal): AsyncIterable<unknown> {
-    return this.readSession(sessionId, signal)
+  public openSessionStream(sessionId: string, signal: AbortSignal, preview = true): AsyncIterable<unknown> {
+    return this.readSession(sessionId, signal, preview)
   }
 
   /** Logical Workspace projection stream used by the alpha event source. */
@@ -832,10 +832,14 @@ export class AlphaLoopbackApiClient implements DshTransport {
    * discontinuity is recovered by re-opening the stream and adopting its new
    * compact baseline instead of silently dropping token output.
    */
-  private async *readSession(sessionId: string, signal: AbortSignal): AsyncGenerator<unknown> {
+  private async *readSession(
+    sessionId: string,
+    signal: AbortSignal,
+    preview = true,
+  ): AsyncGenerator<unknown> {
     const wireVersion = this.options.sessionWireVersion ?? 'v0'
     const v2 = wireVersion === 'v2'
-    const assistantStream = v2 || wireVersion === 'v3' || wireVersion === 'v4'
+    const assistantStream = preview && (v2 || wireVersion === 'v3' || wireVersion === 'v4')
     const historyWindow = this.legacyRpc.historyWindowOptions({
       maxMessages: 50,
       ...(this.options.sessionHistoryTurnWindow === true
@@ -851,6 +855,16 @@ export class AlphaLoopbackApiClient implements DshTransport {
     const questionReplies = this.options.createQuestionReplyObserver?.(sessionId)
     let previewEnabled = projector !== undefined
     let consecutiveRecoveries = 0
+    let lastRecoveryAt: number | undefined
+    const resetExpiredRecoveryBudget = (): void => {
+      if (
+        lastRecoveryAt !== undefined &&
+        performance.now() - lastRecoveryAt >= ASSISTANT_PREVIEW_RECOVERY_WINDOW_MS
+      ) {
+        consecutiveRecoveries = 0
+        lastRecoveryAt = undefined
+      }
+    }
     const stopPreview = (): readonly Alpha13ProjectorOutput[] => {
       const pending = projector?.releaseDurable() ?? []
       previewEnabled = false
@@ -996,6 +1010,8 @@ export class AlphaLoopbackApiClient implements DshTransport {
             for (const reply of replies) yield reply
           } else if (projector !== undefined && frame?.type === 'assistant-stream') {
             if (!previewEnabled) {
+              resetExpiredRecoveryBudget()
+              if (consecutiveRecoveries >= MAX_ASSISTANT_PREVIEW_RECOVERIES) continue
               // A fresh attempt is the cheapest way back into the preview: its
               // start frame carries everything a missing baseline would have.
               if (recordOrUndefined(frame.frame)?.type !== 'start') continue
@@ -1007,7 +1023,6 @@ export class AlphaLoopbackApiClient implements DshTransport {
                 continue
               }
               previewEnabled = true
-              consecutiveRecoveries = 0
               for (const output of resumed) yield this.alpha13ProjectorFrame(output)
               continue
             }
@@ -1018,8 +1033,10 @@ export class AlphaLoopbackApiClient implements DshTransport {
               recovery = 'frame'
               break
             }
-            // A delivered chunk proves the preview channel is healthy again.
-            consecutiveRecoveries = 0
+            // A single delivered chunk after a rebase does not immediately reset
+            // the recovery budget: only sustained health across the recovery
+            // window clears it, preventing a "recover -> one good chunk -> gap" loop.
+            resetExpiredRecoveryBudget()
             for (const output of projected) yield this.alpha13ProjectorFrame(output)
           }
         }
@@ -1029,6 +1046,7 @@ export class AlphaLoopbackApiClient implements DshTransport {
         throw error
       }
       if (!previewEnabled) continue
+      resetExpiredRecoveryBudget()
       if (consecutiveRecoveries >= MAX_ASSISTANT_PREVIEW_RECOVERIES) {
         // Terminal fallback: keep the durable reply path usable and make the
         // degraded mode observable instead of failing the whole stream.
@@ -1037,6 +1055,7 @@ export class AlphaLoopbackApiClient implements DshTransport {
         continue
       }
       consecutiveRecoveries += 1
+      lastRecoveryAt = performance.now()
       reportPreview({ status: 'rebased', phase: recovery })
       await assistantPreviewBackoff(consecutiveRecoveries, signal)
       if (signal.aborted) return
@@ -1168,6 +1187,7 @@ export class AlphaLoopbackApiClient implements DshTransport {
  * optional transient channel and keeps the durable stream usable.
  */
 const MAX_ASSISTANT_PREVIEW_RECOVERIES = 3
+const ASSISTANT_PREVIEW_RECOVERY_WINDOW_MS = 10_000
 
 /** Bounded backoff for a follow re-open that only repairs the preview channel. */
 async function assistantPreviewBackoff(attempt: number, signal: AbortSignal): Promise<void> {

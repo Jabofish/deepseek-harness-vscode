@@ -168,6 +168,10 @@ export function createHostBackedAppStore(
         host.acknowledge(request.payload.sessionId, request.payload.revision)
         return {} as T
       }
+      if (request.type === 'session.transcript.resync')
+        return {
+          transcript: await host.resync(request.payload.sessionId, signal ?? new AbortController().signal),
+        } as T
       if (request.type === 'session.transcript.node')
         return {
           node: host.fullNode(

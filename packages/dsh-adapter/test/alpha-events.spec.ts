@@ -83,6 +83,39 @@ async function waitForAtMost(predicate: () => boolean, timeoutMs: number): Promi
 }
 
 describe('AlphaEventSource session lifecycle', () => {
+  it('changes preview demand by rebaselining only that session and retains its durable subscription', async () => {
+    const transport = fakeAlphaTransport()
+    const open = vi.fn((sessionId: string, signal: AbortSignal, _preview?: boolean) =>
+      (async function* () {
+        yield { payload: { type: 'session/subscribed', sessionId, lastSeq: 0 } }
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) resolve()
+          else signal.addEventListener('abort', () => resolve(), { once: true })
+        })
+      })(),
+    )
+    transport.openSessionStream = open
+    const source = new AlphaEventSource(transport as unknown as AlphaLoopbackApiClient & DshTransport)
+    const received: BackendEvent[] = []
+    const unsubscribe = source.subscribe((event) => received.push(event))
+    try {
+      source.watchSession('s1')
+      await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1))
+      source.setSessionPreview('s1', false)
+      await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(2))
+      expect(open.mock.calls[1]?.[2]).toBe(false)
+      source.setSessionPreview('s1', false)
+      await Promise.resolve()
+      expect(open).toHaveBeenCalledTimes(2)
+      source.setSessionPreview('s1', true)
+      await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(3))
+      expect(open.mock.calls[2]?.[2]).toBe(true)
+      expect(received.some((event) => event.type === 'connection.lost')).toBe(false)
+    } finally {
+      unsubscribe()
+      await source.close()
+    }
+  })
   it('stops following a session after the host announces its removal', async () => {
     const transport = fakeAlphaTransport({ removeSession: 's1' })
     const source = new AlphaEventSource(transport as unknown as AlphaLoopbackApiClient & DshTransport)

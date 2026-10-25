@@ -1539,6 +1539,18 @@ describe('reduceTimeline', () => {
     })
     expect(two.nodes).toHaveLength(1)
     expect(two.nodes[0]).toMatchObject({ kind: 'tool', tool: { status: 'completed' } })
+    const duplicate = reduceTimeline(two, {
+      sequence: 2,
+      advanceSequence: false,
+      event: {
+        type: 'tool.updated',
+        sessionId: 'session-1',
+        tool: { ...tool, status: 'completed', metadata: {} },
+      },
+    })
+    expect(duplicate.nodes[0]).toBe(two.nodes[0])
+    expect(duplicate.nodes).toBe(two.nodes)
+    expect(duplicate.lastSequence).toBe(2)
   })
 
   it('folds durable workflow records by run and exact phase identity', () => {

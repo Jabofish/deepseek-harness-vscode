@@ -1,3 +1,5 @@
+import { sameTimelineValue } from '@dsh-vscode/timeline'
+import { TranscriptEventBuffer, isTextEvent } from './transcript-event-buffer.js'
 import { createHash } from 'node:crypto'
 import { TranscriptContentVersions } from './transcript-content-version.js'
 import {
@@ -43,7 +45,7 @@ interface PendingOpen {
   readonly sessionId: string
   readonly generation: number
   readonly child: boolean
-  events: BackendEvent[]
+  events: TranscriptEventBuffer
   chars: number
   overflow: boolean
   cwd?: string
@@ -72,6 +74,7 @@ interface Resident {
   currentTodos?: readonly TodoView[]
   currentTodosOmitted?: true
   nativeTodos: boolean
+  boundDirty?: boolean
 }
 interface WindowMetadataSource {
   readonly facts: number
@@ -99,6 +102,9 @@ export class TranscriptWindowService {
   private readonly sameSequence = new Set<string>()
   private identitySequence = -1
   private visible = true
+  private readonly ingress = new TranscriptEventBuffer()
+  private needsRebase = false
+  private overloadBudget = { started: 0, count: 0 }
   private dirty = false
   private posting = false
   private readonly pendingAcks = new Map<number, number>()
@@ -143,16 +149,29 @@ export class TranscriptWindowService {
       readonly post: (window: TranscriptWindow) => Promise<boolean>
       readonly postPatch?: (patch: TranscriptPatch) => Promise<boolean>
       readonly invalidate?: (sessionId: string) => void
+      readonly consumerDriven?: boolean
+      readonly refresh?: (sessionId: string) => Promise<void>
+      readonly onCapacity?: (ready: boolean) => void
       readonly report?: (failure: { readonly attempt: number; readonly retrying: boolean }) => void
     },
   ) {}
 
-  public begin(sessionId: string, child = false): number {
+  public begin(sessionId: string, child = false, recovery = false): number {
+    if (!recovery) this.overloadBudget = { started: performance.now(), count: 0 }
     const generation = ++this.generation
     this.deliveryEpoch++
     // Reads and invalidations are not proof that the renderer recovered.
     this.published = undefined
-    this.pending = { sessionId, generation, child, events: [], chars: 0, overflow: false }
+    this.ingress.clear()
+    this.needsRebase = false
+    this.pending = {
+      sessionId,
+      generation,
+      child,
+      events: new TranscriptEventBuffer(),
+      chars: 0,
+      overflow: false,
+    }
     return generation
   }
 
@@ -163,7 +182,7 @@ export class TranscriptWindowService {
   public restart(generation: number): void {
     const pending = this.pending
     if (pending?.generation !== generation) return
-    pending.events = []
+    pending.events.clear()
     pending.chars = 0
     pending.overflow = false
   }
@@ -191,6 +210,12 @@ export class TranscriptWindowService {
   ): TranscriptWindow {
     if (this.pending?.generation !== generation || this.pending.sessionId !== sessionId) throw stale()
     if (this.pending.overflow) throw stale()
+    const previousResident =
+      this.tail?.sessionId === sessionId
+        ? this.tail
+        : this.displayed?.sessionId === sessionId
+          ? this.displayed
+          : undefined
     const resident = this.project(sessionId, page, this.pending.child, undefined, cwd)
     if (
       this.pending.cwdKnown &&
@@ -200,7 +225,7 @@ export class TranscriptWindowService {
       if (this.pending.cwd === undefined) delete resident.cwd
       else resident.cwd = this.pending.cwd
     }
-    const pending = this.pending.events
+    const pending = this.pending.events.take()
     this.pending = undefined
     this.tail = resident
     this.displayed = resident
@@ -229,11 +254,14 @@ export class TranscriptWindowService {
         continue
       this.reduce(resident, event)
     }
+    this.ensureProjected(resident)
+    if (previousResident !== undefined) this.reconcileResidentNodes(resident, previousResident)
     this.revision++
     this.published = undefined
     this.pendingAcks.clear()
     this.pendingChars = 0
     this.budgetBlocked = false
+    this.deps.onCapacity?.(this.previewCanResume())
     return this.snapshot()
   }
 
@@ -280,25 +308,42 @@ export class TranscriptWindowService {
       delete this.tail.currentTodos
       delete this.tail.currentTodosOmitted
     }
-    if (!isTranscriptEvent(event)) return false
+    if (!isTranscriptEvent(event)) {
+      const controlSession =
+        event.type === 'permission.requested'
+          ? event.request.sessionId
+          : event.type === 'question.requested'
+            ? event.question.sessionId
+            : sessionId
+      const interaction = event.type === 'permission.requested' || event.type === 'question.requested'
+      if ((this.visible || interaction) && controlSession === this.tail?.sessionId)
+        this.flushIngress(interaction)
+      return false
+    }
     const pending = this.pending
     if (pending !== undefined && pending.sessionId === sessionId && !pending.overflow) {
-      const chars = JSON.stringify(event).length
-      if (pending.events.length >= 256 || pending.chars + chars > 512 * 1024) {
-        pending.events = []
-        pending.chars = 0
-        pending.overflow = true
-      } else {
-        pending.events.push(event)
-        pending.chars += chars
-      }
+      if (!pending.events.push(event)) pending.overflow = true
     }
     if (this.tail !== undefined && this.tail.sessionId === sessionId) {
-      const previous = this.tail.timeline
-      this.reduce(this.tail, event)
-      if (this.displayed === this.tail && this.tail.timeline !== previous) {
-        this.revision++
-        this.schedule(event.type === 'tool.updated')
+      if (this.needsRebase) {
+        this.invalidateIngress()
+        return isTranscriptOnlyEvent(event)
+      }
+      if (
+        !this.visible ||
+        (this.deps.consumerDriven === true &&
+          isTextEvent(event) &&
+          (this.pendingAcks.size > 0 || this.posting || this.budgetBlocked))
+      ) {
+        if (!this.ingress.push(event)) {
+          this.needsRebase = true
+          this.noteOverload()
+          this.deps.onCapacity?.(false)
+          this.invalidateIngress()
+        }
+      } else {
+        this.flushIngress()
+        this.applyTailEvent(event)
       }
     } else if (isRetainedHostNotice(event) && sessionId !== undefined) {
       const scratch = reduceTimeline(empty(sessionId), {
@@ -322,6 +367,7 @@ export class TranscriptWindowService {
     revision: number,
     signal: AbortSignal,
   ): Promise<TranscriptWindow> {
+    this.flushIngress(false, false)
     if (
       this.tail?.sessionId !== sessionId ||
       this.displayed === undefined ||
@@ -329,6 +375,8 @@ export class TranscriptWindowService {
       (this.displayed !== this.tail && revision !== this.revision)
     )
       throw stale()
+    this.ensureProjected(this.tail)
+    this.ensureProjected(this.displayed)
     if (direction === 'latest') {
       if (this.invalidated) {
         const generation = this.begin(sessionId, this.tail.child)
@@ -398,7 +446,9 @@ export class TranscriptWindowService {
       this.displayed = merged
     } else {
       this.forward.pop()
-      this.displayed = this.project(sessionId, page, previous.child, before, previous.cwd)
+      const nextDisplayed = this.project(sessionId, page, previous.child, before, previous.cwd)
+      this.reconcileResidentNodes(nextDisplayed, previous)
+      this.displayed = nextDisplayed
     }
     this.revision++
     this.published = undefined
@@ -407,6 +457,7 @@ export class TranscriptWindowService {
 
   /** Complete current content, including live bodies outside the transport window. */
   public fullNode(sessionId: string, nodeId: string, revision: number, signal: AbortSignal): TimelineNode {
+    this.flushIngress(false, false)
     const displayed = this.displayed
     if (
       signal.aborted ||
@@ -415,6 +466,8 @@ export class TranscriptWindowService {
       (displayed !== this.tail && revision !== this.revision)
     )
       throw stale()
+    if (this.tail !== undefined) this.ensureProjected(this.tail)
+    this.ensureProjected(displayed)
     const resident = this.tail?.sessionId === sessionId ? this.tail : displayed
     const displayedNode = displayed.timeline.nodes.find((candidate) => candidate.id === nodeId)
     // An approval can outlive its visible tool row (paging or a busy turn).
@@ -481,12 +534,20 @@ export class TranscriptWindowService {
   public setVisible(visible: boolean): void {
     const becameVisible = visible && !this.visible
     this.visible = visible
+    if (visible && this.needsRebase) {
+      this.invalidateIngress()
+      return
+    }
+    if (visible) this.flushIngress(false, false)
+    if (visible && this.previewCanResume()) this.deps.onCapacity?.(true)
     if (visible && this.displayed !== undefined) {
       if (becameVisible) {
         this.deliverySuspended = false
         this.clearRetry()
         this.invalidated = false
       }
+      if (this.tail !== undefined) this.ensureProjected(this.tail)
+      this.ensureProjected(this.displayed)
       this.deliveryEpoch++
       this.published = undefined
       this.revision++
@@ -499,17 +560,20 @@ export class TranscriptWindowService {
 
   public acknowledge(sessionId: string, revision: number): void {
     if (this.displayed?.sessionId !== sessionId || revision > this.revision) return
+    if (this.overloadBudget.count > 0 && this.previewCanResume()) this.deps.onCapacity?.(true)
     for (const [sent, chars] of this.pendingAcks)
       if (sent <= revision) {
         this.pendingAcks.delete(sent)
         this.pendingChars -= chars
         this.budgetBlocked = false
       }
+    if (this.visible && !this.needsRebase) this.flushIngress()
     if (this.dirty) this.schedule()
   }
 
   public showLatest(sessionId: string): void {
     if (this.tail?.sessionId !== sessionId) return
+    this.ensureProjected(this.tail)
     this.displayed = this.tail
     this.forward.length = 0
     this.revision++
@@ -517,8 +581,15 @@ export class TranscriptWindowService {
     this.schedule()
   }
 
+  public activeSessionId(): string | undefined {
+    const current = this.pending ?? this.displayed ?? this.tail
+    return current?.sessionId
+  }
+
   public dispose(): void {
     ++this.generation
+    this.ingress.clear()
+    this.needsRebase = false
     this.pending = undefined
     this.tail = undefined
     this.displayed = undefined
@@ -626,6 +697,9 @@ export class TranscriptWindowService {
         // authoritative window; do not sort, backfill or replay another journal.
         const known = this.recentEvents.has(eventIdentity(event, sequence))
         if (!known && sequence >= (resident.before ?? 0) && this.pending === undefined && !this.invalidated) {
+          this.needsRebase = true
+          this.noteOverload()
+          this.deps.onCapacity?.(false)
           this.invalidated = true
           this.deps.invalidate?.(resident.sessionId)
         }
@@ -639,6 +713,14 @@ export class TranscriptWindowService {
       if (this.sameSequence.has(key)) return
       if (this.sameSequence.size < 64) this.sameSequence.add(key)
       this.rememberIdentity(event, sequence)
+    }
+    if (
+      resident.boundDirty === true &&
+      event.type !== 'message.delta' &&
+      event.type !== 'reasoning.delta' &&
+      event.type !== 'tool.updated'
+    ) {
+      this.ensureProjected(resident)
     }
     this.restoreLiveBody(resident, event)
     const previous = resident.timeline.nodes
@@ -663,8 +745,141 @@ export class TranscriptWindowService {
         event.type === 'session.gap' ? { from: event.fromSequence, to: event.toSequence } : undefined,
       )
     this.rememberChanges(resident, previous, event, event.sequence)
-    this.bound(resident)
+    const nodeBudget = resident.expanded === true ? TRANSCRIPT_MAX_NODES : 256
+    if (
+      !this.visible &&
+      (event.type === 'message.delta' ||
+        event.type === 'reasoning.delta' ||
+        (event.type === 'tool.updated' &&
+          (event.tool.status === 'running' || event.tool.status === 'queued'))) &&
+      resident.timeline.nodes.length === previous.length &&
+      resident.timeline.nodes.length < nodeBudget - 32
+    ) {
+      resident.boundDirty = true
+    } else {
+      resident.boundDirty = false
+      this.bound(resident)
+    }
     this.updateCurrentTodos(resident, event)
+  }
+
+  private applyTailEvent(event: BackendEvent): void {
+    if (this.tail === undefined) return
+    const previous = this.tail.timeline
+    this.reduce(this.tail, event)
+    if (this.displayed === this.tail && this.tail.timeline !== previous) {
+      this.revision++
+      this.schedule(event.type === 'tool.updated')
+    }
+  }
+
+  private flushIngress(urgent = false, publish = true): void {
+    if (this.needsRebase || this.ingress.size === 0 || this.tail === undefined) return
+    for (const event of this.ingress.take(
+      (first) =>
+        first.transientAttemptId === undefined ||
+        first.transientSequence === 1 ||
+        !this.tail!.timeline.nodes.some(
+          (node) =>
+            (node.kind === 'assistant-message' || node.kind === 'reasoning') &&
+            node.liveAttemptId === first.transientAttemptId &&
+            node.liveLastIndex !== undefined &&
+            first.transientIndex !== undefined &&
+            node.liveLastIndex >= first.transientIndex,
+        ),
+    ))
+      this.reduce(this.tail, event)
+    if (this.displayed === this.tail) {
+      this.revision++
+      this.dirty = true
+      if (publish) this.schedule(urgent)
+    }
+  }
+
+  private invalidateIngress(): void {
+    if (!this.visible || this.invalidated || this.tail === undefined) return
+    this.invalidated = true
+    this.deps.invalidate?.(this.tail.sessionId)
+  }
+
+  private noteOverload(): void {
+    this.previewCanResume()
+    this.overloadBudget.count++
+  }
+
+  private previewCanResume(): boolean {
+    if (performance.now() - this.overloadBudget.started >= 10_000)
+      this.overloadBudget = { started: performance.now(), count: 0 }
+    return this.overloadBudget.count < 3
+  }
+
+  /** Repair only this bounded view; ordinary packet loss needs no upstream read. */
+  public async resync(sessionId: string, signal: AbortSignal): Promise<TranscriptWindow> {
+    if (this.displayed?.sessionId !== sessionId || this.tail === undefined) throw stale()
+    if (this.needsRebase) {
+      const child = this.tail.child
+      const cwd = this.tail.cwd
+      const generation = this.begin(sessionId, child, true)
+      try {
+        await this.deps.refresh?.(sessionId)
+        signal.throwIfAborted()
+        const page = await this.deps.read(sessionId, undefined, signal, child)
+        signal.throwIfAborted()
+        return this.installPage(sessionId, page, generation, cwd)
+      } catch (error) {
+        if (this.generation === generation) {
+          this.needsRebase = true
+          this.deps.onCapacity?.(false)
+          this.invalidated = false
+        }
+        throw error
+      } finally {
+        this.cancel(generation)
+      }
+    }
+    this.flushIngress(false, false)
+    this.deliveryEpoch++
+    this.deliverySuspended = false
+    this.clearRetry()
+    this.invalidated = false
+    this.published = undefined
+    this.pendingAcks.clear()
+    this.pendingChars = 0
+    this.budgetBlocked = false
+    this.revision++
+    return this.snapshot()
+  }
+
+  private ensureProjected(resident: Resident): void {
+    if (resident.boundDirty === true) {
+      resident.boundDirty = false
+      this.bound(resident)
+    }
+  }
+
+  private reconcileResidentNodes(resident: Resident, previous: Resident): void {
+    this.ensureProjected(previous)
+    const previousById = new Map(previous.timeline.nodes.map((node) => [node.id, node]))
+    if (previousById.size === 0) return
+    let reusedAny = false
+    const nodes = resident.timeline.nodes.map((node) => {
+      const prevNode = previousById.get(node.id)
+      if (prevNode === undefined || prevNode === node) return node
+      const prevTracked = previous.rawChars.get(node.id)
+      const currTracked = resident.rawChars.get(node.id)
+      if (prevTracked !== undefined && currTracked !== undefined && prevTracked.chars !== currTracked.chars)
+        return node
+      if (!sameTimelineValue(prevNode, node)) return node
+      reusedAny = true
+      if (prevTracked !== undefined) resident.rawChars.set(node.id, prevTracked)
+      else if (currTracked !== undefined)
+        resident.rawChars.set(node.id, { node: prevNode, chars: currTracked.chars })
+      if (resident.liveBodies.has(node.id)) resident.liveBodies.set(node.id, prevNode)
+      return prevNode
+    })
+    if (reusedAny) {
+      resident.timeline = { ...resident.timeline, nodes }
+    }
   }
 
   /** A viewport eviction must never turn the next delta into a new partial body. */
@@ -961,9 +1176,11 @@ export class TranscriptWindowService {
     }
   }
 
-  private snapshot(nodeIds?: ReadonlySet<string>): TranscriptWindow {
+  private snapshot(nodeIds?: ReadonlySet<string>, flush = true): TranscriptWindow {
+    if (flush) this.flushIngress(false, false)
     const resident = this.displayed
     if (resident === undefined) throw stale()
+    this.ensureProjected(resident)
     const safe = this.deps.publicValue(
       {
         sessionId: resident.sessionId,
@@ -1050,7 +1267,7 @@ export class TranscriptWindowService {
     // One reserved frame lets an executed tool's context precede its question
     // even while ordinary streaming has exhausted its delivery credits.
     if (
-      !this.visible ||
+      (!this.visible && !urgent) ||
       this.deliverySuspended ||
       this.posting ||
       (!urgent && this.budgetBlocked) ||
@@ -1087,7 +1304,9 @@ export class TranscriptWindowService {
   }
 
   private async publish(urgent = false): Promise<void> {
-    if (!this.visible || this.displayed === undefined) return
+    if ((!this.visible && !urgent) || this.displayed === undefined) return
+    if (this.tail !== undefined) this.ensureProjected(this.tail)
+    this.ensureProjected(this.displayed)
     this.dirty = false
     this.posting = true
     const sentRevision = this.revision
@@ -1140,7 +1359,7 @@ export class TranscriptWindowService {
               revision: sentRevision,
               nodes: this.publicNodes(resident, changedIds),
             }
-          : this.snapshot(incremental ? changedIds : undefined)
+          : this.snapshot(incremental ? changedIds : undefined, false)
       const publicNodes = new Map(incremental ? base?.publicNodes : undefined)
       for (const node of window.nodes) publicNodes.set(node.id, node)
       let patch: TranscriptPatch | undefined

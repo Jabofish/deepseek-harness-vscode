@@ -165,7 +165,6 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     createSessionRequestHandler({
       ...(deps.prepareEditorSession === undefined ? {} : { prepareEditorSession: deps.prepareEditorSession }),
       transcript: deps.transcript.forSurface(surfaceId ?? SIDEBAR_SURFACE_ID),
-      ...(deps.resyncView === undefined ? {} : { resyncView: deps.resyncView }),
       backendService,
       workspaceUseCases,
       sessionUseCases,
@@ -240,6 +239,10 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     signal: AbortSignal,
     surfaceId: string | undefined,
   ): Promise<unknown> => {
+    if (request.type === 'ui.events.ack') {
+      if (surfaceId !== undefined) deps.acknowledgeHostEvents?.(surfaceId, request.payload.sequence)
+      return {}
+    }
     if (request.type === 'surface.titlebarLayout') {
       // Editor tabs have different widths and cannot change the sidebar's chrome.
       if (surfaceId !== SIDEBAR_SURFACE_ID) return { updated: false }
@@ -248,6 +251,7 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
       return { updated: true }
     }
     if (request.type === 'app.ready') {
+      if (surfaceId !== undefined) deps.forgetHostSurface?.(surfaceId)
       const opening = openingConnection
       if (request.payload?.snapshotOnly === true) {
         // Delivery recovery rereads authority; it never starts or reconnects DSH.
@@ -848,6 +852,7 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
   const onSurfaceWorkCancelled = (disposedSurfaceId: string): void => {
     selectionRequests.delete(disposedSurfaceId)
     sessionWatch.surfaceReleased(disposedSurfaceId)
+    deps.forgetHostSurface?.(disposedSurfaceId)
     deps.transcript.remove(disposedSurfaceId)
     router.cancelSurface(disposedSurfaceId)
     runSharedSurfaceTeardownIfIdle()

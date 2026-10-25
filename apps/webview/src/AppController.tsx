@@ -31,7 +31,7 @@ import { CONVERSATION_VIEW_IDS } from './app/conversation-view-ids.js'
 import { ConversationActionItems } from './features/shell/ConversationActionItems.js'
 import { createAppStore, type AppState, type AppStore } from './app/store.js'
 import { sameShallowSelection, useAppStoreSelector } from './app/useAppStoreSelector.js'
-import { selectAppViewState } from './app/store/view-state.js'
+import { selectAppViewState, APP_VIEW_SUBSCRIPTION } from './app/store/view-state.js'
 import { selectSessionModels } from './app/store/model-directory-state.js'
 import { activateDraftOwner, clearDraftIf, readDraft, resetDraft } from './app/draft-store.js'
 import { publicProtocolErrorMessage } from './app/protocol-client.js'
@@ -71,7 +71,7 @@ const useAppControllerImpl = () => {
   const initializedStoreRef = useRef<AppStore | undefined>(undefined)
   const disposeTimerRef = useRef<number | undefined>(undefined)
   const popupSelects = useMemo(() => new PopupSelectRegistry(), [])
-  const state = useAppStoreSelector(store, selectAppViewState, sameShallowSelection)
+  const state = useAppStoreSelector(store, selectAppViewState, sameShallowSelection, APP_VIEW_SUBSCRIPTION)
   useEffect(() => {
     mountedRef.current = true
     // A remount (error-boundary recovery, test render) must not inherit the
@@ -107,7 +107,7 @@ const useAppControllerImpl = () => {
       if (next !== undefined && next !== previous) setError(next.message)
       previous = next
     }
-    const unsubscribe = store.subscribe(publishFailure)
+    const unsubscribe = store.subscribe(publishFailure, ['surfaceError'])
     let retired = false
     queueMicrotask(() => {
       if (!retired) publishFailure()
@@ -363,6 +363,8 @@ const useAppControllerImpl = () => {
         resolveAssistantModelLabel(active, current.configuration, selectSessionModels(current), t),
       [active, t],
     ),
+    Object.is,
+    ASSISTANT_LABEL_FIELDS,
   )
   const activeProjection = useMemo(
     () => (activeSessionId === undefined ? undefined : state.projections[activeSessionId]),
@@ -1022,3 +1024,5 @@ const useAppControllerImpl = () => {
 export function useAppController(): ReturnType<typeof useAppControllerImpl> {
   return useAppControllerImpl()
 }
+
+const ASSISTANT_LABEL_FIELDS = ['configuration', 'sessionModels', 'models'] as const

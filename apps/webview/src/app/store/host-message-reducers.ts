@@ -49,6 +49,7 @@ export function applyHostMessage(
   parsedEvent?: BackendEvent | null,
   projectionSequences?: ProjectionSequenceIndex,
   onConnectionEpoch?: () => void,
+  onTranscriptRecovery: (() => void) | undefined = onConnectionEpoch,
 ): void {
   if (message.type !== 'event') return
   if (message.name === 'session.transcript.patch') {
@@ -57,7 +58,7 @@ export function applyHostMessage(
     } catch {
       // A lost baseline is repaired by reading the Host's current window,
       // never by sorting or replaying patches in the renderer.
-      if (object(message.payload)?.sessionId === state.activeSessionId) onConnectionEpoch?.()
+      if (object(message.payload)?.sessionId === state.activeSessionId) onTranscriptRecovery?.()
     }
     return
   }
@@ -66,7 +67,7 @@ export function applyHostMessage(
       setState(installTranscript(state, parseTranscript(message.payload)))
     } catch {
       // A malformed full window needs the same authoritative recovery as a bad patch.
-      if (object(message.payload)?.sessionId === state.activeSessionId) onConnectionEpoch?.()
+      if (object(message.payload)?.sessionId === state.activeSessionId) onTranscriptRecovery?.()
     }
     return
   }

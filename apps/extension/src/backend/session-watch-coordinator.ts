@@ -53,6 +53,7 @@ export interface SessionWatchControllerDependencies {
 export interface SessionWatchController {
   /** A surface's panel started displaying this session. */
   surfaceDisplaysSession(this: void, surfaceId: string, sessionId: string, visible?: boolean): void
+  surfaceCapacityChanged(this: void, surfaceId: string, ready: boolean): void
   surfaceVisibilityChanged(this: void, surfaceId: string, visible: boolean): void
   /** A surface closed or stopped displaying its session. */
   surfaceReleased(this: void, surfaceId: string): void
@@ -89,6 +90,7 @@ export function createSessionWatchController(
   /** Panel display state; surfaces outlive backend reattachment. */
   const displayedBySurface = new Map<string, string>()
   const visibleSurfaces = new Set<string>()
+  const blockedSurfaces = new Set<string>()
   const records = new Map<string, SessionWatchRecord>()
   let backend: DshBackend | undefined
   let unsubscribe: (() => void) | undefined
@@ -162,6 +164,10 @@ export function createSessionWatchController(
   const evaluate = (sessionId: string): void => {
     const entry = records.get(sessionId)
     if (entry === undefined) return
+    backend?.events.setSessionPreview?.(
+      sessionId,
+      [...entry.displayedBy].some((surfaceId) => !blockedSurfaces.has(surfaceId)),
+    )
     if (isFollowed(sessionId)) {
       cancelTimer(entry)
       watch(sessionId)
@@ -280,6 +286,7 @@ export function createSessionWatchController(
         for (const [surfaceId, sessionId] of displayedBySurface)
           if (sessionId === event.sessionId) {
             displayedBySurface.delete(surfaceId)
+            blockedSurfaces.delete(surfaceId)
             visibleSurfaces.delete(surfaceId)
           }
         backend?.events.unwatchSession?.(event.sessionId)
@@ -315,6 +322,7 @@ export function createSessionWatchController(
         for (const [surfaceId, sessionId] of displayedBySurface)
           if (archived.has(sessionId)) {
             displayedBySurface.delete(surfaceId)
+            blockedSurfaces.delete(surfaceId)
             visibleSurfaces.delete(surfaceId)
           }
         return
@@ -403,6 +411,12 @@ export function createSessionWatchController(
       evaluate(sessionId)
       if (previous !== undefined) evaluate(previous)
     },
+    surfaceCapacityChanged: (surfaceId, ready) => {
+      if (ready) blockedSurfaces.delete(surfaceId)
+      else blockedSurfaces.add(surfaceId)
+      const sessionId = displayedBySurface.get(surfaceId)
+      if (sessionId !== undefined) evaluate(sessionId)
+    },
     surfaceVisibilityChanged: (surfaceId, visible) => {
       const sessionId = displayedBySurface.get(surfaceId)
       if (sessionId === undefined) return
@@ -419,6 +433,7 @@ export function createSessionWatchController(
       const sessionId = displayedBySurface.get(surfaceId)
       if (sessionId === undefined) return
       displayedBySurface.delete(surfaceId)
+      blockedSurfaces.delete(surfaceId)
       visibleSurfaces.delete(surfaceId)
       records.get(sessionId)?.displayedBy.delete(surfaceId)
       evaluate(sessionId)
@@ -444,6 +459,7 @@ export function createSessionWatchController(
       clearBackendState()
       displayedBySurface.clear()
       visibleSurfaces.clear()
+      blockedSurfaces.clear()
     },
   }
 }

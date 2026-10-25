@@ -10,7 +10,7 @@ import { isGoalView, isJobView, isQueuedInput, nonEmptyString } from './event-va
 import { feedbackRecord } from './feature-parsers.js'
 import { applyBufferedHostState } from './host-message-reducers.js'
 import { withCurrentTodos } from './todo-state.js'
-import { parseTranscript, transcriptTimeline } from './transcript-state.js'
+import { parseTranscript, reconcileFullWindow, transcriptTimeline } from './transcript-state.js'
 import { EMPTY_SUBAGENT_CATALOG, type ComposerPreferences } from './initial-state.js'
 import { stringList } from './list-equality.js'
 import { isSessionOpenDetail } from './session-guards.js'
@@ -94,6 +94,9 @@ export function createSessionOpenController(host: SessionOpenHost): {
     sessionWorkspaceFolderId,
     persistWebviewState,
   } = host
+  // A new backend must republish image references so failed thumbnail reads
+  // can retry. Share full-open rows only within the connection that installed them.
+  let installedTranscriptEpoch: number | undefined
   const { requestFeedbackSnapshot } = feedbackCache
   const readAdvisoryData = (sessionId: string): SessionAdvisoryReads => ({
     goalGeneration: host.getGoalReadGeneration(),
@@ -232,7 +235,6 @@ export function createSessionOpenController(host: SessionOpenHost): {
       if (!isSessionOpenDetail(detail, sessionId)) throw new Error(translate('app.error.openSession'))
       const transcript = parseTranscript(detail.transcript)
       if (transcript.sessionId !== sessionId) throw new Error(translate('app.error.openSession'))
-      const timeline = transcriptTimeline(transcript)
       const permissionPresets = stringList(detail?.permissionPresets)
       // The Host resolves which VS Code folder guards this session's paths and
       // states it on the open detail; a row from an earlier list is the
@@ -253,14 +255,19 @@ export function createSessionOpenController(host: SessionOpenHost): {
       const secondaryData = readAdvisoryData(sessionId)
       if (version !== host.getOpenVersion()) return
       const initialMessages = pendingOpenBuffer.messagesAfterReplay(pending)
-      setState((current) =>
-        applyBufferedHostState(
+      setState((current) => {
+        const reconciled = reconcileFullWindow(
+          installedTranscriptEpoch === current.connectionEpoch ? current.transcript : undefined,
+          transcript,
+        )
+        installedTranscriptEpoch = current.connectionEpoch
+        return applyBufferedHostState(
           withCurrentTodos({
             ...current,
             activeSessionId: sessionId,
             pendingSession: undefined,
-            timeline,
-            transcript,
+            timeline: transcriptTimeline(reconciled, current.timeline),
+            transcript: reconciled,
             historyHasMore: transcript.hasMore,
             historyBeforeSequence: transcript.beforeSequence,
             historyLoading: false,
@@ -320,8 +327,8 @@ export function createSessionOpenController(host: SessionOpenHost): {
           }),
           initialMessages,
           projectionSequences,
-        ),
-      )
+        )
+      })
       pending.ready = true
       // Keep the open barrier registered until the advisory snapshots merge.
       // Events arriving after first paint must be replayed over those
@@ -401,17 +408,21 @@ export function createSessionOpenController(host: SessionOpenHost): {
       if (version !== host.getOpenVersion()) return
       const transcript = history.transcript
       if (transcript.sessionId !== entry.id) throw new Error(translate('app.error.openSession'))
-      const timeline = transcriptTimeline(transcript)
       const initialMessages = pendingOpenBuffer.messagesAfterReplay(pending)
-      setState((current) =>
-        applyBufferedHostState(
+      setState((current) => {
+        const reconciled = reconcileFullWindow(
+          installedTranscriptEpoch === current.connectionEpoch ? current.transcript : undefined,
+          transcript,
+        )
+        installedTranscriptEpoch = current.connectionEpoch
+        return applyBufferedHostState(
           withCurrentTodos({
             ...current,
             activeSessionId: entry.id,
             pendingSession: undefined,
             activeSubagent: { entry, parentAvailable, workspaceId },
-            timeline,
-            transcript,
+            timeline: transcriptTimeline(reconciled, current.timeline),
+            transcript: reconciled,
             historyHasMore: transcript.hasMore,
             historyBeforeSequence: transcript.beforeSequence,
             historyLoading: false,
@@ -459,8 +470,8 @@ export function createSessionOpenController(host: SessionOpenHost): {
           }),
           initialMessages,
           projectionSequences,
-        ),
-      )
+        )
+      })
       pending.ready = true
       persistWebviewState({ activeSessionId: entry.id })
 

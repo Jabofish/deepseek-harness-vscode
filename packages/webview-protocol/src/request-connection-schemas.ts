@@ -4,6 +4,13 @@ import { requestBase } from './request-common.js'
 export const connectionRequestSchemas = [
   z
     .object({
+      type: z.literal('ui.events.ack'),
+      ...requestBase,
+      payload: z.object({ sequence: z.number().int().nonnegative().safe() }).strict(),
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal('app.ready'),
       ...requestBase,
       payload: z

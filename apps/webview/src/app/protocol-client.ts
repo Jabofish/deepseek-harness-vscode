@@ -109,6 +109,8 @@ export class ProtocolClient {
   private readonly featureGenerations = new Map<string, number>()
   private featureBackendIdentity: FeatureBackendIdentity | undefined
   private featureConnectionKnown = false
+  private pendingEventAck: number | undefined
+  private eventAckScheduled = false
   private disposed = false
   private readonly windowListener = (event: MessageEvent<unknown>): void => this.handle(event.data)
 
@@ -220,13 +222,33 @@ export class ProtocolClient {
       return
     }
     const previous = this.sequences.get(message.name) ?? -1
-    if (message.sequence <= previous) return
+    if (message.sequence <= previous) {
+      if ('requiresAck' in message && message.requiresAck === true) this.acknowledgeEvent(message.sequence)
+      return
+    }
     this.sequences.set(message.name, message.sequence)
     if (message.name === 'connection.snapshot' || message.name === 'connection.lost')
       this.updateFeatureBackendIdentity(
         message.name === 'connection.lost' ? { kind: 'lost' } : message.payload,
       )
     for (const listener of this.listeners) listener(message)
+    if ('requiresAck' in message && message.requiresAck === true) this.acknowledgeEvent(message.sequence)
+  }
+
+  private acknowledgeEvent(sequence: number): void {
+    this.pendingEventAck = Math.max(this.pendingEventAck ?? -1, sequence)
+    if (this.eventAckScheduled) return
+    this.eventAckScheduled = true
+    queueMicrotask(() => {
+      this.eventAckScheduled = false
+      const sequence = this.pendingEventAck
+      this.pendingEventAck = undefined
+      if (this.disposed || sequence === undefined) return
+      const id = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
+      void this.request({ type: 'ui.events.ack', requestId: id, payload: { sequence } }).catch(
+        () => undefined,
+      )
+    })
   }
 
   private handleFeatureMessage(message: FeatureHostMessage): void {

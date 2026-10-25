@@ -144,6 +144,50 @@ function settlementFrame(seq: number, text: string): Record<string, unknown> {
 }
 
 describe('assistant preview recovery', () => {
+  it('omits the optional assistant channel for a hidden consumer while retaining durable settlements', async () => {
+    FakeMuxSocket.instances.length = 0
+    const client = new AlphaLoopbackApiClient({
+      endpoint,
+      requestTimeoutMs: 2_000,
+      retryPolicy: { maximumAttempts: 1, baseDelayMs: 1, maximumDelayMs: 1 },
+      fetch: vi.fn((_input: RequestInfo | URL, init?: RequestInit) => Promise.resolve(response(init, {}))),
+      authCookie: () => 'dsh_session=test-cookie',
+      webSocket: FakeMuxSocket,
+      sessionWireVersion: 'v2',
+    })
+    const controller = new DshStreamController(client, undefined, undefined, {
+      streamSource: (signal) => client.openSessionStream(sessionId, signal, false),
+      normalizeEvent: createAlpha211SessionNormalizer(),
+      closeTransport: false,
+    })
+    const received: BackendEvent[] = []
+    controller.subscribe((event) => received.push(event))
+    try {
+      const socket = await waitForSocket()
+      socket.open()
+      await waitForOpens(socket, 1)
+      const open = socket.sent
+        .map((raw) => JSON.parse(raw) as { type: string; payload?: { args?: Record<string, unknown> } })
+        .find((frame) => frame.type === 'open')
+      expect(open?.payload?.args).toBeDefined()
+      expect(open?.payload?.args).not.toHaveProperty('assistantStream')
+      const baseline = snapshot()
+      delete baseline.assistantStream
+      socket.message(socket.item(0, baseline))
+      await tick()
+      socket.message(socket.item(0, settlementFrame(1, 'Complete durable answer')))
+      await tick()
+      expect(
+        received.some(
+          (event) => event.type === 'message.completed' && event.markdown === 'Complete durable answer',
+        ),
+      ).toBe(true)
+      expect(received.some((event) => event.type === 'message.delta')).toBe(false)
+    } finally {
+      await controller.close()
+      await client.close()
+    }
+  })
   beforeEach(() => vi.useFakeTimers())
   afterEach(() => {
     vi.restoreAllMocks()
@@ -363,5 +407,68 @@ describe('assistant preview recovery', () => {
 
     await controller.close()
     expect(socket.opens()).toHaveLength(2)
+  })
+
+  it('does not reset the recovery budget on a single valid chunk when gaps repeat within the recovery window', async () => {
+    FakeMuxSocket.instances.length = 0
+    const previews: AssistantPreviewState[] = []
+    const client = new AlphaLoopbackApiClient({
+      endpoint,
+      requestTimeoutMs: 2_000,
+      retryPolicy: { maximumAttempts: 1, baseDelayMs: 1, maximumDelayMs: 1 },
+      fetch: vi.fn((_input: RequestInfo | URL, init?: RequestInit) => Promise.resolve(response(init, {}))),
+      authCookie: () => 'dsh_session=test-cookie',
+      webSocket: FakeMuxSocket,
+      sessionWireVersion: 'v2',
+      onAssistantPreview: (state) => previews.push(state),
+    })
+    const controller = new DshStreamController(client, undefined, undefined, {
+      streamSource: (signal) => client.openSessionStream(sessionId, signal),
+      normalizeEvent: (frame) => createAlpha211SessionNormalizer()(frame),
+      closeTransport: false,
+    })
+    controller.subscribe(() => undefined)
+
+    const socket = await waitForSocket()
+    socket.open()
+    await waitForOpens(socket, 1)
+
+    // Repeat "valid snapshot + 1 valid chunk + immediate revision gap" 4 times within 10s:
+    // Previously, the single valid chunk reset consecutiveRecoveries = 0 every time,
+    // causing an infinite rebase loop. Now it is bounded at 3 rebased + 1 disabled.
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      socket.message(socket.item(attempt, snapshot()))
+      await tick()
+      socket.message(socket.item(attempt, startFrame(1)))
+      await tick()
+      socket.message(socket.item(attempt, chunkFrame(2, 0, 'one-valid-chunk')))
+      await tick()
+      // Immediate revision gap (2 -> 4, skipping 3)
+      socket.message(socket.item(attempt, chunkFrame(4, 1, 'gap')))
+      await vi.advanceTimersByTimeAsync(1_000)
+      await waitForOpens(socket, attempt + 2)
+    }
+
+    expect(previews.filter((state) => state.status === 'rebased')).toHaveLength(3)
+    expect(previews.filter((state) => state.status === 'disabled')).toEqual([
+      { status: 'disabled', phase: 'frame' },
+    ])
+
+    // Fresh start frames in the same exhausted window must not re-enable a
+    // preview which immediately fails again and re-reads the full history.
+    const durable = socket.opens().length - 1
+    socket.message(socket.item(durable, snapshot()))
+    for (let attempt = 0; attempt < 4; attempt++) {
+      socket.message(socket.item(durable, startFrame(1)))
+      socket.message(socket.item(durable, chunkFrame(4, 0, 'still gapped')))
+      await tick()
+    }
+    expect(socket.opens()).toHaveLength(durable + 1)
+    await vi.advanceTimersByTimeAsync(10_000)
+    socket.message(socket.item(durable, startFrame(1)))
+    socket.message(socket.item(durable, chunkFrame(4, 0, 'gap after cooldown')))
+    await waitForOpens(socket, durable + 2)
+
+    await controller.close()
   })
 })

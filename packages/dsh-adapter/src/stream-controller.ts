@@ -49,6 +49,17 @@ interface OrderedRangeOrder {
   readonly skipped: number[]
 }
 
+const MAX_TRANSIENT_RECOVERIES = 3
+const TRANSIENT_RECOVERY_WINDOW_MS = 10_000
+const SHORT_GENERATION_WINDOW_MS = 5_000
+const MAX_FREE_SHORT_GENERATIONS = 3
+
+interface TransientRecoveryBudget {
+  count: number
+  lastRecoveryAt: number
+  degraded: boolean
+}
+
 /** One shared mux/host reader for every consumer in an Extension Host. */
 export class DshStreamController implements AsyncEventSource<BackendEvent> {
   private readonly listeners = new Set<(event: BackendEvent) => void>()
@@ -63,16 +74,19 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
   private readonly projectionBaselines = new Map<string, number>()
   /** Alpha13 transient frames have a separate local sequence space. */
   private readonly lastTransientSequences = new Map<string, number>()
+  private readonly transientRecoveries = new Map<string, TransientRecoveryBudget>()
   /** Session/follow emits its bounded history before the subscription cursor. */
   private readonly pendingSessionSnapshots = new Map<string, BackendEvent[]>()
   private lifetime: AbortController | undefined
   private reading: Promise<void> | undefined
   private retryTimer: ReturnType<typeof setTimeout> | undefined
   private retryAttempt = 0
+  private consecutiveShortGenerations = 0
+  private lastGenerationStartedAt = 0
   private connectionLost = false
   private restartTask: Promise<void> | undefined
   private transientRestartTimer: ReturnType<typeof setTimeout> | undefined
-  private transientRestartPending = false
+  private readonly pendingTransientRestarts = new Set<string>()
   private closed = false
 
   public constructor(
@@ -85,7 +99,7 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
   public subscribe(listener: (event: BackendEvent) => void): () => void {
     if (this.closed) return () => undefined
     this.listeners.add(listener)
-    if (this.reading === undefined) this.startReading()
+    if (this.reading === undefined && this.restartTask === undefined) this.startReading()
     let active = true
     return () => {
       if (!active) return
@@ -119,20 +133,23 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
    * this both when a session becomes active again and when a transient frame
    * gap proves that the bounded receive queue discarded process-local chunks.
    */
-  public async restart(): Promise<void> {
+  public async restart(preserveTransientBudget = false): Promise<void> {
     if (this.closed) return
     if (this.restartTask !== undefined) return this.restartTask
     // This fresh baseline also fulfills any coalesced request from the old stream.
-    this.transientRestartPending = false
+    this.pendingTransientRestarts.clear()
+    if (!preserveTransientBudget) this.clearTransientRestart()
     const task = (async (): Promise<void> => {
       if (this.retryTimer !== undefined) clearTimeout(this.retryTimer)
       this.retryTimer = undefined
       this.retryAttempt = 0
+      this.consecutiveShortGenerations = 0
       this.lastSequences.clear()
       this.clearOrderedDeliveries()
       this.lastProjectionSequences.clear()
       this.projectionBaselines.clear()
       this.lastTransientSequences.clear()
+      if (!preserveTransientBudget) this.transientRecoveries.clear()
       this.subscribedSessions.clear()
       this.pendingSessionSnapshots.clear()
       const reading = this.reading
@@ -157,39 +174,49 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
    * `setTimeout` is the only timer so tests can drive the window with fake
    * clocks.
    */
-  private restartForTransientGap(): void {
+  private restartForTransientGap(sessionId: string): void {
     if (this.closed || this.listeners.size === 0) return
-    if (this.transientRestartTimer !== undefined) {
-      this.transientRestartPending = true
+    const budget = this.transientRecoveries.get(sessionId)
+    if (budget !== undefined && budget.count >= MAX_TRANSIENT_RECOVERIES) {
+      budget.degraded = true
       return
     }
-    if (this.restartTask !== undefined) {
-      // A new generation can publish before restart() finishes its teardown.
-      // Keep its gap until that in-flight restart releases its guard.
-      this.transientRestartPending = true
-      void this.restartTask.then(() => {
-        if (this.transientRestartPending) this.restartForTransientGap()
-      })
+    if (this.transientRestartTimer !== undefined || this.restartTask !== undefined) {
+      this.pendingTransientRestarts.add(sessionId)
       return
     }
-    this.transientRestartPending = false
+    this.transientRecoveries.set(sessionId, {
+      count: (budget?.count ?? 0) + 1,
+      lastRecoveryAt: performance.now(),
+      degraded: false,
+    })
+    this.pendingTransientRestarts.delete(sessionId)
+    // Retain main's trailing recovery: a dropped final frame must heal even
+    // when nothing else arrives. Waiting happens outside restart(), so closing
+    // or unsubscribing cancels a timer rather than stranding an awaited promise.
     this.transientRestartTimer = setTimeout(() => {
       this.transientRestartTimer = undefined
-      if (this.transientRestartPending) this.restartForTransientGap()
+      this.flushTransientRestarts()
     }, TRANSIENT_RESTART_COOLDOWN_MS)
-    void this.restart()
+    void this.restart(true).then(() => this.flushTransientRestarts())
+  }
+
+  private flushTransientRestarts(): void {
+    if (this.transientRestartTimer !== undefined || this.restartTask !== undefined) return
+    const pending = [...this.pendingTransientRestarts]
+    this.pendingTransientRestarts.clear()
+    for (const sessionId of pending) this.restartForTransientGap(sessionId)
   }
 
   private clearTransientRestart(): void {
     if (this.transientRestartTimer !== undefined) clearTimeout(this.transientRestartTimer)
     this.transientRestartTimer = undefined
-    this.transientRestartPending = false
+    this.pendingTransientRestarts.clear()
   }
 
   private startReading(): void {
     if (this.closed || this.listeners.size === 0 || this.reading !== undefined) return
     if (this.options.streamSource !== undefined) {
-      this.transientRestartPending = false
       // A streamSource session starts every generation with a fresh bounded
       // snapshot. Keep the durable watermark for recovery, but make the next
       // session/subscribed frame establish the snapshot boundary again.
@@ -215,11 +242,13 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
         // still set while the aborted generation unwound. Restart only for
         // that case; natural failures keep the backoff path in
         // scheduleReconnect, so a down host cannot hot-loop reconnects.
-        if (strandedSubscriber && !this.closed && this.listeners.size > 0) this.startReading()
+        if (strandedSubscriber && !this.closed && this.listeners.size > 0 && this.restartTask === undefined)
+          this.startReading()
       })
   }
 
   private async runGeneration(lifetime: AbortController): Promise<void> {
+    this.lastGenerationStartedAt = performance.now()
     const generation = new AbortController()
     const signal = AbortSignal.any([lifetime.signal, generation.signal])
     const tasks: Promise<void>[] =
@@ -254,7 +283,15 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
     this.connectionLost = true
     this.emit({ type: 'connection.lost', reason: safeReason(error) })
     if (this.closed || this.listeners.size === 0 || this.lifetime !== lifetime) return
-    const attempt = this.retryAttempt
+    if (performance.now() - this.lastGenerationStartedAt < SHORT_GENERATION_WINDOW_MS) {
+      this.consecutiveShortGenerations += 1
+    } else {
+      this.consecutiveShortGenerations = 0
+    }
+    const attempt =
+      this.consecutiveShortGenerations > MAX_FREE_SHORT_GENERATIONS
+        ? Math.max(this.retryAttempt, this.consecutiveShortGenerations - MAX_FREE_SHORT_GENERATIONS)
+        : this.retryAttempt
     this.retryAttempt = Math.min(attempt + 1, 8)
     const base = Math.min(10_000, 250 * 2 ** attempt)
     const jitter = Math.floor(base * 0.2 * Math.random())
@@ -274,13 +311,16 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
           (this.options.normalizeEvent === undefined ? normalizeEnvelope(envelope) : undefined)
         if (event !== undefined) {
           // A delivered frame proves this generation's transport is alive.
-          // Restart the reconnect ladder, or streamSource-based controllers
-          // (alpha workspace/session streams) that never see a
-          // session/subscribed frame would ratchet their backoff up across
-          // healthy generations.
+          // Restart the reconnect ladder unless the stream is repeatedly
+          // flapping within the short-generation window.
           if (!receivedFrame) {
             receivedFrame = true
-            this.retryAttempt = 0
+            if (performance.now() - this.lastGenerationStartedAt >= SHORT_GENERATION_WINDOW_MS) {
+              this.consecutiveShortGenerations = 0
+            }
+            if (this.consecutiveShortGenerations < MAX_FREE_SHORT_GENERATIONS) {
+              this.retryAttempt = 0
+            }
             if (this.connectionLost) {
               this.connectionLost = false
               this.emit({ type: 'connection.restored' })
@@ -304,6 +344,8 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
       this.lastProjectionSequences.delete(event.sessionId)
       this.projectionBaselines.delete(event.sessionId)
       this.lastTransientSequences.delete(event.sessionId)
+      this.transientRecoveries.delete(event.sessionId)
+      this.pendingTransientRestarts.delete(event.sessionId)
       this.subscribedSessions.delete(event.sessionId)
       this.pendingSessionSnapshots.delete(event.sessionId)
     }
@@ -377,7 +419,9 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
         // directly; start the ordered live tail immediately after the cursor.
         this.orderedDeliveries.set(event.sessionId, createOrderedDelivery(event.lastSequence + 1))
       }
-      this.retryAttempt = 0
+      if (this.consecutiveShortGenerations < MAX_FREE_SHORT_GENERATIONS) {
+        this.retryAttempt = 0
+      }
       this.emit(event)
       const delivery = this.orderedDeliveries.get(event.sessionId)
       if (delivery !== undefined && delivery.nextSequence <= event.lastSequence) {
@@ -399,6 +443,12 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
       transientSequence !== undefined &&
       this.options.streamSource !== undefined
     ) {
+      let budget = this.transientRecoveries.get(sessionId)
+      if (budget !== undefined && performance.now() - budget.lastRecoveryAt >= TRANSIENT_RECOVERY_WINDOW_MS) {
+        this.transientRecoveries.delete(sessionId)
+        budget = undefined
+      }
+      if (budget?.degraded === true) return
       const previousTransient = this.lastTransientSequences.get(sessionId)
       if (previousTransient !== undefined && transientSequence > previousTransient + 1) {
         // Unlike durable frames, transient assistant chunks cannot be
@@ -406,7 +456,7 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
         // taking the stream's authoritative snapshot/baseline again — but a
         // reasoning flood can drop chunks repeatedly, so the re-subscription
         // is coalesced behind a cooldown instead of firing per dropped frame.
-        this.restartForTransientGap()
+        this.restartForTransientGap(sessionId)
         return
       }
       if (previousTransient !== undefined && transientSequence <= previousTransient) return
@@ -448,7 +498,9 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
     delivery.pending.set(sequence, pending)
     queueHeldSequence(delivery, sequence, false)
     this.lastSequences.set(sessionId, Math.max(this.lastSequences.get(sessionId) ?? -1, sequence))
-    this.retryAttempt = 0
+    if (this.consecutiveShortGenerations < MAX_FREE_SHORT_GENERATIONS) {
+      this.retryAttempt = 0
+    }
     this.startOrderedDrain(sessionId, signal)
   }
 

@@ -28,9 +28,10 @@ import type { PostHostMessage, PostHostMessageTo, PostSurfaceEvent } from './hos
 import type { TranscriptWindowRegistry } from '../view/transcript-window-registry.js'
 
 export interface RequestGatewayDependencies {
+  readonly acknowledgeHostEvents?: (surfaceId: string, sequence: number) => void
+  readonly forgetHostSurface?: (surfaceId: string) => void
   readonly prepareEditorSession?: (sessionId: string, signal: AbortSignal) => Promise<void>
   readonly transcript: TranscriptWindowRegistry
-  readonly resyncView?: () => Promise<void>
   readonly post: PostHostMessage
   readonly postTo: PostHostMessageTo
   readonly postEvent: (name: string, payload: unknown) => Promise<boolean>
