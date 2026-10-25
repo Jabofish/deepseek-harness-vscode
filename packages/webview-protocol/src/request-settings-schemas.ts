@@ -71,6 +71,7 @@ export const settingsRequestSchemas = [
       payload: z
         .object({
           questionId: id,
+          identity: z.object({ sessionId: id, rpcId: id }).strict().optional(),
           response: z.union([
             z.string().max(100_000),
             z.array(id).max(32),
@@ -84,7 +85,9 @@ export const settingsRequestSchemas = [
     .object({
       type: z.literal('interaction.question.cancel'),
       ...requestBase,
-      payload: z.object({ questionId: id }).strict(),
+      payload: z
+        .object({ questionId: id, identity: z.object({ sessionId: id, rpcId: id }).strict().optional() })
+        .strict(),
     })
     .strict(),
   z.object({ type: z.literal('settings.read'), ...requestBase }).strict(),

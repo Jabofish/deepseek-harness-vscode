@@ -33,6 +33,39 @@ function harness(): { registry: TranscriptWindowRegistry; sent: Map<string, Tran
 }
 
 describe('surface-owned transcript windows', () => {
+  it('releases a failed in-flight post on close and gives a recreated panel its own recovery budget', async () => {
+    let release!: (delivered: boolean) => void
+    const report = vi.fn()
+    let created = 0
+    const post = vi.fn(() => Promise.resolve(true))
+    const registry = new TranscriptWindowRegistry(
+      () =>
+        new TranscriptWindowService({
+          read: () => Promise.resolve({ events: [], hasMore: false }),
+          publicValue: (value) => value,
+          post:
+            created++ === 0
+              ? () =>
+                  new Promise((resolve) => {
+                    release = resolve
+                  })
+              : post,
+          report,
+        }),
+    )
+    const original = registry.forSurface('editor')
+    original.installPage('s1', { events: [], hasMore: false }, original.begin('s1'))
+    registry.accept(completed('s1', 1))
+    registry.remove('editor')
+    const replacement = registry.forSurface('editor')
+    replacement.installPage('s1', { events: [], hasMore: false }, replacement.begin('s1'))
+    registry.accept(completed('s1', 2))
+    release(false)
+    for (let index = 0; index < 6; index++) await Promise.resolve()
+    expect(report).not.toHaveBeenCalled()
+    expect(post).toHaveBeenCalledTimes(1)
+    registry.dispose()
+  })
   it('invalidates queued sends when a closed surface is recreated with the same identity', () => {
     const guards: (() => boolean)[] = []
     const registry = new TranscriptWindowRegistry((_surfaceId, isCurrent) => {

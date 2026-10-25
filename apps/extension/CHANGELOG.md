@@ -8,6 +8,10 @@
 - Honors system and VS Code reduced motion and screen-reader changes. Adds a local Process display preference: Quiet keeps collapsed thinking and tool activity stable until completion or expansion, preserves streaming answers, and reduces repeated progress announcements.
 - 修复安静模式下工具详情的展开/收起、提交计划被隐藏及重复错误提示；工具批次增长和读屏模式切换时保留焦点及披露状态，准备中无详情的工具也保留行内焦点。附件翻页遵循减少动效且运行时切换立即停止滚动，聊天和轨迹视图共用稳定的进度播报区域。
 - Fixes quiet tool disclosures, hidden submitted plans and duplicate failure prompts. Tool batches and screen-reader changes preserve focus and disclosure state, including preparing tools without details. Attachment paging honors reduced motion and stops immediately when it is enabled. Chat and trajectory views share a stable progress announcement region.
+- 修复答题后的残留表单：保留定时问题身份，按已接受回执和权威投影结算整组答案，避免重读与迟到事件复活；排队迟到答复在面板重建后保持只读，Inbox 丢弃后可重新作答。
+- Fix stale question forms after answering, preserve timed request identities and batch settlements across recovery, and retain queued late replies until Inbox admission or discard.
+- 限制 Webview 持续拒收时的正文重发与恢复重读；耗尽预算后等待面板重新可见，避免流事件持续触发失败投递。
+- Stop transcript delivery and recovery loops after repeated Webview failures; resume with the latest state when the panel becomes visible again.
 
 ## 0.4.0
 

@@ -606,16 +606,31 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
       )
     }
     if (request.type === 'interaction.question.respond') {
-      await requireOwnedQuestion(request.payload.questionId, signal)
+      const backend = backendService.requireBackend()
+      await requireOwnedQuestion(request.payload.questionId, signal, request.payload.identity)
+      if (backendService.requireBackend().interactions !== backend.interactions)
+        throw new AppError({
+          code: 'STALE_INTERACTION',
+          message: 'The DSH question connection changed.',
+          retryable: true,
+        })
       return interactionUseCases.respondToQuestion(
         request.payload.questionId,
         questionResponse(request.payload.response),
         signal,
+        request.payload.identity,
       )
     }
     if (request.type === 'interaction.question.cancel') {
-      await requireOwnedQuestion(request.payload.questionId, signal)
-      return interactionUseCases.cancelQuestion(request.payload.questionId, signal)
+      const backend = backendService.requireBackend()
+      await requireOwnedQuestion(request.payload.questionId, signal, request.payload.identity)
+      if (backendService.requireBackend().interactions !== backend.interactions)
+        throw new AppError({
+          code: 'STALE_INTERACTION',
+          message: 'The DSH question connection changed.',
+          retryable: true,
+        })
+      return interactionUseCases.cancelQuestion(request.payload.questionId, signal, request.payload.identity)
     }
     if (request.type === 'settings.read') return publicValue(await settingsUseCases.read(signal))
     if (request.type === 'settings.openDocument') return settingsUseCases.openDocument(signal)

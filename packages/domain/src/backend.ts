@@ -1,4 +1,5 @@
 import type { WorkspaceChangeSource } from './changes.js'
+import type { QuestionRequestIdentity } from './tools.js'
 import type { BillingUsageRepository } from './billing.js'
 import type { ModsBandRepository } from './mods-band.js'
 import type { InspectorDevtoolsRepository } from './inspector.js'
@@ -163,8 +164,9 @@ export interface InteractionRepository {
     questionId: string,
     response: string | readonly string[] | readonly QuestionAnswer[],
     signal?: AbortSignal,
+    identity?: QuestionRequestIdentity,
   ): Promise<void>
-  cancelQuestion(questionId: string, signal?: AbortSignal): Promise<void>
+  cancelQuestion(questionId: string, signal?: AbortSignal, identity?: QuestionRequestIdentity): Promise<void>
   /** Host-side ownership facts used to authorize Webview interaction routes. */
   readonly sessionForPermission?: (this: InteractionRepository, requestId: string) => string | undefined
   /** Authoritative pending choice semantics, never inferred from a Webview label or ID. */
@@ -173,7 +175,11 @@ export interface InteractionRepository {
     requestId: string,
     optionId: string,
   ) => PermissionOption['kind'] | undefined
-  readonly sessionForQuestion?: (this: InteractionRepository, questionId: string) => string | undefined
+  readonly sessionForQuestion?: (
+    this: InteractionRepository,
+    questionId: string,
+    identity?: QuestionRequestIdentity,
+  ) => string | undefined
 }
 
 export interface GoalRepository {

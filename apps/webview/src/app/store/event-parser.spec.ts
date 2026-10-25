@@ -11,6 +11,25 @@ import { timelineSequenceOptions } from '@dsh-vscode/timeline'
  * tighten one branch's validation.
  */
 describe('domainEvent', () => {
+  it.each(['', 12, null])('rejects malformed terminal call identity %j', (settledCallId) => {
+    expect(
+      domainEvent('question.resolved', { sessionId: 's1', questionRpcId: 'rpc', settledCallId })?.type,
+    ).not.toBe('question.resolved')
+  })
+  it.each([{ callId: '' }, { timed: 'true' }, { state: 'settled' }, { replyQueued: 1 }])(
+    'rejects malformed question lifecycle fields %j',
+    (fields) => {
+      const parsed = parseHostDomainEvent({
+        type: 'event',
+        name: 'question.requested',
+        sequence: 1,
+        payload: {
+          question: { id: 'q', sessionId: 's1', prompt: 'Continue?', allowFreeText: true, ...fields },
+        },
+      })
+      expect(parsed?.type).not.toBe('question.requested')
+    },
+  )
   it('preserves a non-object payload as an unknown row instead of dropping it', () => {
     expect(domainEvent('session.status', 'nope')).toMatchObject({ type: 'unknown', name: 'session.status' })
     expect(domainEvent('session.status', undefined)).toMatchObject({

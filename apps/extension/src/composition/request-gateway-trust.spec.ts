@@ -42,6 +42,8 @@ function buildGateway(isTrusted: boolean): {
   retries: number[]
   controls: string[]
   permissionOwnership: ReturnType<typeof vi.fn<() => Promise<void>>>
+  questionOwnership: ReturnType<typeof vi.fn<() => Promise<void>>>
+  replaceQuestionRepository: () => void
 } {
   host.isTrusted = isTrusted
   host.commands = []
@@ -49,7 +51,9 @@ function buildGateway(isTrusted: boolean): {
   const retries: number[] = []
   const controls: string[] = []
   const permissionOwnership = vi.fn<() => Promise<void>>().mockResolvedValue(undefined)
+  const questionOwnership = vi.fn<() => Promise<void>>().mockResolvedValue(undefined)
   const interactions = new Rc6InteractionRepository({})
+  let currentInteractions = interactions
   interactions.remember({
     type: 'permission.requested',
     request: {
@@ -88,9 +92,9 @@ function buildGateway(isTrusted: boolean): {
       return Promise.resolve({ connected: true })
     },
     requireCurrentWorkspaceSession: () => Promise.resolve({ id: 's1' }),
-    requireOwnedQuestion: () => Promise.resolve(),
+    requireOwnedQuestion: questionOwnership,
     requireOwnedPermission: permissionOwnership,
-    backendService: { requireBackend: () => ({ interactions }) },
+    backendService: { requireBackend: () => ({ interactions: currentInteractions }) },
     sessionUseCases: {
       cancel: (id: string) => {
         controls.push(`cancel:${id}`)
@@ -108,7 +112,17 @@ function buildGateway(isTrusted: boolean): {
       },
     },
   } as never)
-  return { gateway, sent, retries, controls, permissionOwnership }
+  return {
+    gateway,
+    sent,
+    retries,
+    controls,
+    permissionOwnership,
+    questionOwnership,
+    replaceQuestionRepository: () => {
+      currentInteractions = new Rc6InteractionRepository({})
+    },
+  }
 }
 
 const envelope = (type: string, requestId: string): unknown => ({
@@ -146,6 +160,25 @@ describe('request gateway workspace trust refusal', () => {
 
     expect(host.commands).toEqual(['workbench.action.openGlobalKeybindings'])
     expect(trusted.sent[0]?.ok).toBe(true)
+  })
+
+  it('rejects a question mutation if its repository is replaced during ownership validation', async () => {
+    context.questionOwnership.mockImplementationOnce(() => {
+      context.replaceQuestionRepository()
+      return Promise.resolve()
+    })
+    const identity = { sessionId: 's1', rpcId: 'rpc-old' }
+    await context.gateway.router.handle({
+      protocolVersion: 1,
+      message: {
+        type: 'interaction.question.cancel',
+        requestId: 'stale',
+        payload: { questionId: 'same', identity },
+      },
+    })
+    expect(context.questionOwnership).toHaveBeenCalledWith('same', expect.any(AbortSignal), identity)
+    expect(context.sent[0]?.error?.code).toBe('STALE_INTERACTION')
+    expect(context.controls).toEqual([])
   })
 
   it('forwards explicit stop and question cancellation after workspace trust is revoked', async () => {

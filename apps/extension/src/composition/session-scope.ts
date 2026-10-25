@@ -1,6 +1,12 @@
 import * as vscode from 'vscode'
 import path from 'node:path'
-import { AppError, type DshBackend, type SessionDetail, type WorkspaceSummary } from '@dsh-vscode/domain'
+import {
+  AppError,
+  type DshBackend,
+  type SessionDetail,
+  type WorkspaceSummary,
+  type QuestionRequestIdentity,
+} from '@dsh-vscode/domain'
 import type { BackendService, WorkspaceUseCases } from '@dsh-vscode/application'
 import type { TemporaryWorkspaceManager } from '../backend/temporary-workspace.js'
 import { registerWorkspaceFolders } from '../backend/register-workspace-folders.js'
@@ -84,7 +90,12 @@ export interface SessionScope {
   requireOwnedQueuedInput(this: void, inputId: string, signal: AbortSignal): Promise<void>
   requireOwnedGoal(this: void, goalId: string, signal: AbortSignal): Promise<void>
   requireOwnedPermission(this: void, requestId: string, signal: AbortSignal): Promise<void>
-  requireOwnedQuestion(this: void, questionId: string, signal: AbortSignal): Promise<void>
+  requireOwnedQuestion(
+    this: void,
+    questionId: string,
+    signal: AbortSignal,
+    identity?: QuestionRequestIdentity,
+  ): Promise<void>
 }
 
 export function createSessionScope(deps: SessionScopeDependencies): SessionScope {
@@ -371,8 +382,12 @@ export function createSessionScope(deps: SessionScopeDependencies): SessionScope
     }
     await requireCurrentWorkspaceSession(owner, signal)
   }
-  const requireOwnedQuestion = async (questionId: string, signal: AbortSignal): Promise<void> => {
-    const owner = backendService.requireBackend().interactions.sessionForQuestion?.(questionId)
+  const requireOwnedQuestion = async (
+    questionId: string,
+    signal: AbortSignal,
+    identity?: QuestionRequestIdentity,
+  ): Promise<void> => {
+    const owner = backendService.requireBackend().interactions.sessionForQuestion?.(questionId, identity)
     if (owner === undefined) {
       throw new AppError({
         code: 'STALE_INTERACTION',

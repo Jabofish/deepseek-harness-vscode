@@ -512,6 +512,28 @@ export const rc6Mapper = {
             ...(envelope.rpcId === undefined ? {} : { questionRpcId: envelope.rpcId }),
           }),
         }
+      case 'question/reply-status':
+        if (
+          sessionId === '' ||
+          typeof data.callId !== 'string' ||
+          data.callId === '' ||
+          (data.state !== 'queued' &&
+            data.state !== 'claimed' &&
+            data.state !== 'released' &&
+            data.state !== 'admitted' &&
+            data.state !== 'settled') ||
+          typeof data.asOfSequence !== 'number' ||
+          !Number.isSafeInteger(data.asOfSequence) ||
+          data.asOfSequence < -1
+        )
+          throw new Error('Malformed question reply status')
+        return {
+          type: 'question.reply.status',
+          sessionId,
+          callId: data.callId,
+          state: data.state,
+          asOfSequence: data.asOfSequence,
+        }
       case 'question/resolved':
         if (
           sessionId === '' ||

@@ -1,4 +1,5 @@
 import { translate } from '../../i18n.js'
+import type { QuestionSettlements, UserQuestion, QuestionRequestIdentity } from '@dsh-vscode/domain'
 import type { ProtocolClient } from '../protocol-client.js'
 import { requestId } from './ids.js'
 import {
@@ -11,7 +12,7 @@ import {
 import { referenceCandidates } from './references.js'
 import { questionResponsePayload } from './session-guards.js'
 import { object } from './unknown-record.js'
-import type { AppActions, StateSetter } from './types.js'
+import type { AppActions, AppState, StateSetter } from './types.js'
 
 export type InteractionActionMethods = Pick<
   AppActions,
@@ -33,7 +34,26 @@ export type InteractionActionMethods = Pick<
 export function createInteractionActions(
   client: ProtocolClient,
   setState: StateSetter,
+  getState: () => AppState,
+  settlements: QuestionSettlements,
 ): InteractionActionMethods {
+  const pendingQuestion = (id: string, identity?: QuestionRequestIdentity): UserQuestion | undefined => {
+    const matches = getState().questions.filter(
+      (question) =>
+        (question.id === id || question.items?.some((item) => item.id === id)) &&
+        (identity === undefined ||
+          (question.sessionId === identity.sessionId && question.rpcId === identity.rpcId)),
+    )
+    return matches.length === 1 ? matches[0] : undefined
+  }
+  const settle = (question: UserQuestion | undefined, epoch: number | undefined): void => {
+    if (question === undefined || getState().connectionEpoch !== epoch) return
+    settlements.accept(question)
+    setState((current) => ({
+      ...current,
+      questions: current.questions.filter((item) => !settlements.has(item)),
+    }))
+  }
   return {
     listReferences: async (sessionId, query, quoted) => {
       const result = await client.request<unknown>({
@@ -56,37 +76,38 @@ export function createInteractionActions(
             permissions: current.permissions.filter((item) => item.id !== interactionId),
           })),
         ),
-    respondToQuestion: (questionId, response) =>
-      client
+    respondToQuestion: (questionId, response, identity) => {
+      const question = pendingQuestion(questionId, identity)
+      const requestIdentity =
+        identity ??
+        (question?.rpcId === undefined ? undefined : { sessionId: question.sessionId, rpcId: question.rpcId })
+      const epoch = getState().connectionEpoch
+      return client
         .request<unknown>({
           type: 'interaction.question.respond',
           requestId: requestId(),
           payload: {
             questionId,
+            ...(requestIdentity === undefined ? {} : { identity: requestIdentity }),
             response: questionResponsePayload(response),
           },
         })
-        .then(() =>
-          setState((current) => ({
-            ...current,
-            questions: current.questions.filter((item) => item.id !== questionId),
-          })),
-        ),
-    cancelQuestion: (questionId) =>
-      client
+        .then(() => settle(question, epoch))
+    },
+    cancelQuestion: (questionId, identity) => {
+      const question = pendingQuestion(questionId, identity)
+      const requestIdentity =
+        identity ??
+        (question?.rpcId === undefined ? undefined : { sessionId: question.sessionId, rpcId: question.rpcId })
+      const epoch = getState().connectionEpoch
+      return client
         .request<unknown>({
           type: 'interaction.question.cancel',
           requestId: requestId(),
-          payload: { questionId },
+          payload: { questionId, ...(requestIdentity === undefined ? {} : { identity: requestIdentity }) },
         })
-        .then(() =>
-          setState((current) => ({
-            ...current,
-            questions: current.questions.filter(
-              (item) => item.id !== questionId && !item.items?.some((entry) => entry.id === questionId),
-            ),
-          })),
-        ),
+        .then(() => settle(question, epoch))
+    },
     pickAttachment: async () => {
       return attachmentFromResult(
         await client.request<unknown>({ type: 'attachment.pick', requestId: requestId() }),

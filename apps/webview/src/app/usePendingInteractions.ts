@@ -1,5 +1,6 @@
 import { useCallback, useMemo, type Dispatch, type SetStateAction } from 'react'
 import type { PermissionRequest, QuestionAnswer, UserQuestion } from '@dsh-vscode/domain'
+import { QuestionSettlements } from '@dsh-vscode/domain'
 import type { AppStore } from './store.js'
 import type { useI18n } from '../i18n.js'
 import { approvalCommand } from '../features/interactions/approval-command.js'
@@ -7,6 +8,7 @@ import { useCompleteTranscriptNodes } from '../features/chat/useCompleteTranscri
 import { useStableCallback } from './useStableCallback.js'
 import { requestId } from './store/ids.js'
 import { object } from './store/unknown-record.js'
+import { questionReplyKey } from './store/question-replies.js'
 import {
   mergeLiveTimedQuestion,
   parseActiveTimedQuestions,
@@ -64,7 +66,15 @@ export function usePendingInteractions({
   readonly store: AppStore
   readonly state: Pick<
     ReturnType<AppStore['getState']>,
-    'permissions' | 'questions' | 'timeline' | 'projections' | 'transcript' | 'connectionEpoch'
+    | 'permissions'
+    | 'questions'
+    | 'timeline'
+    | 'projections'
+    | 'transcript'
+    | 'connectionEpoch'
+    | 'queuedQuestionReplies'
+    | 'settledQuestionCalls'
+    | 'questionReplyStates'
   >
   readonly activeSessionId: string | undefined
   readonly setRespondingInteractionId: Dispatch<SetStateAction<string | undefined>>
@@ -135,14 +145,24 @@ export function usePendingInteractions({
   const pendingQuestions = useMemo(() => {
     if (activeSessionId === undefined) return EMPTY_USER_QUESTIONS
     const active = activeTimedQuestions
-    const queued = queuedQuestionReplyCallIds(relevantInboxProjection)
+    const queued = new Set(queuedQuestionReplyCallIds(relevantInboxProjection))
+    for (const question of active ?? []) {
+      const status = state.questionReplyStates?.[questionReplyKey(activeSessionId, question.callId)]
+      if (status === 'claimed' || status === 'queued') queued.add(question.callId)
+      else if (status === 'released' || status === 'admitted' || status === 'settled')
+        queued.delete(question.callId)
+    }
+    for (const question of active ?? [])
+      if (state.queuedQuestionReplies?.includes(questionReplyKey(activeSessionId, question.callId)))
+        queued.add(question.callId)
     const byCallId = new Map((active ?? []).map((question) => [question.callId, question] as const))
+    const settled = new QuestionSettlements()
+    settled.project(activeSessionId, questionProjection)
     const live = state.questions
       .filter((question) => question.sessionId === activeSessionId)
+      .filter((question) => !settled.has(question))
       .map((question) => {
-        const projected =
-          (question.callId === undefined ? undefined : byCallId.get(question.callId)) ??
-          active?.find((entry) => entry.questions.some((item) => item.id === question.id))
+        const projected = question.callId === undefined ? undefined : byCallId.get(question.callId)
         return projected === undefined
           ? question
           : mergeLiveTimedQuestion(question, projected, queued.has(projected.callId))
@@ -150,11 +170,24 @@ export function usePendingInteractions({
       .filter((question) => question.state !== 'continued')
     const recovered = (active ?? [])
       .filter((question) => question.state === 'continued')
+      .filter(
+        (question) =>
+          !state.settledQuestionCalls?.includes(questionReplyKey(activeSessionId, question.callId)),
+      )
       .filter((question) => !live.some((candidate) => candidate.callId === question.callId))
       .map((question) => questionFromProjection(activeSessionId, question, queued.has(question.callId)))
       .filter((question): question is UserQuestion => question !== undefined)
     return [...live, ...recovered]
-  }, [activeSessionId, activeTimedQuestions, relevantInboxProjection, state.questions])
+  }, [
+    activeSessionId,
+    activeTimedQuestions,
+    questionProjection,
+    relevantInboxProjection,
+    state.questions,
+    state.queuedQuestionReplies,
+    state.settledQuestionCalls,
+    state.questionReplyStates,
+  ])
   // The pending cards are memoized against streaming frames, so their handlers
   // must not be inline closures: they are dispatched through stable per-id
   // callbacks and cached per pending object, keeping the card props identical
@@ -200,7 +233,13 @@ export function usePendingInteractions({
           if (result?.kind !== 'question.answer' || result.accepted !== true)
             throw new Error(t('question.answerNoLongerPending'))
         } else {
-          await store.respondToQuestion(question.id, response)
+          await store.respondToQuestion(
+            question.id,
+            response,
+            question.rpcId === undefined
+              ? undefined
+              : { sessionId: question.sessionId, rpcId: question.rpcId },
+          )
         }
       } catch (reason) {
         setError(reason instanceof Error ? reason.message : t('app.error.answerQuestion'))
@@ -210,10 +249,13 @@ export function usePendingInteractions({
       }
     },
   )
-  const cancelQuestionById = useStableCallback((questionId: string): void => {
-    setRespondingInteractionId(questionId)
+  const cancelQuestionById = useStableCallback((question: UserQuestion): void => {
+    setRespondingInteractionId(question.id)
     void store
-      .cancelQuestion(questionId)
+      .cancelQuestion(
+        question.id,
+        question.rpcId === undefined ? undefined : { sessionId: question.sessionId, rpcId: question.rpcId },
+      )
       .catch((reason: unknown) =>
         setError(reason instanceof Error ? reason.message : t('app.error.cancelQuestion')),
       )
@@ -247,7 +289,7 @@ export function usePendingInteractions({
     (question: UserQuestion): (() => void) => {
       let handler = questionCancelHandlers.get(question)
       if (handler === undefined) {
-        handler = () => cancelQuestionById(question.id)
+        handler = () => cancelQuestionById(question)
         questionCancelHandlers.set(question, handler)
       }
       return handler

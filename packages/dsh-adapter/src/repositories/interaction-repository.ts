@@ -1,10 +1,14 @@
 import {
   AppError,
+  QuestionSettlements,
+  matchesQuestionResolution,
   type BackendEvent,
   type InteractionRepository,
   type PermissionOption,
   type QuestionAnswer,
   type UserQuestionItem,
+  type UserQuestion,
+  type QuestionRequestIdentity,
 } from '@dsh-vscode/domain'
 
 import type { DshTransport } from '../contracts.js'
@@ -17,8 +21,17 @@ interface SharedResponse {
   settled: boolean
 }
 
+interface PendingQuestion {
+  readonly rpcId: string
+  readonly sessionId: string
+  readonly questionIds: readonly string[]
+  readonly items: readonly UserQuestionItem[]
+  readonly question: UserQuestion
+}
+
 export class Rc6InteractionRepository implements InteractionRepository {
   private readonly answered = new Map<string, number>()
+  private readonly settlements = new QuestionSettlements()
   private readonly permissions = new Map<
     string,
     {
@@ -27,15 +40,7 @@ export class Rc6InteractionRepository implements InteractionRepository {
       readonly options: readonly PermissionOption[]
     }
   >()
-  private readonly questions = new Map<
-    string,
-    {
-      readonly rpcId: string
-      readonly sessionId: string
-      readonly questionIds: readonly string[]
-      readonly items: readonly UserQuestionItem[]
-    }
-  >()
+  private readonly questions = new Map<string, PendingQuestion>()
   private readonly responding = new Map<string, SharedResponse>()
   private readonly resetPendingOnSubscribe: boolean
   private readonly onSettled: ((event: BackendEvent) => void) | undefined
@@ -68,11 +73,45 @@ export class Rc6InteractionRepository implements InteractionRepository {
   }
 
   /** Return the session that owns a currently remembered question item. */
-  public sessionForQuestion(questionId: string): string | undefined {
-    return this.questions.get(questionId)?.sessionId
+  public sessionForQuestion(questionId: string, identity?: QuestionRequestIdentity): string | undefined {
+    return this.pendingQuestion(questionId, identity)?.sessionId
+  }
+
+  private pendingQuestion(id: string, identity?: QuestionRequestIdentity): PendingQuestion | undefined {
+    const matches = [...this.questions.values()].filter(
+      (pending) =>
+        pending.questionIds.includes(id) &&
+        (identity === undefined ||
+          (pending.sessionId === identity.sessionId && pending.rpcId === identity.rpcId)),
+    )
+    // The public legacy route only names an item. Never pick another session's
+    // request when model-supplied ids collide.
+    if (matches.length > 1) throw staleInteraction('ambiguous question')
+    return matches[0]
   }
 
   public remember(event: BackendEvent): void {
+    if (event.type === 'connection.lost') {
+      this.questions.clear()
+      return
+    }
+    if (event.type === 'question.reply.status' && event.state === 'admitted')
+      this.settlements.acceptCall(event.sessionId, event.callId)
+    if (event.type === 'session.projection' && event.key === 'userQuestions')
+      this.settlements.project(event.sessionId, event.value)
+    if (event.type === 'session.subscribed' && event.projection !== undefined)
+      this.settlements.project(event.sessionId, event.projection.values.userQuestions)
+    if (event.type === 'session.projection.baseline')
+      for (const [sessionId, projection] of Object.entries(event.projections))
+        this.settlements.project(sessionId, projection.values.userQuestions)
+    if (
+      event.type === 'question.reply.status' ||
+      event.type === 'session.projection' ||
+      event.type === 'session.projection.baseline' ||
+      event.type === 'session.subscribed'
+    )
+      for (const [key, pending] of this.questions)
+        if (this.settlements.has(pending.question)) this.questions.delete(key)
     if (event.type === 'session.subscribed') {
       // The rc.6-family mux replays each session's still-pending
       // approval/question requested frames right after the subscribed frame
@@ -98,6 +137,7 @@ export class Rc6InteractionRepository implements InteractionRepository {
     }
     if (event.type === 'permission.resolved') this.permissions.delete(event.requestId)
     if (event.type === 'question.requested' && event.question.rpcId !== undefined) {
+      if (this.settlements.has(event.question)) return
       const items = event.question.items ?? [
         {
           id: event.question.id,
@@ -108,24 +148,22 @@ export class Rc6InteractionRepository implements InteractionRepository {
         },
       ]
       const questionIds = [...new Set(items.map((item) => item.id))]
-      for (const id of questionIds) {
-        this.answered.delete(id)
-        this.questions.set(id, {
-          rpcId: event.question.rpcId,
-          sessionId: event.question.sessionId,
-          questionIds,
-          items,
-        })
-      }
+      for (const id of questionIds) this.answered.delete(id)
+      this.questions.set(JSON.stringify([event.question.sessionId, event.question.rpcId]), {
+        rpcId: event.question.rpcId,
+        sessionId: event.question.sessionId,
+        questionIds,
+        items,
+        question: event.question,
+      })
     }
     if (event.type === 'question.resolved') {
-      for (const [id, pending] of this.questions) {
-        if (
-          (event.questionRpcId !== undefined && pending.rpcId === event.questionRpcId) ||
-          (event.questionId !== undefined && id === event.questionId)
-        )
-          this.questions.delete(id)
-      }
+      this.settlements.resolve(
+        event,
+        [...this.questions.values()].map((pending) => pending.question),
+      )
+      for (const [key, pending] of this.questions)
+        if (matchesQuestionResolution(pending.question, event)) this.questions.delete(key)
     }
   }
 
@@ -173,9 +211,16 @@ export class Rc6InteractionRepository implements InteractionRepository {
     questionId: string,
     response: string | readonly string[] | readonly QuestionAnswer[],
     signal?: AbortSignal,
+    identity?: QuestionRequestIdentity,
   ): Promise<void> {
     if (signal?.aborted) throw cancelledResponse()
-    if (this.answered.has(questionId)) return
+    if (
+      this.pendingQuestion(questionId, identity) === undefined &&
+      (identity === undefined
+        ? this.answered.has(questionId)
+        : this.settlements.hasRpc(identity.sessionId, identity.rpcId))
+    )
+      return
     const respondEnvelope = this.transport.respondEnvelope?.bind(this.transport)
     if (respondEnvelope === undefined)
       throw new AppError({
@@ -183,7 +228,7 @@ export class Rc6InteractionRepository implements InteractionRepository {
         message: 'The connected DSH cannot answer user questions.',
         retryable: false,
       })
-    const pending = this.questions.get(questionId)
+    const pending = this.pendingQuestion(questionId, identity)
     if (pending === undefined) throw staleInteraction('question')
     const isBatch =
       Array.isArray(response) && response.length > 0 && response.every((entry) => isQuestionAnswer(entry))
@@ -209,9 +254,19 @@ export class Rc6InteractionRepository implements InteractionRepository {
     )
   }
 
-  public async cancelQuestion(questionId: string, signal?: AbortSignal): Promise<void> {
+  public async cancelQuestion(
+    questionId: string,
+    signal?: AbortSignal,
+    identity?: QuestionRequestIdentity,
+  ): Promise<void> {
     if (signal?.aborted) throw cancelledResponse()
-    if (this.answered.has(questionId)) return
+    if (
+      this.pendingQuestion(questionId, identity) === undefined &&
+      (identity === undefined
+        ? this.answered.has(questionId)
+        : this.settlements.hasRpc(identity.sessionId, identity.rpcId))
+    )
+      return
     const respondEnvelope = this.transport.respondEnvelope?.bind(this.transport)
     if (respondEnvelope === undefined)
       throw new AppError({
@@ -219,7 +274,7 @@ export class Rc6InteractionRepository implements InteractionRepository {
         message: 'The connected DSH cannot cancel user questions.',
         retryable: false,
       })
-    const pending = this.questions.get(questionId)
+    const pending = this.pendingQuestion(questionId, identity)
     if (pending === undefined) throw staleInteraction('question')
     const payload = {
       ok: false,
@@ -317,17 +372,22 @@ export class Rc6InteractionRepository implements InteractionRepository {
       readonly rpcId: string
       readonly sessionId: string
       readonly questionIds: readonly string[]
+      readonly question: UserQuestion
     },
     outcome: 'answered' | 'cancelled',
   ): void {
     for (const id of pending.questionIds) {
       this.markAnswered([id])
-      this.questions.delete(id)
     }
+    this.settlements.accept(pending.question)
+    for (const [key, current] of this.questions)
+      if (current.rpcId === pending.rpcId && current.sessionId === pending.sessionId)
+        this.questions.delete(key)
     this.onSettled?.({
       type: 'question.resolved',
       sessionId: pending.sessionId,
       questionRpcId: pending.rpcId,
+      ...(pending.question.callId === undefined ? {} : { settledCallId: pending.question.callId }),
       outcome,
     })
   }

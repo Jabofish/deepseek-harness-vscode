@@ -46,9 +46,7 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
   const composing = useRef(false)
   const submitting = useRef(false)
   const [waitState, setWaitState] = useState<TimedWaitState | undefined>(undefined)
-  const [submitted, setSubmitted] = useState(false)
   const [waitAttempt, setWaitAttempt] = useState(0)
-  const lastServerQueued = useRef(props.question.replyQueued === true)
   const waitHandlers = useRef({ attach: props.onAttachWait, release: props.onReleaseWait })
   useEffect(() => {
     waitHandlers.current = { attach: props.onAttachWait, release: props.onReleaseWait }
@@ -105,15 +103,10 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
       void waitHandlers.current.release?.()
     }
   }, [props.question.callId, props.question.sessionId, timedForeground, waitAttempt, waitKey])
-  useEffect(() => {
-    const serverQueued = props.question.replyQueued === true
-    if (lastServerQueued.current && !serverQueued) setSubmitted(false)
-    lastServerQueued.current = serverQueued
-  }, [props.question.replyQueued])
   const complete =
     drafts.length === items.length &&
     drafts.every((draft, index) => hasAnswer(draft, items[index]?.allowFreeText === true) || draft.skipped)
-  const replyQueued = props.question.replyQueued === true || submitted
+  const replyQueued = props.question.replyQueued === true
   // A zero local countdown is not by itself proof the question became
   // unanswerable. While this client holds the claim the Host suspends its own
   // deadline (`TimedQuestionWait.schedule` returns early while `claims.size > 0`),
@@ -138,7 +131,6 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
     submitting.current = true
     try {
       await props.onRespond(response)
-      if (props.question.state === 'continued') setSubmitted(true)
     } catch {
       // The owning hook reports the Host error; keep the draft editable here.
     } finally {

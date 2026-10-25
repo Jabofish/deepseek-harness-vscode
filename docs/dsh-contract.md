@@ -164,6 +164,16 @@ Legacy Host 的 `view` envelope 存在时，它是工具卡的权威投影。无
 
 Alpha Remote Event 的发起客户端在交互结算后可能不会收到取消帧。适配层对本地已接受的审批/问题必须按真实 request identity 补发 resolved；其他客户端的结构化结算也应使待处理卡消失。审批、Goal、Plan、Workflow、Job 和 Tool 状态只由结构化响应或事件推进，不从模型文本推断。
 
+全局 `$events` 与独立 Session、Workspace、Job 流的连接健康分开处理：只有 Host 级断连可以使原生交互身份失效；局部流的断连和恢复须在仓储观察器之前过滤，不能仅在 UI 通知前过滤。局部重订阅不重放 Alpha waterfall，不能依赖它重新建立待答问题。
+
+问题的 `callId`、`timed` 与 `state` 必须贯穿 Host 和 Webview；模型给出的 item ID 可在不同调用和会话复用，不能替代 rpc/call 身份。回答与取消携带可选的严格会话/rpc 身份，由仓储核对后再做工作区授权；旧的 item-only 请求有歧义时拒绝。整组接受回执、本地 resolved 和权威 settled 投影均须防止迟到重放复活；定时前台 waterfall 的取消只关闭该请求，不把 continued call 当成已回答。
+
+本地已接纳的回答或明确取消在 resolved 中保留终态 `settledCallId`，即使原请求已离开有界回放缓存，也可跨窗口结算对应调用；原生前台超时取消不携带该字段。完整订阅快照与控制投影遵循相同结算规则；恢复原生 Inbox 历史时，明确丢弃和准入事实与 claimed 身份一起保留。
+
+定时问题的 Inbox 领取会先通过无 outcome 的 `agent/inbox/spliced` 删除条目，再异步准入，队列消失不等于丢弃。`outcome: canceled` 才释放普通删除的答复；`user/message` 的结构化 `user-question-reply` 来源确认准入，所属 `turn/end` 释放未准入的 claimed reply。精确支持入口从原生快照及连续 splice 折叠有界的身份元数据，丢帧或畸形索引后停止按旧位置解释，等待新基线；生命周期 DTO 仅包含会话、调用、状态和序号，不携带答复正文。排队/领取状态由 Store 保存，卡片重建不解除只读；回执迟到不能撤销已知的准入或释放。
+
+迟到答复接纳后，通过新建的原生 follow 读取提交后的权威基线，只返回状态和序号并立即释放流。HTTP 回执与历史回放没有共同顺序，不能把提交前客户端已知序号当成释放边界；读取前及基线之前的 released 不解除本次只读锁，基线已确认的丢弃及其后的释放仍可重答。读取失败保留已接受状态，重连仅重试读取，不重发答复。固定 Gateway 仅透传带 RemoteError 标记的错误；UserQuestionError 的 REPLY_QUEUED 在原生 Gateway 上可能编码为 gateway/internal。拒绝回执不能当作已接纳，也不能通过错误正文猜出排队状态；只读状态仍以结构化 Inbox 和准入事实为准。
+
 ## 队列、标题与模型
 
 `session/queue` 行可能没有时间、role 或 source；缺失本来可选的字段不是损坏。`placement: context` 不进用户待发队列。Host 控制流基线列出当时已知 Session，之后只在待发输入变化时发送帧；基线后新建且尚未入队的 Session 应回答空队列，不伪报不可用。不同 wire 的 subscription/control 基线语义要显式选择，重订阅不得清除另一控制流已发布的队列。

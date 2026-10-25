@@ -67,6 +67,32 @@ function parameters(
 }
 
 describe('complete approval content', () => {
+  it('uses settled call identity instead of reviving a stale foreground request', () => {
+    const props = parameters(vi.fn(), [])
+    const question = {
+      id: 'first',
+      rpcId: 'rpc',
+      callId: 'call-q',
+      sessionId: 's1',
+      prompt: 'Continue?',
+      allowFreeText: true,
+      timed: true,
+      state: 'open' as const,
+    }
+    const { result } = renderHook(() =>
+      usePendingInteractions({
+        ...props,
+        state: {
+          ...props.state,
+          questions: [question],
+          projections: {
+            s1: { userQuestions: { active: [], settled: [{ callId: 'call-q', answers: [] }] } },
+          },
+        },
+      }),
+    )
+    expect(result.current.pendingQuestions).toEqual([])
+  })
   it('does not reuse an off-window command after the backend connection changes', async () => {
     let resolve!: (node: TimelineNode) => void
     const second = new Promise<TimelineNode>((settle) => {

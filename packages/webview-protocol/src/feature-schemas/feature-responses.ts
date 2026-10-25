@@ -141,6 +141,17 @@ export const featureResponsePayloadSchema = z.discriminatedUnion('kind', [
     })
     .strict(),
   z.object({ kind: z.literal('question.answer'), accepted: z.boolean() }).strict(),
+  z
+    .object({
+      kind: z.literal('question.reply'),
+      status: z
+        .object({
+          state: z.enum(['queued', 'claimed', 'released', 'admitted', 'settled', 'unknown']),
+          asOfSequence: z.number().int().min(-1).max(Number.MAX_SAFE_INTEGER),
+        })
+        .strict(),
+    })
+    .strict(),
   z.object({ kind: z.literal('schedule.updated'), result: scheduleUpdatePayloadSchema }).strict(),
   z.object({ kind: z.literal('schedule.deleted'), result: scheduleDeletePayloadSchema }).strict(),
   z

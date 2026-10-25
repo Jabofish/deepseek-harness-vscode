@@ -56,6 +56,7 @@ import type {
   PromptTemplateUpdate,
   PromptAttachment,
   QuestionAnswer,
+  QuestionRequestIdentity,
   QueuedInput,
   RunningInputMode,
   SessionExportOptions,
@@ -155,6 +156,11 @@ export interface AppState extends SessionModelDirectoryState {
   readonly connectionOutput?: readonly ConnectionLogEntry[]
   /** Monotonic opaque counter for a newly observed connected backend epoch. */
   readonly connectionEpoch?: number
+  readonly queuedQuestionReplies?: readonly string[]
+  readonly settledQuestionCalls?: readonly string[]
+  readonly questionReplyStates?: Readonly<
+    Record<string, 'queued' | 'claimed' | 'released' | 'admitted' | 'settled'>
+  >
   /** Safe connected-host version copied from the Extension Host snapshot. */
   readonly connectedDshVersion: string | undefined
   /** True only when the selected pinned adapter accepts inline subagent images. */
@@ -364,8 +370,9 @@ export interface AppActions {
   respondToQuestion(
     questionId: string,
     response: string | readonly string[] | readonly QuestionAnswer[],
+    identity?: QuestionRequestIdentity,
   ): Promise<void>
-  cancelQuestion(questionId: string): Promise<void>
+  cancelQuestion(questionId: string, identity?: QuestionRequestIdentity): Promise<void>
   pickAttachment(): Promise<PromptAttachment | undefined>
   ingestAttachment(input: IngestedFile): Promise<PromptAttachment | undefined>
   previewAttachment(uri: string): Promise<string | undefined>

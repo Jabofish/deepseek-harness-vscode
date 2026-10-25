@@ -3463,6 +3463,43 @@ describe('App connected rendering', () => {
     expect(container.querySelector('.dsh-composer__status')).not.toBeNull()
   })
 
+  it('preserves the draft when the same call transitions from foreground to continued', () => {
+    const base = connectedState(true)
+    const question = {
+      id: 'first',
+      rpcId: 'rpc-first',
+      callId: 'call-first',
+      sessionId: 's1',
+      prompt: 'Choose scope',
+      allowFreeText: true,
+      state: 'open' as const,
+    }
+    const view = renderWithMutableState({ ...base, questions: [question] })
+    const input = screen.getByLabelText<HTMLTextAreaElement>('Answer for Choose scope')
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: 'keep this draft' } })
+    view.updateState({
+      ...base,
+      questions: [],
+      projections: {
+        s1: {
+          userQuestions: {
+            active: [
+              {
+                callId: question.callId,
+                state: 'continued',
+                questions: [{ id: 'first', prompt: question.prompt, allowFreeText: true }],
+              },
+            ],
+            settled: [],
+          },
+        },
+      },
+    })
+    expect(screen.getByLabelText('Answer for Choose scope')).toBe(input)
+    expect(input.value).toBe('keep this draft')
+  })
+
   it('floats pending questions outside the composer layout', () => {
     const state = connectedState(true)
     currentStore = storeFor({

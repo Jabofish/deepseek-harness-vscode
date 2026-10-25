@@ -9,6 +9,27 @@ export function parseInteractionEvents(
   value: Record<string, unknown>,
   _payload: unknown,
 ): BackendEvent | undefined {
+  if (
+    name === 'question.reply.status' &&
+    nonEmptyString(value.sessionId) &&
+    nonEmptyString(value.callId) &&
+    (value.state === 'queued' ||
+      value.state === 'claimed' ||
+      value.state === 'released' ||
+      value.state === 'admitted' ||
+      value.state === 'settled') &&
+    typeof value.asOfSequence === 'number' &&
+    Number.isSafeInteger(value.asOfSequence) &&
+    value.asOfSequence >= -1 &&
+    !Object.is(value.asOfSequence, -0)
+  )
+    return {
+      type: 'question.reply.status',
+      sessionId: value.sessionId,
+      callId: value.callId,
+      state: value.state,
+      asOfSequence: value.asOfSequence,
+    }
   if (name === 'permission.requested' && isRecord(value.request)) {
     const request = parsePermissionRequest(value.request)
     if (request !== undefined) return { type: 'permission.requested', request }
@@ -34,6 +55,7 @@ export function parseInteractionEvents(
   if (name === 'question.resolved') {
     const hasQuestionRpcId = Object.hasOwn(value, 'questionRpcId')
     const hasQuestionId = Object.hasOwn(value, 'questionId')
+    const hasSettledCallId = Object.hasOwn(value, 'settledCallId')
     const questionRpcId =
       hasQuestionRpcId && nonEmptyString(value.questionRpcId) ? value.questionRpcId : undefined
     const questionId = hasQuestionId && nonEmptyString(value.questionId) ? value.questionId : undefined
@@ -42,6 +64,7 @@ export function parseInteractionEvents(
       nonEmptyString(value.sessionId) &&
       (!hasQuestionRpcId || questionRpcId !== undefined) &&
       (!hasQuestionId || questionId !== undefined) &&
+      (!hasSettledCallId || nonEmptyString(value.settledCallId)) &&
       (questionRpcId !== undefined || questionId !== undefined) &&
       (!hasOutcome || typeof value.outcome === 'string')
     )
@@ -50,6 +73,7 @@ export function parseInteractionEvents(
         sessionId: value.sessionId,
         ...(questionRpcId === undefined ? {} : { questionRpcId }),
         ...(questionId === undefined ? {} : { questionId }),
+        ...(nonEmptyString(value.settledCallId) ? { settledCallId: value.settledCallId } : {}),
         ...(typeof value.outcome === 'string' ? { outcome: value.outcome } : {}),
       }
   }

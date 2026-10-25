@@ -70,6 +70,7 @@ export function normalizeEnvelope(value: unknown): BackendEvent | undefined {
     case 'approval/resolved':
     case 'question/requested':
     case 'question/resolved':
+    case 'question/reply-status':
     case 'session/subscribed':
     case 'session/queue':
     case 'session/jobs':

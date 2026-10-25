@@ -700,7 +700,10 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                       ))}
                       {pendingQuestions.map((question) => (
                         <UserQuestionCard
-                          key={question.id}
+                          key={JSON.stringify([
+                            question.sessionId,
+                            question.callId ?? question.rpcId ?? question.id,
+                          ])}
                           question={question}
                           disabled={respondingInteractionId !== undefined}
                           onRespond={questionRespondFor(question)}

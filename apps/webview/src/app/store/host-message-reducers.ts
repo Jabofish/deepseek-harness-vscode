@@ -5,6 +5,7 @@ import type {
   SessionSummary,
 } from '@dsh-vscode/domain'
 import { CONNECTION_PHASES } from '@dsh-vscode/domain'
+import { matchesQuestionResolution } from '@dsh-vscode/domain'
 import {
   connectionOutputSchema,
   transcriptPatchSchema,
@@ -525,13 +526,7 @@ export function applyHostMessage(
     )
     if (permissions !== next.permissions) next = { ...next, permissions }
   } else if (event.type === 'question.resolved') {
-    const questions = removeMatching(
-      next.questions,
-      (question) =>
-        question.sessionId === event.sessionId &&
-        (question.id === event.questionId ||
-          (event.questionRpcId !== undefined && question.rpcId === event.questionRpcId)),
-    )
+    const questions = removeMatching(next.questions, (question) => matchesQuestionResolution(question, event))
     if (questions !== next.questions) next = { ...next, questions }
   } else if (event.type === 'permission.requested') {
     next = {
@@ -541,7 +536,18 @@ export function applyHostMessage(
   } else if (event.type === 'question.requested') {
     next = {
       ...next,
-      questions: [...next.questions.filter((question) => question.id !== event.question.id), event.question],
+      questions: [
+        ...next.questions.filter(
+          (question) =>
+            !(
+              question.sessionId === event.question.sessionId &&
+              (question.rpcId !== undefined && event.question.rpcId !== undefined
+                ? question.rpcId === event.question.rpcId
+                : question.id === event.question.id)
+            ),
+        ),
+        event.question,
+      ],
     }
   } else if (event.type === 'connection.lost') {
     projectionSequences?.perKey.clear()

@@ -1,19 +1,55 @@
 import type { BackendEvent, DshBackend } from '@dsh-vscode/domain'
-import { AppError } from '@dsh-vscode/domain'
+import { AppError, QuestionSettlements, matchesQuestionResolution } from '@dsh-vscode/domain'
 
 export class BackendService {
   /** Re-deliver current DSH control facts after a Webview transport invalidation. */
   public replayEvents(): readonly BackendEvent[] {
-    return [...this.replay.values()]
+    const replay = [...this.replay.values()]
+    const terminal = new Map<string, BackendEvent>()
+    const overlay = (sessionId: string, value: unknown): void => {
+      if (typeof value !== 'object' || value === null || !('active' in value) || !Array.isArray(value.active))
+        return
+      for (const candidate of value.active as readonly unknown[]) {
+        if (
+          typeof candidate !== 'object' ||
+          candidate === null ||
+          !('callId' in candidate) ||
+          typeof candidate.callId !== 'string' ||
+          !this.questionSettlements.hasCall(sessionId, candidate.callId)
+        )
+          continue
+        terminal.set(JSON.stringify([sessionId, candidate.callId]), {
+          type: 'question.reply.status',
+          sessionId,
+          callId: candidate.callId,
+          state: 'settled',
+          asOfSequence: -1,
+        })
+      }
+    }
+    for (const event of replay) {
+      if (event.type === 'session.projection' && event.key === 'userQuestions')
+        overlay(event.sessionId, event.value)
+      if (event.type === 'session.subscribed' && event.projection !== undefined)
+        overlay(event.sessionId, event.projection.values.userQuestions)
+      if (event.type === 'session.projection.baseline')
+        for (const [sessionId, projection] of Object.entries(event.projections))
+          overlay(sessionId, projection.values.userQuestions)
+    }
+    return [...replay, ...terminal.values()]
   }
   private backend: DshBackend | undefined
   private unsubscribe: (() => void) | undefined
   private readonly replay = new Map<string, BackendEvent>()
   private generation = 0
+  private readonly questionSettlements = new QuestionSettlements()
 
   public attach(backend: DshBackend, onEvent: (event: BackendEvent) => void): void {
     const generation = ++this.generation
-    if (this.backend !== backend) this.replay.clear()
+    if (this.backend !== backend) {
+      this.replay.clear()
+      this.questionSettlements.clear()
+    }
     const previousUnsubscribe = this.unsubscribe
     this.unsubscribe = undefined
     previousUnsubscribe?.()
@@ -23,11 +59,12 @@ export class BackendService {
     // application event sink; the coordinator closes the backend and any
     // managed process exactly once during disconnect.
     this.backend = backend
-    const replay = [...this.replay.values()]
+    const replay = this.replayEvents()
     const opening: BackendEvent[] = []
     let buffering = true
     const unsubscribe = backend.events.subscribe((event) => {
       if (this.generation !== generation) return
+      if (event.type === 'question.requested' && this.questionSettlements.has(event.question)) return
       this.remember(event)
       if (buffering) opening.push(event)
       else onEvent(event)
@@ -66,6 +103,7 @@ export class BackendService {
     this.unsubscribe = undefined
     this.backend = undefined
     this.replay.clear()
+    this.questionSettlements.clear()
     unsubscribe?.()
     // Do not close the backend here.  The coordinator owns its lifetime and
     // may be in the middle of a serialized disconnect/replace operation.
@@ -74,6 +112,17 @@ export class BackendService {
   }
 
   private remember(event: BackendEvent): void {
+    if (event.type === 'question.reply.status' && (event.state === 'admitted' || event.state === 'settled')) {
+      this.questionSettlements.acceptCall(event.sessionId, event.callId)
+      for (const [key, remembered] of this.replay)
+        if (remembered.type === 'question.requested' && this.questionSettlements.has(remembered.question))
+          this.replay.delete(key)
+    }
+    if (event.type === 'connection.lost') {
+      for (const [key, remembered] of this.replay)
+        if (remembered.type === 'question.requested') this.replay.delete(key)
+      return
+    }
     if (event.type === 'session.removed') {
       for (const [key, remembered] of this.replay) {
         if (remembered.type === 'session.projection.baseline') {
@@ -102,6 +151,12 @@ export class BackendService {
       return
     }
     if (event.type === 'question.resolved') {
+      this.questionSettlements.resolve(
+        event,
+        [...this.replay.values()].flatMap((remembered) =>
+          remembered.type === 'question.requested' ? [remembered.question] : [],
+        ),
+      )
       // DSH holds every unanswered question pending at once (the upstream
       // provider keys them by rpc id), so one resolution retires only the
       // question it names. A resolution that names none of them is the sole
@@ -110,17 +165,37 @@ export class BackendService {
         if (remembered.type !== 'question.requested') continue
         if (remembered.question.sessionId !== event.sessionId) continue
         if (
-          event.questionRpcId !== undefined
-            ? remembered.question.rpcId === event.questionRpcId
-            : event.questionId === undefined || remembered.question.id === event.questionId
+          matchesQuestionResolution(remembered.question, event) ||
+          (event.questionRpcId === undefined && event.questionId === undefined)
         )
           this.replay.delete(key)
       }
       return
     }
+    if (event.type === 'session.projection' && event.key === 'userQuestions')
+      this.questionSettlements.project(event.sessionId, event.value)
+    if (event.type === 'session.subscribed' && event.projection !== undefined)
+      this.questionSettlements.project(event.sessionId, event.projection.values.userQuestions)
+    if (event.type === 'session.projection.baseline')
+      for (const [sessionId, projection] of Object.entries(event.projections))
+        this.questionSettlements.project(sessionId, projection.values.userQuestions)
+    if (
+      (event.type === 'session.projection' && event.key === 'userQuestions') ||
+      event.type === 'session.subscribed' ||
+      event.type === 'session.projection.baseline'
+    )
+      for (const [key, remembered] of this.replay)
+        if (remembered.type === 'question.requested' && this.questionSettlements.has(remembered.question))
+          this.replay.delete(key)
     const key = replayKey(event)
     if (key === undefined) return
     const previous = this.replay.get(key)
+    if (
+      event.type === 'question.reply.status' &&
+      previous?.type === 'question.reply.status' &&
+      event.asOfSequence < previous.asOfSequence
+    )
+      return
     this.replay.set(
       key,
       event.type === 'session.configuration' && previous?.type === 'session.configuration'
@@ -182,7 +257,11 @@ const REPLAY_BOUND = 256
 
 /** An interaction the Host is still waiting to settle, so it must stay replayable. */
 function isPendingPrompt(event: BackendEvent): boolean {
-  return event.type === 'permission.requested' || event.type === 'question.requested'
+  return (
+    event.type === 'permission.requested' ||
+    event.type === 'question.requested' ||
+    (event.type === 'question.reply.status' && (event.state === 'queued' || event.state === 'claimed'))
+  )
 }
 
 function replayKey(event: BackendEvent): string | undefined {
@@ -196,7 +275,13 @@ function replayKey(event: BackendEvent): string | undefined {
     case 'permission.requested':
       return `permission:${event.request.sessionId}:${event.request.id}`
     case 'question.requested':
-      return `question:${event.question.sessionId}:${event.question.id}`
+      return JSON.stringify([
+        'question',
+        event.question.sessionId,
+        event.question.rpcId ?? event.question.callId ?? event.question.id,
+      ])
+    case 'question.reply.status':
+      return JSON.stringify(['question.reply', event.sessionId, event.callId])
     case 'queue.updated':
     case 'goal.updated':
     case 'todo.updated':

@@ -32,7 +32,7 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
     private readonly createSessionNormalizer?: () =>
       ((frame: unknown) => BackendEvent | undefined) | undefined,
   ) {
-    this.global = new DshStreamController(transport, (event) => this.handleObserved(event), recover, {
+    this.global = new DshStreamController(transport, (event) => this.handleObserved(event, true), recover, {
       // The global controller shares the alpha transport with the workspace
       // and per-session controllers. The backend owns the one transport
       // lifecycle; a logical stream must not tear down its siblings.
@@ -72,7 +72,7 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
   public publish(event: BackendEvent): void {
     if (this.closed) return
     const listeners = [...this.listeners]
-    const mapped = this.handleObserved(event)
+    const mapped = this.handleObserved(event, true)
     for (const listener of listeners) {
       try {
         listener(mapped)
@@ -188,8 +188,12 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
     this.subscriptions.set(controller, entries)
   }
 
-  private handleObserved(event: BackendEvent): BackendEvent {
+  private handleObserved(event: BackendEvent, hostWide = false): BackendEvent {
     const mapped = this.mapEvent(event)
+    // Controller observers run before listeners. Filter scoped health here as
+    // well as in attach(), before repositories can invalidate live waterfalls.
+    if (!hostWide && (mapped.type === 'connection.lost' || mapped.type === 'connection.restored'))
+      return mapped
     try {
       this.observe?.(mapped)
     } catch {

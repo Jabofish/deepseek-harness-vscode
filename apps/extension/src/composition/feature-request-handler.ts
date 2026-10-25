@@ -234,10 +234,32 @@ export function createFeatureRequestHandler(deps: FeatureRequestHandlerDependenc
     if (
       request.type === 'user-question.wait.attach' ||
       request.type === 'user-question.wait.release' ||
+      request.type === 'user-question.reply.read' ||
       request.type === 'user-question.answer'
     ) {
+      const questionBackend = backendService.requireBackend()
       await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      if (backendService.requireBackend() !== questionBackend || signal.aborted)
+        throw new AppError({
+          code: 'STALE_INTERACTION',
+          message: 'The DSH question connection changed.',
+          retryable: true,
+        })
       const userQuestions = new UserQuestionUseCases(backendService)
+      if (request.type === 'user-question.reply.read') {
+        const status = await userQuestions.replyStatus(
+          request.payload.sessionId,
+          request.payload.callId,
+          signal,
+        )
+        if (backendService.requireBackend() !== questionBackend || signal.aborted)
+          throw new AppError({
+            code: 'STALE_INTERACTION',
+            message: 'The DSH question connection changed.',
+            retryable: true,
+          })
+        return { kind: 'question.reply', status }
+      }
       if (request.type === 'user-question.wait.attach') {
         const remainingMs = await userQuestions.attachWait(
           request.payload.sessionId,

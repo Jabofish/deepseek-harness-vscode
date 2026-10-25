@@ -10,6 +10,7 @@ import { Rc201VersionAdapter } from '../rc201/adapter.js'
 import { Rc202UserQuestionRepository } from './user-question-repository.js'
 import { normalizeRc202ErrorCode } from './error-vocabulary.js'
 import { mapRc202BackendEvent, mapRc202ProjectionValues } from './user-question-projections.js'
+import { Rc202QuestionReplyObserver } from './question-reply-observer.js'
 
 /** Exact adapter for DSH dsh-v0.2.0-rc.2 at 639ed015397290b3745d163aafe02ffee4aa3f84. */
 export class Rc202VersionAdapter extends Rc201VersionAdapter {
@@ -23,7 +24,11 @@ export class Rc202VersionAdapter extends Rc201VersionAdapter {
   }
 
   protected override createTransportOptions(endpoint: BackendEndpoint): AlphaLoopbackApiClientOptions {
-    return { ...super.createTransportOptions(endpoint), normalizeErrorCode: normalizeRc202ErrorCode }
+    return {
+      ...super.createTransportOptions(endpoint),
+      normalizeErrorCode: normalizeRc202ErrorCode,
+      createQuestionReplyObserver: (sessionId) => new Rc202QuestionReplyObserver(sessionId),
+    }
   }
 
   protected override createUserQuestionRepository(transport: AlphaLoopbackApiClient): UserQuestionRepository {
