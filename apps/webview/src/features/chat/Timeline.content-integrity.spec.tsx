@@ -74,6 +74,38 @@ it('identifies an incomplete body while reading it automatically and clears the 
   ).toBeNull()
 })
 
+it('does not re-read a re-baselined node whose content is unchanged', async () => {
+  const loadFullNode = vi.fn().mockResolvedValue(message('answer', 'Complete body'))
+  const view = render(
+    <Timeline
+      sessionId="s"
+      streaming={false}
+      omittedNodeIds={['answer']}
+      contentVersions={{ answer: 'a'.repeat(64) }}
+      nodes={[message('answer', 'Visible fragment')]}
+      loadFullNode={loadFullNode}
+    />,
+  )
+  await screen.findByText('Complete body')
+  expect(loadFullNode).toHaveBeenCalledOnce()
+  // A re-baseline re-projects the same node into a new object. Same content,
+  // new reference, must not re-fetch or flash the "still incomplete" status.
+  view.rerender(
+    <Timeline
+      sessionId="s"
+      streaming={false}
+      omittedNodeIds={['answer']}
+      contentVersions={{ answer: 'a'.repeat(64) }}
+      nodes={[message('answer', 'Visible fragment')]}
+      loadFullNode={loadFullNode}
+    />,
+  )
+  await waitFor(() => expect(loadFullNode).toHaveBeenCalledOnce())
+  expect(
+    screen.queryByText('Reading the complete content… The current display is still incomplete.'),
+  ).toBeNull()
+})
+
 it('places a tool read status on its own row while leaving unrelated messages unmarked', async () => {
   let resolve!: (node: TimelineNode) => void
   const tool: TimelineNode = {

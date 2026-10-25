@@ -25,6 +25,7 @@ export interface TrajectoryViewProps {
   readonly running?: boolean
   readonly contentScope?: string
   readonly omittedNodeIds?: readonly string[]
+  readonly contentVersions?: Readonly<Record<string, string>>
   readonly loadFullNode?: (nodeId: string, signal?: AbortSignal) => Promise<TimelineNode>
 }
 
@@ -58,6 +59,8 @@ export const TrajectoryView = memo(function TrajectoryView(props: TrajectoryView
     props.nodes,
     props.omittedNodeIds,
     props.loadFullNode,
+    undefined,
+    props.contentVersions,
   )
   const sourceNodes = complete.nodes
   const changeStart = sourceNodes === props.nodes ? props.nodeChangeStart : undefined

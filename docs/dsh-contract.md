@@ -152,6 +152,8 @@ Control 基线随 wire 变化：早期 alpha 是 `queues`/`jobs`；`alpha162` �
 
 ## 工具、命令与交互
 
+Host 截断正文时，协议以完整规范节点的内容指纹标记省略节点版本，不能以有损预览相等推断全文相等。相同正文的重放保持版本稳定，文本追加增量更新指纹；正文、思考及节点元数据变更使缓存失效。该标记只用于视图缓存，不替代原生序号、交互身份或授权；未携带版本的旧视图保持保守重读。临时分片缺口的重订阅合并在一秒窗口内，窗口内再次缺口必须保留一次到期恢复；取消订阅、关闭和新基线释放旧恢复任务。标题事件与快照均按持久化序号比较，较新的权威快照不得被旧 live 标题永久屏蔽。
+
 `rc201` 及继承它的精确入口直接消费 [rc.1 的 tool-todo projection](https://github.com/deepseek-ai/deepseek-harness/blob/4878cdabd87d4041bdaff61d04c966883b9fd07a/packages/todo/tool-todo/src/index.ts)：原生 `todos` 是整值数组或 null；`todo/write` 替换，`turn/start` 清为 null，`turn/end` 保留清单。rc.2（`639ed015397290b3745d163aafe02ffee4aa3f84`）和 alpha.2（`d743267388641bc76f17c45ce8b4c231aed1d32c`）已核对同一行为。Adapter 只将 key、条目身份及 `in_progress` 映射为 Domain `todoList` / `in-progress`；完整基线缺少服务表示空当前列表，不从历史 Todo 卡恢复。历史卡仍属于对应回合；旧版未声明该 projection 时，由 Host 桥接结构化 Todo 整值，Webview 不再扫描历史。桥只采用最新尾部，裁切带明确标记；新版原生投影一旦可用就停止该桥的推导，不能用新版投影契约猜测旧版。
 
 Legacy Host 的 `view` envelope 存在时，它是工具卡的权威投影。无 envelope 的后续 wire 只能从第一方工具**结构化参数或结果 `meta` 的合法形状**派生展示：diff、搜索、网页、读卡等分别校验所需字段，空或畸形 `diffs` 不造卡；第三方工具即使有同名参数也不套第一方规则。调用期文件变更卡只表示“打算做”，成功结果和权威 `meta` 到达后才可结算。Shell/terminal 卡必须校验前台命令、工作目录、权限字段及结果标记；后台、失败、溢出页脚、畸形参数和不完整结果退回通用行。调用与结果需按 call ID 在时间线合并点配对，不能逐事件猜测退出状态；宿主结算卡始终优先。

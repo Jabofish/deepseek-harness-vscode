@@ -12,6 +12,12 @@
 - Fix stale question forms after answering, preserve timed request identities and batch settlements across recovery, and retain queued late replies until Inbox admission or discard.
 - 限制 Webview 持续拒收时的正文重发与恢复重读；耗尽预算后等待面板重新可见，避免流事件持续触发失败投递。
 - Stop transcript delivery and recovery loops after repeated Webview failures; resume with the latest state when the panel becomes visible again.
+- 会话标题按持久化序列“最新优先”处理，重放旧标题不再让打开的标签页或会话列表反复刷新。
+- Session titles are latest-wins by durable sequence, so a replayed stale title no longer flips an open tab or reloads the session list.
+- 转瞬态分片缺口后的重新订阅按冷却窗口合并，思考分片大量掉帧不再反复重连并触发全量重订阅。
+- Re-subscription after a transient chunk gap is coalesced behind a cooldown, so a reasoning-delta flood no longer hot-loops reconnect and re-subscription.
+- 冷却期内的缺口会在到期后恢复，较新标题快照仍可生效；截断正文按完整内容版本更新，相同预览不会掩盖全文变化。
+- Gaps detected during cooldown recover when it expires, newer title snapshots remain authoritative, and clipped bodies refresh by full-content version even when their previews are identical.
 
 ## 0.4.0
 

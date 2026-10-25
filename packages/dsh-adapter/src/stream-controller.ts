@@ -4,6 +4,9 @@ import type { DshTransport } from './contracts.js'
 import { eventSessionId, eventTransientSequence, normalizeEnvelope, safeReason } from './stream-envelopes.js'
 import { STREAM_BATCH_SIZE, STREAM_TIME_SLICE_MS, yieldToEventLoop } from './stream-scheduling.js'
 
+/** Minimum interval between gap-driven stream re-subscriptions. */
+const TRANSIENT_RESTART_COOLDOWN_MS = 1_000
+
 export interface DshStreamControllerOptions {
   /** Optional version-specific logical stream (for example alpha Remote mux). */
   readonly streamSource?: (signal: AbortSignal) => AsyncIterable<unknown>
@@ -68,6 +71,8 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
   private retryAttempt = 0
   private connectionLost = false
   private restartTask: Promise<void> | undefined
+  private transientRestartTimer: ReturnType<typeof setTimeout> | undefined
+  private transientRestartPending = false
   private closed = false
 
   public constructor(
@@ -89,6 +94,7 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
       if (this.listeners.size === 0) {
         if (this.retryTimer !== undefined) clearTimeout(this.retryTimer)
         this.retryTimer = undefined
+        this.clearTransientRestart()
         this.lifetime?.abort()
       }
     }
@@ -99,6 +105,7 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
     this.closed = true
     if (this.retryTimer !== undefined) clearTimeout(this.retryTimer)
     this.retryTimer = undefined
+    this.clearTransientRestart()
     this.lifetime?.abort()
     this.clearOrderedDeliveries()
     this.listeners.clear()
@@ -115,6 +122,8 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
   public async restart(): Promise<void> {
     if (this.closed) return
     if (this.restartTask !== undefined) return this.restartTask
+    // This fresh baseline also fulfills any coalesced request from the old stream.
+    this.transientRestartPending = false
     const task = (async (): Promise<void> => {
       if (this.retryTimer !== undefined) clearTimeout(this.retryTimer)
       this.retryTimer = undefined
@@ -139,9 +148,48 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
     }
   }
 
+  /**
+   * Heal a transient sequence gap without hot-looping the stream. A dropped
+   * chunk is unrecoverable except by re-subscribing, but a flood of reasoning
+   * deltas can drop chunks repeatedly. The first gap re-subscribes immediately;
+   * subsequent gaps are retained as one trailing recovery, even if no more
+   * frames arrive after the stream becomes incomplete.
+   * `setTimeout` is the only timer so tests can drive the window with fake
+   * clocks.
+   */
+  private restartForTransientGap(): void {
+    if (this.closed || this.listeners.size === 0) return
+    if (this.transientRestartTimer !== undefined) {
+      this.transientRestartPending = true
+      return
+    }
+    if (this.restartTask !== undefined) {
+      // A new generation can publish before restart() finishes its teardown.
+      // Keep its gap until that in-flight restart releases its guard.
+      this.transientRestartPending = true
+      void this.restartTask.then(() => {
+        if (this.transientRestartPending) this.restartForTransientGap()
+      })
+      return
+    }
+    this.transientRestartPending = false
+    this.transientRestartTimer = setTimeout(() => {
+      this.transientRestartTimer = undefined
+      if (this.transientRestartPending) this.restartForTransientGap()
+    }, TRANSIENT_RESTART_COOLDOWN_MS)
+    void this.restart()
+  }
+
+  private clearTransientRestart(): void {
+    if (this.transientRestartTimer !== undefined) clearTimeout(this.transientRestartTimer)
+    this.transientRestartTimer = undefined
+    this.transientRestartPending = false
+  }
+
   private startReading(): void {
     if (this.closed || this.listeners.size === 0 || this.reading !== undefined) return
     if (this.options.streamSource !== undefined) {
+      this.transientRestartPending = false
       // A streamSource session starts every generation with a fresh bounded
       // snapshot. Keep the durable watermark for recovery, but make the next
       // session/subscribed frame establish the snapshot boundary again.
@@ -355,8 +403,10 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
       if (previousTransient !== undefined && transientSequence > previousTransient + 1) {
         // Unlike durable frames, transient assistant chunks cannot be
         // recovered from session.history. A queue drop is therefore healed by
-        // taking the stream's authoritative snapshot/baseline again.
-        void this.restart()
+        // taking the stream's authoritative snapshot/baseline again — but a
+        // reasoning flood can drop chunks repeatedly, so the re-subscription
+        // is coalesced behind a cooldown instead of firing per dropped frame.
+        this.restartForTransientGap()
         return
       }
       if (previousTransient !== undefined && transientSequence <= previousTransient) return

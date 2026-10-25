@@ -85,6 +85,7 @@ export interface TimelineProps {
   readonly onFeedbackPrepare?: FeedbackPrepare
   /** Nodes whose wire projection clipped their Markdown. */
   readonly omittedNodeIds?: readonly string[]
+  readonly contentVersions?: Readonly<Record<string, string>>
   readonly loadFullNode?: (nodeId: string, signal?: AbortSignal) => Promise<TimelineNode>
   readonly loadFullContent?: (nodeId: string) => Promise<string>
   /** Whether an older DSH history window is available. */
@@ -194,6 +195,8 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
     props.nodes,
     props.omittedNodeIds,
     props.loadFullNode,
+    undefined,
+    props.contentVersions,
   )
   const sourceNodes = complete.nodes
   const changeStart = sourceNodes === props.nodes ? props.nodeChangeStart : undefined
@@ -524,8 +527,10 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
     if (!virtualizedReady || virtualized.totalSize <= 0) return
     // Virtual rows refine the canvas height as they enter the measurement
     // cache. Reconcile that estimate only through the shared scroll owner;
-    // native reader input cancels it before it can move the viewport.
-    scheduleScrollToLatest({ preserveBottom: true, immediate: true })
+    // native reader input cancels it before it can move the viewport. Coalesce
+    // (no `immediate`) so a streaming row's provisional heights collapse into
+    // one write per microtask instead of a synchronous write per refinement.
+    scheduleScrollToLatest({ preserveBottom: true })
   }, [scheduleScrollToLatest, virtualizedReady, virtualized.totalSize])
   const loadOlderHistory = useCallback((): void => {
     if (

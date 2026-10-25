@@ -58,6 +58,21 @@ function fixture(
 afterEach(() => vi.useRealTimers())
 
 describe('Host transcript windows', () => {
+  it('keeps omitted-body versions stable across equal rebaselines but detects hidden same-length changes', () => {
+    const client = fixture()
+    try {
+      const prefix = 'x'.repeat(5_000_000)
+      const first = client.open([message(0, prefix + 'hidden A')])
+      const second = client.open([message(0, prefix + 'hidden A')])
+      expect(second.contentVersions).toEqual(first.contentVersions)
+      const changed = client.open([message(0, prefix + 'hidden B')])
+      expect(changed.nodes).toEqual(second.nodes)
+      expect(changed.contentVersions?.['m-0']).not.toBe(second.contentVersions?.['m-0'])
+      expect(changed.contentVersions?.['m-0']).toMatch(/^[a-f0-9]{64}$/)
+    } finally {
+      client.service.dispose()
+    }
+  })
   it('posts subsequent text and executed tool context before the preceding IPC receipt settles', async () => {
     vi.useFakeTimers()
     const sent: (TranscriptWindow | TranscriptPatch)[] = []
