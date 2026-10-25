@@ -524,8 +524,10 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
     if (!virtualizedReady || virtualized.totalSize <= 0) return
     // Virtual rows refine the canvas height as they enter the measurement
     // cache. Reconcile that estimate only through the shared scroll owner;
-    // native reader input cancels it before it can move the viewport.
-    scheduleScrollToLatest({ preserveBottom: true, immediate: true })
+    // native reader input cancels it before it can move the viewport. Coalesce
+    // (no `immediate`) so a streaming row's provisional heights collapse into
+    // one write per microtask instead of a synchronous write per refinement.
+    scheduleScrollToLatest({ preserveBottom: true })
   }, [scheduleScrollToLatest, virtualizedReady, virtualized.totalSize])
   const loadOlderHistory = useCallback((): void => {
     if (

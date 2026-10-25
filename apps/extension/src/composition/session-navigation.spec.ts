@@ -102,9 +102,13 @@ describe('shared Host session navigation', () => {
     navigation.select('s1')
     navigation.select('s1')
     expect(changed).toHaveBeenCalledExactlyOnceWith('selection')
-    navigation.acceptEvent('session.projection', { key: 'title' })
+    // A title change refreshes the directory once.
+    navigation.acceptEvent('session.projection', { sessionId: 's1', key: 'title', value: 'Renamed' })
     expect(changed).toHaveBeenLastCalledWith('directory')
     changed.mockClear()
+    // A same-value title re-emission must not reload the directory again.
+    navigation.acceptEvent('session.projection', { sessionId: 's1', key: 'title', value: 'Renamed' })
+    expect(changed).not.toHaveBeenCalled()
     navigation.acceptEvent('connection.snapshot', { kind: 'connected' })
     navigation.acceptEvent('connection.snapshot', { kind: 'connected' })
     expect(changed).toHaveBeenCalledExactlyOnceWith('connection')
@@ -128,9 +132,11 @@ describe('shared Host session navigation', () => {
       expect(changed).toHaveBeenCalledExactlyOnceWith('directory')
 
       // A full refresh from any other event supersedes the pending window.
+      // `session.title` is title-only now (refreshes only on a real change),
+      // so use a structural event that always invalidates the directory.
       changed.mockClear()
       navigation.acceptEvent('session.activity')
-      navigation.acceptEvent('session.title')
+      navigation.acceptEvent('session.added')
       expect(changed).toHaveBeenCalledTimes(1)
       await vi.advanceTimersByTimeAsync(1_000)
       expect(changed).toHaveBeenCalledTimes(1)
@@ -229,6 +235,57 @@ describe('shared Host session navigation', () => {
     const { navigation, retitleEditorTab } = fixture()
     navigation.acceptEvent(name, payload)
     expect(retitleEditorTab).toHaveBeenCalledExactlyOnceWith('s1', 'Projected title')
+  })
+
+  it('keeps a live title authoritative over later snapshot baselines and skips same-value re-emissions', () => {
+    const { navigation, retitleEditorTab } = fixture()
+    navigation.acceptEvent('session.title', { sessionId: 's1', title: 'Live title' })
+    expect(retitleEditorTab).toHaveBeenCalledExactlyOnceWith('s1', 'Live title')
+    // A stale snapshot must not overwrite the live title.
+    navigation.acceptEvent('session.projection.baseline', {
+      projections: { s1: { asOfSequence: 3, values: { title: 'Stale title' } } },
+    })
+    navigation.acceptEvent('session.subscribed', {
+      sessionId: 's1',
+      lastSequence: 3,
+      projection: { asOfSequence: 3, values: { title: 'Stale title' } },
+    })
+    expect(retitleEditorTab).toHaveBeenCalledOnce()
+    // A same-value live re-emission is a no-op.
+    navigation.acceptEvent('session.title', { sessionId: 's1', title: 'Live title' })
+    expect(retitleEditorTab).toHaveBeenCalledOnce()
+    // A genuinely new live title still applies.
+    navigation.acceptEvent('session.title', { sessionId: 's1', title: 'Renamed' })
+    expect(retitleEditorTab).toHaveBeenLastCalledWith('s1', 'Renamed')
+  })
+
+  it('applies latest-wins by sequence so a replayed fallback title cannot flip the tab', () => {
+    const { navigation, retitleEditorTab } = fixture()
+    // DSH logs a deterministic fallback (seq 5) then the LLM provider title (seq 6).
+    navigation.acceptEvent('session.title', { sessionId: 's1', title: 'Fallback title', sequence: 5 })
+    navigation.acceptEvent('session.title', { sessionId: 's1', title: 'Provider title', sequence: 6 })
+    expect(retitleEditorTab).toHaveBeenNthCalledWith(1, 's1', 'Fallback title')
+    expect(retitleEditorTab).toHaveBeenNthCalledWith(2, 's1', 'Provider title')
+    retitleEditorTab.mockClear()
+    // A re-baseline replays both durable title events. The older fallback must
+    // not flip the tab back, and the newer provider is a same-value no-op.
+    navigation.acceptEvent('session.title', { sessionId: 's1', title: 'Fallback title', sequence: 5 })
+    navigation.acceptEvent('session.title', { sessionId: 's1', title: 'Provider title', sequence: 6 })
+    expect(retitleEditorTab).not.toHaveBeenCalled()
+  })
+
+  it('fences replayed live titles behind a projection baseline sequence', () => {
+    const { navigation, retitleEditorTab } = fixture()
+    navigation.acceptEvent('session.subscribed', {
+      sessionId: 's1',
+      lastSequence: 6,
+      projection: { asOfSequence: 6, values: { title: 'Provider title' } },
+    })
+    expect(retitleEditorTab).toHaveBeenCalledExactlyOnceWith('s1', 'Provider title')
+    retitleEditorTab.mockClear()
+    // The replayed fallback (seq 5) is older than the baseline's fold cut.
+    navigation.acceptEvent('session.title', { sessionId: 's1', title: 'Fallback title', sequence: 5 })
+    expect(retitleEditorTab).not.toHaveBeenCalled()
   })
 
   it('ignores absent, malformed and unrelated title projections without hiding valid baseline entries', () => {
