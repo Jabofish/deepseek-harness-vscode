@@ -198,7 +198,7 @@ describe('session dragging respects cancellation and explicit opening', () => {
 
     // Recency order disables reordering, while opening by native drop stays available.
     fireEvent.click(screen.getByRole('button', { name: 'Sort sessions by last updated' }))
-    const row = screen.getByRole('button', { name: 'Open Fix login bug in the editor area' }).closest('li')
+    const row = rowActionsTrigger('Fix login bug').closest('li')
     if (row === null) throw new Error('the session row is missing')
     expect(row.getAttribute('draggable')).toBe('true')
 
@@ -211,7 +211,8 @@ describe('session dragging respects cancellation and explicit opening', () => {
     fireEvent.dragEnd(row, { dataTransfer })
 
     expect(onOpenInEditor).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: 'Open Fix login bug in the editor area' }))
+    openRowActions('Fix login bug')
+    fireEvent.click(screen.getByRole('button', { name: 'Open in Editor Area' }))
     expect(onOpenInEditor).toHaveBeenCalledOnce()
     expect(onOpenInEditor).toHaveBeenCalledWith('s1')
   })
@@ -241,7 +242,8 @@ describe('session dragging respects cancellation and explicit opening', () => {
   it('does not export an editor resource while a row mutation locks the list', () => {
     stubWidePanel()
     renderDrawer({ onOpenInEditor: vi.fn(), onArchive: () => new Promise<void>(() => undefined) }, 'focused')
-    fireEvent.click(screen.getByRole('button', { name: 'Archive session Fix login bug' }))
+    openRowActions('Fix login bug')
+    fireEvent.click(screen.getByRole('button', { name: 'Archive session' }))
     const row = sessionRow()
     expect(row.getAttribute('draggable')).toBe('false')
     const dataTransfer = createDataTransfer()
@@ -262,8 +264,8 @@ describe('opening a session in the editor area', () => {
     const onOpenInEditor = vi.fn()
     renderDrawer({ onOpenInEditor }, 'focused')
 
-    const action = screen.getByRole('button', { name: 'Open Fix login bug in the editor area' })
-    expect(action.getAttribute('title')).toBe('Open in Editor Area')
+    openRowActions('Fix login bug')
+    const action = screen.getByRole('button', { name: 'Open in Editor Area' })
 
     fireEvent.click(action)
 
@@ -278,7 +280,9 @@ describe('opening a session in the editor area', () => {
     }))
     renderDrawer({}, 'focused')
 
-    expect(screen.queryByTitle('Open in Editor Area')).toBeNull()
+    openRowActions('Fix login bug')
+    expect(screen.queryByRole('button', { name: 'Open in Editor Area' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Rename session' })).toBeDefined()
   })
 })
 
@@ -309,6 +313,18 @@ const archiveFilterLabels = {
 function chooseArchiveFilter(value: keyof typeof archiveFilterLabels): void {
   fireEvent.click(screen.getByRole('button', { name: /Archived conversation filter/u }))
   fireEvent.click(screen.getByRole('option', { name: archiveFilterLabels[value] }))
+}
+
+/**
+ * A row's rarer actions live behind one trigger so revealing them cannot take
+ * width from the title. Tests open that menu before picking an action.
+ */
+function rowActionsTrigger(title: string): HTMLElement {
+  return screen.getByRole('button', { name: `Session actions for ${title}` })
+}
+
+function openRowActions(title: string): void {
+  fireEvent.click(rowActionsTrigger(title))
 }
 
 describe('SessionDrawer', () => {
@@ -686,7 +702,8 @@ describe('SessionDrawer', () => {
     const onRename = vi.fn().mockResolvedValue(undefined)
     renderDrawer({ onRename })
 
-    fireEvent.click(screen.getAllByTitle('Rename session')[0]!)
+    openRowActions('Fix login bug')
+    fireEvent.click(screen.getByRole('button', { name: 'Rename session' }))
     const input = screen.getByLabelText('Session name')
     fireEvent.change(input, { target: { value: 'Write docs' } })
 
@@ -708,7 +725,8 @@ describe('SessionDrawer', () => {
     })
     await waitFor(() => expect(screen.getByTitle('Other workspace note')).toBeDefined())
 
-    fireEvent.click(screen.getByRole('button', { name: 'Rename session Other workspace note' }))
+    openRowActions('Other workspace note')
+    fireEvent.click(screen.getByRole('button', { name: 'Rename session' }))
     const input = screen.getByLabelText('Session name')
 
     // "Write docs" only exists in Alpha; Beta has no such title.
@@ -803,9 +821,10 @@ describe('SessionDrawer', () => {
     const onRename = vi.fn().mockResolvedValue(undefined)
     renderDrawer({ open: true, onOpenChange, onRename })
 
-    const trigger = screen.getAllByTitle('Rename session')[0]!
+    const trigger = rowActionsTrigger('Fix login bug')
     trigger.focus()
     fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('button', { name: 'Rename session' }))
     expect(screen.getByRole('dialog', { name: 'Rename session' })).toBeDefined()
 
     fireEvent.keyDown(document, { key: 'Escape' })
@@ -848,7 +867,8 @@ describe('SessionDrawer', () => {
     const onOpenChange = vi.fn()
     renderDrawer({ open: true, onOpenChange })
 
-    fireEvent.click(screen.getAllByTitle('Rename session')[0]!)
+    openRowActions('Fix login bug')
+    fireEvent.click(screen.getByRole('button', { name: 'Rename session' }))
     fireEvent.pointerDown(screen.getByLabelText('Session name'))
 
     expect(onOpenChange).not.toHaveBeenCalled()
@@ -945,9 +965,10 @@ describe('SessionDrawer', () => {
   it('cycles Tab in both directions inside the top rename dialog above the switcher', () => {
     renderDrawer({ open: true })
 
-    const trigger = screen.getAllByTitle('Rename session')[0]!
+    const trigger = rowActionsTrigger('Fix login bug')
     trigger.focus()
     fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('button', { name: 'Rename session' }))
     const dialog = screen.getByRole('dialog', { name: 'Rename session' })
     const input = within(dialog).getByLabelText('Session name')
     const cancel = within(dialog).getByRole('button', { name: 'Cancel' })
@@ -995,9 +1016,10 @@ describe('SessionDrawer', () => {
   it('returns focus to the renamed row after the rename dialog closes', () => {
     renderDrawer()
 
-    const trigger = screen.getAllByTitle('Rename session')[0]!
+    const trigger = rowActionsTrigger('Fix login bug')
     trigger.focus()
     fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('button', { name: 'Rename session' }))
     const input = screen.getByLabelText('Session name')
     expect(document.activeElement).toBe(input)
 
@@ -1072,12 +1094,13 @@ describe('session archive failures', () => {
     const onArchive = vi.fn().mockRejectedValue(new Error(message))
     renderDrawer({ onArchive })
 
-    const archiveButton = screen.getByRole('button', { name: 'Archive session Fix login bug' })
-    fireEvent.click(archiveButton)
+    const trigger = rowActionsTrigger('Fix login bug')
+    openRowActions('Fix login bug')
+    fireEvent.click(screen.getByRole('button', { name: 'Archive session' }))
 
     expect((await screen.findByRole('alert')).textContent).toContain(message)
     expect(screen.getByTitle('Fix login bug')).toBeDefined()
-    await waitFor(() => expect(archiveButton.hasAttribute('disabled')).toBe(false))
+    await waitFor(() => expect(trigger.hasAttribute('disabled')).toBe(false))
   })
 
   it('shows an ordinary RPC error instead of silently keeping the session', async () => {
@@ -1085,7 +1108,8 @@ describe('session archive failures', () => {
     const onArchive = vi.fn().mockRejectedValue(new Error(message))
     renderDrawer({ onArchive })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Archive session Fix login bug' }))
+    openRowActions('Fix login bug')
+    fireEvent.click(screen.getByRole('button', { name: 'Archive session' }))
 
     expect((await screen.findByRole('alert')).textContent).toContain(message)
     expect(screen.getByTitle('Fix login bug')).toBeDefined()
@@ -1095,7 +1119,8 @@ describe('session archive failures', () => {
     const onArchive = vi.fn().mockRejectedValue('rejected')
     renderDrawer({ onArchive })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Archive session Fix login bug' }))
+    openRowActions('Fix login bug')
+    fireEvent.click(screen.getByRole('button', { name: 'Archive session' }))
 
     expect((await screen.findByRole('alert')).textContent).toContain('Unable to archive session.')
   })

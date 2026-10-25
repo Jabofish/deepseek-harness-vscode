@@ -441,6 +441,58 @@
   padding: var(--dsh-space-1);
 }
 
+/* A session row owns exactly one action trigger, in the layout in every state,
+ * so revealing the rare actions never takes width from the title column. The
+ * menu is portalled to the body (see session-row-actions.tsx): the panel is a
+ * size-query container and would otherwise be the fixed menu's containing
+ * block, and the results scrollport would clip it. */
+.dsh-session-item__menu-panel {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  z-index: 70;
+  box-sizing: border-box;
+  width: min(18rem, calc(100vw - var(--dsh-space-4)));
+  max-width: calc(100vw - var(--dsh-space-4));
+  max-height: min(var(--dsh-menu-max-height), calc(100dvh - 5rem));
+  padding: var(--dsh-space-1);
+  overflow: visible;
+  overflow-anchor: none;
+}
+
+.dsh-session-item__menu-list {
+  display: grid;
+  flex: 0 1 auto;
+  min-width: 0;
+  min-height: 0;
+  gap: var(--dsh-space-1);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.dsh-session-item__menu-list > button {
+  justify-content: flex-start;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  min-height: var(--dsh-menu-item-height);
+  padding: var(--dsh-space-2) var(--dsh-space-3);
+  border: 1px solid transparent;
+  border-radius: var(--dsh-radius-md);
+  color: var(--dsh-text);
+  background: transparent;
+  font-family: inherit;
+  font-size: var(--dsh-menu-font-size);
+  font-weight: 400;
+  line-height: var(--dsh-menu-line-height);
+  text-align: start;
+}
+
+.dsh-session-item__menu-list > button:hover:not(:disabled),
+.dsh-session-item__menu-list > button:focus-visible {
+  background: var(--dsh-surface-hover);
+}
+
 .dsh-session-switcher__results {
   display: grid;
   flex: 1 1 auto;

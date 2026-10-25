@@ -345,37 +345,6 @@
   font-size: var(--dsh-font-size-2xs);
 }
 
-.dsh-session-item__remove {
-  width: 24px;
-  min-width: 24px;
-  height: 28px;
-  min-height: 28px;
-  padding: 0;
-  border: 1px solid transparent;
-  border-radius: var(--dsh-radius-sm);
-  color: var(--dsh-muted);
-  background: transparent;
-  opacity: 0.72;
-}
-
-.dsh-session-switcher__list > li:hover .dsh-session-item__remove,
-.dsh-session-switcher__list > li:focus-within .dsh-session-item__remove {
-  opacity: 1;
-}
-
-.dsh-session-item__remove:hover:not(:disabled),
-.dsh-session-item__remove:focus-visible {
-  border-color: var(--dsh-focus, var(--dsh-control-border));
-  color: var(--dsh-danger, var(--dsh-danger));
-  background: var(--dsh-control-hover);
-  outline: none;
-}
-
-.dsh-session-item__remove .dsh-icon {
-  width: 14px;
-  height: 14px;
-}
-
 .dsh-session-switcher--headless {
   position: static !important;
   width: 0 !important;

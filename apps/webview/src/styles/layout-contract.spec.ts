@@ -120,6 +120,64 @@ describe('Session switcher accent rail', () => {
     // session rails, which is what made the two bars look misaligned.
     expect(cascade).not.toMatch(/\.dsh-session-switcher__workspace-button[^{]*\{[^}]*box-shadow/)
   })
+
+  it('keeps a session row the same size in every interaction state', () => {
+    // The focused layout used to reveal a row action rail by adding a grid
+    // column for it on hover/focus-within, which took its width out of the
+    // title column: a docked 248px rail measured a 148px title at rest and
+    // 55px while hovered, and one long title's row grew from 101px to 247px as
+    // the pointer crossed the list. Session rows now keep exactly one action
+    // trigger in the layout and open a menu for the rest.
+    //
+    // Every sheet is scanned, and every spelling of the interaction states, so
+    // a rail reintroduced in layout/05 or as `.dsh-…__list > li:hover` is
+    // caught as well as the original `:is(:hover, :focus-within)` form.
+    const sheets = {
+      compatibility: compatibilityStyles,
+      app: appStyles,
+      layout: layoutStyles,
+      focused: focusedStyles,
+    }
+    // Paint-only feedback (a hover background) is fine; anything that can move
+    // the title's line box or the row's grid is not.
+    // Border and background colours are paint-only here: the row already owns
+    // a 1px transparent border in every state, so recolouring it moves nothing.
+    const geometric =
+      /(?:^|;)\s*(?:display|grid-template-columns|position|padding[\w-]*|margin[\w-]*|(?:min-|max-)?(?:width|height)|gap|font-size|font-weight|letter-spacing|white-space|border(?:-(?:top|right|bottom|left|inline|block)[\w-]*)?-width|border)\s*:/u
+    const interaction = /:(?:hover|focus|focus-within|focus-visible)\b/u
+    let checkedRules = 0
+    for (const [name, sheet] of Object.entries(sheets)) {
+      for (const match of sheet.matchAll(/([^{}]*)\{([^{}]*)\}/gu)) {
+        const selector = (match[1] ?? '').replace(/\/\*[\s\S]*?\*\//gu, '')
+        const body = match[2] ?? ''
+        const touchesSessionRow =
+          selector.includes('.dsh-session-item') || selector.includes('.dsh-session-switcher__list')
+        // A workspace name never wraps, so its reveal only moves an ellipsis.
+        if (!touchesSessionRow || !interaction.test(selector)) continue
+        checkedRules += 1
+        expect(body, `${name}: ${selector.trim()}`).not.toMatch(geometric)
+      }
+    }
+    expect(checkedRules).toBeGreaterThan(0)
+
+    // The action rail itself may never leave the row's flow, in any sheet.
+    const actionsRule = /\.dsh-session-item__actions[^{}]*\{([^{}]*)\}/gu
+    for (const sheet of Object.values(sheets)) {
+      for (const match of sheet.matchAll(actionsRule)) {
+        expect(match[1] ?? '').not.toMatch(/(?:^|;)\s*position\s*:/u)
+      }
+    }
+    expect(
+      effective(`${appStyles}\n${layoutStyles}\n${focusedStyles}`, '.dsh-session-item__actions', 'position'),
+    ).not.toBe('absolute')
+    expect(
+      effective(
+        `${appStyles}\n${layoutStyles}\n${focusedStyles}`,
+        '.dsh-session-switcher__list > li',
+        'grid-template-columns',
+      ),
+    ).toBe('minmax(0, 1fr) auto')
+  })
 })
 
 describe('Form control base styles', () => {
