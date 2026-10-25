@@ -15,6 +15,7 @@ import { App } from './App.js'
 import { readThemePreference } from './app/ui-preferences.js'
 import { I18nProvider } from './i18n.js'
 import { ConversationLayoutProvider } from './app/ConversationLayoutProvider.js'
+import { AccessibilityProvider } from './app/AccessibilityProvider.js'
 import { watchNativeTitlebarLayout } from './app/native-titlebar-layout.js'
 import { getVsCodeApi, hasVsCodeApi } from './vscode-api.js'
 
@@ -29,9 +30,11 @@ if (rootElement === null) throw new Error('Missing #root element')
 createRoot(rootElement).render(
   <StrictMode>
     <I18nProvider>
-      <ConversationLayoutProvider>
-        <App />
-      </ConversationLayoutProvider>
+      <AccessibilityProvider>
+        <ConversationLayoutProvider>
+          <App />
+        </ConversationLayoutProvider>
+      </AccessibilityProvider>
     </I18nProvider>
   </StrictMode>,
 )

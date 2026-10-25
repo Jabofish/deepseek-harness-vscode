@@ -7,6 +7,7 @@ import type { TimelineNode } from '@dsh-vscode/timeline'
 
 import { ToolCallCollection } from './ToolCallCollection.js'
 import { ConversationLayoutProvider } from '../../app/ConversationLayoutProvider.js'
+import type { ExpandedDetailsSetter } from './timeline-shared.js'
 
 const translate = (key: string, params?: Readonly<Record<string, string | number>>): string => {
   if (key === 'timeline.toolSubcalls') return 'Nested tool calls'
@@ -46,7 +47,7 @@ describe('ToolCallCollection', () => {
 
   it('opens a focused web target without toggling its independently controlled details', () => {
     const open = vi.fn()
-    const expand = vi.fn()
+    const expand = vi.fn<ExpandedDetailsSetter>()
     const source = toolNode('web_fetch', undefined, 'completed', {
       phase: 'result',
       card: 'web',
@@ -74,7 +75,10 @@ describe('ToolCallCollection', () => {
     expect(expand).not.toHaveBeenCalled()
     const toggle = view.container.querySelector<HTMLButtonElement>('.dsh-tool-row__toggle')!
     fireEvent.click(toggle)
-    expect(expand).toHaveBeenCalledWith(new Set(['web_fetch']))
+    expect(expand).toHaveBeenCalledOnce()
+    const update = expand.mock.calls[0]?.[0]
+    if (typeof update !== 'function') throw new Error('Expected a functional expansion update')
+    expect(update(new Set(['reasoning']))).toEqual(new Set(['reasoning', 'web_fetch']))
     expect(target.closest('button')?.parentElement?.closest('button')).toBeNull()
     expect(document.getElementById(toggle.getAttribute('aria-controls') ?? '')).not.toBeNull()
   })

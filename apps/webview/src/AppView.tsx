@@ -642,6 +642,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                         ? {}
                         : { nodeChangeBase: state.timeline.nodeChangeBase })}
                       streaming={streaming}
+                      running={activeRunning}
                     />
                   )}
                   <QueuePanel

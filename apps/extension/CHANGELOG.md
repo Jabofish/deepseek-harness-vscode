@@ -4,6 +4,10 @@
 
 - 会话列表每行改用单个操作菜单，悬停或聚焦时标题不再改变换行宽度，侧栏列表不再随鼠标移动反复重排。
 - Session rows use one actions menu instead of a hover-revealed button rail, so hovering or focusing a row no longer re-wraps its title or resizes the list.
+- 跟随系统与 VS Code 的减少动效设置及动态读屏模式；新增本地“过程显示”偏好，安静模式在思考和工具运行时保持折叠摘要稳定，完成或主动展开后显示详情，回答继续实时输出，并减少重复进度播报。
+- Honors system and VS Code reduced motion and screen-reader changes. Adds a local Process display preference: Quiet keeps collapsed thinking and tool activity stable until completion or expansion, preserves streaming answers, and reduces repeated progress announcements.
+- 修复安静模式下工具详情的展开/收起、提交计划被隐藏及重复错误提示；工具批次增长和读屏模式切换时保留焦点及披露状态，准备中无详情的工具也保留行内焦点。附件翻页遵循减少动效且运行时切换立即停止滚动，聊天和轨迹视图共用稳定的进度播报区域。
+- Fixes quiet tool disclosures, hidden submitted plans and duplicate failure prompts. Tool batches and screen-reader changes preserve focus and disclosure state, including preparing tools without details. Attachment paging honors reduced motion and stops immediately when it is enabled. Chat and trajectory views share a stable progress announcement region.
 
 ## 0.4.0
 

@@ -2,6 +2,7 @@ import { memo, useId, useRef, useState, type ReactElement } from 'react'
 import type { GoalView, TodoView } from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
+import { useQuietActivity } from '../../app/AccessibilityProvider.js'
 import { GoalBar } from './GoalBar.js'
 import { GoalTodoStrip } from './GoalTodoStrip.js'
 import { TodoList } from './TodoList.js'
@@ -25,6 +26,7 @@ export const GoalsTasksStrip = memo(function GoalsTasksStrip(
   props: GoalsTasksStripProps,
 ): ReactElement | null {
   const { t } = useI18n()
+  const quiet = useQuietActivity()
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -86,7 +88,7 @@ export const GoalsTasksStrip = memo(function GoalsTasksStrip(
         )}
         <span
           className="dsh-goals-tasks__count"
-          role="status"
+          role={quiet ? undefined : 'status'}
           aria-label={t('goals.complete', { completed, total })}
         >
           {completed}/{total}

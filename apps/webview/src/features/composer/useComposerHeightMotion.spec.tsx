@@ -7,6 +7,7 @@ import { useComposerHeightMotion } from './useComposerHeightMotion.js'
 const originalAnimate = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'animate')
 afterEach(() => {
   cleanup()
+  document.body.className = ''
   vi.unstubAllGlobals()
   if (originalAnimate === undefined) Reflect.deleteProperty(HTMLElement.prototype, 'animate')
   else Object.defineProperty(HTMLElement.prototype, 'animate', originalAnimate)
@@ -105,6 +106,32 @@ function harness(reduced = false): MotionHarness {
 }
 
 describe('composer height motion', () => {
+  it('honors the initial VS Code class and settles an active animation when it changes', async () => {
+    document.body.classList.add('vscode-reduce-motion')
+    const h = harness()
+    h.height(72)
+    h.resize()
+    expect(h.animate).not.toHaveBeenCalled()
+    await act(async () => {
+      await Promise.resolve()
+      document.body.classList.remove('vscode-reduce-motion')
+    })
+    h.height(90)
+    h.resize()
+    expect(h.animate).toHaveBeenCalledOnce()
+    await act(async () => {
+      await Promise.resolve()
+      document.body.classList.add('vscode-reduce-motion')
+    })
+    expect(h.pending[0]!.cancel).toHaveBeenCalledOnce()
+    expect(h.form.classList.contains('dsh-composer--resizing')).toBe(false)
+    expect(h.form.style.height).toBe('140px')
+    h.height(100)
+    h.resize()
+    expect(h.animate).toHaveBeenCalledOnce()
+    expect(h.form.style.height).toBe('150px')
+  })
+
   it('holds the prior height through content changes and keeps the final height after motion', async () => {
     const h = harness()
     expect(h.form.style.height).toBe('92px')

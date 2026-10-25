@@ -1,4 +1,5 @@
 import { useCallback, useLayoutEffect, useRef, useState, type RefObject } from 'react'
+import { getAccessibilitySignals, subscribeAccessibilitySignals } from '../../app/accessibility-signals.js'
 
 const DEFAULT_BOTTOM_THRESHOLD = 64
 const USER_SCROLL_IDLE_MS = 220
@@ -211,8 +212,7 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
     const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight)
     setShowJumpToLatest(false)
 
-    const reduceMotion =
-      typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const reduceMotion = getAccessibilitySignals().reducedMotion
     if (
       reduceMotion ||
       Math.abs(element.scrollTop - maxScrollTop) <= 0.5 ||
@@ -228,6 +228,14 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
     smoothScrollActiveRef.current = true
     element.scrollTo({ top: maxScrollTop, behavior: 'smooth' })
   }, [cancelScheduledFollow, clearLayoutProtection, clearUserScrollLock])
+
+  useLayoutEffect(
+    () =>
+      subscribeAccessibilitySignals(() => {
+        if (getAccessibilitySignals().reducedMotion && smoothScrollActiveRef.current) scrollToLatest()
+      }),
+    [scrollToLatest],
+  )
 
   const userScrollToOffset = useCallback(
     (offset: number): void => {

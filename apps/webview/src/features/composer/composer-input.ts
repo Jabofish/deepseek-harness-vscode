@@ -3,6 +3,7 @@ import { normalizeClientCommandText } from '../../app/client-commands.js'
 import { formatPermissionLabel } from './SessionControls.js'
 import type { CommandArgumentOption } from '../commands/CommandPalette.js'
 import type { DynamicCommand, RunningInputMode } from '@dsh-vscode/domain'
+import { getAccessibilitySignals } from '../../app/accessibility-signals.js'
 
 export const COMPOSER_MIN_HEIGHT = 42
 export const COMPOSER_MAX_HEIGHT = 132
@@ -31,7 +32,10 @@ export function fitComposerTextarea(
 export function pageAttachmentRail(element: HTMLUListElement | null, direction: -1 | 1): void {
   if (element === null) return
   const distance = Math.max(160, Math.floor(element.clientWidth * 0.8))
-  element.scrollBy({ left: direction * distance, behavior: 'smooth' })
+  element.scrollBy({
+    left: direction * distance,
+    behavior: getAccessibilitySignals().reducedMotion ? 'auto' : 'smooth',
+  })
 }
 
 interface EmbeddedReferenceRange {

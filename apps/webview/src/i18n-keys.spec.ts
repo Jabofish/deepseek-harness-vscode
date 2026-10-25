@@ -35,6 +35,7 @@ import {
   PROMPT_MODES,
 } from '@dsh-vscode/domain'
 import { CONVERSATION_FONT_SIZE_OPTIONS, THEME_PREFERENCE_OPTIONS } from './app/ui-preferences.js'
+import { ACTIVITY_PRESENTATION_OPTIONS } from './app/activity-presentation.js'
 import type { PresetCopyBlocker } from './features/settings/PresetManager.js'
 import type { Locale } from './i18n.js'
 import { translate } from './i18n.js'
@@ -446,6 +447,7 @@ describe('webview translation keys', () => {
     // the unions rather than against a copied list of strings.
     const families: readonly (readonly [string, readonly string[]])[] = [
       ['goal.status.', Object.keys(GOAL_STATUS)],
+      ['settings.activityPresentation.', ACTIVITY_PRESENTATION_OPTIONS],
       ['todo.status.', Object.keys(TODO_STATUS)],
       ['jobs.status.', Object.keys(JOB_STATUS)],
       ['workflow.status.', Object.keys(WORKFLOW_STATUS)],

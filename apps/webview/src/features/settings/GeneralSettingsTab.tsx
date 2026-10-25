@@ -30,6 +30,7 @@ import {
 import type { SettingsDrawerProps } from './settings-drawer-props.js'
 import type { Translate, Locale } from '../../i18n.js'
 import { ConversationLayoutControl } from '../../app/ConversationLayoutControl.js'
+import { ActivityPresentationControl } from '../../app/ActivityPresentationControl.js'
 import { EditorIntegrationSettings } from './EditorIntegrationSettings.js'
 
 const LOCALE_OPTIONS: readonly Locale[] = ['en', 'zh']
@@ -515,6 +516,7 @@ export function GeneralSettingsTab(input: GeneralSettingsTabProps): ReactElement
       <EditorIntegrationSettings request={props.featureRequest} />
       <SettingCard ariaLabel={t('settings.extensionPreferences')} title={t('settings.extensionPreferences')}>
         <ConversationLayoutControl />
+        <ActivityPresentationControl />
         <SettingRow
           title={t('settings.language.label')}
           description={t('settings.language.hint')}

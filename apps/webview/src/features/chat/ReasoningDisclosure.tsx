@@ -4,6 +4,7 @@ import { Icon } from '../../ui/Icon.js'
 import type { Translate } from '../../i18n.js'
 import { useConversationLayout } from '../../app/ConversationLayoutProvider.js'
 import { MarkdownContent } from './MarkdownContent.js'
+import { useQuietActivity } from '../../app/AccessibilityProvider.js'
 
 export interface ReasoningDisclosureProps {
   readonly id: string
@@ -26,12 +27,15 @@ export const ReasoningDisclosure = memo(function ReasoningDisclosure(
   props: ReasoningDisclosureProps,
 ): ReactElement | null {
   const focused = useConversationLayout()?.layout === 'focused'
+  const deferred = useQuietActivity() && props.streaming && !props.expanded
   const content = props.markdown.trim()
   if (content === '') return null
 
-  const preview = focused
-    ? focusedReasoningSummary(props.markdown, props.streaming)
-    : latestReasoningLines(content)
+  const preview = deferred
+    ? ''
+    : focused
+      ? focusedReasoningSummary(props.markdown, props.streaming)
+      : latestReasoningLines(content)
   const contentId = `${props.id}:content`
   const showPreview = props.expanded || (props.streaming && preview !== '')
   const showCollapsedPreview = preview !== '' && (!props.hideSettledPreview || props.streaming)

@@ -3,6 +3,7 @@ import type { TodoView } from '@dsh-vscode/domain'
 import { ContentFlow } from '../../components/common/ContentFlow.js'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
+import { useQuietActivity } from '../../app/AccessibilityProvider.js'
 
 export interface TodoListProps {
   readonly todos: readonly TodoView[]
@@ -11,6 +12,7 @@ export interface TodoListProps {
 /** Persistent task progress directly above the composer. */
 export const TodoList = memo(function TodoList({ todos }: TodoListProps): ReactElement | null {
   const { t } = useI18n()
+  const quiet = useQuietActivity()
   const [open, setOpen] = useState(false)
   const { completed, current } = useMemo(() => summarizeTodos(todos), [todos])
   if (todos.length === 0) return null
@@ -37,7 +39,7 @@ export const TodoList = memo(function TodoList({ todos }: TodoListProps): ReactE
             <Icon name="list" />
             <strong>{t('todo.title')}</strong>
           </span>
-          <span className="dsh-todo-list__progress" role="status">
+          <span className="dsh-todo-list__progress" role={quiet ? undefined : 'status'}>
             {t('todo.progress', { completed, total: todos.length })}
           </span>
           {open || current === undefined ? null : (

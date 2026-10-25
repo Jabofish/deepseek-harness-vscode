@@ -66,6 +66,23 @@ describe('motion system', () => {
     expect(webviewStyles.join('\n')).not.toMatch(/prefers-reduced-motion\s*:\s*reduce/u)
   })
 
+  it('applies the same reduction to VS Code body classes, including portalled surfaces', () => {
+    const media = uiStyles.slice(uiStyles.indexOf('@media (prefers-reduced-motion: reduce)'))
+    const body = media.slice(media.indexOf('body.vscode-reduce-motion'))
+    expect(body).toContain('body.vscode-reduce-motion *::before')
+    expect(body).toContain('body.vscode-reduce-motion *::after')
+    for (const declaration of [
+      'scroll-behavior: auto !important;',
+      'animation-duration: 0.01ms !important;',
+      'animation-delay: 0ms !important;',
+      'animation-iteration-count: 1 !important;',
+      'transition: none !important;',
+    ]) {
+      expect(media.slice(0, media.indexOf('body.vscode-reduce-motion'))).toContain(declaration)
+      expect(body).toContain(declaration)
+    }
+  })
+
   it('disables transitions instead of adding a nonzero transition to every element', () => {
     // A universal duration paired with the default transition-property: all
     // animated hidden -> visible at menu mount and made Chromium reject focus.

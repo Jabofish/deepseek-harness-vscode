@@ -9,6 +9,8 @@ import { ScrollToLatestButton, useScrollFollow } from '../../components/common/i
 import { useI18n, type Translate } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
 import { useCompleteTranscriptNodes } from '../chat/useCompleteTranscriptNodes.js'
+import { TurnProgressAnnouncement } from '../chat/TurnProgressAnnouncement.js'
+import { useQuietActivity } from '../../app/AccessibilityProvider.js'
 
 export interface TrajectoryViewProps {
   readonly sessionId: string | undefined
@@ -19,6 +21,8 @@ export interface TrajectoryViewProps {
   readonly nodeChangeStart?: number
   readonly nodeChangeBase?: readonly TimelineNode[]
   readonly streaming: boolean
+  /** Keep progress active across model steps and tool execution. */
+  readonly running?: boolean
   readonly contentScope?: string
   readonly omittedNodeIds?: readonly string[]
   readonly loadFullNode?: (nodeId: string, signal?: AbortSignal) => Promise<TimelineNode>
@@ -34,6 +38,7 @@ export interface TrajectoryViewProps {
  */
 export const TrajectoryView = memo(function TrajectoryView(props: TrajectoryViewProps): ReactElement {
   const { t } = useI18n()
+  const quiet = useQuietActivity()
   const previousSessionRef = useRef(props.sessionId)
   const [query, setQuery] = useState('')
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined)
@@ -111,7 +116,7 @@ export const TrajectoryView = memo(function TrajectoryView(props: TrajectoryView
           onChange={(event) => setQuery(event.target.value)}
         />
         {searching ? (
-          <span className="dsh-trajectory__count" role="status">
+          <span className="dsh-trajectory__count" role={quiet ? undefined : 'status'}>
             {t(matches.length === 1 ? 'trajectory.matches' : 'trajectory.matches.plural', {
               count: matches.length,
             })}
@@ -184,11 +189,11 @@ export const TrajectoryView = memo(function TrajectoryView(props: TrajectoryView
                 </section>
               ))
             )}
-            {props.streaming ? (
-              <span className="dsh-sr-only" aria-live="polite">
-                {t('timeline.streaming')}
-              </span>
-            ) : null}
+            <TurnProgressAnnouncement
+              sessionId={props.sessionId ?? ''}
+              running={props.running ?? props.streaming}
+              translate={t}
+            />
           </div>
         </div>
         {showJumpToLatest && selected === undefined ? (

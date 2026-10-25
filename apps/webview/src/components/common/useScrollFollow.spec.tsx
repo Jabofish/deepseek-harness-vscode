@@ -58,6 +58,7 @@ describe('useScrollFollow user jump', () => {
 
   afterEach(() => {
     cleanup()
+    document.body.className = ''
     vi.unstubAllGlobals()
     vi.useRealTimers()
   })
@@ -70,6 +71,29 @@ describe('useScrollFollow user jump', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Jump to latest' }))
 
     expect(scrollTo).toHaveBeenCalledWith({ top: 600, behavior: 'smooth' })
+  })
+
+  it('honors the VS Code class initially and stops a smooth jump when it changes at runtime', async () => {
+    stubReducedMotion(false)
+    document.body.classList.add('vscode-reduce-motion')
+    const { viewport, scrollTo } = renderHarness()
+    setScrollMetrics(viewport, 200, 1_000, 400)
+    fireEvent.click(screen.getByRole('button', { name: 'Jump to latest' }))
+    expect(scrollTo).not.toHaveBeenCalled()
+    expect(viewport.scrollTop).toBe(600)
+    await act(async () => {
+      await Promise.resolve()
+      document.body.classList.remove('vscode-reduce-motion')
+    })
+    viewport.scrollTop = 200
+    fireEvent.click(screen.getByRole('button', { name: 'Jump to latest' }))
+    expect(scrollTo).toHaveBeenCalledOnce()
+    await act(async () => {
+      await Promise.resolve()
+      document.body.classList.add('vscode-reduce-motion')
+    })
+    expect(viewport.scrollTop).toBe(600)
+    expect(screen.getByTestId('jump-state').getAttribute('data-visible')).toBe('false')
   })
 
   it('uses an immediate jump when reduced motion is enabled', () => {

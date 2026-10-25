@@ -22,13 +22,16 @@ import { ToolSearchPreview } from './ToolSearchPreview.js'
 import { ToolTerminalPreview } from './ToolTerminalPreview.js'
 import { ToolWebPreview } from './ToolWebPreview.js'
 import { useConversationLayout } from '../../app/ConversationLayoutProvider.js'
+import { useQuietActivity } from '../../app/AccessibilityProvider.js'
+import { QuietToolActivity } from './QuietToolActivity.js'
+import type { ExpandedDetailsSetter } from './timeline-shared.js'
 
 export type ToolTimelineNode = Extract<TimelineNode, { readonly kind: 'tool' }>
 
 export interface ToolCallCollectionProps {
   readonly tools: readonly ToolTimelineNode[]
   readonly expanded: ReadonlySet<string>
-  readonly onExpandedChange: (expanded: ReadonlySet<string>) => void
+  readonly onExpandedChange: ExpandedDetailsSetter
   readonly translate: Translate
   /** A parent presentation can own the disclosure; classic collections group by default. */
   readonly grouped?: boolean
@@ -46,6 +49,8 @@ const toolRendererRegistry = new ToolRendererRegistry()
 export const ToolCallCollection = memo(function ToolCallCollection(
   props: ToolCallCollectionProps,
 ): ReactElement {
+  const quiet = useQuietActivity()
+  const rows = <ToolCallRows {...props} {...(quiet ? { grouped: false } : {})} />
   return (
     <>
       {props.tools
@@ -53,7 +58,13 @@ export const ToolCallCollection = memo(function ToolCallCollection(
         .map((node) => (
           <SubmittedPlanCard key={node.id} tool={node.tool} onOpenLink={props.onOpenLink} />
         ))}
-      <ToolCallRows {...props} />
+      {quiet && props.grouped !== false ? (
+        <QuietToolActivity {...props} groupId={`quiet-tools:${props.tools[0]?.id}`}>
+          {rows}
+        </QuietToolActivity>
+      ) : (
+        rows
+      )}
     </>
   )
 }, toolCollectionEqual)
@@ -154,7 +165,7 @@ function treeHasFailure(tree: ToolCallTreeNode): boolean {
 interface ToolCardViewProps {
   readonly tree: ToolCallTreeNode
   readonly expanded: ReadonlySet<string>
-  readonly onExpandedChange: (expanded: ReadonlySet<string>) => void
+  readonly onExpandedChange: ExpandedDetailsSetter
   readonly translate: Translate
   readonly onOpenLink?: (href: string) => void
   readonly onLoadImage?: (image: MessageImageReference) => Promise<string | undefined>
@@ -166,11 +177,14 @@ const ToolCardView = memo(function ToolCardView(props: ToolCardViewProps): React
   const node = tree.node
   const expanded = expandedKeys.has(node.id)
   const onToggle = useCallback((): void => {
-    const next = new Set(expandedKeys)
-    if (next.has(node.id)) next.delete(node.id)
-    else next.add(node.id)
-    onExpandedChange(next)
-  }, [expandedKeys, node.id, onExpandedChange])
+    // Other memoized rows may have changed the set since this card rendered.
+    onExpandedChange((current) => {
+      const next = new Set(current)
+      if (next.has(node.id)) next.delete(node.id)
+      else next.add(node.id)
+      return next
+    })
+  }, [node.id, onExpandedChange])
 
   return (
     <div className="dsh-timeline__tool-call" data-tool-call-id={node.id}>
@@ -250,6 +264,9 @@ function toolCollectionEqual(previous: ToolCallCollectionProps, next: ToolCallCo
   for (let index = 0; index < previous.tools.length; index += 1)
     if (previous.tools[index] !== next.tools[index]) return false
   if (previous.expanded === next.expanded) return true
+  const groupId = `quiet-tools:${next.tools[0]?.id}`
+  for (const key of [groupId, `${groupId}:collapsed`])
+    if (previous.expanded.has(key) !== next.expanded.has(key)) return false
   for (const tool of next.tools)
     if (previous.expanded.has(tool.id) !== next.expanded.has(tool.id)) return false
   return true
