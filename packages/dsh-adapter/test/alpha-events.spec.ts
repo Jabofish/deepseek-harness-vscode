@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { BackendEvent } from '@dsh-vscode/domain'
 
 import type { DshTransport } from '../src/contracts.js'
 import { AlphaEventSource } from '../src/versions/alpha/events.js'
 import type { AlphaLoopbackApiClient } from '../src/versions/alpha/transport.js'
+import { Rc6InteractionRepository } from '../src/repositories/interaction-repository.js'
 
 interface FakeAlphaTransport extends DshTransport {
   readonly sessionStreamOpens: Map<string, number>
@@ -244,6 +245,111 @@ function hangingAlphaTransport(): HangingAlphaTransport {
 }
 
 describe('AlphaEventSource follow policy', () => {
+  it.each(['session', 'workspace', 'job', 'host'] as const)(
+    'preserves live question ownership across a %s stream failure only when the host remains connected',
+    async (scope) => {
+      const transport = hangingAlphaTransport()
+      let fail!: (reason: Error) => void
+      const failure = new Promise<never>((_resolve, reject) => {
+        fail = reject
+      })
+      let interrupted = false
+      let first = true
+      const failFirst = (next: () => AsyncIterable<unknown>): AsyncIterable<unknown> =>
+        (async function* () {
+          if (first) {
+            first = false
+            try {
+              yield await failure
+            } finally {
+              interrupted = true
+            }
+          }
+          yield* next()
+        })()
+      if (scope === 'host') {
+        const original = transport.openEventStream.bind(transport)
+        transport.openEventStream = (signal) => failFirst(() => original(signal))
+      } else if (scope === 'workspace') {
+        const original = transport.openWorkspaceStream.bind(transport)
+        transport.openWorkspaceStream = (signal) => failFirst(() => original(signal))
+      } else if (scope === 'session') {
+        const original = transport.openSessionStream.bind(transport)
+        transport.openSessionStream = (sessionId, signal) =>
+          sessionId === 's1' ? failFirst(() => original(sessionId, signal)) : original(sessionId, signal)
+      }
+      const jobRows =
+        scope === 'job'
+          ? (sessionId: string, signal: AbortSignal): AsyncIterable<unknown> =>
+              sessionId === 's1'
+                ? failFirst(() => transport.jobRows(sessionId, signal))
+                : transport.jobRows(sessionId, signal)
+          : transport.jobRows
+      const respondEnvelope = vi.fn(() => Promise.resolve({ accepted: true }))
+      const interactions = new Rc6InteractionRepository(
+        { ...transport, respondEnvelope },
+        {
+          resetPendingOnSubscribe: false,
+          onSettled: (event) => source.publish(event),
+        },
+      )
+      const observed: BackendEvent[] = []
+      const source = new AlphaEventSource(
+        transport as unknown as AlphaLoopbackApiClient & DshTransport,
+        (event) => {
+          observed.push(event)
+          interactions.remember(event)
+        },
+        undefined,
+        jobRows,
+      )
+      const received: BackendEvent[] = []
+      const unsubscribe = source.subscribe((event) => received.push(event))
+      source.watchSession('s1')
+      source.watchSession('s2')
+      try {
+        for (const sessionId of ['s1', 's2'])
+          source.publish({
+            type: 'question.requested',
+            question: {
+              id: `q-${sessionId}`,
+              rpcId: `rpc-${sessionId}`,
+              sessionId,
+              prompt: 'Fixture question',
+              allowFreeText: true,
+            },
+          })
+        expect(interactions.sessionForQuestion('q-s1')).toBe('s1')
+        expect(interactions.sessionForQuestion('q-s2')).toBe('s2')
+        fail(new Error('Fixture stream interruption'))
+        await waitForAtMost(() => interrupted, 1000)
+        // Let the controller's observer and listener delivery both finish.
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        if (scope === 'host') {
+          expect(observed.some((event) => event.type === 'connection.lost')).toBe(true)
+          expect(received.some((event) => event.type === 'connection.lost')).toBe(true)
+          expect(interactions.sessionForQuestion('q-s1')).toBeUndefined()
+          expect(interactions.sessionForQuestion('q-s2')).toBeUndefined()
+          await expect(interactions.respondToQuestion('q-s1', 'answer')).rejects.toMatchObject({
+            code: 'STALE_INTERACTION',
+          })
+          expect(respondEnvelope).not.toHaveBeenCalled()
+        } else {
+          expect(interactions.sessionForQuestion('q-s1')).toBe('s1')
+          expect(interactions.sessionForQuestion('q-s2')).toBe('s2')
+          expect(observed.some((event) => event.type === 'connection.lost')).toBe(false)
+          expect(received.some((event) => event.type === 'connection.lost')).toBe(false)
+          await expect(interactions.respondToQuestion('q-s1', 'answer')).resolves.toBeUndefined()
+          await expect(interactions.cancelQuestion('q-s2')).resolves.toBeUndefined()
+          expect(respondEnvelope.mock.calls).toHaveLength(2)
+        }
+      } finally {
+        fail(new Error('Fixture cleanup'))
+        unsubscribe()
+        await source.close()
+      }
+    },
+  )
   it('does not report a workspace-only interruption as a host connection loss', async () => {
     const transport = hangingAlphaTransport()
     let attempted = false

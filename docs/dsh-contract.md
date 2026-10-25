@@ -164,6 +164,8 @@ Legacy Host 的 `view` envelope 存在时，它是工具卡的权威投影。无
 
 Alpha Remote Event 的发起客户端在交互结算后可能不会收到取消帧。适配层对本地已接受的审批/问题必须按真实 request identity 补发 resolved；其他客户端的结构化结算也应使待处理卡消失。审批、Goal、Plan、Workflow、Job 和 Tool 状态只由结构化响应或事件推进，不从模型文本推断。
 
+全局 `$events` 与独立 Session、Workspace、Job 流的连接健康分开处理：只有 Host 级断连可以使原生交互身份失效；局部流的断连和恢复须在仓储观察器之前过滤，不能仅在 UI 通知前过滤。局部重订阅不重放 Alpha waterfall，不能依赖它重新建立待答问题。
+
 问题的 `callId`、`timed` 与 `state` 必须贯穿 Host 和 Webview；模型给出的 item ID 可在不同调用和会话复用，不能替代 rpc/call 身份。回答与取消携带可选的严格会话/rpc 身份，由仓储核对后再做工作区授权；旧的 item-only 请求有歧义时拒绝。整组接受回执、本地 resolved 和权威 settled 投影均须防止迟到重放复活；定时前台 waterfall 的取消只关闭该请求，不把 continued call 当成已回答。
 
 本地已接纳的回答或明确取消在 resolved 中保留终态 `settledCallId`，即使原请求已离开有界回放缓存，也可跨窗口结算对应调用；原生前台超时取消不携带该字段。完整订阅快照与控制投影遵循相同结算规则；恢复原生 Inbox 历史时，明确丢弃和准入事实与 claimed 身份一起保留。

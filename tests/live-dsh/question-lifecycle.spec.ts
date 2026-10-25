@@ -8,6 +8,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { describe, expect, it, vi } from 'vitest'
 import type { BackendEvent, UserQuestion } from '../../packages/domain/src/index.js'
 import { AlphaLoopbackApiClient } from '../../packages/dsh-adapter/src/versions/alpha/transport.js'
+import type { AlphaEventSource } from '../../packages/dsh-adapter/src/versions/alpha/events.js'
 import { unwrapRpcResultValue } from '../../packages/dsh-adapter/src/versions/rc6/rpc.js'
 import { redactText } from '../../packages/dsh-adapter/src/redaction.js'
 import { canConnect, startManagedRuntime, spawnManagedChild } from './harness.js'
@@ -218,10 +219,37 @@ describe.skipIf(!enabled)('real DSH question lifecycle in an isolated profile', 
       await invoke('start', { callId: batchCall })
       const batch = await waitQuestion(batchCall)
       expect(batch.items).toHaveLength(2)
-      await backend.interactions.respondToQuestion('second', answers, undefined, {
-        sessionId: session.id,
-        rpcId: batch.rpcId!,
-      })
+      // Inject one logical follow failure while the real $events waterfall is
+      // pending. Its cached ownership and native answer must both survive.
+      const afterQuestion = events.length
+      const follow = vi
+        .spyOn(AlphaLoopbackApiClient.prototype, 'openSessionStream')
+        .mockImplementationOnce(async function* () {
+          yield await Promise.reject(new Error('Fixture logical follow interruption'))
+        })
+      try {
+        await (backend.events as AlphaEventSource).refreshSession(session.id)
+        expect(follow.mock.calls[0]?.[0]).toBe(session.id)
+        await vi.waitFor(
+          () =>
+            expect(
+              events
+                .slice(afterQuestion)
+                .some((event) => event.type === 'notice' && event.sessionId === session.id),
+            ).toBe(true),
+          { timeout: 10000 },
+        )
+        expect(events.slice(afterQuestion).some((event) => event.type === 'connection.lost')).toBe(false)
+        expect(
+          backend.interactions.sessionForQuestion?.('second', { sessionId: session.id, rpcId: batch.rpcId! }),
+        ).toBe(session.id)
+        await backend.interactions.respondToQuestion('second', answers, undefined, {
+          sessionId: session.id,
+          rpcId: batch.rpcId!,
+        })
+      } finally {
+        follow.mockRestore()
+      }
       await vi.waitFor(async () => expect((await invoke('status', { callId: batchCall })).done).toBe(true))
       expect((await invoke('status', { callId: batchCall })).failure).toBeNull()
       expect(events).toContainEqual(
