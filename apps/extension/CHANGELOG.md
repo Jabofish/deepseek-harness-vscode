@@ -6,6 +6,9 @@ Release entries describe behaviour at that release. `Unreleased` lists changes a
 
 ## Unreleased
 
+- 全局安装 DSH 前增加原生确认，并以 `--ignore-scripts` 禁用安装脚本；`dsh.runtime.executablePath` 不再允许工作区设置覆盖，且拒绝 UNC 网络路径。
+- Global DSH installs now require a native confirmation and run with `--ignore-scripts`; `dsh.runtime.executablePath` is no longer overridable by workspace settings and UNC paths are rejected.
+
 ## 0.4.1
 
 - 长会话输出按面板消费确认推进，限制归约前缓冲与恢复重读；隐藏视图延后处理，未变化节点及全文缓存保持稳定。暂态缺口使用恢复预算和退避，控制消息丢失后保留可重试的 Job 输出及字节游标。

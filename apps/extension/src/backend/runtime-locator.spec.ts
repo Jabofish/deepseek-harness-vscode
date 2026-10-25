@@ -477,6 +477,50 @@ describe('unusable runtime candidates', () => {
   })
 })
 
+describe('configured runtime confirmation', () => {
+  it('skips the configured executable when the host confirmation is declined', async () => {
+    const configured = testPlatform.pathApi.join(
+      testPlatform.configuredDirectory,
+      testPlatform.executableName,
+    )
+    const scanned = testPlatform.pathApi.join(testPlatform.existingDirectory, testPlatform.executableName)
+    const runtime = new DshRuntimeLocator({
+      os: testPlatform.os,
+      configuredPath: () => configured,
+      pathEntries: () => [testPlatform.existingDirectory],
+      npmGlobalPrefix: () => Promise.resolve(undefined),
+      fileExists: (candidate) => Promise.resolve(candidate === configured || candidate === scanned),
+      executeVersion: (executable) =>
+        Promise.resolve(executable === configured ? '0.1.1-rc.2' : '0.1.1-rc.1'),
+      confirmRuntimePath: () => Promise.resolve(false),
+    })
+
+    await expect(runtime.locate()).resolves.toMatchObject({
+      runtime: { executable: scanned, source: 'path' },
+    })
+  })
+
+  it('runs the configured executable when the host confirmation is accepted', async () => {
+    const configured = testPlatform.pathApi.join(
+      testPlatform.configuredDirectory,
+      testPlatform.executableName,
+    )
+    const runtime = new DshRuntimeLocator({
+      os: testPlatform.os,
+      configuredPath: () => configured,
+      pathEntries: () => [],
+      npmGlobalPrefix: () => Promise.resolve(undefined),
+      fileExists: () => Promise.resolve(true),
+      executeVersion: () => Promise.resolve('0.1.1-rc.2'),
+      confirmRuntimePath: () => Promise.resolve(true),
+    })
+
+    await expect(runtime.locate()).resolves.toMatchObject({
+      runtime: { executable: configured, source: 'configured', supported: true },
+    })
+  })
+})
+
 describe('persisted runtime path hints', () => {
   it('keeps a hint written on a POSIX platform', () => {
     // The host persists this value in `globalState`; macOS/Linux installs put

@@ -306,6 +306,7 @@ describe('DshRuntimeUpdater', () => {
       '@deepseek-ai/dsh@0.1.0-rc.8',
       '--no-audit',
       '--no-fund',
+      '--ignore-scripts',
       '--loglevel=info',
     ])
   })

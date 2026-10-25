@@ -28,6 +28,9 @@ const unavailableFileSystem: ExportFileSystem = {
 
 /** Export streams the entire history; larger pages halve the roundtrips. */
 const EXPORT_HISTORY_PAGE_MESSAGES = 200
+
+/** Bound the whole export so a malicious DSH cannot exhaust the Extension Host. */
+const MAX_EXPORT_BYTES = 64 * 1024 * 1024
 export class Rc6ExportRepository implements ExportRepository {
   public constructor(
     private readonly transport: DshTransport,
@@ -86,9 +89,13 @@ export class Rc6ExportRepository implements ExportRepository {
         ? jsonChunks(events, options.includeReasoning, options.includeAttachments)
         : markdownChunks(events, options.includeReasoning, options.includeAttachments, options.sessionId)
     const chunks: string[] = []
+    let bytes = 0
+    const encoder = new TextEncoder()
     for (const chunk of source) {
       throwIfAborted(signal)
       chunks.push(chunk)
+      bytes += encoder.encode(chunk).byteLength
+      if (bytes > MAX_EXPORT_BYTES) throw exportTooLarge()
     }
     await this.fileSystem.writeFile(destination, new TextEncoder().encode(chunks.join('')))
   }
@@ -100,11 +107,14 @@ export class Rc6ExportRepository implements ExportRepository {
   ): Promise<void> {
     const reader = body.getReader()
     const chunks: Uint8Array[] = []
+    let bytes = 0
     try {
       while (true) {
         throwIfAborted(signal)
         const next = await reader.read()
         if (next.done) break
+        bytes += next.value.byteLength
+        if (bytes > MAX_EXPORT_BYTES) throw exportTooLarge()
         chunks.push(next.value)
       }
     } finally {
@@ -547,6 +557,14 @@ function indent(value: string, spaces: number): string {
 function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted === true)
     throw signal.reason ?? new DOMException('The export was cancelled.', 'AbortError')
+}
+
+function exportTooLarge(): AppError {
+  return new AppError({
+    code: 'EXPORT_FAILED',
+    message: 'The DSH session export exceeded the maximum supported size.',
+    retryable: false,
+  })
 }
 
 function mapExportError(error: unknown, signal: AbortSignal | undefined): AppError {

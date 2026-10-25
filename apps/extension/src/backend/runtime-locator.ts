@@ -22,6 +22,13 @@ export interface RuntimeLocatorDependencies {
   readonly lastKnownRuntimePath?: () => RuntimePathHint | undefined
   readonly rememberRuntimePath?: (hint: RuntimePathHint) => void
   /**
+   * Native confirmation for a configured executable path the host has not been
+   * told to run before. Returning `false` drops the configured candidate so the
+   * ordinary scan never executes an unconfirmed path. Absent for tests and for
+   * embedders that do not expose a UI.
+   */
+  readonly confirmRuntimePath?: (path: string) => Promise<boolean>
+  /**
    * Reports a candidate that exists but cannot report a version, so a broken
    * install stays diagnosable once its failure is classified instead of thrown.
    */
@@ -81,13 +88,19 @@ export class DshRuntimeLocator implements RuntimeLocator {
     // an incompatible version, surface that fact instead of silently falling
     // back to a different PATH binary.
     if (configured !== undefined && (await this.dependencies.fileExists(configured.path))) {
-      this.rememberLocation(locations, configured.path)
-      const result = {
-        runtime: await this.inspect(configured, signal),
-        searchedLocations: [...locations],
+      const approved =
+        this.dependencies.confirmRuntimePath === undefined
+          ? true
+          : await this.dependencies.confirmRuntimePath(configured.path)
+      if (approved) {
+        this.rememberLocation(locations, configured.path)
+        const result = {
+          runtime: await this.inspect(configured, signal),
+          searchedLocations: [...locations],
+        }
+        if (result.runtime.supported) this.memoize(result, configured.path, 'configured')
+        return result
       }
-      if (result.runtime.supported) this.memoize(result, configured.path, 'configured')
-      return result
     }
 
     // The persisted hint turns the repeated cold-start scan into one

@@ -155,7 +155,11 @@ export function normalizeServerUrl(value: unknown): string | undefined {
 }
 
 function isAbsolutePath(value: string): boolean {
-  return /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('\\\\') || value.startsWith('/')
+  // Drive paths and POSIX roots only. UNC (`\\server\share`) and Windows device
+  // paths (`\\?\C:\…`) are rejected: an executable path is never resolved from a
+  // remote share, which on Windows would force SMB/NetNTLM authentication and
+  // could point at a network-served binary.
+  return /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('/')
 }
 
 function invalid(key: string, expected: string): never {
