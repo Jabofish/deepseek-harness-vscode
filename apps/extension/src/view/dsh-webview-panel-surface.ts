@@ -105,7 +105,11 @@ export class DshWebviewPanelSurface implements WebviewSurface {
 
   /** Retitle the editor tab (the session name may change while it is open). */
   public setTitle(title: string): void {
-    if (!this.disposed) this.panel.title = title
+    if (this.disposed) return
+    const previous = this.panel.title
+    // Same-value title writes still cost a Workbench tab re-render; skip them.
+    if (previous === title) return
+    this.panel.title = title
   }
 
   /** Close the editor tab; the user can do the same with the tab's ✕. */

@@ -3,6 +3,18 @@ import type { TimelineNode } from '@dsh-vscode/timeline'
 
 const EMPTY_PENDING_IDS: ReadonlySet<string> = new Set<string>()
 
+/**
+ * A re-baseline re-projects an unchanged node into a new object, so reference
+ * identity is not a reliable staleness signal. Compare content only when the
+ * references differ; the transcript is a plain serializable tree, so a JSON
+ * comparison is correct and runs only on the (rare) reference-change path.
+ */
+function sameNodeContent(a: TimelineNode | undefined, b: TimelineNode | undefined): boolean {
+  if (a === b) return true
+  if (a === undefined || b === undefined) return false
+  return JSON.stringify(a) === JSON.stringify(b)
+}
+
 /** Transport limits never become presentation limits. Refresh live bodies
  * automatically, retaining the last complete body while a newer one arrives. */
 export function useCompleteTranscriptNodes(
@@ -60,9 +72,10 @@ export function useCompleteTranscriptNodes(
       if (!idle) {
         for (const id of omitted) {
           const source = sources?.get(id)
+          const loaded = values.get(id)
           if (
             (!sources?.has(id) && !required.has(id)) ||
-            (values.has(id) && values.get(id)?.source === source)
+            (loaded !== undefined && sameNodeContent(loaded.source, source))
           )
             continue
           // Required ids already represented by an intact transport node need no read.
@@ -93,7 +106,9 @@ export function useCompleteTranscriptNodes(
         const next = latest.current
         const pending =
           next.nodes.some(
-            (node) => next.omittedIds?.includes(node.id) === true && values.get(node.id)?.source !== node,
+            (node) =>
+              next.omittedIds?.includes(node.id) === true &&
+              !sameNodeContent(values.get(node.id)?.source, node),
           ) ||
           next.requiredIds?.some((id) => !next.nodes.some((node) => node.id === id) && !values.has(id)) ===
             true
@@ -141,7 +156,7 @@ export function useCompleteTranscriptNodes(
     const complete = nodes.map((node) => {
       if (!omitted.has(node.id)) return node
       const value = values.get(node.id)
-      if (value?.source !== node) pendingIds.add(node.id)
+      if (!sameNodeContent(value?.source, node)) pendingIds.add(node.id)
       if (value === undefined) return node
       changed = true
       return value.node

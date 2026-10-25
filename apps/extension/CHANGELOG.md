@@ -8,6 +8,10 @@
 - Honors system and VS Code reduced motion and screen-reader changes. Adds a local Process display preference: Quiet keeps collapsed thinking and tool activity stable until completion or expansion, preserves streaming answers, and reduces repeated progress announcements.
 - 修复安静模式下工具详情的展开/收起、提交计划被隐藏及重复错误提示；工具批次增长和读屏模式切换时保留焦点及披露状态，准备中无详情的工具也保留行内焦点。附件翻页遵循减少动效且运行时切换立即停止滚动，聊天和轨迹视图共用稳定的进度播报区域。
 - Fixes quiet tool disclosures, hidden submitted plans and duplicate failure prompts. Tool batches and screen-reader changes preserve focus and disclosure state, including preparing tools without details. Attachment paging honors reduced motion and stops immediately when it is enabled. Chat and trajectory views share a stable progress announcement region.
+- 会话标题按持久化序列“最新优先”处理，重放旧标题不再让打开的标签页或会话列表反复刷新。
+- Session titles are latest-wins by durable sequence, so a replayed stale title no longer flips an open tab or reloads the session list.
+- 转瞬态分片缺口后的重新订阅按冷却窗口合并，思考分片大量掉帧不再反复重连并触发全量重订阅。
+- Re-subscription after a transient chunk gap is coalesced behind a cooldown, so a reasoning-delta flood no longer hot-loops reconnect and re-subscription.
 
 ## 0.4.0
 

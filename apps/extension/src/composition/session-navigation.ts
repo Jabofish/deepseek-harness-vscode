@@ -59,6 +59,12 @@ export function createSessionNavigation(
     activityRefreshTimer = undefined
     activityDirty = false
   }
+  /** Sessions whose title came from a live event; snapshot baselines only seed. */
+  const liveTitles = new Set<string>()
+  /** Last title applied per session, so same-value re-emissions are no-ops. */
+  const titleState = new Map<string, string>()
+  /** Highest title sequence applied per session; stale re-emissions lose. */
+  const titleSequence = new Map<string, number>()
   const invalidate = (): void => {
     // Any full re-read supersedes a pending activity-only refresh.
     clearActivityRefresh()
@@ -168,6 +174,10 @@ export function createSessionNavigation(
       if (name === 'connection.lost') {
         observedKind = 'disconnected'
         observedBackend = undefined
+        // A reconnect re-baselines through snapshots; allow them to seed again,
+        // and the durable sequence space may reset on a restarted host.
+        liveTitles.clear()
+        titleSequence.clear()
         for (const listener of listeners) listener('connection')
         return
       }
@@ -192,7 +202,15 @@ export function createSessionNavigation(
         }
         return
       }
-      syncSessionTitles(name, payload, deps.retitleEditorTab)
+      const titleChanged = syncSessionTitles(
+        name,
+        payload,
+        deps.retitleEditorTab,
+        liveTitles,
+        titleState,
+        titleSequence,
+      )
+      const projectionKey = objectRecord(payload)?.key
       if (name === 'session.activity') {
         if (listeners.size === 0) return
         // Streaming emits an activity event per step, and a directory read is
@@ -209,47 +227,114 @@ export function createSessionNavigation(
           }, ACTIVITY_REFRESH_MS)
         return
       }
+      // Title-carrying events only refresh the directory when the title actually
+      // changed; a re-emitted baseline or a same-value title projection must not
+      // re-read the whole session list (this was the UI-jitter amplification).
+      if (
+        name === 'session.title' ||
+        name === 'session.projection.baseline' ||
+        (name === 'session.projection' && projectionKey === 'title')
+      ) {
+        if (titleChanged) invalidate()
+        return
+      }
       if (
         DIRECTORY_EVENTS.has(name) ||
-        (name === 'session.projection' &&
-          typeof payload === 'object' &&
-          payload !== null &&
-          'key' in payload &&
-          (payload.key === 'title' || payload.key === 'sessionListMetadata'))
+        (name === 'session.projection' && projectionKey === 'sessionListMetadata')
       )
         invalidate()
     },
   }
 }
 
-/** Use the upstream title view directly, including reconnect and follow baselines. */
+/**
+ * Use the upstream title view directly, including reconnect and follow baselines.
+ * Live events (`session.title`, `session.projection` key `title`) win: once a
+ * live title is seen, snapshot baselines (`session.subscribed`,
+ * `session.projection.baseline`) only seed sessions that have no live title yet.
+ * Titles are also latest-wins by durable sequence, so a re-baseline that replays
+ * an older fallback title after a newer provider title does not flip the tab.
+ * Returns whether any title actually changed, so the caller can skip a directory
+ * refresh for same-value re-emissions.
+ */
 function syncSessionTitles(
   name: string,
   payload: unknown,
   retitle: NavigationDependencies['retitleEditorTab'],
-): void {
-  if (retitle === undefined) return
+  liveTitles: Set<string>,
+  titleState: Map<string, string>,
+  titleSequence: Map<string, number>,
+): boolean {
+  if (retitle === undefined) return false
   if (
     name !== 'session.title' &&
     name !== 'session.projection' &&
     name !== 'session.projection.baseline' &&
     name !== 'session.subscribed'
   )
-    return
+    return false
   const event = objectRecord(payload)
-  if (event === undefined) return
-  const apply = (sessionId: unknown, title: unknown): void => {
-    if (typeof sessionId === 'string' && sessionId.trim() !== '' && typeof title === 'string')
+  if (event === undefined) return false
+  let changed = false
+  const applyLive = (sessionId: unknown, title: unknown, sequence: number | undefined): void => {
+    if (typeof sessionId !== 'string' || sessionId.trim() === '' || typeof title !== 'string') return
+    liveTitles.add(sessionId)
+    if (!applyNewerTitle(sessionId, sequence, titleSequence)) return
+    if (titleState.get(sessionId) !== title) {
+      titleState.set(sessionId, title)
       retitle(sessionId, title)
+      changed = true
+    }
   }
-  if (name === 'session.title') apply(event.sessionId, event.title)
-  else if (name === 'session.projection' && event.key === 'title') apply(event.sessionId, event.value)
+  const applySeed = (sessionId: unknown, title: unknown, sequence: number | undefined): void => {
+    if (typeof sessionId !== 'string' || sessionId.trim() === '' || typeof title !== 'string') return
+    if (liveTitles.has(sessionId)) return
+    if (!applyNewerTitle(sessionId, sequence, titleSequence)) return
+    if (titleState.get(sessionId) !== title) {
+      titleState.set(sessionId, title)
+      retitle(sessionId, title)
+      changed = true
+    }
+  }
+  if (name === 'session.title') applyLive(event.sessionId, event.title, safeSequence(event.sequence))
+  else if (name === 'session.projection' && event.key === 'title')
+    applyLive(event.sessionId, event.value, safeSequence(event.sequence))
   else if (name === 'session.subscribed')
-    apply(event.sessionId, objectRecord(objectRecord(event.projection)?.values)?.title)
+    applySeed(
+      event.sessionId,
+      objectRecord(objectRecord(event.projection)?.values)?.title,
+      safeSequence(objectRecord(event.projection)?.asOfSequence),
+    )
   else if (name === 'session.projection.baseline') {
     for (const [sessionId, projection] of Object.entries(objectRecord(event.projections) ?? {}))
-      apply(sessionId, objectRecord(objectRecord(projection)?.values)?.title)
+      applySeed(
+        sessionId,
+        objectRecord(objectRecord(projection)?.values)?.title,
+        safeSequence(objectRecord(projection)?.asOfSequence),
+      )
   }
+  return changed
+}
+
+/**
+ * Accept a title only when its durable sequence is at least as recent as the
+ * last one applied. Unsequenced titles (older wires / host notices) skip the
+ * sequence guard and rely on the value dedupe above.
+ */
+function applyNewerTitle(
+  sessionId: string,
+  sequence: number | undefined,
+  titleSequence: Map<string, number>,
+): boolean {
+  if (sequence === undefined) return true
+  const previous = titleSequence.get(sessionId)
+  if (previous !== undefined && sequence < previous) return false
+  titleSequence.set(sessionId, sequence)
+  return true
+}
+
+function safeSequence(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
 }
 
 function objectRecord(value: unknown): Readonly<Record<string, unknown>> | undefined {
