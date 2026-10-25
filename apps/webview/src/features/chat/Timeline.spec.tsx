@@ -1929,7 +1929,7 @@ describe('Timeline', () => {
       />,
     )
 
-    expect(screen.getByRole('status')).toBeDefined()
+    expect(screen.getByText('Response is streaming')).toBeDefined()
     expect(screen.queryByRole('button', { name: 'Branch into a new conversation' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Copy' })).toBeNull()
   })
@@ -1956,7 +1956,7 @@ describe('Timeline', () => {
       />,
     )
 
-    expect(screen.getByRole('status')).toBeDefined()
+    expect(screen.getByText('Response is streaming')).toBeDefined()
     expect(screen.queryByRole('button', { name: 'Branch into a new conversation' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Copy' })).toBeNull()
 

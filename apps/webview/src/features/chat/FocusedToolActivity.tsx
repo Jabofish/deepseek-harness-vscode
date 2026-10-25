@@ -7,6 +7,8 @@ import { SubmittedPlanCard } from './SubmittedPlanCard.js'
 import { focusedPresentationPolicy } from './focused-presentation-policy.js'
 import type { TranscriptViewMode } from '../../app/ui-preferences.js'
 import type { ExpandedDetailsSetter } from './timeline-shared.js'
+import { useQuietActivity } from '../../app/AccessibilityProvider.js'
+import { QuietToolActivity } from './QuietToolActivity.js'
 
 /** Inline group disclosure retains every tool result without a page submenu. */
 export function FocusedToolActivity(
@@ -17,6 +19,7 @@ export function FocusedToolActivity(
     readonly revealRequestId?: string | undefined
   },
 ): ReactElement {
+  const quiet = useQuietActivity()
   const revealIndex = props.tools.findIndex((tool) => tool.id === props.revealSourceNodeId)
   const groupId = `focused-tools:${props.tools[0]?.id}`
   const revealKey = props.revealRequestId ?? props.revealSourceNodeId
@@ -63,47 +66,63 @@ export function FocusedToolActivity(
       ? undefined
       : props.translate('timeline.focused.failedTools', { count: failed.length })
   const visible = open || !policy.groupTools
+  const plans = props.tools
+    .filter((node) => node.tool.submittedPlan !== undefined)
+    .map((node) => <SubmittedPlanCard key={node.id} tool={node.tool} onOpenLink={props.onOpenLink} />)
+  const toolCards = (): ReactElement => (
+    <ToolCallCollection
+      {...props}
+      grouped={false}
+      tools={props.tools.map((node) => {
+        const { submittedPlan: _plan, ...tool } = node.tool
+        return _plan === undefined ? node : { ...node, tool }
+      })}
+    />
+  )
   return (
     <div className="dsh-focused-tools">
-      {props.tools
-        .filter((node) => node.tool.submittedPlan !== undefined)
-        .map((node) => (
-          <SubmittedPlanCard key={node.id} tool={node.tool} onOpenLink={props.onOpenLink} />
-        ))}
-      <button
-        type="button"
-        className={`dsh-focused-tools__summary${failureLabel === undefined ? '' : ' dsh-focused-tools__summary--failed'}`}
-        aria-expanded={visible}
-        aria-controls={bodyId}
-        aria-label={failureLabel === undefined ? undefined : `${summaryLabel} · ${failureLabel}`}
-        title={failureLabel}
-        disabled={!policy.groupTools}
-        onClick={() => {
-          setDisclosure({ ...disclosure, open: !open })
-          props.onExpandedChange((current) => {
-            const next = new Set(current)
-            if (open) next.delete(groupId)
-            else next.add(groupId)
-            return next
-          })
-        }}
-      >
-        <Icon name={failureLabel === undefined ? 'tool' : 'alert'} />
-        <span>{summaryLabel}</span>
-        {policy.groupTools ? <Icon name={open ? 'chevron-down' : 'chevron-right'} /> : null}
-      </button>
-      <div id={bodyId} hidden={!visible} className="dsh-focused-tools__body">
-        {visible ? (
-          <ToolCallCollection
-            {...props}
-            grouped={false}
-            tools={props.tools.map((node) => {
-              const { submittedPlan: _plan, ...tool } = node.tool
-              return _plan === undefined ? node : { ...node, tool }
-            })}
-          />
-        ) : null}
-      </div>
+      {plans}
+      {quiet ? (
+        <QuietToolActivity
+          {...props}
+          groupId={groupId}
+          onExpandedChange={(next) => {
+            const updated = typeof next === 'function' ? next(props.expanded) : next
+            setDisclosure({ ...disclosure, open: updated.has(groupId) })
+            onExpandedChange(next)
+          }}
+        >
+          {toolCards()}
+        </QuietToolActivity>
+      ) : (
+        <>
+          <button
+            type="button"
+            className={`dsh-focused-tools__summary${failureLabel === undefined ? '' : ' dsh-focused-tools__summary--failed'}`}
+            aria-expanded={visible}
+            aria-controls={bodyId}
+            aria-label={failureLabel === undefined ? undefined : `${summaryLabel} · ${failureLabel}`}
+            title={failureLabel}
+            disabled={!policy.groupTools}
+            onClick={() => {
+              setDisclosure({ ...disclosure, open: !open })
+              props.onExpandedChange((current) => {
+                const next = new Set(current)
+                if (open) next.delete(groupId)
+                else next.add(groupId)
+                return next
+              })
+            }}
+          >
+            <Icon name={failureLabel === undefined ? 'tool' : 'alert'} />
+            <span>{summaryLabel}</span>
+            {policy.groupTools ? <Icon name={open ? 'chevron-down' : 'chevron-right'} /> : null}
+          </button>
+          <div id={bodyId} hidden={!visible} className="dsh-focused-tools__body">
+            {visible ? toolCards() : null}
+          </div>
+        </>
+      )}
     </div>
   )
 }

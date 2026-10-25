@@ -1,4 +1,13 @@
 {
+  "settings.activityPresentation.label": "Process display",
+  "settings.activityPresentation.hint": "Quiet keeps thinking and tool activity stable while running. Details appear when finished or when you expand them. The answer continues streaming. Auto follows VS Code screen-reader mode. Saved locally.",
+  "settings.activityPresentation.auto": "Auto (screen reader)",
+  "settings.activityPresentation.live": "Live",
+  "settings.activityPresentation.quiet": "Quiet",
+  "timeline.quietTools.running": "Tools working…",
+  "timeline.quietTools.completed": "Tool activity finished",
+  "timeline.quietTools.failed": "A tool failed. Expand tool activity for details.",
+  "timeline.responseFinished": "Response finished",
   "billing.convertingCurrency": "Converting costs…",
   "billing.originalCurrency": "Original currency",
   "billing.exchangeRate": "Reference rate: 1 USD = {rate} CNY (ECB, {date})",

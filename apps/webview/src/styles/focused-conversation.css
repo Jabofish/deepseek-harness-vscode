@@ -163,6 +163,12 @@
   color: var(--dsh-danger);
 }
 
+.dsh-focused-tools__failure {
+  display: block;
+  padding-block: var(--dsh-space-1);
+  color: var(--dsh-danger);
+}
+
 .dsh-focused-tools__pages {
   display: flex;
   align-items: center;

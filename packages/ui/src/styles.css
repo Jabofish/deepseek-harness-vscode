@@ -1036,3 +1036,16 @@
     transition: none !important;
   }
 }
+
+body.vscode-reduce-motion,
+body.vscode-reduce-motion::before,
+body.vscode-reduce-motion::after,
+body.vscode-reduce-motion *,
+body.vscode-reduce-motion *::before,
+body.vscode-reduce-motion *::after {
+  scroll-behavior: auto !important;
+  animation-duration: 0.01ms !important;
+  animation-delay: 0ms !important;
+  animation-iteration-count: 1 !important;
+  transition: none !important;
+}

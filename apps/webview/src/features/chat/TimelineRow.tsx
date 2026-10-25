@@ -87,9 +87,17 @@ function expandedDetailsEqualForNode(
 ): boolean {
   if (previous === next) return true
   const check = (key: string): boolean => previous.has(key) === next.has(key)
+  const checkTool = (id: string): boolean => {
+    if (!check(id)) return false
+    for (const prefix of ['quiet-tools', 'focused-tools']) {
+      const groupId = `${prefix}:${id}`
+      if (!check(groupId) || !check(`${groupId}:collapsed`)) return false
+    }
+    return true
+  }
   switch (node.kind) {
     case 'tool':
-      return check(node.id)
+      return checkTool(node.id)
     case 'assistant-message':
       return node.reasoning === undefined || check(`reasoning:${node.id}`)
     case 'reasoning':
@@ -97,8 +105,8 @@ function expandedDetailsEqualForNode(
     case 'assistant-turn': {
       const blocks = node.blocks.length === 0 ? assistantBlocksFromAggregates(node) : node.blocks
       for (const block of blocks) {
-        const key = block.kind === 'tool' ? block.node.id : `reasoning:${node.id}:${block.id}`
-        if (!check(key)) return false
+        if (block.kind === 'tool' ? !checkTool(block.node.id) : !check(`reasoning:${node.id}:${block.id}`))
+          return false
       }
       return true
     }

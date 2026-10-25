@@ -19,6 +19,7 @@ import { WorkflowRunCard } from '../workflows/WorkflowDrawer.js'
 import { Icon } from '../../ui/Icon.js'
 import type { PerformanceUsageMode, TranscriptViewMode } from '../../app/ui-preferences.js'
 import type { Translate } from '../../i18n.js'
+import { useQuietActivity } from '../../app/AccessibilityProvider.js'
 import {
   assistantBlocksFromAggregates,
   assistantMessageId,
@@ -808,7 +809,7 @@ function renderAssistantBlocks(
       if (next?.kind === 'tool') tools.push(next.node)
     }
     rendered.push(
-      <div className="dsh-timeline__assistant-tools" key={`tools:${tools.map((tool) => tool.id).join('|')}`}>
+      <div className="dsh-timeline__assistant-tools" key={`tools:${tools[0]?.id}`}>
         {focused ? (
           <FocusedToolActivity
             tools={tools}
@@ -930,10 +931,12 @@ export function StreamingActivity(props: {
   readonly usingTool?: boolean
   readonly translate: Translate
 }): ReactElement {
-  const key = props.usingTool === true ? 'timeline.activity.usingTool' : 'timeline.activity.responding'
+  const quiet = useQuietActivity()
+  const usingTool = !quiet && props.usingTool === true
+  const key = usingTool ? 'timeline.activity.usingTool' : 'timeline.activity.responding'
   return (
-    <span className="dsh-timeline__streaming-status" role="status" aria-live="polite">
-      <Icon name={props.usingTool === true ? 'tool' : 'sparkles'} />
+    <span className="dsh-timeline__streaming-status">
+      <Icon name={usingTool ? 'tool' : 'sparkles'} />
       <span>{props.translate(key)}</span>
     </span>
   )

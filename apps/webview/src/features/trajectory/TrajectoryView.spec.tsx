@@ -67,7 +67,52 @@ function renderView(
 }
 
 describe('TrajectoryView', () => {
-  afterEach(() => cleanup())
+  afterEach(() => {
+    cleanup()
+    document.body.className = ''
+  })
+
+  it('keeps search counts readable without announcing streamed match-count changes in quiet mode', async () => {
+    document.body.classList.add('vscode-using-screen-reader')
+    const view = renderView({ streaming: true })
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search trajectory records' }), {
+      target: { value: 'parser' },
+    })
+    const count = view.container.querySelector('.dsh-trajectory__count')!
+    expect(count.getAttribute('role')).toBeNull()
+    expect(count.textContent).toContain('match')
+    const next = [...nodes, { kind: 'user-message' as const, id: 'new-match', markdown: 'parser' }]
+    view.rerender(<TrajectoryView sessionId="session-1" nodes={next} streaming />)
+    expect(view.container.querySelector('.dsh-trajectory__count')).toBe(count)
+    expect(count.getAttribute('role')).toBeNull()
+    await act(async () => {
+      document.body.className = ''
+      await Promise.resolve()
+    })
+    expect(count.getAttribute('role')).toBe('status')
+  })
+
+  it('keeps one progress region and its role stable until the authoritative run ends', () => {
+    const view = renderView({ running: true, streaming: true })
+    const region = view.container.querySelector('[aria-live="polite"]')!
+    const role = region.getAttribute('role')
+    const observer = new MutationObserver(() => undefined)
+    observer.observe(region, { subtree: true, attributes: true, characterData: true, childList: true })
+    expect(region.textContent).toBe('Response is streaming')
+    view.rerender(<TrajectoryView sessionId="session-1" nodes={nodes} running streaming={false} />)
+    expect(region.textContent).toBe('Response is streaming')
+    expect(observer.takeRecords()).toHaveLength(0)
+    view.rerender(<TrajectoryView sessionId="session-1" nodes={nodes} running={false} streaming={false} />)
+    expect(view.container.querySelector('[aria-live="polite"]')).toBe(region)
+    expect(region.textContent).toBe('Response finished')
+    expect(region.getAttribute('role')).toBe(role)
+    expect(observer.takeRecords().filter((record) => record.type === 'attributes')).toHaveLength(0)
+    view.rerender(<TrajectoryView sessionId="session-2" nodes={[]} streaming={false} />)
+    expect(region.textContent).toBe('')
+    view.rerender(<TrajectoryView sessionId="session-2" nodes={[]} streaming />)
+    expect(region.textContent).toBe('Response is streaming')
+    observer.disconnect()
+  })
 
   it('automatically replaces a clipped selected tool result with its complete inline output', async () => {
     const tool = nodes.find((node) => node.kind === 'tool' && node.id === 't1')

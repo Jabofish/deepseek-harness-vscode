@@ -1,4 +1,13 @@
 {
+  "settings.activityPresentation.label": "过程显示",
+  "settings.activityPresentation.hint": "安静模式在运行时保持思考和工具摘要稳定，完成或主动展开后显示详情。回答仍实时输出。自动模式跟随 VS Code 读屏模式。此偏好保存在本地。",
+  "settings.activityPresentation.auto": "自动（跟随读屏模式）",
+  "settings.activityPresentation.live": "实时",
+  "settings.activityPresentation.quiet": "安静",
+  "timeline.quietTools.running": "工具处理中…",
+  "timeline.quietTools.completed": "工具活动已结束",
+  "timeline.quietTools.failed": "工具执行失败，可展开工具活动查看详情。",
+  "timeline.responseFinished": "回答已结束",
   "billing.convertingCurrency": "正在换算费用…",
   "billing.originalCurrency": "原币",
   "billing.exchangeRate": "参考汇率：1 USD = {rate} CNY（ECB，{date}）",

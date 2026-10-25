@@ -1,13 +1,14 @@
-import type { ReactElement, RefObject } from 'react'
+import { useLayoutEffect, type ReactElement, type RefObject } from 'react'
 import type { PromptAttachment } from '@dsh-vscode/domain'
+import { getAccessibilitySignals, subscribeAccessibilitySignals } from '../../app/accessibility-signals.js'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
 import { pageAttachmentRail } from './composer-input.js'
 
 /**
  * The composer's attachment chip rail with its horizontal paging buttons and
- * wheel-to-horizontal-scroll. Pure rendering: state lives in the composer and
- * the lightbox hook.
+ * wheel-to-horizontal-scroll. Attachment state lives in the composer and the
+ * lightbox hook; motion follows the shared accessibility subscription.
  */
 export function ComposerAttachmentsRail({
   attachments,
@@ -25,6 +26,18 @@ export function ComposerAttachmentsRail({
   readonly onRemove: (uri: string) => void
 }): ReactElement | null {
   const { t } = useI18n()
+  useLayoutEffect(
+    () =>
+      subscribeAccessibilitySignals(() => {
+        const rail = railRef.current
+        if (rail !== null && getAccessibilitySignals().reducedMotion && typeof rail.scrollTo === 'function') {
+          // CSS and future paging calls cannot cancel an already running
+          // browser smooth scroll. Freeze it at its current position.
+          rail.scrollTo({ left: rail.scrollLeft, behavior: 'instant' })
+        }
+      }),
+    [railRef],
+  )
   if (attachments.length === 0) return null
   return (
     <div className="dsh-composer__attachment-rail">

@@ -36,6 +36,7 @@ import {
   type TimelineNodeRenderContext,
 } from './timeline-shared.js'
 import { StreamingActivity } from './timeline-renderers.js'
+import { TurnProgressAnnouncement } from './TurnProgressAnnouncement.js'
 import { TimelineRow } from './TimelineRow.js'
 import { ToolLinkErrorDialog } from './ToolLinkErrorDialog.js'
 import {
@@ -47,6 +48,7 @@ import { useCompleteTranscriptNodes } from './useCompleteTranscriptNodes.js'
 import { useTranscriptCopyFallback } from './useTranscriptCopyFallback.js'
 import { useConversationLayout } from '../../app/ConversationLayoutProvider.js'
 import type { ConversationLayout } from '../../app/conversation-layout.js'
+import { useQuietActivity } from '../../app/AccessibilityProvider.js'
 
 export interface TimelineProps {
   readonly sessionId: string
@@ -167,6 +169,16 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
     olderHistoryRequestRef.current = undefined
   }, [props.sessionId])
   const [expandedDetails, setExpandedDetails] = useState<ReadonlySet<string>>(new Set())
+  const quietActivity = useQuietActivity()
+  const presentationFocus = useRef<
+    | {
+        readonly element: HTMLElement
+        readonly sessionId: string
+        readonly rowId: string
+        readonly toolId: string | undefined
+      }
+    | undefined
+  >(undefined)
   const showDshEvents = props.showDshEvents ?? false
   const transcriptView = props.transcriptView ?? 'standard'
   const performanceUsage = props.performanceUsage ?? 'detailed'
@@ -330,6 +342,48 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
     sessionId: props.sessionId,
     layoutMeasurementsActive: virtualizeTimeline,
   })
+  useLayoutEffect(() => {
+    const saved = presentationFocus.current
+    if (saved !== undefined && saved.sessionId !== props.sessionId) {
+      presentationFocus.current = undefined
+      return
+    }
+    if (saved === undefined || saved.element.isConnected || document.activeElement !== document.body) return
+    // A host screen-reader change can replace a tool disclosure while its
+    // keyboard focus is inside. Restore only the removed control's row; never
+    // take focus back from settings, the composer or another live control.
+    const row = [...(scrollRef.current?.querySelectorAll<HTMLElement>('[data-node-id]') ?? [])].find(
+      (element) => element.dataset.nodeId === saved.rowId,
+    )
+    const tool = [...(row?.querySelectorAll<HTMLElement>('[data-tool-call-id]') ?? [])].find(
+      (element) => element.dataset.toolCallId === saved.toolId,
+    )
+    const visible = (element: HTMLElement): boolean => {
+      for (let parent = element.parentElement; parent !== null; parent = parent.parentElement) {
+        if (parent.hidden) return false
+        if (
+          parent instanceof HTMLDetailsElement &&
+          !parent.open &&
+          !parent.querySelector(':scope > summary')?.contains(element)
+        )
+          return false
+      }
+      return true
+    }
+    const candidates = [
+      ...(tool?.querySelectorAll<HTMLElement>('button:not(:disabled)') ?? []),
+      ...(row?.querySelectorAll<HTMLElement>(
+        '[data-quiet-tools] button:not(:disabled), .dsh-focused-tools__summary:not(:disabled), .dsh-timeline__tool-group > summary, .dsh-tool-card__summary:not(:disabled), .dsh-tool-row__toggle:not(:disabled)',
+      ) ?? []),
+      ...(row?.querySelectorAll<HTMLElement>('.dsh-focused-turn__summary:not(:disabled)') ?? []),
+    ]
+    // Preparing tools can have no enabled detail controls in the live view.
+    // Prefer the outer process disclosure, then keep a programmatic focus
+    // anchor on the original row without adding it to sequential Tab order.
+    const target = candidates.find(visible) ?? (row !== undefined && visible(row) ? row : undefined)
+    if (target === row && row !== undefined) row.tabIndex = -1
+    target?.focus({ preventScroll: true })
+  }, [quietActivity, props.sessionId, scrollRef])
   const getFocusedTimelineIndex = useCallback((): number | undefined => {
     const timeline = scrollRef.current
     if (timeline === null) return undefined
@@ -603,6 +657,24 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
         tabIndex={0}
         onKeyDown={handleTimelineScrollKeyDown}
         onScroll={handleScroll}
+        onFocusCapture={(event) => {
+          const element = event.target
+          const row = element.closest<HTMLElement>('.dsh-timeline__row[data-node-id]')
+          if (row?.dataset.nodeId === undefined) {
+            presentationFocus.current = undefined
+            return
+          }
+          presentationFocus.current = {
+            element,
+            sessionId: props.sessionId,
+            rowId: row.dataset.nodeId,
+            toolId: element.closest<HTMLElement>('[data-tool-call-id]')?.dataset.toolCallId,
+          }
+        }}
+        onBlurCapture={(event) => {
+          if (event.relatedTarget instanceof Node && !event.currentTarget.contains(event.relatedTarget))
+            presentationFocus.current = undefined
+        }}
       >
         {props.hasMoreHistory && props.onLoadOlderHistory !== undefined ? (
           <div className="dsh-timeline__history-more">
@@ -697,11 +769,7 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
             />
           ) : null}
         </div>
-        {props.streaming ? (
-          <span className="dsh-sr-only" aria-live="polite">
-            {t('timeline.streaming')}
-          </span>
-        ) : null}
+        <TurnProgressAnnouncement sessionId={props.sessionId} running={running} translate={t} />
         {/* Mounted only while an outcome is up, like the per-row copy button. */}
         {copyFallbackAnnounced ? (
           <span className="dsh-sr-only" role="status">
