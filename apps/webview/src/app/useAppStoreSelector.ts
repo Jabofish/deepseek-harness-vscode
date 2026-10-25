@@ -1,3 +1,4 @@
+import type { StateSubscription } from './store/state-subscriptions.js'
 import { useCallback, useMemo, useSyncExternalStore } from 'react'
 import type { AppState, AppStore } from './store.js'
 
@@ -25,8 +26,9 @@ export function useAppStoreSelector<Selection>(
   store: AppStateSource,
   select: (state: AppState) => Selection,
   isEqual: (previous: Selection, next: Selection) => boolean = Object.is,
+  fields?: StateSubscription<AppState>,
 ): Selection {
-  const subscribe = useCallback((listener: () => void) => store.subscribe(listener), [store])
+  const subscribe = useCallback((listener: () => void) => store.subscribe(listener, fields), [store, fields])
   const getSnapshot = useMemo(() => createSelectionReader(store, select, isEqual), [store, select, isEqual])
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 }

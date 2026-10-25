@@ -1,3 +1,4 @@
+import { sameTimelineValue } from '@dsh-vscode/timeline'
 import {
   TRANSCRIPT_MAX_CHARS,
   TRANSCRIPT_MAX_NODES,
@@ -91,18 +92,81 @@ export function transcriptTimeline(window: TranscriptWindow, previous?: Timeline
   }
 }
 
+export function reconcileFullWindow(
+  previous: TranscriptWindow | undefined,
+  next: TranscriptWindow,
+): TranscriptWindow {
+  if (previous === undefined) return next
+  if (previous.sessionId !== next.sessionId || previous.nodes.length === 0 || next.nodes.length === 0)
+    return next
+  const previousById = new Map(previous.nodes.map((node) => [node.id, node]))
+  const previousOmitted = new Set(previous.omittedNodeIds)
+  const nextOmitted = new Set(next.omittedNodeIds)
+  let reusedAny = false
+  let allSameOrder = previous.nodes.length === next.nodes.length
+  const nodes = next.nodes.map((node, index) => {
+    const prevNode = previousById.get(node.id)
+    if (prevNode === undefined) {
+      allSameOrder = false
+      return node
+    }
+    if (prevNode === node) {
+      if (previous.nodes[index] !== prevNode) allSameOrder = false
+      return node
+    }
+    const wasOmitted = previousOmitted.has(node.id)
+    const isOmitted = nextOmitted.has(node.id)
+    if (wasOmitted !== isOmitted) {
+      allSameOrder = false
+      return node
+    }
+    if (isOmitted) {
+      const prevRevision =
+        previous.contentVersions !== undefined && Object.hasOwn(previous.contentVersions, node.id)
+          ? previous.contentVersions[node.id]
+          : undefined
+      const nextRevision =
+        next.contentVersions !== undefined && Object.hasOwn(next.contentVersions, node.id)
+          ? next.contentVersions[node.id]
+          : undefined
+      // A truncated preview cannot prove the full body on the Host is unchanged;
+      // require an authoritative matching full-body fingerprint before reusing.
+      if (prevRevision === undefined || nextRevision === undefined || prevRevision !== nextRevision) {
+        allSameOrder = false
+        return node
+      }
+    }
+    if (!sameTimelineValue(prevNode, node)) {
+      allSameOrder = false
+      return node
+    }
+    reusedAny = true
+    if (previous.nodes[index] !== prevNode) allSameOrder = false
+    return prevNode
+  })
+  if (!reusedAny && !allSameOrder) return next
+  return {
+    ...next,
+    nodes: allSameOrder ? previous.nodes : nodes,
+  }
+}
+
 export function installTranscript(state: AppState, window: TranscriptWindow): AppState {
   if (
     window.sessionId !== state.activeSessionId ||
     (state.transcript !== undefined && window.revision <= state.transcript.revision)
   )
     return state
+  const reconciled =
+    state.transcript !== undefined && !transcriptPositions.has(window.nodes)
+      ? reconcileFullWindow(state.transcript, window)
+      : window
   return withCurrentTodos({
     ...state,
-    transcript: window,
-    timeline: transcriptTimeline(window, state.timeline),
-    historyHasMore: window.hasMore,
-    historyBeforeSequence: window.beforeSequence,
+    transcript: reconciled,
+    timeline: transcriptTimeline(reconciled, state.timeline),
+    historyHasMore: reconciled.hasMore,
+    historyBeforeSequence: reconciled.beforeSequence,
     historyLoading: false,
   })
 }

@@ -29,7 +29,6 @@ type SessionDependencies = Pick<
   | 'requireCurrentWorkspaceSession'
   | 'requireCurrentWorkspaceId'
   | 'requireOwnedQueuedInput'
-  | 'resyncView'
   | 'prepareEditorSession'
 > & {
   readonly transcript: TranscriptWindowService
@@ -140,8 +139,7 @@ export function createSessionRequestHandler(
     }
     if (request.type === 'session.transcript.resync') {
       await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
-      await deps.resyncView?.()
-      return {}
+      return { transcript: await deps.transcript.resync(request.payload.sessionId, signal) }
     }
     if (request.type === 'session.transcript.openContent') {
       await requireCurrentWorkspaceSession(request.payload.sessionId, signal)

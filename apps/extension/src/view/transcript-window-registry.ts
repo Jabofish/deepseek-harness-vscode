@@ -8,7 +8,24 @@ export class TranscriptWindowRegistry {
   public constructor(
     private readonly create: (surfaceId: string, isCurrent: () => boolean) => TranscriptWindowService,
     private readonly visible: (surfaceId: string) => boolean = () => true,
+    private readonly hasUnboundSurface: (hasSurface: (surfaceId: string) => boolean) => boolean = () => false,
   ) {}
+
+  public hasSurface(surfaceId: string): boolean {
+    return this.windows.has(surfaceId)
+  }
+
+  public surfacesForSession(sessionId: string): readonly string[] | undefined {
+    if (this.windows.size === 0 || this.hasUnboundSurface((surfaceId) => this.windows.has(surfaceId)))
+      return undefined
+    const matched: string[] = []
+    for (const [surfaceId, window] of this.windows) {
+      const active = window.activeSessionId()
+      if (active === undefined) return undefined
+      if (active === sessionId) matched.push(surfaceId)
+    }
+    return matched
+  }
 
   public forSurface(surfaceId: string): TranscriptWindowService {
     let window = this.windows.get(surfaceId)

@@ -58,6 +58,59 @@ function fixture(
 afterEach(() => vi.useRealTimers())
 
 describe('Host transcript windows', () => {
+  it('defers hidden text projection while bounding new and settled tool bodies and preserving the visible window', () => {
+    const hidden = fixture(),
+      visible = fixture()
+    try {
+      hidden.open()
+      visible.open()
+      hidden.service.setVisible(false)
+      for (let index = 1; index <= 4; index++) {
+        const event: BackendEvent = {
+          type: 'tool.updated',
+          sessionId,
+          sequence: index,
+          tool: {
+            id: `tool-${index}`,
+            name: 'bash',
+            category: 'shell',
+            title: 'Check',
+            status: 'completed',
+            inputSummary: 'x'.repeat(50_000),
+            outputSummary: 'complete',
+            metadata: {},
+          },
+        }
+        hidden.service.accept(event)
+        visible.service.accept(event)
+        // Hidden terminal/new rows must still obey the resident memory budget.
+        expect(hidden.service['tail']!.timeline.nodes.length).toBeLessThan(20)
+      }
+      const bound = vi.spyOn(hidden.service as unknown as { bound(): void }, 'bound')
+      for (let index = 0; index < 50; index++) {
+        const event: BackendEvent = {
+          type: 'message.delta',
+          sessionId,
+          messageId: 'streaming',
+          delta: `${index} `,
+        }
+        hidden.service.accept(event)
+        visible.service.accept(event)
+      }
+      expect(bound).not.toHaveBeenCalled()
+      hidden.service.setVisible(true)
+      const hiddenWindow = hidden.service['snapshot']()
+      const visibleWindow = visible.service['snapshot']()
+      expect(hiddenWindow.nodes).toEqual(visibleWindow.nodes)
+      expect(hiddenWindow.omittedNodeIds).toEqual(visibleWindow.omittedNodeIds)
+      expect(hiddenWindow.contentVersions).toEqual(visibleWindow.contentVersions)
+      expect(hiddenWindow.lastSequence).toBe(visibleWindow.lastSequence)
+    } finally {
+      hidden.service.dispose()
+      visible.service.dispose()
+    }
+  })
+
   it('keeps omitted-body versions stable across equal rebaselines but detects hidden same-length changes', () => {
     const client = fixture()
     try {

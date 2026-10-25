@@ -1,3 +1,4 @@
+import { StateSubscriptions } from './store/state-subscriptions.js'
 import type { AgentConfiguration, PromptMode, SubagentCatalog, SubagentView } from '@dsh-vscode/domain'
 import { QuestionSettlements } from '@dsh-vscode/domain'
 import type { FeatureRequest } from '@dsh-vscode/webview-protocol'
@@ -15,7 +16,7 @@ import { createJobActions } from './store/job-actions.js'
 import { withAvailableList } from './store/list-availability.js'
 import { getVsCodeApi } from '../vscode-api.js'
 import { ProtocolClient } from './protocol-client.js'
-import type { AppStore, StateSetter } from './store/types.js'
+import type { AppState, AppStore, StateSetter } from './store/types.js'
 import { requestId } from './store/ids.js'
 import { createPendingOpenBuffer } from './store/opening-state.js'
 import { createGoalQueueActions } from './store/goal-queue-actions.js'
@@ -96,7 +97,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     queueBySession: new Map(),
     connectionIdentity: undefined,
   }
-  const listeners = new Set<() => void>()
+  const subscriptions = new StateSubscriptions<AppState>()
   const turnWatchers = createTurnWatchers({ isDisposed: () => disposed })
   // Acknowledgements are cumulative by revision, so a burst of streaming
   // patches only needs its newest revision. Send one request per session per
@@ -144,6 +145,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     const settledQuestionCalls = questionSettlements.settledCalls()
     if (nextState.settledQuestionCalls !== settledQuestionCalls)
       nextState = { ...nextState, settledQuestionCalls }
+    const previousState = state
     const previousTranscript = state.transcript
     state =
       nextState.transcript !== undefined && nextState.transcript.sessionId !== nextState.activeSessionId
@@ -164,7 +166,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     if (state.transcript !== undefined && state.transcript !== previousTranscript)
       acknowledgeTranscript(state.transcript.sessionId, state.transcript.revision)
     // Publish installed Host state immediately; do not add a timer or frame wait.
-    for (const listener of listeners) listener()
+    subscriptions.publish(previousState, state)
   }
   const questionReplies = new QuestionReplies(
     client,
@@ -298,17 +300,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   let startupRestoreArmed = false
   let startupRestorePromise: Promise<void> | undefined
   const pendingOpenBuffer = createPendingOpenBuffer(() => {
-    turnWatchers.disposeAll()
-    const sessionId = state.activeSessionId
-    if (sessionId !== undefined)
-      void client
-        .request({
-          type: 'session.transcript.resync',
-          requestId: requestId(),
-          payload: { sessionId },
-        })
-        .catch(() => undefined)
-    reopenActiveView()
+    void resubscribeActiveView()
   })
   const commandDirectory = createCommandDirectoryCache((sessionId) => readCommandList(client, sessionId))
   const loadCommandDirectory = (
@@ -517,25 +509,100 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
    * same bounded backoff, and stop as soon as the user looks at something else
    * so the panel never jumps back to the view that failed.
    */
-  const resubscribeActiveView = async (): Promise<void> => {
-    for (let attempt = 1; ; attempt += 1) {
-      if (disposed) return
-      const subagent = state.activeSubagent
-      const sessionId = subagent === undefined ? state.activeSessionId : subagent.entry.id
-      if (sessionId === undefined) return
-      try {
-        if (subagent === undefined) await open(sessionId)
-        else await openSubagent(subagent.entry, subagent.parentAvailable)
-        return
-      } catch {
-        const stillCurrent =
-          subagent === undefined
-            ? state.activeSubagent === undefined && state.activeSessionId === sessionId
-            : state.activeSubagent?.entry.id === sessionId
-        if (disposed || attempt >= OPEN_RETRY_ATTEMPTS || !stillCurrent) return
-        if (!(await retryDelays.wait(OPEN_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1)))) return
+  let activeViewResubscribeTask: Promise<void> | undefined
+  let activeViewResubscribeTarget: string | undefined
+  let activeViewResubscribeIntent: number | undefined
+  const resubscribeActiveView = (): Promise<void> => {
+    if (disposed) return Promise.resolve()
+    const currentSubagent = state.activeSubagent
+    const currentSessionId = currentSubagent === undefined ? state.activeSessionId : currentSubagent.entry.id
+    if (currentSessionId === undefined) return Promise.resolve()
+    const epoch = state.connectionEpoch
+    let intent = openIntent
+    const targetKey = JSON.stringify([
+      epoch,
+      currentSubagent === undefined ? 'session' : 'subagent',
+      currentSessionId,
+      currentSubagent?.parentAvailable,
+    ])
+    const stillCurrent = (): boolean =>
+      !disposed &&
+      state.connectionEpoch === epoch &&
+      openIntent === intent &&
+      (currentSubagent === undefined
+        ? state.activeSubagent === undefined && state.activeSessionId === currentSessionId
+        : state.activeSubagent?.entry.id === currentSessionId &&
+          state.activeSubagent.parentAvailable === currentSubagent.parentAvailable)
+    if (
+      activeViewResubscribeTask !== undefined &&
+      activeViewResubscribeTarget === targetKey &&
+      activeViewResubscribeIntent === openIntent
+    )
+      return activeViewResubscribeTask
+    const task = (async (): Promise<void> => {
+      for (let attempt = 1; ; attempt += 1) {
+        if (!stillCurrent()) return
+        const subagent = currentSubagent
+        const sessionId = currentSessionId
+        try {
+          const opening =
+            subagent === undefined ? open(sessionId) : openSubagent(subagent.entry, subagent.parentAvailable)
+          intent = openIntent
+          activeViewResubscribeIntent = intent
+          await opening
+          return
+        } catch {
+          if (attempt >= OPEN_RETRY_ATTEMPTS || !stillCurrent()) return
+          if (!(await retryDelays.wait(OPEN_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1)))) return
+        }
       }
-    }
+    })().finally(() => {
+      if (activeViewResubscribeTask === task) {
+        activeViewResubscribeTask = undefined
+        activeViewResubscribeTarget = undefined
+        activeViewResubscribeIntent = undefined
+      }
+    })
+    activeViewResubscribeIntent = openIntent
+    activeViewResubscribeTarget = targetKey
+    activeViewResubscribeTask = task
+    return task
+  }
+  let transcriptRecovery: { readonly key: string; readonly task: Promise<void> } | undefined
+  const recoverTranscriptView = (): Promise<void> => {
+    const sessionId = state.activeSessionId
+    if (disposed || sessionId === undefined) return Promise.resolve()
+    const epoch = state.connectionEpoch,
+      version = openVersion
+    const key = JSON.stringify([epoch, sessionId, version])
+    if (transcriptRecovery?.key === key) return transcriptRecovery.task
+    const stillCurrent = (): boolean =>
+      !disposed &&
+      state.connectionEpoch === epoch &&
+      openVersion === version &&
+      state.activeSessionId === sessionId
+    const task = (async () => {
+      for (let attempt = 1; attempt <= 3 && stillCurrent(); attempt++) {
+        try {
+          const result = await client.request<unknown>({
+            type: 'session.transcript.resync',
+            requestId: requestId(),
+            payload: { sessionId },
+          })
+          if (!stillCurrent()) return
+          const transcript = parseTranscript(object(result)?.transcript)
+          if (transcript.sessionId !== sessionId) return
+          setState((current) => installTranscript(current, transcript))
+          return
+        } catch {
+          if (attempt >= 3 || !stillCurrent() || !(await retryDelays.wait(250 * 2 ** (attempt - 1)))) return
+        }
+      }
+    })().finally(() => {
+      if (transcriptRecovery?.task === task) transcriptRecovery = undefined
+    })
+    transcriptRecovery = { key, task }
+    return task
   }
   const reopenActiveView = (): void => {
     void resubscribeActiveView()
@@ -574,6 +641,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     featureActions,
     getState: () => state,
     invalidateFeedback,
+    invalidateJobFollow: jobActions.invalidateAfterControlLoss,
     lifecycle: {
       invalidateGlobalCatalogs: globalCatalogs.invalidate,
       retireSessionReads: () => {
@@ -607,6 +675,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     refreshLiveGoals,
     refreshSessionModelDirectoryForSession,
     reopenActiveView,
+    resubscribeActiveView: recoverTranscriptView,
     setState,
     surfaceActions,
     turnWatchers,
@@ -758,11 +827,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       return state.unavailableLists ?? []
     },
     getState: () => state,
-    subscribe: (listener) => {
-      if (disposed) return () => undefined
-      listeners.add(listener)
-      return () => listeners.delete(listener)
-    },
+    subscribe: (listener, keys) =>
+      disposed ? () => undefined : subscriptions.subscribe(listener, state, keys),
     watchSessionTurnEnd: (sessionId) => turnWatchers.watch(sessionId),
     ...lifecycleActions,
     refreshSessions: refresh,
@@ -950,7 +1016,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       invalidateFeedback()
       unsubscribeHostEvents()
       client.dispose()
-      listeners.clear()
+      subscriptions.clear()
     },
   }
   return defineStateView(store, () => state)

@@ -33,6 +33,28 @@ function harness(): { registry: TranscriptWindowRegistry; sent: Map<string, Tran
 }
 
 describe('surface-owned transcript windows', () => {
+  it('routes root, pending and child sessions without treating an addressed child as unbound', () => {
+    const { registry } = harness()
+    try {
+      expect(registry.surfacesForSession('root')).toBeUndefined()
+      const root = registry.forSurface('sidebar')
+      // A created but unassigned window still needs broadcast recovery.
+      expect(registry.surfacesForSession('root')).toBeUndefined()
+      root.installPage('root', { events: [], hasMore: false }, root.begin('root'))
+      const child = registry.forSurface('editor')
+      child.installPage('child', { events: [], hasMore: false }, child.begin('child', true))
+      expect(registry.surfacesForSession('root')).toEqual(['sidebar'])
+      expect(registry.surfacesForSession('child')).toEqual(['editor'])
+      expect(registry.surfacesForSession('background')).toEqual([])
+      const opening = root.begin('next')
+      expect(registry.surfacesForSession('next')).toEqual(['sidebar'])
+      root.cancel(opening)
+      expect(registry.surfacesForSession('root')).toEqual(['sidebar'])
+    } finally {
+      registry.dispose()
+    }
+  })
+
   it('releases a failed in-flight post on close and gives a recreated panel its own recovery budget', async () => {
     let release!: (delivered: boolean) => void
     const report = vi.fn()

@@ -60,6 +60,10 @@ export interface AsyncEventSource<T> {
    * per-session subscription management.
    */
   watchSession?(sessionId: string): void
+  /** Whether any visible consumer can accept the optional transient preview. */
+  setSessionPreview?(sessionId: string, enabled: boolean): void
+  /** Request a fresh bounded follow baseline for one session, retaining listeners. */
+  refreshSession?(sessionId: string): Promise<void>
   /**
    * Stop following one session. `keepJobRows` preserves the session's Job row
    * stream so running background jobs keep publishing progress while the

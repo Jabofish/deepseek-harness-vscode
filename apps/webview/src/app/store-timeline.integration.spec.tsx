@@ -42,6 +42,19 @@ class StreamClient {
 
   private response(request: WebviewRequest): unknown {
     switch (request.type) {
+      case 'session.history': {
+        const detail = this.response({
+          type: 'session.open',
+          requestId: 'fixture-recovery',
+          payload: { sessionId: request.payload.sessionId },
+        }) as { history: { sequence: number }[] }
+        return {
+          events: detail.history.filter(
+            (entry) => request.payload.beforeSeq === undefined || entry.sequence < request.payload.beforeSeq,
+          ),
+          hasMore: false,
+        }
+      }
       case 'session.open':
         return {
           id: 'session-stream',

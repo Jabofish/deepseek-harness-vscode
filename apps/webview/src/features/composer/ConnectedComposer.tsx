@@ -31,6 +31,7 @@ export function ConnectedComposer({ store, modelScope, ...props }: ConnectedComp
     store,
     modelScope === 'session' ? selectSessionComposerModels : selectGlobalComposerModels,
     sameShallowSelection,
+    modelScope === 'session' ? SESSION_MODEL_FIELDS : GLOBAL_MODEL_FIELDS,
   )
   const changeDraft = useCallback(
     (value: string | ((current: string) => string)) => setDraftFor(props.draftKey, value),
@@ -50,3 +51,14 @@ export function ConnectedComposer({ store, modelScope, ...props }: ConnectedComp
     />
   )
 }
+
+const GLOBAL_MODEL_FIELDS = ['models'] as const
+const SESSION_MODEL_FIELDS = [
+  'models',
+  'sessionModels',
+  'sessionModelFailures',
+  'sessionModelDirectoryLoading',
+  'sessionModelCurrent',
+  'sessionModelRoutable',
+  'sessionModelDirectoryError',
+] as const

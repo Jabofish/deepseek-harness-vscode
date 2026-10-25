@@ -202,6 +202,7 @@ const toolPreparingHostEventSchema = z
     type: z.literal('event'),
     name: z.literal('tool.preparing'),
     sequence: jobFollowSafeOffsetSchema,
+    requiresAck: z.literal(true).optional(),
     payload: toolPreparingPayloadSchema,
   })
   .strict()
@@ -228,6 +229,7 @@ const genericHostEventSchema = z
           name !== 'session.transcript',
       ),
     sequence: z.number().int().nonnegative(),
+    requiresAck: z.literal(true).optional(),
     payload: boundedUnknown,
   })
   .strict()
@@ -237,6 +239,7 @@ const connectionSnapshotHostEventSchema = z
     type: z.literal('event'),
     name: z.literal('connection.snapshot'),
     sequence: z.number().int().nonnegative(),
+    requiresAck: z.literal(true).optional(),
     payload: z
       .object({
         kind: z.enum([
@@ -283,6 +286,7 @@ const queueUpdatedHostEventSchema = z
     type: z.literal('event'),
     name: z.literal('queue.updated'),
     sequence: z.number().int().nonnegative(),
+    requiresAck: z.literal(true).optional(),
     // Keep legacy queue payloads open; validate the new optional projection
     // watermark without dropping older adapter fields.
     payload: boundedUnknown.superRefine((value, context) => {
@@ -304,6 +308,7 @@ const jobFollowUpdatedHostEventSchema = z
     type: z.literal('event'),
     name: z.literal('job.follow.updated'),
     sequence: jobFollowSafeOffsetSchema,
+    requiresAck: z.literal(true).optional(),
     payload: jobFollowUpdatedPayloadSchema,
   })
   .strict()
@@ -313,6 +318,7 @@ const jobFollowFailedHostEventSchema = z
     type: z.literal('event'),
     name: z.literal('job.follow.failed'),
     sequence: jobFollowSafeOffsetSchema,
+    requiresAck: z.literal(true).optional(),
     payload: jobFollowFailedPayloadSchema,
   })
   .strict()
@@ -324,6 +330,7 @@ export const hostEventSchema = z.union([
       type: z.literal('event'),
       name: z.literal('session.transcript'),
       sequence: z.number().int().nonnegative(),
+      requiresAck: z.literal(true).optional(),
       payload: transcriptWindowSchema,
     })
     .strict(),

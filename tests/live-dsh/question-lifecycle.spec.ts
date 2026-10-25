@@ -165,6 +165,8 @@ describe.skipIf(!enabled)('real DSH question lifecycle in an isolated profile', 
       })
       const events: BackendEvent[] = []
       unsubscribe = backend.events.subscribe((event) => events.push(event))
+      expect(typeof backend.events.setSessionPreview).toBe('function')
+      backend.events.setSessionPreview?.(session.id, false)
       backend.events.watchSession?.(session.id)
       await vi.waitFor(
         () =>
@@ -218,6 +220,21 @@ describe.skipIf(!enabled)('real DSH question lifecycle in an isolated profile', 
       const batchCall = randomUUID()
       await invoke('start', { callId: batchCall })
       const batch = await waitQuestion(batchCall)
+      // A hidden session retains real interaction delivery. Restoring the
+      // optional assistant preview must rebaseline only its follow subscription
+      // and leave the native question owner/reply lifecycle intact.
+      const subscribedBefore = events.filter(
+        (event) => event.type === 'session.subscribed' && event.sessionId === session.id,
+      ).length
+      backend.events.setSessionPreview?.(session.id, true)
+      await vi.waitFor(
+        () =>
+          expect(
+            events.filter((event) => event.type === 'session.subscribed' && event.sessionId === session.id)
+              .length,
+          ).toBeGreaterThan(subscribedBefore),
+        { timeout: 15000 },
+      )
       expect(batch.items).toHaveLength(2)
       // Inject one logical follow failure while the real $events waterfall is
       // pending. Its cached ownership and native answer must both survive.

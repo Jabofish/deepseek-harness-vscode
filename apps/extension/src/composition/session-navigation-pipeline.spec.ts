@@ -77,7 +77,9 @@ describe('native session navigation through the Host pipeline', () => {
         value: 'Automatically named',
       })
       expect(retitleEditorTab).toHaveBeenCalledExactlyOnceWith('s1', 'Automatically named')
-      expect(post).toHaveBeenCalledOnce()
+      expect(
+        post.mock.calls.map(([message]) => (message.type === 'event' ? message.name : message.type)),
+      ).toEqual(['ui.notification', 'connection.snapshot', 'session.added'])
       release(true)
       await Promise.all([blocked, directory, title])
     } finally {

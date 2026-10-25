@@ -15,3 +15,14 @@ export function selectAppViewState({
 }: AppState): AppViewState {
   return state
 }
+
+export const APP_VIEW_SUBSCRIPTION = {
+  exclude: [
+    'sessionModels',
+    'sessionModelFailures',
+    'sessionModelCurrent',
+    'sessionModelRoutable',
+    'sessionModelDirectoryLoading',
+    'sessionModelDirectoryError',
+  ],
+} as const

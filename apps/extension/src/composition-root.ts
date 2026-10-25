@@ -190,6 +190,10 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const transcript = new TranscriptWindowRegistry(
     (surfaceId, isCurrent) =>
       new TranscriptWindowService({
+        consumerDriven: true,
+        refresh: (sessionId) =>
+          backendService.requireBackend().events.refreshSession?.(sessionId) ?? Promise.resolve(),
+        onCapacity: (ready) => sessionWatch.surfaceCapacityChanged(surfaceId, ready),
         read: (sessionId, before, signal, child) =>
           child
             ? advancedUseCases.listSubagentHistory(
@@ -229,6 +233,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       const surface = surfaces.get(surfaceId)
       return surface?.isReady === true && surface.visible
     },
+    (hasSurface) => surfaces.list().some((surface) => surface.isReady && !hasSurface(surface.surfaceId)),
   )
   const {
     postFeatureEvent,
@@ -241,8 +246,15 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     postBackendEvent,
     publishState,
     nextFeatureLocalSequence,
+    acknowledgeEvents,
+    forgetSurface,
     dispose: disposeHostEventPipeline,
   } = createHostEventPipeline({
+    surfaceIds: () =>
+      surfaces
+        .list()
+        .filter((surface) => surface.isReady)
+        .map((surface) => surface.surfaceId),
     transcript,
     post,
     postTo,
@@ -365,12 +377,10 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     currentWorkspaceFolders,
   })
   const gateway = createRequestGateway({
+    acknowledgeHostEvents: acknowledgeEvents,
+    forgetHostSurface: forgetSurface,
     prepareEditorSession: (sessionId, signal) => commands.editorCompanion.prepareSession(sessionId, signal),
     transcript,
-    resyncView: async () => {
-      const backend = backendService.requireBackend()
-      for (const event of backendService.replayEvents()) await postBackendEvent(backend, event)
-    },
     post,
     postTo,
     postEvent,

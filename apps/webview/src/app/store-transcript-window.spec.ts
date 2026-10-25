@@ -45,6 +45,8 @@ class Client {
       return (this.open?.(request.payload.sessionId) ??
         Promise.resolve(detail(request.payload.sessionId))) as Promise<T>
     if (request.type === 'subagent.list') result = { entries: [], parentAvailable: true }
+    if (request.type === 'session.transcript.resync')
+      result = { transcript: window(request.payload.sessionId, 2) }
     if (request.type === 'session.transcript.navigate')
       result = {
         ...window(request.payload.sessionId, request.payload.revision + 1, 'Older reply'),
@@ -123,7 +125,10 @@ describe('Webview installs Host windows', () => {
         client.requests.filter(
           (request) => request.type === 'session.open' && request.payload.sessionId === 's',
         ).length,
-      ).toBe(2)
+      ).toBe(1)
+      expect(client.requests.filter((request) => request.type === 'session.transcript.resync')).toHaveLength(
+        1,
+      )
       expect(store.getState().transcript?.nodes[0]).toMatchObject({ markdown: 'Final reply' })
     } finally {
       store.dispose()

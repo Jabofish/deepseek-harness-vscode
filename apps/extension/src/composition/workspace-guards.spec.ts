@@ -43,6 +43,7 @@ const routesAllowedWhileUntrusted = [
   'settings.read',
   'surface.moveToSidebar',
   'surface.titlebarLayout',
+  'ui.events.ack',
   'view.openLink',
   'view.showInFolder',
   'workspace.addFolder',

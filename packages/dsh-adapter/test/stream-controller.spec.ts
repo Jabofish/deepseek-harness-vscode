@@ -576,6 +576,29 @@ describe('DshStreamController', () => {
     )
   })
 
+  it('backs off a chronically short stream even when each generation delivers a valid frame', async () => {
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0)
+    let opens = 0
+    const controller = new DshStreamController(streamTransport([]), undefined, undefined, {
+      streamSource: async function* () {
+        opens++
+        yield await Promise.resolve(subscribeFrame('s1', 0))
+        throw new Error('short-lived stream')
+      },
+      closeTransport: false,
+    })
+    controllers.push(controller)
+    try {
+      controller.subscribe(() => undefined)
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(opens).toBeGreaterThan(3)
+      expect(opens).toBeLessThan(10)
+    } finally {
+      await controller.close()
+      random.mockRestore()
+    }
+  })
+
   it('eventually heals a gap suppressed in the cooldown without needing another frame', async () => {
     const first = new ControlledStream(),
       second = new ControlledStream(),
@@ -2467,6 +2490,51 @@ describe('DshStreamController ordered gap recovery', () => {
     expect(recoverSignals.every((signal) => signal.aborted)).toBe(true)
     // Closing while the second recovery runs must not leave it hanging.
     stream.end()
+  })
+
+  it('bounds repeated transient sequence gaps within the recovery window and degrades to durable delivery without restarting', async () => {
+    const streams = [
+      new ControlledStream(),
+      new ControlledStream(),
+      new ControlledStream(),
+      new ControlledStream(),
+    ]
+    const controller = new DshStreamController(streamTransport([]), undefined, undefined, {
+      streamSource: controlledGenerationSource(streams),
+      closeTransport: false,
+    })
+    controllers.push(controller)
+    const received: BackendEvent[] = []
+    controller.subscribe((event) => received.push(event))
+
+    // Attempts 0, 1, 2: each delivers 1 valid transient frame then a transient gap (1 -> 3)
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const stream = streams[attempt]!
+      stream.push(subscribeFrame('s1', 0))
+      await waitFor(
+        () => received.filter((event) => event.type === 'session.subscribed').length === attempt + 1,
+      )
+      stream.push(assistantFrame('s1', 1, `ok-${attempt}`))
+      await waitFor(() => received.filter((event) => event.type === 'message.delta').length === attempt + 1)
+      // Trigger transient gap (1 -> 3)
+      stream.push(assistantFrame('s1', 3, `gap-${attempt}`))
+      await vi.advanceTimersByTimeAsync(1_000)
+      await waitFor(() => streams[attempt + 1]?.signal !== undefined)
+    }
+
+    // Attempt 3 (the 4th transient gap within the window): budget is exhausted,
+    // so it must NOT restart into a 5th stream, drops the gapped transient chunk,
+    // and keeps stream[3] alive for durable events.
+    const finalStream = streams[3]!
+    finalStream.push(subscribeFrame('s1', 0))
+    await waitFor(() => received.filter((event) => event.type === 'session.subscribed').length === 4)
+    finalStream.push(assistantFrame('s1', 1, 'ok-3'))
+    finalStream.push(assistantFrame('s1', 3, 'gap-3'))
+    finalStream.push(liveTurnFrame('s1', 1))
+    await waitFor(() => received.some((event) => event.sequence === 1))
+
+    expect(finalStream.signal?.aborted).toBe(false)
+    expect(received.some((event) => event.type === 'message.delta' && event.delta === 'gap-3')).toBe(false)
   })
 })
 

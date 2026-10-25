@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { HostMessage } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
 import {
@@ -532,6 +532,22 @@ describe('AppStore connection restart', () => {
     client.dispose()
   })
 
+  it('shares unchanged child rows on a same-connection reopen', async () => {
+    const { store, client } = makeSubagentStore()
+    try {
+      client.emit(connectionSnapshot(1, 'connected', { dshVersion: '0.1.0' }))
+      await store.openSession(activeSession.id)
+      await store.openSubagent(childEntry, true)
+      const previous = store.getState().timeline.nodes
+      expect(previous.length).toBeGreaterThan(0)
+      await store.openSubagent(childEntry, true)
+      expect(store.getState().timeline.nodes).toBe(previous)
+    } finally {
+      store.dispose()
+      client.dispose()
+    }
+  })
+
   it('retries the re-open when the replacement connection rejects it as not yet owned', async () => {
     const rejections = { count: 0 }
     const { store, client } = makeRejectingStore(rejections)
@@ -557,5 +573,31 @@ describe('AppStore connection restart', () => {
     expect(userMessageNodes(store.getState())).toHaveLength(5)
     store.dispose()
     client.dispose()
+  })
+
+  it('retires an old recovery retry when the user reopens the same session during backoff', async () => {
+    vi.useFakeTimers()
+    const rejections = { count: 0 }
+    const { store, client } = makeRejectingStore(rejections)
+    try {
+      client.emit(connectionSnapshot(1, 'connected'))
+      await store.openSession(activeSession.id)
+      await vi.advanceTimersByTimeAsync(0)
+      rejections.count = 1
+      client.emit(connectionSnapshot(2, 'stopping'))
+      client.emit(connectionSnapshot(3, 'connected'))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(sessionOpens(client)).toHaveLength(2)
+      await store.openSession(activeSession.id)
+      expect(sessionOpens(client)).toHaveLength(3)
+      const nodes = store.getState().timeline.nodes
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(sessionOpens(client)).toHaveLength(3)
+      expect(store.getState().timeline.nodes).toBe(nodes)
+    } finally {
+      store.dispose()
+      client.dispose()
+      vi.useRealTimers()
+    }
   })
 })

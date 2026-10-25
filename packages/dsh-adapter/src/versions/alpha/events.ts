@@ -12,6 +12,8 @@ import type { AlphaLoopbackApiClient } from './transport.js'
 export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
   private readonly global: DshStreamController
   private readonly workspace: DshStreamController
+  private readonly sessionPreviews = new Map<string, boolean>()
+  private readonly previewTransitions = new Set<string>()
   private readonly sessions = new Map<string, DshStreamController>()
   private readonly jobSessions = new Map<string, DshStreamController>()
   private readonly archivedSessions = new Set<string>()
@@ -105,13 +107,27 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
       (event) => this.handleObserved(event),
       this.recover,
       {
-        streamSource: (signal) => this.transport.openSessionStream(sessionId, signal),
+        streamSource: (signal) =>
+          this.transport.openSessionStream(sessionId, signal, this.sessionPreviews.get(sessionId) ?? true),
         ...(normalizeEvent === undefined ? {} : { normalizeEvent }),
         closeTransport: false,
       },
     )
     this.sessions.set(sessionId, controller)
     for (const listener of this.listeners) this.attach(controller, listener, sessionId)
+  }
+
+  public setSessionPreview(sessionId: string, enabled: boolean): void {
+    if (this.closed || this.sessionPreviews.get(sessionId) === enabled) return
+    const wasEnabled = this.sessionPreviews.get(sessionId) ?? true
+    this.sessionPreviews.set(sessionId, enabled)
+    if (wasEnabled === enabled || !this.sessions.has(sessionId) || this.previewTransitions.has(sessionId))
+      return
+    this.previewTransitions.add(sessionId)
+    queueMicrotask(() => {
+      this.previewTransitions.delete(sessionId)
+      if (!this.closed) void this.sessions.get(sessionId)?.restart()
+    })
   }
 
   /** Re-baseline a watched session so process-local assistant chunks are replayed. */
@@ -128,6 +144,8 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
     const controllers = [...this.controllers()]
     await Promise.all(controllers.map((controller) => controller.close()))
     this.sessions.clear()
+    this.sessionPreviews.clear()
+    this.previewTransitions.clear()
     this.jobSessions.clear()
     this.archivedSessions.clear()
     this.sessionFailureNotices.clear()
@@ -242,6 +260,8 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
     options: { readonly keepJobRows?: boolean },
   ): Promise<void> {
     this.clearSessionFailureNotices(sessionId)
+    this.sessionPreviews.delete(sessionId)
+    this.previewTransitions.delete(sessionId)
     const controller = this.sessions.get(sessionId)
     if (controller !== undefined) {
       this.sessions.delete(sessionId)

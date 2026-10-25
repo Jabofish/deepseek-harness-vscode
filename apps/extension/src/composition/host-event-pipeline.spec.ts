@@ -6,14 +6,16 @@ vi.mock('vscode', () => ({ commands: { executeCommand: vi.fn() } }))
 
 function harness(
   respond: (message: HostMessage | FeatureHostMessage) => Promise<boolean>,
-  postTo = vi.fn(() => Promise.resolve(true)),
+  postTo = vi.fn<HostEventPipelineDependencies['postTo']>(() => Promise.resolve(true)),
   editorContextUseCases: Record<string, unknown> = {},
+  surfaceIds?: () => readonly string[],
 ): {
   readonly pipeline: ReturnType<typeof createHostEventPipeline>
   readonly posted: readonly (HostMessage | FeatureHostMessage)[]
 } {
   const posted: (HostMessage | FeatureHostMessage)[] = []
   const pipeline = createHostEventPipeline({
+    ...(surfaceIds === undefined ? {} : { surfaceIds }),
     transcript: { accept: () => true, dispose: vi.fn() },
     post: (message: Parameters<HostEventPipelineDependencies['post']>[0]) => {
       posted.push(message)
@@ -50,6 +52,40 @@ function deferredAvailability(): {
 }
 
 describe('Host event delivery', () => {
+  it('uses independent consumer ACKs per surface in the production path', async () => {
+    const posted: Array<{ surface: string; name: string; sequence: number; payload: unknown }> = []
+    const postTo: HostEventPipelineDependencies['postTo'] = (surface, message) => {
+      if (message.type === 'event') {
+        posted.push({ surface, name: message.name, sequence: message.sequence, payload: message.payload })
+        if (surface === 'fast') pipeline.acknowledgeEvents(surface, message.sequence)
+      }
+      return Promise.resolve(true)
+    }
+    const { pipeline } = harness(
+      () => Promise.resolve(true),
+      vi.fn(postTo),
+      {},
+      () => ['slow', 'fast'],
+    )
+    try {
+      const pending = Array.from({ length: 1000 }, (_, index) =>
+        pipeline.postEvent('session.status', { sessionId: 's', status: index }),
+      )
+      expect(new Set(pending).size).toBe(2)
+      await pipeline.postEventTo('fast', 'question.requested', {})
+      expect(posted.filter((frame) => frame.surface === 'slow')).toHaveLength(1)
+      expect(posted.filter((frame) => frame.surface === 'fast').map((frame) => frame.name)).toEqual([
+        'session.status',
+        'session.status',
+        'question.requested',
+      ])
+      expect(posted.filter((frame) => frame.surface === 'fast')[1]!.payload).toMatchObject({ status: 999 })
+      pipeline.forgetSurface('slow')
+      await Promise.all(pending)
+    } finally {
+      pipeline.dispose()
+    }
+  })
   it('retries unchanged availability after the renderer rejected its previous event', async () => {
     const availability = vi.fn().mockResolvedValue({ availableKinds: ['file'] })
     let delivered = false
@@ -252,6 +288,226 @@ describe('Host event delivery', () => {
           message.type === 'feature.event' && message.name === 'editor.context.availability.changed',
       ),
     ).toHaveLength(1)
+    pipeline.dispose()
+  })
+
+  it('coalesces overwritable control snapshots by session, type, and key while in flight without delaying idle delivery or dropping authoritative Host callbacks', async () => {
+    let releaseFirst!: (value: boolean) => void
+    let firstBlocked = true
+    const onEvent = vi.fn()
+    const posted: (HostMessage | FeatureHostMessage)[] = []
+    const pipeline = createHostEventPipeline({
+      transcript: { accept: () => false, dispose: vi.fn() },
+      post: (message: Parameters<HostEventPipelineDependencies['post']>[0]) => {
+        posted.push(message)
+        if (firstBlocked) {
+          firstBlocked = false
+          return new Promise<boolean>((resolve) => {
+            releaseFirst = resolve
+          })
+        }
+        return Promise.resolve(true)
+      },
+      postTo: vi.fn<HostEventPipelineDependencies['postTo']>(() => Promise.resolve(true)),
+      onEvent,
+      backendService: {
+        requireBackend: () => ({
+          connection: { backendInstanceId: 'backend-1', connectionGeneration: 1 },
+        }),
+      },
+      diagnostics: { log: vi.fn(), connectionOutput: () => undefined },
+      editorContextUseCases: {},
+      featureOwner: () => ({}),
+      currentWorkspaceFolders: () => [],
+      temporaryWorkspaceManager: {},
+      runtimeUpdateProgress: { current: vi.fn() },
+    } as unknown as HostEventPipelineDependencies)
+
+    // 1. First event enters IPC immediately while idle
+    const first = pipeline.postEvent('permission.requested', { id: 'p-1' })
+    await Promise.resolve()
+    expect(posted).toHaveLength(1)
+
+    // 2. While first IPC is in flight, a burst of overwritable snapshots arrives
+    const activity1 = pipeline.postEvent('session.activity', {
+      type: 'session.activity',
+      sessionId: 's-1',
+      updatedAt: '2026-10-20T00:00:01Z',
+    })
+    const activity2 = pipeline.postEvent('session.activity', {
+      type: 'session.activity',
+      sessionId: 's-1',
+      updatedAt: '2026-10-20T00:00:02Z',
+    })
+    const projTodoOld = pipeline.postEvent('session.projection', {
+      type: 'session.projection',
+      sessionId: 's-1',
+      key: 'todoList',
+      value: ['v1'],
+      sequence: 10,
+    })
+    const projTodoNew = pipeline.postEvent('session.projection', {
+      type: 'session.projection',
+      sessionId: 's-1',
+      key: 'todoList',
+      value: ['v2'],
+      sequence: 12,
+    })
+    // Stale sequence (11 < 12) must not overwrite sequence 12
+    const projTodoStale = pipeline.postEvent('session.projection', {
+      type: 'session.projection',
+      sessionId: 's-1',
+      key: 'todoList',
+      value: ['v-stale'],
+      sequence: 11,
+    })
+    const projPlan = pipeline.postEvent('session.projection', {
+      type: 'session.projection',
+      sessionId: 's-1',
+      key: 'plan',
+      value: { active: true },
+      sequence: 13,
+    })
+
+    // Authoritative Host listener received every event synchronously
+    expect(onEvent).toHaveBeenCalledTimes(7)
+
+    releaseFirst(true)
+    await Promise.all([first, activity1, activity2, projTodoOld, projTodoNew, projTodoStale, projPlan])
+
+    // Only 1 permission.requested + 1 coalesced session.activity + 1 coalesced todoList + 1 plan = 4 frames posted
+    expect(posted).toHaveLength(4)
+    expect(posted[1]).toMatchObject({
+      type: 'event',
+      name: 'session.activity',
+      payload: { sessionId: 's-1', updatedAt: '2026-10-20T00:00:02Z' },
+    })
+    expect(posted[2]).toMatchObject({
+      type: 'event',
+      name: 'session.projection',
+      payload: { sessionId: 's-1', key: 'todoList', value: ['v2'], sequence: 12 },
+    })
+    expect(posted[3]).toMatchObject({
+      type: 'event',
+      name: 'session.projection',
+      payload: { sessionId: 's-1', key: 'plan', value: { active: true }, sequence: 13 },
+    })
+    pipeline.dispose()
+  })
+
+  it('narrows active-session-only backend events to matching surfaces and skips background sessions', async () => {
+    const posted: (HostMessage | FeatureHostMessage)[] = []
+    const postTo = vi.fn(() => Promise.resolve(true))
+    let backend = {
+      connection: { backendInstanceId: 'backend-1', connectionGeneration: 1 },
+    }
+    const pipeline = createHostEventPipeline({
+      transcript: {
+        accept: () => false,
+        dispose: vi.fn(),
+        surfacesForSession: (sessionId: string) => (sessionId === 's-visible' ? ['sidebar'] : []),
+      },
+      post: (message: Parameters<HostEventPipelineDependencies['post']>[0]) => {
+        posted.push(message)
+        return Promise.resolve(true)
+      },
+      postTo,
+      backendService: {
+        requireBackend: () => backend,
+      },
+      diagnostics: { log: vi.fn(), connectionOutput: () => undefined },
+      editorContextUseCases: {},
+      featureOwner: () => ({}),
+      currentWorkspaceFolders: () => [],
+      temporaryWorkspaceManager: {},
+      runtimeUpdateProgress: { current: vi.fn() },
+    } as unknown as HostEventPipelineDependencies)
+
+    await pipeline.postBackendEvent(backend as never, {
+      type: 'jobs.updated',
+      sessionId: 's-background',
+      jobs: [],
+    })
+    expect(posted).toHaveLength(0)
+    expect(postTo).not.toHaveBeenCalled()
+
+    await pipeline.postBackendEvent(backend as never, {
+      type: 'jobs.updated',
+      sessionId: 's-visible',
+      jobs: [],
+    })
+    expect(posted).toHaveLength(0)
+    expect(postTo).toHaveBeenCalledTimes(1)
+    expect(postTo).toHaveBeenCalledWith(
+      'sidebar',
+      expect.objectContaining({ name: 'jobs.updated', sequence: 1 }),
+    )
+    // These background-session facts update the global switcher or settle
+    // interactions. Restricting all projections to the opened session loses them.
+    for (const key of ['title', 'sessionListMetadata', 'userQuestions']) {
+      await pipeline.postBackendEvent(backend as never, {
+        type: 'session.projection',
+        sessionId: 's-background',
+        key,
+        value: null,
+      })
+    }
+    expect(posted).toHaveLength(3)
+    expect(posted.every((message) => message.type === 'event' && message.name === 'session.projection')).toBe(
+      true,
+    )
+    let release!: (delivered: boolean) => void
+    postTo.mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          release = resolve
+        }),
+    )
+    const oldBackend = pipeline.postBackendEvent(backend as never, {
+      type: 'jobs.updated',
+      sessionId: 's-visible',
+      jobs: [],
+      sequence: 100,
+    })
+    backend = { connection: { backendInstanceId: 'backend-2', connectionGeneration: 2 } }
+    const newBackend = pipeline.postBackendEvent(backend as never, {
+      type: 'jobs.updated',
+      sessionId: 's-visible',
+      jobs: [],
+      sequence: 1,
+    })
+    await newBackend
+    expect(postTo).toHaveBeenCalledTimes(3)
+    expect(postTo).toHaveBeenLastCalledWith(
+      'sidebar',
+      expect.objectContaining({
+        name: 'jobs.updated',
+        payload: expect.objectContaining({ sequence: 1 }) as unknown,
+      }),
+    )
+    release(true)
+    await oldBackend
+    pipeline.dispose()
+  })
+
+  it('does not broadcast a global ui.resync when the bulk lane overflows', async () => {
+    const releases: Array<(value: boolean) => void> = []
+    const postTo = vi.fn<HostEventPipelineDependencies['postTo']>((_surfaceId, _message) => {
+      return new Promise<boolean>((resolve) => {
+        releases.push(resolve)
+      })
+    })
+    const { pipeline, posted } = harness(() => Promise.resolve(true), postTo)
+
+    const pending: Array<Promise<boolean>> = []
+    for (let i = 0; i < 140; i += 1) {
+      pending.push(pipeline.postEventTo('sidebar', 'session.transcript.patch', { revision: i + 1 }))
+    }
+    await Promise.resolve()
+    while (releases.length > 0) releases.shift()?.(true)
+    await Promise.all(pending)
+
+    expect(posted.filter((msg) => msg.type === 'event' && msg.name === 'ui.resync')).toHaveLength(0)
     pipeline.dispose()
   })
 })

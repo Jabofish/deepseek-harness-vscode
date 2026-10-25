@@ -1,3 +1,4 @@
+import type { StateSubscription } from './state-subscriptions.js'
 import type { MovetoOutcome } from '../client-commands.js'
 import type { PendingPromptReceipt } from './pending-prompts.js'
 import type {
@@ -489,7 +490,7 @@ export interface AppActions {
 
 export interface AppStore extends AppState, AppActions {
   getState(): AppState
-  subscribe(listener: () => void): () => void
+  subscribe(listener: () => void, subscription?: StateSubscription<AppState>): () => void
   /** Wait for a structured turn end after observing its start in this Session. */
   watchSessionTurnEnd(sessionId: string): { readonly completion: Promise<void>; dispose(): void }
   dispose(): void

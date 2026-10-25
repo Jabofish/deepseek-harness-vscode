@@ -50,6 +50,7 @@ export interface HostEventSubscriptionDependencies {
   readonly featureActions: FeatureEventActions
   readonly getState: () => AppState
   readonly invalidateFeedback: () => void
+  readonly invalidateJobFollow: () => void
   readonly lifecycle: HostEventSubscriptionLifecycle
   readonly loadSubagentCatalog: (sessionId: string) => Promise<SubagentCatalog | undefined>
   readonly pendingOpenBuffer: PendingOpenBuffer
@@ -62,6 +63,7 @@ export interface HostEventSubscriptionDependencies {
   readonly refreshLiveGoals: () => Promise<void>
   readonly refreshSessionModelDirectoryForSession: (sessionId: string) => Promise<void>
   readonly reopenActiveView: () => void
+  readonly resubscribeActiveView?: () => Promise<void>
   readonly setState: StateSetter
   readonly surfaceActions: SurfaceActions
   readonly turnWatchers: TurnWatchers
@@ -89,12 +91,55 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
     refreshLiveGoals,
     refreshSessionModelDirectoryForSession,
     reopenActiveView,
+    resubscribeActiveView,
     setState,
     surfaceActions,
     turnWatchers,
   } = deps
+  const recoverActiveTranscript = (): Promise<void> =>
+    resubscribeActiveView !== undefined
+      ? resubscribeActiveView()
+      : Promise.resolve().then(() => reopenActiveView())
   let permissionCatalogGeneration = 0
   let resyncing = false
+  let resyncRerun = false
+  let subscriptionDisposed = false
+  let resyncTimer: ReturnType<typeof setTimeout> | undefined
+  const recoverGlobalState = (): void => {
+    resyncRerun = true
+    if (resyncing || resyncTimer !== undefined || subscriptionDisposed) return
+    resyncing = true
+    // The missing control frame may itself have been the connection snapshot.
+    // Recover it and replay process-local interactions before reopening a view,
+    // keeping single-flight protection active until all async reads settle.
+    void (async () => {
+      try {
+        for (let pass = 0; pass < 2; pass++) {
+          resyncRerun = false
+          await client
+            .request({ type: 'app.ready', requestId: requestId(), payload: { snapshotOnly: true } })
+            .catch(() => undefined)
+          if (subscriptionDisposed || lifecycle.isDisposed()) return
+          const state = getState()
+          if (state.backend.kind !== 'connected') break
+          const tasks: Promise<unknown>[] = [refresh().catch(() => undefined)]
+          if (state.activeSessionId !== undefined) {
+            tasks.push(recoverActiveTranscript().catch(() => undefined))
+          }
+          await Promise.all(tasks)
+          if (!resyncRerun || subscriptionDisposed || lifecycle.isDisposed()) break
+        }
+      } finally {
+        resyncing = false
+        if (resyncRerun && !subscriptionDisposed && !lifecycle.isDisposed()) {
+          resyncTimer = setTimeout(() => {
+            resyncTimer = undefined
+            recoverGlobalState()
+          }, 1_000)
+        }
+      }
+    })()
+  }
   const unsubscribe = client.subscribe((message) => {
     if (lifecycle.isDisposed()) return
     const previousBackendKind = getState().backend.kind
@@ -113,33 +158,9 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
     // reach the conversation pipeline.
     if (surfaceActions.applySurfaceEvent(message)) return
     if (message.type === 'event' && message.name === 'ui.resync') {
+      deps.invalidateJobFollow()
       turnWatchers.disposeAll()
-      if (resyncing) return
-      resyncing = true
-      // The missing control frame may itself have been the connection snapshot.
-      // Recover it and replay process-local interactions before reopening a view.
-      void client
-        .request({ type: 'app.ready', requestId: requestId(), payload: { snapshotOnly: true } })
-        .then(() => {
-          if (lifecycle.isDisposed()) return
-          const state = getState()
-          if (state.backend.kind !== 'connected') return
-          if (state.activeSessionId !== undefined) {
-            void client
-              .request({
-                type: 'session.transcript.resync',
-                requestId: requestId(),
-                payload: { sessionId: state.activeSessionId },
-              })
-              .catch(() => undefined)
-            reopenActiveView()
-          }
-          void refresh().catch(() => undefined)
-        })
-        .catch(() => undefined)
-        .finally(() => {
-          resyncing = false
-        })
+      recoverGlobalState()
       return
     }
     if (message.type === 'event' && message.name === 'session.transcript.invalidated') {
@@ -148,7 +169,7 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
         getState().transcript !== undefined &&
         getState().transcript?.historical !== true
       )
-        reopenActiveView()
+        void recoverActiveTranscript()
       return
     }
     if (
@@ -223,13 +244,29 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
           pending.version === lifecycle.getOpenVersion() &&
           getState().activeSessionId === pending.sessionId
         )
-          applyHostMessage(message, getState(), setState, parsedEvent, projectionSequences, reopenActiveView)
+          applyHostMessage(
+            message,
+            getState(),
+            setState,
+            parsedEvent,
+            projectionSequences,
+            reopenActiveView,
+            () => void recoverActiveTranscript(),
+          )
       }
     }
     // Buffer session-scoped view/control updates during the opening barrier.
     // Global shell facts and pending interactions remain immediately available.
     if (!deferredToOpen)
-      applyHostMessage(message, getState(), setState, parsedEvent, projectionSequences, reopenActiveView)
+      applyHostMessage(
+        message,
+        getState(),
+        setState,
+        parsedEvent,
+        projectionSequences,
+        reopenActiveView,
+        () => void recoverActiveTranscript(),
+      )
     const currentState = getState()
     // The switcher only caches its rows, so a session whose title changed
     // while the drawer was closed (a missed live frame, a reconnect gap, or a
@@ -446,6 +483,9 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
         })
       : () => undefined
   return () => {
+    subscriptionDisposed = true
+    if (resyncTimer !== undefined) clearTimeout(resyncTimer)
+    resyncTimer = undefined
     unsubscribe()
     unsubscribeFeature()
   }

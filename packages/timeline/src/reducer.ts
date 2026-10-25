@@ -1,4 +1,5 @@
 import { type BackendEvent } from '@dsh-vscode/domain'
+import { sameTimelineValue } from './node-equality.js'
 
 import type { ModelRetryNode, TimelineNode, TimelineState } from './nodes.js'
 import { addTokenUsage } from './usage.js'
@@ -921,9 +922,17 @@ export function reduceTimeline(
   const nextEventCount = eventCount
   const nextNodeChangeBase = nodesMayChange ? state.nodes : state.nodeChangeBase
   if (nodesMayChange && nodeChangeStart === undefined) nodeChangeStart = 0
+  let unchangedNodes = nodes.length === state.nodes.length
+  if (nodesMayChange && options.mutableNodes === undefined) {
+    for (let index = nodeChangeStart ?? 0; index < nodes.length; index++) {
+      const previous = state.nodes[index]
+      if (previous !== undefined && sameTimelineValue(previous, nodes[index])) nodes[index] = previous
+      else unchangedNodes = false
+    }
+  } else unchangedNodes = false
   return {
     sessionId: state.sessionId ?? sessionId,
-    nodes: nodesMayChange ? nodes : state.nodes,
+    nodes: nodesMayChange && !unchangedNodes ? nodes : state.nodes,
     lastSequence: input.advanceSequence === false ? state.lastSequence : input.sequence,
     ...(nodeChangeStart === undefined
       ? {}

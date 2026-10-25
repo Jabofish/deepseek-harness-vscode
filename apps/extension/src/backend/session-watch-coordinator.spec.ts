@@ -103,6 +103,30 @@ function jobsUpdated(
 }
 
 describe('session watch coordinator', () => {
+  it('disables transient preview only when every displayed consumer is hidden or blocked, retaining durable/control follow', () => {
+    const fake = fakeBackend()
+    const preview = vi.fn()
+    fake.backend.events.setSessionPreview = preview
+    const controller = createSessionWatchController({ readDirectory: () => Promise.resolve([]) })
+    try {
+      controller.attach(fake.backend)
+      controller.surfaceDisplaysSession('sidebar', 's1')
+      controller.surfaceDisplaysSession('editor:s1', 's1')
+      fake.emit({ type: 'session.status', sessionId: 's1', status: 'running' })
+      controller.surfaceCapacityChanged('sidebar', false)
+      expect(preview).toHaveBeenLastCalledWith('s1', true)
+      controller.surfaceVisibilityChanged('editor:s1', false)
+      expect(preview).toHaveBeenLastCalledWith('s1', false)
+      expect(fake.unwatchCalls).toEqual([])
+      controller.surfaceCapacityChanged('sidebar', true)
+      expect(preview).toHaveBeenLastCalledWith('s1', true)
+      controller.surfaceVisibilityChanged('sidebar', false)
+      expect(preview).toHaveBeenLastCalledWith('s1', false)
+      expect(fake.watchCalls).toEqual(['s1'])
+    } finally {
+      controller.dispose()
+    }
+  })
   beforeEach(() => {
     vi.useFakeTimers()
   })
