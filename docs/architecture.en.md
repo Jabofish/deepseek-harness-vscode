@@ -161,13 +161,13 @@ The Host is the single trust boundary. The Webview is an untrusted rendering sur
 | ---------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
 | DSH ↔ Host       | Structured RPC/Events                                  | —                                                                                          |
 | Host ↔ Webview   | Typed DTOs and redacted summaries                      | Endpoint, PID, command line, secrets, absolute paths, raw diagnostics, upstream wire types |
-| Host ↔ companion | Editor capabilities within the trusted workspace roots | Archive paths, authorisation identity, source text, diagnostic bodies                      |
+| Host ↔ companion | Editor capabilities, source text and diagnostic bodies | Provider credentials, connection secrets, data outside trusted roots                       |
 
 - Secrets are handled only by the Host (VS Code password input or SecretStorage); the Webview sees only configured/missing.
 - Discovery is loopback-only; a remote target requires an explicit, user-authorised `custom` endpoint with certificate verification, DNS pinning and no redirects. Remote HTTP requires an explicit plaintext confirmation.
 - Workspace access (attachments, exports, file open) goes through VS Code APIs and user actions, with the Host validating trust and paths.
 - The Webview **Content Security Policy** is nonce-based: no remote scripts, no `unsafe-eval`, no inline event handlers, no arbitrary frames and no WebAssembly. Model Markdown strips raw HTML, and links accept only safe schemes and are opened by the Host.
-- Companion-initiated edits, reads and terminal actions are constrained to the trusted workspace roots; the Host validates URI trust, path traversal, symlinks, Zip Slip and overwrite intent. A bounded number of session bindings is admitted, each with bounded in-flight work.
+- Companion-initiated edits, reads and navigation are constrained to the trusted workspace roots; the Host validates URI trust, path traversal, symlinks, document versions and edit scope. A bounded number of session bindings is admitted, each with bounded in-flight work.
 
 ## Design rationale
 
