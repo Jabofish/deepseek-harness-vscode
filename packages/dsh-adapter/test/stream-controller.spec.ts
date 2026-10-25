@@ -615,6 +615,90 @@ describe('DshStreamController', () => {
     ).toEqual([1, 2, 3])
   })
 
+  it('resumes an interleaved skip and gap drain across a generation handoff without loss', async () => {
+    // The ordered drain's cursor view survives the reconnect: projection rows
+    // already recorded below the per-key watermark stay skipped, uncovered
+    // positions become exactly one gap notice each, and no position is either
+    // dropped or delivered twice across the interrupted walk.
+    const firstStream = new ControlledStream()
+    const secondStream = new ControlledStream()
+    let releaseRecovery = (): void => undefined
+    const recoveryBarrier = new Promise<void>((resolve) => {
+      releaseRecovery = resolve
+    })
+    let recoveryCalls = 0
+    const recoverRanges: Array<[number, number]> = []
+    const controller = new DshStreamController(
+      controlledGenerationTransport([firstStream, secondStream]),
+      undefined,
+      async (_sessionId, fromSequence, toSequence) => {
+        recoveryCalls += 1
+        recoverRanges.push([fromSequence, toSequence])
+        if (recoveryCalls === 1) await recoveryBarrier
+        // Every recovered even position is an advisory projection the live
+        // watermark already covers; odd positions stay unrecoverable.
+        return Array.from(
+          { length: toSequence - fromSequence + 1 },
+          (_, offset): BackendEvent | undefined => {
+            const sequence = fromSequence + offset
+            return sequence % 2 === 0
+              ? ({
+                  type: 'session.projection',
+                  sessionId: 's1',
+                  key: 'plan',
+                  value: { v: sequence },
+                  sequence,
+                } satisfies BackendEvent)
+              : undefined
+          },
+        ).filter((event): event is BackendEvent => event !== undefined)
+      },
+    )
+    controllers.push(controller)
+    const received: BackendEvent[] = []
+    controller.subscribe((event) => received.push(event))
+
+    firstStream.push(subscribeFrame('s1', 0))
+    firstStream.push(liveTurnFrame('s1', 1))
+    firstStream.push(liveTurnFrame('s1', 5))
+    await waitFor(() => recoveryCalls === 1)
+    firstStream.push(liveTurnFrame('s1', 9))
+    firstStream.end()
+
+    await waitForAtMost(() => secondStream.signal !== undefined, 2_000)
+    secondStream.push(subscribeFrame('s1', 9))
+    // A projection watermark above the reconnect cursor must be established
+    // after that cursor: the subscribed frame truncates per-key watermarks
+    // from a log generation it no longer covers.
+    secondStream.push(projectionFrame('s1', 50, 'plan', { v: 'watermark' }))
+    secondStream.push(liveTurnFrame('s1', 13))
+    releaseRecovery()
+
+    await waitForAtMost(() => received.some((event) => event.sequence === 13), 2_000)
+    expect(received.filter((event) => event.type === 'turn.started').map((event) => event.sequence)).toEqual([
+      1, 5, 9, 13,
+    ])
+    expect(
+      received
+        .filter((event) => event.type === 'session.gap')
+        .map((event) => [event.fromSequence, event.toSequence]),
+    ).toEqual([
+      [3, 3],
+      [7, 7],
+      [11, 11],
+    ])
+    // Only the post-reconnect watermark projection is delivered; the
+    // interrupted first recovery is discarded and its range re-covered
+    // wholesale by the live generation without any duplicate delivery.
+    expect(received.filter((event) => event.type === 'session.projection')).toHaveLength(1)
+    expect(recoveryCalls).toBe(3)
+    expect(recoverRanges).toEqual([
+      [2, 4],
+      [2, 9],
+      [10, 12],
+    ])
+  })
+
   it('projects an abandoned assistant stream as a host-only interrupted completion', async () => {
     const stream = new ControlledStream()
     const controller = new DshStreamController(streamTransport([]), undefined, undefined, {

@@ -242,18 +242,57 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
       code,
     }))
   }
-  const postEditorContextAvailabilityEvent = async (): Promise<void> => {
+  let availabilityRun: Promise<void> | undefined
+  let availabilityRerun = false
+  let availabilityEpoch = 0
+  let publishedAvailabilityKinds: readonly string[] | undefined
+  const publishAvailabilityOnce = async (): Promise<void> => {
     try {
-      const availability = await editorContextUseCases.availability(featureOwner())
-      await updateEditorContextAvailabilityKeys(vscode.commands, availability.availableKinds)
-      await postFeatureEvent('editor.context.availability.changed', {
-        availableKinds: featureContextKinds(availability),
-      })
-    } catch {
-      await updateEditorContextAvailabilityKeys(vscode.commands, []).catch(() => undefined)
-      // Capability refresh is best effort; the next feature list remains the
-      // authoritative recovery path when the view or backend is reconnecting.
+      for (;;) {
+        availabilityRerun = false
+        const epoch = availabilityEpoch
+        try {
+          const availability = await editorContextUseCases.availability(featureOwner())
+          const kinds = featureContextKinds(availability)
+          // Editor listeners funnel every keystroke into availability recomputes
+          // that usually answer the same kinds. Only a real gate change needs
+          // new context keys and a renderer event; identical results would just
+          // hand the Webview a fresh array and a full re-render.
+          if (
+            publishedAvailabilityKinds === undefined ||
+            kinds.length !== publishedAvailabilityKinds.length ||
+            kinds.some((kind, index) => kind !== publishedAvailabilityKinds![index])
+          ) {
+            await updateEditorContextAvailabilityKeys(vscode.commands, availability.availableKinds)
+            const delivered = await postFeatureEvent('editor.context.availability.changed', {
+              availableKinds: kinds,
+            })
+            // A failed receipt is not a published baseline. The next trigger
+            // must retry even when the editor still offers the same kinds.
+            publishedAvailabilityKinds = delivered && epoch === availabilityEpoch ? kinds : undefined
+          }
+        } catch {
+          publishedAvailabilityKinds = undefined
+          await updateEditorContextAvailabilityKeys(vscode.commands, []).catch(() => undefined)
+          // Capability refresh is best effort; the next feature list remains the
+          // authoritative recovery path when the view or backend is reconnecting.
+        }
+        if (!availabilityRerun) break
+      }
+    } finally {
+      availabilityRun = undefined
     }
+  }
+  const postEditorContextAvailabilityEvent = (): Promise<void> => {
+    // Selection, diagnostics, and activation listeners call this per keystroke
+    // and per lint round. Runs are single-flight with latest-wins: a call
+    // arriving during a run only marks a rerun, so a burst costs one
+    // computation plus at most one trailing pass instead of one per keystroke,
+    // and results are published strictly in order — the previous unbounded
+    // concurrent runs could interleave and publish out of order.
+    if (availabilityRun === undefined) availabilityRun = publishAvailabilityOnce()
+    else availabilityRerun = true
+    return availabilityRun
   }
   let sequence = 0
   const eventPostQueue = new BoundedEventQueue(async () => {
@@ -356,6 +395,9 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
     void postEvent('runtime.update.progress', progress)
   }
   const publishState = (state: BackendState): void => {
+    // A new connection/view baseline must receive its own availability event.
+    availabilityEpoch++
+    publishedAvailabilityKinds = undefined
     if (state.kind !== 'connected') deps.transcript?.dispose()
     void updateContextKeys(vscode.commands, state)
     diagnostics.log('info', 'connection-state', { state: state.kind })

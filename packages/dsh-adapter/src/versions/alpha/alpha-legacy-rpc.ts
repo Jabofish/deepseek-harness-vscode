@@ -19,7 +19,13 @@ import {
   type AlphaCatalogSelection,
   presetRoster,
 } from './model-catalog.js'
-import { expandHistoryRecords, readAlphaWireSnapshot, validAlphaProjectionBaseline } from './session-wire.js'
+import {
+  expandHistoryRecords,
+  expandV4HistoryRecordsIncremental,
+  readAlphaWireSnapshotEnvelope,
+  type AlphaWireSnapshotEnvelope,
+  validAlphaProjectionBaseline,
+} from './session-wire.js'
 import {
   type AlphaConfigurableProvider,
   type AlphaResponse,
@@ -200,10 +206,7 @@ export function createAlphaLegacyRpc(dependencies: AlphaLegacyRpcDependencies): 
       )
       return historyResponse(page, sessionId)
     }
-    return historyResponse(
-      { records: snapshot.records, hasMore: snapshot.hasMore, projections: snapshot.projections },
-      sessionId,
-    )
+    return snapshotHistoryResponse(snapshot, sessionId, signal)
   }
 
   async function subagentHistory(
@@ -219,21 +222,19 @@ export function createAlphaLegacyRpc(dependencies: AlphaLegacyRpcDependencies): 
     }
     const historyWindow = historyWindowOptions(value)
     const snapshot = await followSnapshot({ address, ...historyWindow }, signal)
-    const page =
-      value.beforeSeq === undefined
-        ? { records: snapshot.records, hasMore: snapshot.hasMore, projections: snapshot.projections }
-        : await unary(
-            'session/page',
-            {
-              request: {
-                address,
-                throughSeq: snapshot.cursor,
-                beforeSeq: value.beforeSeq,
-                ...historyWindow,
-              },
-            },
-            signal,
-          )
+    if (value.beforeSeq === undefined) return snapshotHistoryResponse(snapshot, sessionId, signal)
+    const page = await unary(
+      'session/page',
+      {
+        request: {
+          address,
+          throughSeq: snapshot.cursor,
+          beforeSeq: value.beforeSeq,
+          ...historyWindow,
+        },
+      },
+      signal,
+    )
     return historyResponse(page, sessionId)
   }
 
@@ -259,12 +260,18 @@ export function createAlphaLegacyRpc(dependencies: AlphaLegacyRpcDependencies): 
     return value.maxMessages === undefined ? {} : { maxMessages: value.maxMessages }
   }
 
+  /**
+   * The follow snapshot for a history read: a validated envelope whose rows
+   * stay undecoded. The v4 per-record codec admission is the expensive part of
+   * a snapshot read, and a pagination call needs only the cursor from the tail;
+   * the rows actually returned are decoded once by the history response.
+   */
   async function followSnapshot(
     request: Record<string, unknown>,
     signal?: AbortSignal,
-  ): Promise<Record<string, unknown>> {
+  ): Promise<AlphaWireSnapshotEnvelope> {
     for await (const item of openRemoteStream('session/follow', { request }, signal)) {
-      const frame = readAlphaWireSnapshot(
+      const frame = readAlphaWireSnapshotEnvelope(
         item,
         options.sessionWireVersion ?? 'v0',
         options.sessionWireProfile,
@@ -273,6 +280,52 @@ export function createAlphaLegacyRpc(dependencies: AlphaLegacyRpcDependencies): 
       return frame
     }
     throw malformedResponse('session/follow snapshot')
+  }
+
+  /**
+   * Expand an already validated follow snapshot for a history read. A v4
+   * snapshot decodes once here with the same `seq <= cursor` admission the
+   * snapshot reader applied, yielding to the transport heartbeat as it goes;
+   * older wires keep their synchronous single decode.
+   */
+  async function snapshotHistoryResponse(
+    snapshot: AlphaWireSnapshotEnvelope,
+    sessionId: string,
+    signal?: AbortSignal,
+  ): Promise<LegacyResponse> {
+    if (options.sessionWireVersion === 'v4') {
+      const events = await expandV4HistoryRecordsIncremental(
+        snapshot.records,
+        sessionId,
+        snapshot.cursor,
+        options.autoReviewDenialContract === true,
+        options.sessionWireProfile,
+        signal,
+      )
+      return historyEventsResponse(events, snapshot.hasMore, snapshot.projections)
+    }
+    return historyResponse(
+      { records: snapshot.records, hasMore: snapshot.hasMore, projections: snapshot.projections },
+      sessionId,
+    )
+  }
+
+  function historyEventsResponse(
+    events: readonly Record<string, unknown>[],
+    hasMore: boolean,
+    projections: Record<string, unknown> | undefined,
+  ): LegacyResponse {
+    return {
+      rpcId: randomUUID(),
+      result: {
+        ok: true,
+        value: {
+          events: events.map((event) => ({ event })),
+          hasMore,
+          ...(projections === undefined ? {} : { projections }),
+        },
+      },
+    }
   }
 
   function historyResponse(value: unknown, sessionId: string): LegacyResponse {
@@ -297,17 +350,12 @@ export function createAlphaLegacyRpc(dependencies: AlphaLegacyRpcDependencies): 
       options.autoReviewDenialContract === true,
       options.sessionWireProfile,
     )
-    return {
-      rpcId: randomUUID(),
-      result: {
-        ok: true,
-        value: {
-          events: events.map((event) => ({ event })),
-          hasMore: record.hasMore,
-          ...(record.projections === undefined ? {} : { projections: record.projections }),
-        },
-      },
-    }
+    // The projection baseline guard above already admitted this value.
+    return historyEventsResponse(
+      events,
+      record.hasMore,
+      record.projections as Record<string, unknown> | undefined,
+    )
   }
 
   async function sessionModels(

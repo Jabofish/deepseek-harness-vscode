@@ -126,7 +126,11 @@ export function createAttachmentRequestHandler(
       const bytes = decodeCanonicalBase64(dataBase64, MAX_IMAGE_ATTACHMENT_BYTES)
       return {
         cancelled: false,
-        attachment: rememberSupportedAttachment(prepareAttachment(name, bytes, mimeType)),
+        // decodeCanonicalBase64 validated dataBase64 as the canonical encoding
+        // of bytes; pass it through so the data URI skips a full re-encode.
+        attachment: rememberSupportedAttachment(
+          prepareAttachment(name, bytes, mimeType, bytes === undefined ? undefined : dataBase64),
+        ),
       }
     }
 

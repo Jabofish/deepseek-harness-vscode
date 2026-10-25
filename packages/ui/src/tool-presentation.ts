@@ -396,7 +396,9 @@ function displayValue(value: unknown, depth = 0, t?: PresentationTranslate): str
 
 /** Find one balanced object/array in a prefixed result without evaluating it. */
 function embeddedStructuredLiteral(value: string): string | undefined {
-  const start = [...value].findIndex((character) => character === '{' || character === '[')
+  // Both markers are ASCII, so a UTF-16 search finds the same first occurrence
+  // as a code-point scan without materializing the whole string as an array.
+  const start = value.search(/[{[]/u)
   if (start < 0) return undefined
   const stack: string[] = []
   let quote: '"' | "'" | undefined

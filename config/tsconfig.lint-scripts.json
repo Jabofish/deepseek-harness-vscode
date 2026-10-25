@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.tools.json",
+  "files": ["../scripts/read-stylesheet.mjs", "../apps/extension/esbuild-import-meta-url.mjs"],
+  "include": []
+}

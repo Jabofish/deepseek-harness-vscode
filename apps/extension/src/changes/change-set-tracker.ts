@@ -593,9 +593,10 @@ export class ChangeSetTracker {
   private trim(): void {
     let totalBytes = 0
     const entries = [...this.entries.values()].sort((left, right) => right.lastSeenAt - left.lastSeenAt)
-    for (const entry of entries) {
+    for (let index = 0; index < entries.length; index++) {
+      const entry = entries[index]!
       totalBytes += entry.diffs === undefined ? 0 : changeDiffsBytes(entry.diffs)
-      if (entries.indexOf(entry) >= CHANGE_LIMITS.maxFiles || totalBytes > CHANGE_LIMITS.maxTotalBytes)
+      if (index >= CHANGE_LIMITS.maxFiles || totalBytes > CHANGE_LIMITS.maxTotalBytes)
         this.entries.delete(entry.changeId)
     }
   }

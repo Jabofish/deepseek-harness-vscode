@@ -294,10 +294,11 @@ export function createSessionScope(deps: SessionScopeDependencies): SessionScope
         const { history: _history, ...metadata } = detail
         void _history
         currentWorkspaceSessionDetails.delete(sessionId)
-        if (JSON.stringify(metadata).length <= 256 * 1024)
+        const metadataChars = JSON.stringify(metadata).length
+        if (metadataChars <= 256 * 1024)
           currentWorkspaceSessionDetails.set(sessionId, { generation, detail: metadata })
         if (
-          JSON.stringify(metadata).length <= 256 * 1024 &&
+          metadataChars <= 256 * 1024 &&
           backendService.requireBackend() === authorityBackend &&
           controlRoots() === authorityRoots
         ) {

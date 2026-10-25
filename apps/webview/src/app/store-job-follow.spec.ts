@@ -877,4 +877,42 @@ describe('AppStore Job follow', () => {
       store.dispose()
     }
   })
+
+  it('evicts the oldest output chunks once the display cap is exceeded', async () => {
+    const { client, store } = await openJobStore()
+
+    try {
+      await store.followJob(job.id)
+      emitFollowFrame(client, { type: 'opened', job, from: 0 })
+      const chunkChars = 1_500
+      const chunkCount = 200
+      for (let index = 0; index < chunkCount; index++) {
+        emitFollowFrame(client, {
+          type: 'output',
+          chunks: [{ at: index * chunkChars, text: `${index}:`.padEnd(chunkChars, 'x') }],
+          next: (index + 1) * chunkChars,
+        })
+      }
+      const totalChars = chunkCount * chunkChars
+      expect(totalChars).toBeGreaterThan(256 * 1024)
+      const chunks = store.jobFollow?.chunks ?? []
+      // The cap drops oldest chunks until the remainder fits, mirroring the
+      // store rule rather than a hardcoded count.
+      let expectedKept = chunkCount
+      let expectedChars = totalChars
+      while (expectedKept > 1 && expectedChars > 256 * 1024) {
+        expectedChars -= chunkChars
+        expectedKept--
+      }
+      expect(chunks).toHaveLength(expectedKept)
+      expect(chunks.reduce((total, chunk) => total + chunk.text.length, 0)).toBe(expectedChars)
+      expect(chunks[0]?.at).toBe((chunkCount - expectedKept) * chunkChars)
+      expect(chunks[0]?.text.startsWith(`${chunkCount - expectedKept}:`)).toBe(true)
+      const newest = chunks.at(-1)
+      expect(newest !== undefined ? newest.at + newest.text.length : 0).toBe(totalChars)
+      expect(store.jobFollow?.next).toBe(totalChars)
+    } finally {
+      store.dispose()
+    }
+  })
 })

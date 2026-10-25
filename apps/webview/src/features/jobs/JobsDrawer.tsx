@@ -106,6 +106,12 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
     }
     return { running, stopping }
   }, [rows])
+  // Follow frames replace the chunk list; unrelated renders (the elapsed-time
+  // clock, other drawers) must not re-join the whole output each time.
+  const followingOutput = useMemo(
+    () => following?.chunks.map((chunk) => chunk.text).join('') ?? '',
+    [following],
+  )
   const { running: runningCount, stopping: stoppingCount } = liveCounts
   const liveCount = runningCount + stoppingCount
 
@@ -261,7 +267,7 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
                 {following.error === 'stream-failed' ? <p role="alert">{t('jobs.followFailed')}</p> : null}
                 {following.lossy ? <p>{t('jobs.output.lossy')}</p> : null}
                 <pre role="log" aria-live="polite">
-                  {following.chunks.map((chunk) => chunk.text).join('') || t('jobs.output.empty')}
+                  {followingOutput || t('jobs.output.empty')}
                 </pre>
               </section>
             </li>

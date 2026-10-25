@@ -50,14 +50,13 @@ export function updateSessionById(
   sessionId: string,
   update: (session: SessionSummary) => SessionSummary,
 ): readonly SessionSummary[] {
-  let changed = false
-  const next = sessions.map((session) => {
-    if (session.id !== sessionId) return session
-    const updated = update(session)
-    if (updated !== session) changed = true
-    return updated
-  })
-  return changed ? next : sessions
+  const index = sessions.findIndex((session) => session.id === sessionId)
+  if (index < 0) return sessions
+  const updated = update(sessions[index]!)
+  if (updated === sessions[index]) return sessions
+  const next = [...sessions]
+  next[index] = updated
+  return next
 }
 
 export function setSessionProjection(

@@ -38,6 +38,7 @@ interface PendingInteractions {
 
 const EMPTY_PERMISSION_REQUESTS: readonly PendingApproval[] = []
 const EMPTY_USER_QUESTIONS: readonly UserQuestion[] = []
+const EMPTY_PAIRED_NODES: readonly never[] = []
 // Per-pending-object handler caches for the memoized interaction cards. They
 // live at module scope (never a ref read during render) so the same pending
 // object keeps one stable callback identity across streaming frames.
@@ -81,7 +82,12 @@ export function usePendingInteractions({
     [activeSessionId, state.permissions],
   )
   const pairedNodes = useMemo(
-    () => state.timeline.nodes.filter((node) => pairedIds.includes(node.id)),
+    () =>
+      // No pending approvals is the common case during streaming; a stable
+      // empty identity skips the whole-table scan and the downstream memos.
+      pairedIds.length === 0
+        ? EMPTY_PAIRED_NODES
+        : state.timeline.nodes.filter((node) => pairedIds.includes(node.id)),
     [pairedIds, state.timeline.nodes],
   )
   const loadNode = useCallback(

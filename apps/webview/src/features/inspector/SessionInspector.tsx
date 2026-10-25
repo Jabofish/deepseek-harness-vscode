@@ -80,14 +80,21 @@ export function SessionInspector(props: {
   )
   const end = Math.max(0, filtered.length - offset)
   const start = Math.max(0, end - PAGE_SIZE)
-  const selected = records.find((record) => record.id === selectedId)
+  // The records map runs per streaming patch while the drawer is open; these
+  // two derived scans would otherwise run again on every unrelated render.
+  const selected = useMemo(() => records.find((record) => record.id === selectedId), [records, selectedId])
   useEffect(() => {
     if (open) selectedRowRef.current?.scrollIntoView?.({ block: 'nearest' })
   }, [open, selectedId])
-  const matches =
-    selected?.sequence === undefined
-      ? []
-      : records.filter((record) => record.source !== selected.source && record.sequence === selected.sequence)
+  const matches = useMemo(
+    () =>
+      selected?.sequence === undefined
+        ? []
+        : records.filter(
+            (record) => record.source !== selected.source && record.sequence === selected.sequence,
+          ),
+    [records, selected],
+  )
   const selectRecord = (record: InspectorRecord): void => {
     const sameSource = records.filter((candidate) => candidate.source === record.source)
     const index = sameSource.findIndex((candidate) => candidate.id === record.id)

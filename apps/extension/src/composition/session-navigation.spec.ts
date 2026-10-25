@@ -114,6 +114,55 @@ describe('shared Host session navigation', () => {
     expect(changed).not.toHaveBeenCalled()
   })
 
+  it('coalesces a streaming activity burst behind a trailing directory refresh', async () => {
+    vi.useFakeTimers()
+    try {
+      const { navigation } = fixture()
+      const changed = vi.fn()
+      const subscription = navigation.onDidChange(changed)
+
+      // A streaming burst never chains directory re-reads per event.
+      for (let index = 0; index < 10; index++) navigation.acceptEvent('session.activity')
+      expect(changed).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(changed).toHaveBeenCalledExactlyOnceWith('directory')
+
+      // A full refresh from any other event supersedes the pending window.
+      changed.mockClear()
+      navigation.acceptEvent('session.activity')
+      navigation.acceptEvent('session.title')
+      expect(changed).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(changed).toHaveBeenCalledTimes(1)
+
+      // An activity arriving after that refresh still gets its own pass.
+      navigation.acceptEvent('session.activity')
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(changed).toHaveBeenCalledTimes(2)
+      subscription.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('releases the activity refresh timer when the final directory consumer unsubscribes', () => {
+    vi.useFakeTimers()
+    try {
+      const { navigation } = fixture()
+      const changed = vi.fn()
+      const subscription = navigation.onDidChange(changed)
+      navigation.acceptEvent('session.activity')
+      expect(vi.getTimerCount()).toBe(1)
+      subscription.dispose()
+      expect(vi.getTimerCount()).toBe(0)
+      navigation.acceptEvent('session.activity')
+      expect(vi.getTimerCount()).toBe(0)
+      expect(changed).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('blocks reads during attach and transport loss, then refreshes on recovery of the same backend', async () => {
     const { navigation, deps, signal } = fixture()
     const backend = deps.backendService.requireBackend()

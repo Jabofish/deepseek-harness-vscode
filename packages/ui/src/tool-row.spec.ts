@@ -15,6 +15,21 @@ function tool(overrides: Partial<ToolCallView> = {}): ToolCallView {
 }
 
 describe('ToolRow', () => {
+  it('invalidates its model cache for a new locale or updated immutable tool', () => {
+    const current = tool({ name: 'bash', status: 'running', inputSummary: 'echo fixture' })
+    const english = (key: string): string => `en:${key}`
+    const chinese = (key: string): string => `zh:${key}`
+    const initial = toolRowModel(current, english)
+    expect(toolRowModel(current, english)).toBe(initial)
+    const localized = toolRowModel(current, chinese)
+    expect(localized.title).toBe('zh:toolrow.title.bash')
+    expect(localized.state).toBe(initial.state)
+    expect(initial.title).toBe('en:toolrow.title.bash')
+    const completed = toolRowModel({ ...current, status: 'completed', outputSummary: 'done' }, chinese)
+    expect(completed.state).toBe('ok')
+    expect(initial.state).toBe('running')
+  })
+
   it('classifies official built-ins while leaving unknown tools on the generic path', () => {
     expect(classifyTool('bash')).toBe('bash')
     expect(classifyTool('pwsh')).toBe('bash')

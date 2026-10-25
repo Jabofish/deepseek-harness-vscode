@@ -105,8 +105,10 @@ function isSensitivePublicField(
   value: unknown,
   parent: Record<string, unknown>,
 ): boolean {
-  const normalizedParent = parentKey?.toLocaleLowerCase()
-  const normalizedKey = key.toLocaleLowerCase()
+  // Locale-independent lowering: the comparison sets are ASCII, and a host
+  // locale must never decide whether a field is redacted or allowlisted.
+  const normalizedParent = parentKey?.toLowerCase()
+  const normalizedKey = key.toLowerCase()
 
   // Provider catalog rows use `secret: boolean` as field metadata. Preserve
   // that structural flag while continuing to redact secret-bearing values.

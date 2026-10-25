@@ -74,7 +74,25 @@ export function isSpecializedTool(tool: ToolCallView): boolean {
   )
 }
 
+/**
+ * Tool nodes are immutable per timeline identity and rows re-render on every
+ * unrelated state change, so the model is cached per tool node. The translate
+ * reference is stable per locale (useCallback); a locale switch rebuilds once.
+ */
+const toolRowModelCache = new WeakMap<
+  ToolCallView,
+  { readonly translate: PresentationTranslate | undefined; readonly model: ToolRowModel }
+>()
+
 export function toolRowModel(tool: ToolCallView, translate?: PresentationTranslate): ToolRowModel {
+  const cached = toolRowModelCache.get(tool)
+  if (cached !== undefined && cached.translate === translate) return cached.model
+  const model = buildToolRowModel(tool, translate)
+  toolRowModelCache.set(tool, { translate, model })
+  return model
+}
+
+function buildToolRowModel(tool: ToolCallView, translate?: PresentationTranslate): ToolRowModel {
   const variant = classifyTool(tool.name)
   const title = rowTitle(variant, tool, translate)
   if (tool.preparation !== undefined) {

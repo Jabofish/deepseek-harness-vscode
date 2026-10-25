@@ -87,25 +87,49 @@ export class BillingUseCases {
       before = page.fromSequence
     }
     let currentRoute: BillingRoute | undefined
-    const prices = new Map<string, BillingPrice[]>()
-    for (const price of settings.prices) {
-      const key = JSON.stringify([price.providerId, price.modelId])
-      prices.set(key, [...(prices.get(key) ?? []), price])
+    // Route lookups run once per scanned fact (up to the event cap); nested
+    // maps answer them without rebuilding a JSON composite key per fact.
+    const prices: Map<string, Map<string, BillingPrice[]>> = new Map()
+    const priceBucketFor = (providerId: string, modelId: string): BillingPrice[] => {
+      let byModel = prices.get(providerId)
+      if (byModel === undefined) {
+        byModel = new Map()
+        prices.set(providerId, byModel)
+      }
+      let bucket = byModel.get(modelId)
+      if (bucket === undefined) {
+        bucket = []
+        byModel.set(modelId, bucket)
+      }
+      return bucket
     }
+    const priceBucket = (providerId: string, modelId: string): readonly BillingPrice[] =>
+      prices.get(providerId)?.get(modelId) ?? []
+    for (const price of settings.prices) priceBucketFor(price.providerId, price.modelId).push(price)
     if (
       (settings.automatic !== false || (settings.mappings?.length ?? 0) > 0) &&
       this.automatic !== undefined
     ) {
-      const routes = new Map<string, BillingRoute>()
+      const routePositions = new Map<string, Map<string, number>>()
+      const uniqueRoutes: BillingRoute[] = []
       for (const fact of facts.values())
-        if (fact.route !== undefined) {
-          const key = JSON.stringify([fact.route.providerId, fact.route.modelId])
-          if (!prices.has(key)) routes.set(key, fact.route)
+        if (fact.route !== undefined && priceBucket(fact.route.providerId, fact.route.modelId).length === 0) {
+          let byModel = routePositions.get(fact.route.providerId)
+          if (byModel === undefined) {
+            byModel = new Map()
+            routePositions.set(fact.route.providerId, byModel)
+          }
+          const position = byModel.get(fact.route.modelId)
+          if (position === undefined) {
+            byModel.set(fact.route.modelId, uniqueRoutes.length)
+            uniqueRoutes.push(fact.route)
+          } else uniqueRoutes[position] = fact.route
         }
-      for (const price of await this.automatic.resolve([...routes.values()], signal)) {
-        const key = JSON.stringify([price.providerId, price.modelId])
-        if (!prices.has(key)) prices.set(key, [price])
-      }
+      // Match Map.set's first-insertion order and last-value replacement even
+      // when routes from different providers are interleaved in the facts.
+      for (const price of await this.automatic.resolve(uniqueRoutes, signal))
+        if (priceBucket(price.providerId, price.modelId).length === 0)
+          priceBucketFor(price.providerId, price.modelId).push(price)
       signal.throwIfAborted()
     }
     const entries = [...facts.values()]
@@ -116,8 +140,7 @@ export class BillingUseCases {
           return []
         }
         const route = fact.kind === 'attempt' ? (coverage ? currentRoute : undefined) : fact.route
-        const candidates =
-          route === undefined ? [] : (prices.get(JSON.stringify([route.providerId, route.modelId])) ?? [])
+        const candidates = route === undefined ? [] : [...priceBucket(route.providerId, route.modelId)]
         const applicable = candidates.filter(
           (price) =>
             (price.validFrom === undefined ||

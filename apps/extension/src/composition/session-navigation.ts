@@ -52,7 +52,16 @@ export function createSessionNavigation(
   let activeSessionId: string | undefined
   let observedKind: unknown
   let observedBackend: DshBackend | undefined
+  let activityRefreshTimer: ReturnType<typeof setTimeout> | undefined
+  let activityDirty = false
+  const clearActivityRefresh = (): void => {
+    if (activityRefreshTimer !== undefined) clearTimeout(activityRefreshTimer)
+    activityRefreshTimer = undefined
+    activityDirty = false
+  }
   const invalidate = (): void => {
+    // Any full re-read supersedes a pending activity-only refresh.
+    clearActivityRefresh()
     for (const listener of listeners) listener('directory')
   }
   const connected = (): boolean => {
@@ -94,6 +103,7 @@ export function createSessionNavigation(
       return {
         dispose: () => {
           listeners.delete(listener)
+          if (listeners.size === 0) clearActivityRefresh()
         },
       }
     },
@@ -183,6 +193,22 @@ export function createSessionNavigation(
         return
       }
       syncSessionTitles(name, payload, deps.retitleEditorTab)
+      if (name === 'session.activity') {
+        if (listeners.size === 0) return
+        // Streaming emits an activity event per step, and a directory read is
+        // two backend RPCs. Coalesce a burst behind a trailing window so the
+        // tree's ordering stays eventual within a second instead of chaining
+        // back-to-back full re-reads for the whole stream.
+        activityDirty = true
+        if (activityRefreshTimer === undefined)
+          activityRefreshTimer = setTimeout(() => {
+            activityRefreshTimer = undefined
+            if (!activityDirty) return
+            activityDirty = false
+            invalidate()
+          }, ACTIVITY_REFRESH_MS)
+        return
+      }
       if (
         DIRECTORY_EVENTS.has(name) ||
         (name === 'session.projection' &&
@@ -242,5 +268,7 @@ const DIRECTORY_EVENTS = new Set([
   'session.added',
   'session.removed',
   'session.title',
-  'session.activity',
 ])
+
+/** Streaming emits activity events per step; see the trailing window in acceptEvent. */
+const ACTIVITY_REFRESH_MS = 1_000

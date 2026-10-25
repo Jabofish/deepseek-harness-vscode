@@ -572,7 +572,7 @@ export class TranscriptWindowService {
         ...timelineSequenceOptions(entry.event),
         ...(entry.sequence === resident.timeline.lastSequence ? { advanceSequence: false as const } : {}),
       })
-      this.rememberLiveBodies(resident, entry.event)
+      this.rememberLiveBodies(resident, entry.event, previous)
       this.rememberChanges(resident, previous, entry.event, entry.sequence, entry.coveredSequences?.[0])
       this.bound(resident)
       this.updateCurrentTodos(resident, entry.event)
@@ -641,7 +641,7 @@ export class TranscriptWindowService {
         ? { advanceSequence: false as const }
         : {}),
     })
-    this.rememberLiveBodies(resident, event)
+    this.rememberLiveBodies(resident, event, previous)
     if (isRetainedHostNotice(event))
       this.rememberNotices(
         resident.sessionId,
@@ -667,16 +667,27 @@ export class TranscriptWindowService {
           : undefined
     if (id === undefined) return
     const node = resident.liveBodies.get(id)
-    if (node !== undefined && !resident.timeline.nodes.some((candidate) => candidate.id === node.id))
+    // Live bodies are the newest rows, so an existence probe from the tail
+    // resolves in a few steps instead of scanning the whole window.
+    if (node !== undefined && !containsNodeIdFromEnd(resident.timeline.nodes, node.id))
       resident.timeline = { ...resident.timeline, nodes: [node, ...resident.timeline.nodes] }
   }
 
-  private rememberLiveBodies(resident: Resident, event: BackendEvent): void {
+  private rememberLiveBodies(
+    resident: Resident,
+    event: BackendEvent,
+    previous: readonly TimelineNode[],
+  ): void {
     if (event.type === 'turn.ended' || event.type === 'session.removed') {
       resident.liveBodies.clear()
       return
     }
-    for (const node of resident.timeline.nodes)
+    const nodes = resident.timeline.nodes
+    // Only rows the reducer touched since `previous` can have changed their
+    // streaming/running state; earlier rows were already reconciled.
+    const start = resident.timeline.nodeChangeBase === previous ? (resident.timeline.nodeChangeStart ?? 0) : 0
+    for (let index = start; index < nodes.length; index++) {
+      const node = nodes[index]!
       if (node.kind === 'tool') {
         if (node.tool.status === 'running' || node.tool.status === 'queued')
           resident.liveBodies.set(node.id, node)
@@ -686,6 +697,7 @@ export class TranscriptWindowService {
           resident.liveBodies.set(node.id, node)
         else resident.liveBodies.delete(node.id)
       }
+    }
   }
 
   private rememberChanges(
@@ -783,8 +795,18 @@ export class TranscriptWindowService {
     const nodeBudget = resident.expanded === true ? TRANSCRIPT_MAX_NODES : 256
     const nodes: TimelineNode[] = []
     const source = resident.timeline.nodes
-    const candidates = source.filter((node) => !resident.contextIds.has(node.id))
-    if (preferOlder) candidates.reverse()
+    // Walk newest-first (oldest-first for a backfill merge) without copying
+    // the retained table; this runs for every accepted event.
+    let cursor = preferOlder ? 0 : source.length - 1
+    const step = preferOlder ? 1 : -1
+    const nextCandidate = (): TimelineNode | undefined => {
+      while (cursor >= 0 && cursor < source.length) {
+        const candidate = source[cursor]!
+        cursor += step
+        if (!resident.contextIds.has(candidate.id)) return candidate
+      }
+      return undefined
+    }
     const projectNode = (
       original: TimelineNode,
     ): {
@@ -835,8 +857,9 @@ export class TranscriptWindowService {
       }
       return clipped
     }
-    for (let index = candidates.length - 1; index >= 0 && nodes.length < nodeBudget - 32; index--) {
-      const original = candidates[index]!
+    while (nodes.length < nodeBudget - 32) {
+      const original = nextCandidate()
+      if (original === undefined) break
       const clipped = projectNode(original)
       const node = clipped.value
       const size = clipped.size
@@ -856,19 +879,23 @@ export class TranscriptWindowService {
     // Context parents preserve supplied call identities and pairing, while
     // the actual page boundary follows the contiguous display rows below.
     let byId: Map<string, TimelineNode> | undefined
-    const normalIds = new Set(nodes.map((node) => node.id))
+    let normalIds: Set<string> | undefined
     const contextIds = new Set<string>()
     let contextChars = 64 * 1024
     const normalCount = nodes.length
     for (let index = 0; index < normalCount; index++) {
       const node = nodes[index]!
-      let parentId = node.kind === 'tool' ? node.tool.parentCallId : undefined
+      // Only a child tool can enter the ancestor walk. Streaming prose used
+      // to allocate an unused cycle-guard Set for every retained row.
+      if (node.kind !== 'tool' || node.tool.parentCallId === undefined) continue
+      let parentId: string | undefined = node.tool.parentCallId
       const visited = new Set<string>()
       while (parentId !== undefined && !visited.has(parentId)) {
         visited.add(parentId)
         byId ??= new Map(source.map((node) => [node.id, node]))
         const parent = byId.get(parentId)
         if (parent?.kind !== 'tool') break
+        normalIds ??= new Set(nodes.map((node) => node.id))
         if (!normalIds.has(parentId) && !contextIds.has(parentId)) {
           const clipped = projectNode(parent)
           if (contextIds.size >= 32 || clipped.rawSize > contextChars) break
@@ -1315,6 +1342,12 @@ function assistantKey(
       ? event.messageId
       : ''
 }
+/** Existence probe from the tail: live rows are the newest in the window. */
+function containsNodeIdFromEnd(nodes: readonly TimelineNode[], id: string): boolean {
+  for (let index = nodes.length - 1; index >= 0; index--) if (nodes[index]!.id === id) return true
+  return false
+}
+
 function stale(): AppError {
   return new AppError({
     code: 'STALE_INTERACTION',
