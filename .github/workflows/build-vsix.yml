@@ -136,7 +136,8 @@ jobs:
     concurrency:
       group: marketplace-publish
       cancel-in-progress: false
-    if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && inputs.publish_marketplace == true) }}
+    # Marketplace publishing requires an explicit manual opt-in, including for tagged releases.
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_marketplace == true }}
     needs: package
     runs-on: ubuntu-24.04
     timeout-minutes: 25

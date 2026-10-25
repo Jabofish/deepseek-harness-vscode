@@ -6,22 +6,18 @@ Release entries describe behaviour at that release. `Unreleased` lists changes a
 
 ## Unreleased
 
-- 会话列表每行改用单个操作菜单，悬停或聚焦时标题不再改变换行宽度，侧栏列表不再随鼠标移动反复重排。
-- Session rows use one actions menu instead of a hover-revealed button rail, so hovering or focusing a row no longer re-wraps its title or resizes the list.
-- 跟随系统与 VS Code 的减少动效设置及动态读屏模式；新增本地“过程显示”偏好，安静模式在思考和工具运行时保持折叠摘要稳定，完成或主动展开后显示详情，回答继续实时输出，并减少重复进度播报。
-- Honors system and VS Code reduced motion and screen-reader changes. Adds a local Process display preference: Quiet keeps collapsed thinking and tool activity stable until completion or expansion, preserves streaming answers, and reduces repeated progress announcements.
-- 修复安静模式下工具详情的展开/收起、提交计划被隐藏及重复错误提示；工具批次增长和读屏模式切换时保留焦点及披露状态，准备中无详情的工具也保留行内焦点。附件翻页遵循减少动效且运行时切换立即停止滚动，聊天和轨迹视图共用稳定的进度播报区域。
-- Fixes quiet tool disclosures, hidden submitted plans and duplicate failure prompts. Tool batches and screen-reader changes preserve focus and disclosure state, including preparing tools without details. Attachment paging honors reduced motion and stops immediately when it is enabled. Chat and trajectory views share a stable progress announcement region.
-- 修复答题后的残留表单：保留定时问题身份，按已接受回执和权威投影结算整组答案，避免重读与迟到事件复活；排队迟到答复在面板重建后保持只读，Inbox 丢弃后可重新作答。
-- Fix stale question forms after answering, preserve timed request identities and batch settlements across recovery, and retain queued late replies until Inbox admission or discard.
-- 限制 Webview 持续拒收时的正文重发与恢复重读；耗尽预算后等待面板重新可见，避免流事件持续触发失败投递。
-- Stop transcript delivery and recovery loops after repeated Webview failures; resume with the latest state when the panel becomes visible again.
-- 会话标题按持久化序列“最新优先”处理，重放旧标题不再让打开的标签页或会话列表反复刷新。
-- Session titles are latest-wins by durable sequence, so a replayed stale title no longer flips an open tab or reloads the session list.
-- 转瞬态分片缺口后的重新订阅按冷却窗口合并，思考分片大量掉帧不再反复重连并触发全量重订阅。
-- Re-subscription after a transient chunk gap is coalesced behind a cooldown, so a reasoning-delta flood no longer hot-loops reconnect and re-subscription.
-- 冷却期内的缺口会在到期后恢复，较新标题快照仍可生效；截断正文按完整内容版本更新，相同预览不会掩盖全文变化。
-- Gaps detected during cooldown recover when it expires, newer title snapshots remain authoritative, and clipped bodies refresh by full-content version even when their previews are identical.
+## 0.4.1
+
+- 长会话输出按面板消费确认推进，限制归约前缓冲与恢复重读；隐藏视图延后处理，未变化节点及全文缓存保持稳定。暂态缺口使用恢复预算和退避，控制消息丢失后保留可重试的 Job 输出及字节游标。
+- Long conversations use per-panel consumption acknowledgements, bounded buffers before reduction and scoped recovery. Hidden views defer work; unchanged nodes and full-content caches stay stable. Transient gaps use recovery budgets/backoff, and control loss retains retryable Job output and byte cursors.
+- 修复答题后表单残留和迟到重放：定时问题保留调用身份并整组结算，排队答复在面板重建后保持只读，Inbox 丢弃后可重新作答。
+- Fixes stale question forms and late replay after answering. Timed calls settle as a batch; queued replies remain read-only across panel rebuilds and can be answered again after Inbox discard.
+- 跟随系统及 VS Code 的减少动效和读屏模式，提供本地安静过程显示；保留流式回答、工具展开、提交计划与键盘焦点，减少重复进度和错误提示。
+- Honors system/VS Code reduced motion and screen-reader changes, with a local Quiet process display. Preserves streaming answers, tool disclosure, submitted plans and keyboard focus while reducing repeated progress/error announcements.
+- 会话行悬停或聚焦时不再反复换行和重排；标题按持久序号更新，重放旧标题不触发目录刷新。相同截断预览下的全文变化仍会更新。
+- Session rows no longer re-wrap or resize on hover/focus. Titles follow durable sequence without stale replay refreshing the directory, and changed full bodies refresh even when clipped previews match.
+- 补齐英文技术文档，更新中英文贡献指南、Agent 规范和测试说明。安装包由 GitHub Releases 提供，本版本不上传 Marketplace。
+- Adds complete English contract/capability documentation and updates bilingual contribution guides, agent rules and testing instructions. This version is distributed through GitHub Release VSIX files without Marketplace publication.
 
 ## 0.4.0
 
