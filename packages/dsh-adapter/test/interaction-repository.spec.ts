@@ -70,6 +70,62 @@ function rememberQuestion(repository: Rc6InteractionRepository, question: UserQu
 }
 
 describe('Rc6InteractionRepository question batch answers', () => {
+  it('retires a request on authoritative projection or late-reply admission without resending a mutation', () => {
+    const { transport, responses } = recordingTransport()
+    const repository = new Rc6InteractionRepository(transport)
+    const first = { ...planReviewQuestion(), callId: 'call-one' }
+    rememberQuestion(repository, first)
+    repository.remember({
+      type: 'session.projection',
+      sessionId: 's1',
+      key: 'userQuestions',
+      value: { active: [], settled: [{ callId: first.callId, answers: [] }] },
+    })
+    expect(repository.sessionForQuestion('q-plan')).toBeUndefined()
+    rememberQuestion(repository, { ...first, rpcId: 'rpc-next', callId: 'call-two' })
+    repository.remember({
+      type: 'question.reply.status',
+      sessionId: 's1',
+      callId: 'call-two',
+      state: 'admitted',
+      asOfSequence: 5,
+    })
+    expect(repository.sessionForQuestion('q-extra')).toBeUndefined()
+    expect(responses).toEqual([])
+  })
+  it('retires an entire batch by any item and scopes resolution to its session and rpc identity', async () => {
+    const { transport, responses } = recordingTransport()
+    const repository = new Rc6InteractionRepository(transport)
+    const first = planReviewQuestion()
+    rememberQuestion(repository, first)
+    repository.remember({ type: 'question.resolved', sessionId: 'other', questionRpcId: 'rpc-plan' })
+    expect(repository.sessionForQuestion('q-extra')).toBe('s1')
+    repository.remember({ type: 'question.resolved', sessionId: 's1', questionId: 'q-extra' })
+    expect(repository.sessionForQuestion('q-plan')).toBeUndefined()
+    rememberQuestion(repository, first)
+    expect(repository.sessionForQuestion('q-plan')).toBeUndefined()
+    rememberQuestion(repository, { ...first, rpcId: 'rpc-new' })
+    repository.remember({
+      type: 'question.resolved',
+      sessionId: 's1',
+      questionRpcId: 'rpc-plan',
+      questionId: 'q-plan',
+    })
+    await repository.cancelQuestion('q-extra')
+    expect(responses[0]?.rpcId).toBe('rpc-new')
+  })
+
+  it('refuses ambiguous item ids instead of responding to a different session and drops disconnected pending ids', async () => {
+    const { transport, responses } = recordingTransport()
+    const repository = new Rc6InteractionRepository(transport)
+    const first = planReviewQuestion()
+    rememberQuestion(repository, first)
+    rememberQuestion(repository, { ...first, sessionId: 's2', rpcId: 'rpc-other' })
+    await expect(repository.cancelQuestion('q-plan')).rejects.toMatchObject({ code: 'STALE_INTERACTION' })
+    expect(responses).toEqual([])
+    repository.remember({ type: 'connection.lost', reason: 'Disconnected' })
+    expect(repository.sessionForQuestion('q-plan')).toBeUndefined()
+  })
   it('answers every question of one ask in a single client-response', async () => {
     const { transport, responses } = recordingTransport()
     const repository = new Rc6InteractionRepository(transport)

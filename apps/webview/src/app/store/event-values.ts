@@ -242,7 +242,11 @@ export function parseUserQuestion(value: Record<string, unknown>): UserQuestion 
     (value.choices !== undefined && choices === undefined) ||
     (value.multiSelect !== undefined && typeof value.multiSelect !== 'boolean') ||
     (value.intent !== undefined && intent === undefined) ||
-    (value.items !== undefined && items === undefined)
+    (value.items !== undefined && items === undefined) ||
+    (value.callId !== undefined && !nonEmptyString(value.callId)) ||
+    (value.timed !== undefined && typeof value.timed !== 'boolean') ||
+    (value.state !== undefined && value.state !== 'open' && value.state !== 'continued') ||
+    (value.replyQueued !== undefined && typeof value.replyQueued !== 'boolean')
   )
     return undefined
   return {
@@ -257,6 +261,10 @@ export function parseUserQuestion(value: Record<string, unknown>): UserQuestion 
     allowFreeText: value.allowFreeText,
     ...(intent === undefined ? {} : { intent }),
     ...(items === undefined ? {} : { items }),
+    ...(typeof value.callId === 'string' ? { callId: value.callId } : {}),
+    ...(typeof value.timed === 'boolean' ? { timed: value.timed } : {}),
+    ...(value.state === 'open' || value.state === 'continued' ? { state: value.state } : {}),
+    ...(typeof value.replyQueued === 'boolean' ? { replyQueued: value.replyQueued } : {}),
   }
 }
 

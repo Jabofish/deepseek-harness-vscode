@@ -2417,6 +2417,33 @@ it('tracks background-session questions and clears them on resolution and subscr
   store.dispose()
 })
 
+it('does not resurrect a resolved batch when a delayed request is replayed', async () => {
+  const client = new StartupClient(startupResponse)
+  const store = createAppStore(client as unknown as ProtocolClient)
+  await store.openSession('session-active')
+  const question = {
+    id: 'first',
+    rpcId: 'rpc-batch',
+    sessionId: 'session-active',
+    prompt: 'First?',
+    allowFreeText: true,
+    items: [
+      { id: 'first', prompt: 'First?', allowFreeText: true },
+      { id: 'second', prompt: 'Second?', allowFreeText: true },
+    ],
+  }
+  client.emit({ type: 'event', name: 'question.requested', sequence: 100, payload: { question } })
+  client.emit({
+    type: 'event',
+    name: 'question.resolved',
+    sequence: 101,
+    payload: { sessionId: question.sessionId, questionRpcId: question.rpcId },
+  })
+  client.emit({ type: 'event', name: 'question.requested', sequence: 102, payload: { question } })
+  expect(store.questions).toEqual([])
+  store.dispose()
+})
+
 it('refreshes goal activation without allowing an older read to overwrite the latest state', async () => {
   let live = false
   const reads: Array<(value: unknown) => void> = []

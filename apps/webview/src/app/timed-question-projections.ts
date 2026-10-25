@@ -73,7 +73,7 @@ export function mergeLiveTimedQuestion(
     ...question,
     callId: pending.callId,
     state: pending.state,
-    ...(replyQueued ? { replyQueued: true } : {}),
+    replyQueued,
   }
 }
 

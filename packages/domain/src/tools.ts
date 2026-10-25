@@ -211,6 +211,11 @@ export interface PermissionOption {
   readonly kind: 'allow-once' | 'deny'
 }
 
+export interface QuestionRequestIdentity {
+  readonly sessionId: string
+  readonly rpcId: string
+}
+
 export interface UserQuestion {
   readonly id: string
   readonly rpcId?: string

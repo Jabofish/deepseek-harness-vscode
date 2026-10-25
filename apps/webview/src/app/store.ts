@@ -1,4 +1,5 @@
 import type { AgentConfiguration, PromptMode, SubagentCatalog, SubagentView } from '@dsh-vscode/domain'
+import { QuestionSettlements } from '@dsh-vscode/domain'
 import type { FeatureRequest } from '@dsh-vscode/webview-protocol'
 import { transcriptNodeSchema } from '@dsh-vscode/webview-protocol'
 import type { TimelineNode } from '@dsh-vscode/timeline'
@@ -25,6 +26,7 @@ import { createDshUpdateActions } from './store/dsh-update.js'
 import { createFeedbackCache } from './store/feedback-cache.js'
 import { createFeedbackActions } from './store/feedback-actions.js'
 import { createInteractionActions } from './store/interaction-actions.js'
+import { QuestionReplies } from './store/question-replies.js'
 import { createSessionCatalogActions } from './store/session-catalog-actions.js'
 import { createSessionOpenController } from './store/session-open-controller.js'
 import { createTurnWatchers } from './store/turn-watchers.js'
@@ -83,6 +85,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   let composerPreferences = persistedWebviewState.composerPreferences ?? {}
   let state = createInitialState(composerPreferences)
   let disposed = false
+  const questionSettlements = new QuestionSettlements()
   const retryDelays = createRetryDelays()
   // Projection values arrive from both the Alpha Session/follow stream and
   // the independent session/control stream. Keep their DSH cut outside the
@@ -123,8 +126,24 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   }
   const setState: StateSetter = (next): void => {
     if (disposed) return
-    const nextState = typeof next === 'function' ? next(state) : next
+    let nextState = typeof next === 'function' ? next(state) : next
     if (nextState === state) return
+    if (nextState.projections !== state.projections)
+      for (const [id, values] of Object.entries(nextState.projections))
+        if (values.userQuestions !== state.projections[id]?.userQuestions)
+          questionSettlements.project(id, values.userQuestions)
+    if (
+      nextState.questions !== state.questions ||
+      nextState.projections !== state.projections ||
+      state.settledQuestionCalls !== questionSettlements.settledCalls()
+    ) {
+      const questions = nextState.questions.filter((question) => !questionSettlements.has(question))
+      if (questions.length !== nextState.questions.length) nextState = { ...nextState, questions }
+    }
+    nextState = questionReplies.reconcile(nextState)
+    const settledQuestionCalls = questionSettlements.settledCalls()
+    if (nextState.settledQuestionCalls !== settledQuestionCalls)
+      nextState = { ...nextState, settledQuestionCalls }
     const previousTranscript = state.transcript
     state =
       nextState.transcript !== undefined && nextState.transcript.sessionId !== nextState.activeSessionId
@@ -147,6 +166,14 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     // Publish installed Host state immediately; do not add a timer or frame wait.
     for (const listener of listeners) listener()
   }
+  const questionReplies = new QuestionReplies(
+    client,
+    () => state,
+    setState,
+    questionSettlements,
+    (sessionId) =>
+      projectionSequences.perKey.get(sessionId)?.get('inbox') ?? projectionSequences.baselines.get(sessionId),
+  )
   const feedbackCache = createFeedbackCache({ client, setState, getState: () => state })
   const invalidateFeedback = feedbackCache.invalidate
   const pluginInstallRecovery = new PluginInstallRecoveryController({
@@ -538,6 +565,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     openSession: open,
   })
   const unsubscribeHostEvents = subscribeHostEvents({
+    questionSettlements,
+    questionReplies,
     accountActions,
     callbacks,
     client,
@@ -634,7 +663,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     isPresetRosterCurrent,
   })
   const feedbackActions = createFeedbackActions({ client, setState, getState: () => state, feedbackCache })
-  const interactionActions = createInteractionActions(client, setState)
+  const interactionActions = createInteractionActions(client, setState, () => state, questionSettlements)
   const sessionCatalogActions = createSessionCatalogActions({
     client,
     getState: () => state,
@@ -897,7 +926,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         )
       return catalog
     },
-    featureRequest: <T>(request: FeatureRequest): Promise<T> => client.featureRequest<T>(request),
+    featureRequest: <T>(request: FeatureRequest): Promise<T> => questionReplies.request<T>(request),
     subscribeFeature: (listener) => client.subscribeFeature(listener),
     setDrawer: (drawer) => {
       const openingSessionsDrawer = drawer === 'sessions' && state.drawer !== 'sessions'

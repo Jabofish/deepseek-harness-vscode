@@ -26,6 +26,147 @@ function requested(value: UserQuestion): BackendEvent {
 }
 
 describe('BackendService event replay', () => {
+  it('remembers the accepted call even when the request has already left the bounded replay cache', () => {
+    const backend = new FakeBackend()
+    const service = new BackendService()
+    service.attach(backend as unknown as DshBackend, () => undefined)
+    backend.emit({
+      type: 'session.projection.baseline',
+      projections: {
+        s1: {
+          asOfSequence: 10,
+          values: {
+            userQuestions: { active: [{ callId: 'call', state: 'continued', questions: [] }], settled: [] },
+          },
+        },
+      },
+    })
+    backend.emit({
+      type: 'question.resolved',
+      sessionId: 's1',
+      questionRpcId: 'rpc',
+      outcome: 'answered',
+      settledCallId: 'call',
+    })
+    expect(service.replayEvents().at(-1)).toMatchObject({
+      type: 'question.reply.status',
+      callId: 'call',
+      state: 'settled',
+    })
+  })
+  it('settles subscribed snapshots and overlays terminal calls in their stale active projection', () => {
+    const backend = new FakeBackend()
+    const service = new BackendService()
+    service.attach(backend as unknown as DshBackend, () => undefined)
+    const pending = { ...question('q', 'rpc'), callId: 'call' }
+    backend.emit(requested(pending))
+    backend.emit({
+      type: 'session.subscribed',
+      sessionId: 's1',
+      lastSequence: 10,
+      projection: {
+        asOfSequence: 10,
+        values: { userQuestions: { active: [], settled: [{ callId: 'call', answers: [] }] } },
+      },
+    })
+    backend.emit(requested(pending))
+    expect(service.replayEvents().filter((event) => event.type === 'question.requested')).toEqual([])
+    backend.emit({
+      type: 'session.subscribed',
+      sessionId: 's1',
+      lastSequence: 9,
+      projection: {
+        asOfSequence: 9,
+        values: {
+          userQuestions: { active: [{ callId: 'call', state: 'continued', questions: [] }], settled: [] },
+        },
+      },
+    })
+    expect(service.replayEvents().at(-1)).toMatchObject({
+      type: 'question.reply.status',
+      callId: 'call',
+      state: 'settled',
+    })
+  })
+  it('overlays accepted call facts when a cached projection still exposes the call during panel recovery', () => {
+    const backend = new FakeBackend()
+    const service = new BackendService()
+    service.attach(backend as unknown as DshBackend, () => undefined)
+    backend.emit(requested({ ...question('q', 'rpc'), callId: 'call' }))
+    backend.emit({
+      type: 'session.projection',
+      sessionId: 's1',
+      key: 'userQuestions',
+      value: { active: [{ callId: 'call', state: 'continued', questions: [] }], settled: [] },
+    })
+    backend.emit({ type: 'question.resolved', sessionId: 's1', questionRpcId: 'rpc', outcome: 'answered' })
+    const replay = service.replayEvents()
+    expect(replay.at(-1)).toEqual({
+      type: 'question.reply.status',
+      sessionId: 's1',
+      callId: 'call',
+      state: 'settled',
+      asOfSequence: -1,
+    })
+    const attached: BackendEvent[] = []
+    service.attach(backend as unknown as DshBackend, (event) => attached.push(event))
+    expect(attached).toEqual(replay)
+  })
+  it('retains terminal request and call identities across rereads, reattach and delayed events', () => {
+    const backend = new FakeBackend()
+    const service = new BackendService()
+    service.attach(backend as unknown as DshBackend, () => undefined)
+    const first = { ...question('same-item', 'rpc-old'), callId: 'call-old' }
+    backend.emit(requested(first))
+    backend.emit({
+      type: 'question.resolved',
+      sessionId: 's1',
+      questionRpcId: 'rpc-old',
+      outcome: 'answered',
+    })
+    backend.emit(requested(first))
+    backend.emit({ type: 'connection.lost', reason: 'Reconnect' })
+    backend.emit(requested(first))
+    const next = { ...first, rpcId: 'rpc-next', callId: 'call-next' }
+    backend.emit(requested(next))
+    expect(service.replayEvents().filter((event) => event.type === 'question.requested')).toEqual([
+      requested(next),
+    ])
+    backend.emit({
+      type: 'session.projection',
+      sessionId: 's1',
+      key: 'userQuestions',
+      value: { active: [], settled: [{ callId: 'call-next', answers: [] }] },
+    })
+    backend.emit(requested(next))
+    const replayed: BackendEvent[] = []
+    service.attach(backend as unknown as DshBackend, (event) => replayed.push(event))
+    expect(replayed.filter((event) => event.type === 'question.requested')).toEqual([])
+  })
+
+  it('keeps a timed question recoverable after foreground timeout and retires stale waterfalls on disconnect', () => {
+    const backend = new FakeBackend()
+    const service = new BackendService()
+    service.attach(backend as unknown as DshBackend, () => undefined)
+    const pending = { ...question('q', 'rpc-timeout'), callId: 'call-timed', timed: true }
+    backend.emit(requested(pending))
+    backend.emit({
+      type: 'question.resolved',
+      sessionId: 's1',
+      questionRpcId: 'rpc-timeout',
+      outcome: 'cancelled',
+    })
+    const projection: BackendEvent = {
+      type: 'session.projection',
+      sessionId: 's1',
+      key: 'userQuestions',
+      value: { active: [{ callId: 'call-timed', state: 'continued', questions: [] }], settled: [] },
+    }
+    backend.emit(projection)
+    backend.emit(requested(question('new', 'rpc-new')))
+    backend.emit({ type: 'connection.lost', reason: 'Reconnect' })
+    expect(service.replayEvents()).toEqual([projection])
+  })
   it('keeps a sibling pending question when another question in the session resolves', () => {
     const backend = new FakeBackend()
     const service = new BackendService()

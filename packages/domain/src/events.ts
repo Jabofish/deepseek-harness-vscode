@@ -364,6 +364,8 @@ type BackendEventPayload =
       readonly type: 'question.resolved'
       readonly sessionId: string
       readonly questionRpcId?: string
+      /** Terminal call from an accepted local response, absent on foreground timeout. */
+      readonly settledCallId?: string
       readonly questionId?: string
       readonly outcome?: string
     }
@@ -468,6 +470,13 @@ type BackendEventPayload =
   | { readonly type: 'workspace.order.changed'; readonly workspaceIds: readonly string[] }
   | { readonly type: 'archived.sessions.changed'; readonly sessionIds: readonly string[] }
   | { readonly type: 'remote.event'; readonly name: string; readonly args: readonly unknown[] }
+  | {
+      readonly type: 'question.reply.status'
+      readonly sessionId: string
+      readonly callId: string
+      readonly state: 'queued' | 'claimed' | 'released' | 'admitted' | 'settled'
+      readonly asOfSequence: number
+    }
   | { readonly type: 'connection.lost'; readonly reason: string }
   | { readonly type: 'connection.restored' }
   | {

@@ -298,6 +298,13 @@ export const featureRequestSchema = z.discriminatedUnion('type', [
     .strict(),
   z
     .object({
+      type: z.literal('user-question.reply.read'),
+      ...featureRequestBase,
+      payload: z.object({ sessionId: id, callId: id }).strict(),
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal('user-question.answer'),
       ...featureRequestBase,
       payload: z

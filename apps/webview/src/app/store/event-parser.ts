@@ -49,6 +49,7 @@ const CONTROL_EVENTS = new Set([
   'permission.resolved',
   'question.requested',
   'question.resolved',
+  'question.reply.status',
   'turn.started',
   'turn.ended',
   'connection.lost',

@@ -9,6 +9,9 @@ import { Alpha1VersionAdapter } from '../src/versions/alpha/adapter.js'
 import { Alpha171VersionAdapter } from '../src/versions/alpha171/adapter.js'
 import { Rc171VersionAdapter } from '../src/versions/rc171/adapter.js'
 import { Rc172VersionAdapter } from '../src/versions/rc172/adapter.js'
+import { Alpha212VersionAdapter } from '../src/versions/alpha212/adapter.js'
+import { Rc213VersionAdapter } from '../src/versions/rc213/adapter.js'
+import { normalizeEnvelope } from '../src/stream-envelopes.js'
 import { callRpc } from '../src/versions/rc6/rpc.js'
 import { Rc6CredentialRepository } from '../src/repositories/credential-repository.js'
 import { Rc6SessionRepository } from '../src/repositories/session-repository.js'
@@ -1450,6 +1453,104 @@ describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
     expect(socket.closeCalls).toBe(1)
   })
 
+  it.each([Alpha212VersionAdapter, Rc213VersionAdapter])(
+    'projects native Inbox claim and release through the exact %s transport',
+    async (Adapter) => {
+      FakeWebSocket.instances.length = 0
+      const transport = new Adapter({
+        fetch: globalThis.fetch,
+        requestTimeoutMs: 1000,
+        retryPolicy: { maximumAttempts: 1, baseDelayMs: 1, maximumDelayMs: 1 },
+        webSocket: FakeWebSocket,
+      }).createTransport(endpoint)
+      if (!(transport instanceof AlphaLoopbackApiClient))
+        throw new Error('Expected the alpha Remote transport')
+      const abort = new AbortController()
+      const events: BackendEvent[] = []
+      const reading = (async (): Promise<void> => {
+        for await (const frame of transport.openSessionStream('s1', abort.signal)) {
+          const event = normalizeEnvelope(frame)
+          if (event !== undefined) events.push(event)
+        }
+      })()
+      try {
+        const socket = await waitForSocket()
+        socket.open()
+        await waitForSent(socket, 1)
+        socket.message(
+          streamItem(socket, {
+            type: 'snapshot',
+            header: { version: 4, id: 's1', createdAt: 1, isSeeded: true, delegationDepth: 0 },
+            cursor: 0,
+            records: [],
+            hasMore: false,
+            projections: {
+              asOfSeq: 0,
+              values: {
+                inbox: {
+                  'next-turn': [
+                    {
+                      id: 'reply',
+                      role: 'user',
+                      source: { kind: 'user-question-reply', callId: 'call', outcome: 'answered' },
+                      content: [{ type: 'text', text: 'private' }],
+                    },
+                  ],
+                  'next-step': [],
+                },
+              },
+            },
+          }),
+        )
+        await vi.waitFor(() =>
+          expect(events).toContainEqual(
+            expect.objectContaining({ type: 'question.reply.status', state: 'queued' }),
+          ),
+        )
+        socket.message(
+          streamItem(socket, {
+            type: 'event',
+            event: { seq: 1, time: 1, type: 'turn/start', data: { turn: 1 } },
+          }),
+        )
+        socket.message(
+          streamItem(socket, {
+            type: 'event',
+            event: {
+              seq: 2,
+              time: 2,
+              type: 'agent/inbox/spliced',
+              data: { target: 'next-turn', start: 0, removedCount: 1, inserted: [] },
+            },
+          }),
+        )
+        await vi.waitFor(() =>
+          expect(events).toContainEqual(
+            expect.objectContaining({ type: 'question.reply.status', state: 'claimed' }),
+          ),
+        )
+        socket.message(
+          streamItem(socket, {
+            type: 'event',
+            event: { seq: 3, time: 3, type: 'turn/end', data: { turn: 1, reason: { kind: 'aborted' } } },
+          }),
+        )
+        await vi.waitFor(() =>
+          expect(events).toContainEqual(
+            expect.objectContaining({ type: 'question.reply.status', state: 'released' }),
+          ),
+        )
+        expect(
+          events.filter((event) => event.type === 'question.reply.status').map((event) => event.state),
+        ).toEqual(['queued', 'claimed', 'released'])
+      } finally {
+        abort.abort()
+        await reading
+        await transport.close()
+      }
+    },
+  )
+
   it('round-trips a scoped alpha waterfall response through `$events/result`', async () => {
     FakeWebSocket.instances.length = 0
     const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
@@ -1517,6 +1618,80 @@ describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
     await iterator.return?.()
     await transport.close()
   })
+
+  it.each(['cancel', 'replace'] as const)(
+    'does not accept an old HTTP receipt after event-stream %s',
+    async (mode) => {
+      FakeWebSocket.instances.length = 0
+      let finish!: () => void
+      const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+        Promise.resolve(response(init, undefined)),
+      )
+      fetch.mockImplementationOnce(
+        (_input, init) =>
+          new Promise((resolve) => {
+            finish = () => resolve(response(init, undefined))
+          }),
+      )
+      const transport = client(fetch)
+      const first = transport.openEventStream(new AbortController().signal)[Symbol.asyncIterator]()
+      const next = first.next()
+      const socket = await waitForSocket()
+      socket.open()
+      await waitForSent(socket, 1)
+      const request = {
+        type: 'waterfall',
+        event: 'user-questions/request',
+        eventId: 'event-same',
+        agentId: 's1',
+        request: { questions: [{ id: 'q', question: 'Continue?' }] },
+      }
+      socket.message(streamItem(socket, { type: 'ready', clientId: 'old', host: { home: '/fixture' } }))
+      socket.message(streamItem(socket, request))
+      await next
+      const payload = {
+        ok: true,
+        value: { sessionId: 's1', answer: { answers: [{ id: 'q', selected: [] }] } },
+      }
+      const old = transport.respondEnvelope('event-same', payload)
+      const rejected = expect(old).rejects.toMatchObject({ code: 'STALE_INTERACTION' })
+      if (mode === 'cancel') {
+        const cancelled = first.next()
+        socket.message(streamItem(socket, { type: 'cancel', eventId: 'event-same' }))
+        await expect(cancelled).resolves.toMatchObject({ value: { type: 'question/resolved' } })
+        finish()
+        await rejected
+        await first.return?.()
+        await transport.close()
+        return
+      }
+      await first.return?.()
+      const replacement = transport.openEventStream(new AbortController().signal)[Symbol.asyncIterator]()
+      const replacementNext = replacement.next()
+      await vi.waitFor(() =>
+        expect(
+          socket.sent
+            .map((value) => JSON.parse(value) as { type: string })
+            .filter((value) => value.type === 'open'),
+        ).toHaveLength(2),
+      )
+      const opening = socket.sent
+        .map((value) => JSON.parse(value) as { type: string; streamId: string })
+        .filter((value) => value.type === 'open')
+        .at(-1)!
+      socket.message(
+        streamItem(socket, { type: 'ready', clientId: 'new', host: { home: '/fixture' } }, opening.streamId),
+      )
+      socket.message(streamItem(socket, request, opening.streamId))
+      await replacementNext
+      finish()
+      await rejected
+      await expect(transport.respondEnvelope('event-same', payload)).resolves.toEqual({ accepted: true })
+      expect(fetch).toHaveBeenCalledTimes(2)
+      await replacement.return?.()
+      await transport.close()
+    },
+  )
 
   it('resolves a cancelled alpha waterfall event with the session that requested it', async () => {
     FakeWebSocket.instances.length = 0

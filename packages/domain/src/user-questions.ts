@@ -38,8 +38,19 @@ export interface UserQuestionReplyView {
   readonly answers: readonly TimedUserQuestionAnswerItem[]
 }
 
+/** Metadata from a fresh native follow baseline, never answer text. */
+export interface QuestionReplyStatus {
+  readonly state: 'queued' | 'claimed' | 'released' | 'admitted' | 'settled' | 'unknown'
+  readonly asOfSequence: number
+}
+
 /** Exact rc.2 Remote boundary; stream claims stay owned by the adapter. */
 export interface UserQuestionRepository {
+  readonly readReplyStatus?: (
+    sessionId: string,
+    callId: string,
+    signal?: AbortSignal,
+  ) => Promise<QuestionReplyStatus>
   attachWait(sessionId: string, callId: string, signal?: AbortSignal): Promise<number | undefined>
   releaseWait(sessionId: string, callId: string): Promise<void>
   answer(

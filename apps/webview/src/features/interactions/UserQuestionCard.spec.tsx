@@ -723,7 +723,7 @@ describe('UserQuestionCard', () => {
 
     fireEvent.change(screen.getByLabelText('Answer for Which scope?'), { target: { value: 'workspace' } })
     fireEvent.click(submitButton())
-    expect(await screen.findByText('Answer queued for the next agent turn')).toBeDefined()
+    await waitFor(() => expect(onRespond).toHaveBeenCalledOnce())
 
     rerender(
       <UserQuestionCard
@@ -733,6 +733,7 @@ describe('UserQuestionCard', () => {
         onCancel={vi.fn()}
       />,
     )
+    expect(screen.getByText('Answer queued for the next agent turn')).toBeDefined()
     rerender(
       <UserQuestionCard
         question={{ ...question, replyQueued: false }}

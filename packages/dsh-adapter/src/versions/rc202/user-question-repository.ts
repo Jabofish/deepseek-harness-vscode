@@ -3,10 +3,13 @@ import {
   type TimedUserQuestionAnswer,
   type TimedUserQuestionAnswerItem,
   type UserQuestionRepository,
+  type QuestionReplyStatus,
 } from '@dsh-vscode/domain'
 
 import type { AlphaLoopbackApiClient } from '../alpha/transport.js'
 import { unwrapRpcResultValue } from '../rc6/rpc.js'
+import { recordOrUndefined as record } from '../alpha/remote-mux.js'
+import { mapRc202UserQuestionProjection } from './user-question-projections.js'
 
 type WaitClaim = {
   readonly key: string
@@ -22,8 +25,65 @@ type WaitClaim = {
 export class Rc202UserQuestionRepository implements UserQuestionRepository {
   private readonly claims = new Map<string, WaitClaim>()
   private closed = false
+  private readonly statusReads = new Map<AbortController, Promise<void>>()
 
   public constructor(private readonly transport: AlphaLoopbackApiClient) {}
+
+  /** A new logical follow starts after the caller's accepted answer receipt. */
+  public async readReplyStatus(
+    sessionId: string,
+    callId: string,
+    signal?: AbortSignal,
+  ): Promise<QuestionReplyStatus> {
+    requireIdentifier(sessionId, 'Session')
+    requireIdentifier(callId, 'question call')
+    if (this.closed) throw closedError()
+    signal?.throwIfAborted()
+    const controller = new AbortController()
+    let finish!: () => void
+    this.statusReads.set(
+      controller,
+      new Promise<void>((resolve) => {
+        finish = resolve
+      }),
+    )
+    const readSignal = signal === undefined ? controller.signal : AbortSignal.any([signal, controller.signal])
+    const timer = setTimeout(() => controller.abort(closedError()), 10_000)
+    let status: QuestionReplyStatus | undefined
+    try {
+      for await (const value of this.transport.openSessionStream(sessionId, readSignal)) {
+        readSignal.throwIfAborted()
+        const frame = record(value)
+        if (frame?.type === 'question/reply-status' && frame.callId === callId) {
+          if (
+            !replyState(frame.state) ||
+            typeof frame.asOfSequence !== 'number' ||
+            !Number.isSafeInteger(frame.asOfSequence) ||
+            frame.asOfSequence < -1
+          )
+            throw malformed('reply status')
+          status = { state: frame.state, asOfSequence: frame.asOfSequence }
+        }
+        if (frame?.type !== 'session/subscribed') continue
+        const projection = record(frame.projections)
+        const sequence = projection?.asOfSeq
+        if (typeof sequence !== 'number' || !Number.isSafeInteger(sequence) || sequence < -1)
+          throw malformed('reply baseline')
+        const questionValue = record(projection?.values)?.userQuestions
+        const questions =
+          questionValue === undefined ? undefined : mapRc202UserQuestionProjection(questionValue)
+        const settled = questions?.settled.some((entry) => entry.callId === callId) === true
+        return { state: settled ? 'settled' : (status?.state ?? 'unknown'), asOfSequence: sequence }
+      }
+      readSignal.throwIfAborted()
+      throw malformed('missing reply baseline')
+    } finally {
+      clearTimeout(timer)
+      controller.abort()
+      this.statusReads.delete(controller)
+      finish()
+    }
+  }
 
   public attachWait(sessionId: string, callId: string, signal?: AbortSignal): Promise<number | undefined> {
     requireIdentifier(sessionId, 'Session')
@@ -109,6 +169,8 @@ export class Rc202UserQuestionRepository implements UserQuestionRepository {
   public async close(): Promise<void> {
     if (this.closed) return
     this.closed = true
+    for (const controller of this.statusReads.keys()) controller.abort(closedError())
+    await Promise.all(this.statusReads.values())
     await Promise.all([...this.claims.values()].map((claim) => this.releaseWaitByClaim(claim)))
   }
 
@@ -198,6 +260,16 @@ export class Rc202UserQuestionRepository implements UserQuestionRepository {
       )
     })
   }
+}
+
+function replyState(value: unknown): value is QuestionReplyStatus['state'] {
+  return (
+    value === 'queued' ||
+    value === 'claimed' ||
+    value === 'released' ||
+    value === 'admitted' ||
+    value === 'settled'
+  )
 }
 
 function validateAnswer(answer: TimedUserQuestionAnswer): void {

@@ -7,6 +7,32 @@ import {
 } from './schemas.js'
 import { featureHostEventSchema, featureRequestSchema, featureResponseSchema } from './feature-schemas.js'
 
+describe('question request identity', () => {
+  it.each(['interaction.question.respond', 'interaction.question.cancel'] as const)(
+    'validates the exact optional identity for %s',
+    (type) => {
+      const request = {
+        type,
+        requestId: 'r',
+        payload: {
+          questionId: 'q',
+          ...(type === 'interaction.question.respond' ? { response: 'answer' } : {}),
+          identity: { sessionId: 's1', rpcId: 'rpc-1' },
+        },
+      }
+      expect(webviewRequestSchema.safeParse(request).success).toBe(true)
+      for (const identity of [
+        { sessionId: 's1' },
+        { sessionId: '', rpcId: 'rpc-1' },
+        { sessionId: 's1', rpcId: 'rpc-1', endpoint: 'extra' },
+      ])
+        expect(
+          webviewRequestSchema.safeParse({ ...request, payload: { ...request.payload, identity } }).success,
+        ).toBe(false)
+    },
+  )
+})
+
 describe('generic Webview host response values', () => {
   it('admits the blank reuse capability only as a connected boolean without Host details', () => {
     const event = (payload: unknown): unknown => ({
@@ -791,6 +817,10 @@ describe('Schedule feature protocol', () => {
         payload: { sessionId: 'session-1', callId: 'call-1' },
       },
       {
+        type: 'user-question.reply.read',
+        payload: { sessionId: 'session-1', callId: 'call-1' },
+      },
+      {
         type: 'user-question.answer',
         payload: {
           sessionId: 'session-1',
@@ -847,6 +877,32 @@ describe('Schedule feature protocol', () => {
         payload: { kind: 'question.answer', accepted: false },
       }).success,
     ).toBe(true)
+  })
+
+  it('accepts reply metadata and rejects answer bodies, unknown states and invalid cuts', () => {
+    const response = (status: unknown): unknown => ({
+      type: 'feature.response',
+      requestId: 'reply-read',
+      ok: true,
+      payload: { kind: 'question.reply', status },
+    })
+    expect(featureResponseSchema.safeParse(response({ state: 'queued', asOfSequence: 101 })).success).toBe(
+      true,
+    )
+    for (const status of [
+      { state: 'queued', asOfSequence: 101, body: 'private answer' },
+      { state: 'invented', asOfSequence: 101 },
+      { state: 'released', asOfSequence: 1.5 },
+      { state: 'released', asOfSequence: -2 },
+    ])
+      expect(featureResponseSchema.safeParse(response(status)).success).toBe(false)
+    expect(
+      featureRequestSchema.safeParse({
+        type: 'user-question.reply.read',
+        requestId: 'reply-read',
+        payload: { sessionId: 's1', callId: 'c', endpoint: 'http://127.0.0.1' },
+      }).success,
+    ).toBe(false)
   })
 
   it('rejects unbounded history pages, empty updates, malformed weekly rules, and unknown fields', () => {

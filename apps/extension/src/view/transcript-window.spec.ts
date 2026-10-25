@@ -570,6 +570,36 @@ describe('Host transcript windows', () => {
     service.dispose()
   })
 
+  it('parks permanent delivery failure across streaming and recovery rereads until readiness changes', async () => {
+    const post = vi.fn().mockResolvedValue(false)
+    const invalidate = vi.fn()
+    const service = new TranscriptWindowService({
+      read: () => Promise.resolve({ events: [], hasMore: false }),
+      publicValue: (value) => value,
+      post,
+      invalidate,
+    })
+    const page = { events: [message(0)], hasMore: false }
+    service.installPage(sessionId, page, service.begin(sessionId))
+    service.accept({ type: 'turn.started', sessionId, turn: 1, sequence: 1 })
+    for (let index = 0; index < 12; index++) await Promise.resolve()
+    expect(post).toHaveBeenCalledTimes(4)
+    expect(invalidate).toHaveBeenCalledTimes(1)
+    service.installPage(sessionId, page, service.begin(sessionId))
+    for (let index = 2; index < 20; index++) {
+      service.accept({ type: 'message.delta', sessionId, messageId: 'live', delta: 'x', sequence: index })
+      await Promise.resolve()
+    }
+    expect(post).toHaveBeenCalledTimes(4)
+    expect(invalidate).toHaveBeenCalledTimes(1)
+    post.mockResolvedValue(true)
+    service.setVisible(false)
+    service.setVisible(true)
+    await Promise.resolve()
+    expect(post).toHaveBeenCalledTimes(5)
+    service.dispose()
+  })
+
   it('sends immediately without advancing time and coalesces only after bounded credits are exhausted', async () => {
     vi.useFakeTimers()
     const sent: (TranscriptWindow | TranscriptPatch)[] = []

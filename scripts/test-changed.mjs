@@ -10,6 +10,8 @@ const contracts = [
   'apps/webview/src/app/store/feature-actions.tasks.spec.ts',
   'apps/extension/src/tasks/task-center-registry.spec.ts',
   'apps/webview/src/App.connected.spec.tsx',
+  'apps/webview/src/app/question-lifecycle.spec.tsx',
+  'apps/extension/src/composition/interaction-response-transport.spec.ts',
   'apps/webview/src/features/shell/AppNotices.spec.tsx',
   'apps/webview/src/components/common/useScrollFollow.spec.tsx',
   'apps/webview/src/features/chat/Timeline.spec.tsx',

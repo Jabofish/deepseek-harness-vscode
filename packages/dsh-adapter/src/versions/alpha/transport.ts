@@ -273,6 +273,7 @@ export class AlphaLoopbackApiClient implements DshTransport {
     )
     if (cordisReceipt !== undefined) return cordisReceipt
     const pending = this.pendingEvents.get(rpcId)
+    const generation = this.eventStreamGeneration
     if (pending === undefined || pending.clientId !== this.eventClientId)
       throw new AppError({
         code: 'STALE_INTERACTION',
@@ -291,6 +292,16 @@ export class AlphaLoopbackApiClient implements DshTransport {
         message: 'The DSH interaction response was rejected.',
         retryable: true,
         context: { rpcCode: response.result.error.code },
+      })
+    if (
+      this.eventStreamGeneration !== generation ||
+      this.eventClientId !== pending.clientId ||
+      this.pendingEvents.get(rpcId) !== pending
+    )
+      throw new AppError({
+        code: 'STALE_INTERACTION',
+        message: 'The DSH interaction stream changed before the receipt arrived.',
+        retryable: true,
       })
     this.pendingEvents.delete(rpcId)
     return { accepted: true }
@@ -680,6 +691,7 @@ export class AlphaLoopbackApiClient implements DshTransport {
         }
         if (frame?.type === 'cancel' && validAlphaEventCancel(frame)) {
           const pending = this.pendingEvents.get(frame.eventId)
+          this.pendingEvents.delete(frame.eventId)
           // The cancel frame itself carries only the eventId, but the resolved
           // projection needs the requesting session so replay bookkeeping can
           // clear the matching pending request.
@@ -697,7 +709,6 @@ export class AlphaLoopbackApiClient implements DshTransport {
               questionRpcId: frame.eventId,
               outcome: 'cancelled',
             }
-          this.pendingEvents.delete(frame.eventId)
           continue
         }
         if (frame.type === 'emit' || frame.type === 'waterfall' || frame.type === 'cancel')
@@ -837,6 +848,7 @@ export class AlphaLoopbackApiClient implements DshTransport {
       ...(assistantStream ? { assistantStream: true } : {}),
     }
     const projector = assistantStream ? new Alpha13AssistantStreamProjector() : undefined
+    const questionReplies = this.options.createQuestionReplyObserver?.(sessionId)
     let previewEnabled = projector !== undefined
     let consecutiveRecoveries = 0
     const stopPreview = (): readonly Alpha13ProjectorOutput[] => {
@@ -927,6 +939,7 @@ export class AlphaLoopbackApiClient implements DshTransport {
             }
             if (signal.aborted) return
             if (queueFrame !== undefined) yield queueFrame
+            for (const reply of questionReplies?.snapshot(projections, events) ?? []) yield reply
             yield {
               type: 'session/subscribed',
               sessionId,
@@ -968,6 +981,7 @@ export class AlphaLoopbackApiClient implements DshTransport {
               this.options.sessionWireProfile,
             )
             if (event === undefined) throw malformedResponse('session/follow event')
+            const replies = questionReplies?.accept(event) ?? []
             if (projector === undefined || !previewEnabled) yield { type: 'session/event', sessionId, event }
             else {
               let projected: readonly Alpha13ProjectorOutput[]
@@ -979,6 +993,7 @@ export class AlphaLoopbackApiClient implements DshTransport {
               }
               for (const output of projected) yield this.alpha13ProjectorFrame(output)
             }
+            for (const reply of replies) yield reply
           } else if (projector !== undefined && frame?.type === 'assistant-stream') {
             if (!previewEnabled) {
               // A fresh attempt is the cheapest way back into the preview: its

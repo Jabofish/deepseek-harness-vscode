@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { DshBackend, SessionDetail, WorkspaceSummary } from '@dsh-vscode/domain'
+import type { DshBackend, SessionDetail, WorkspaceSummary, QuestionRequestIdentity } from '@dsh-vscode/domain'
 
 import type * as SessionOwnership from '../view/session-ownership.js'
 import type * as RegisterWorkspaceFolders from '../backend/register-workspace-folders.js'
@@ -66,6 +66,7 @@ function scopeWith(overrides: {
   readonly archivedSessionIds?: readonly string[]
   readonly get?: ReturnType<typeof vi.fn>
   readonly interactionOwner?: string
+  readonly questionOwner?: (id: string, identity?: QuestionRequestIdentity) => string | undefined
 }): {
   readonly scope: ReturnType<typeof createSessionScope>
   readonly get: ReturnType<typeof vi.fn>
@@ -88,7 +89,7 @@ function scopeWith(overrides: {
         sessions: { get },
         interactions: {
           sessionForPermission: () => overrides.interactionOwner,
-          sessionForQuestion: () => overrides.interactionOwner,
+          sessionForQuestion: overrides.questionOwner ?? (() => overrides.interactionOwner),
         },
         subagents: {},
       }),
@@ -102,6 +103,20 @@ function scopeWith(overrides: {
 }
 
 describe('session scope pending-load reuse', () => {
+  it('resolves an exact question identity through the repository before applying workspace ownership', async () => {
+    const questionOwner = vi.fn((id: string, identity?: QuestionRequestIdentity) =>
+      id === 'same' && identity?.sessionId === 's1' && identity.rpcId === 'owned' ? 's1' : undefined,
+    )
+    const { scope, get } = scopeWith({ archivedSessionIds: [], questionOwner })
+    const signal = new AbortController().signal
+    await expect(
+      scope.requireOwnedQuestion('same', signal, { sessionId: 's2', rpcId: 'owned' }),
+    ).rejects.toMatchObject({ code: 'STALE_INTERACTION' })
+    expect(get).not.toHaveBeenCalled()
+    await scope.requireOwnedQuestion('same', signal, { sessionId: 's1', rpcId: 'owned' })
+    expect(questionOwner).toHaveBeenLastCalledWith('same', { sessionId: 's1', rpcId: 'owned' })
+    expect(get).toHaveBeenCalledOnce()
+  })
   it.each(['permission', 'question'] as const)(
     'reports an unknown %s as stale without claiming workspace denial',
     async (kind) => {

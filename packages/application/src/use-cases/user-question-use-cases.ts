@@ -1,4 +1,9 @@
-import { AppError, type TimedUserQuestionAnswer, type UserQuestionRepository } from '@dsh-vscode/domain'
+import {
+  AppError,
+  type QuestionReplyStatus,
+  type TimedUserQuestionAnswer,
+  type UserQuestionRepository,
+} from '@dsh-vscode/domain'
 
 import type { BackendService } from '../services/backend-service.js'
 
@@ -20,6 +25,16 @@ export class UserQuestionUseCases {
     signal?: AbortSignal,
   ): Promise<boolean> {
     return this.repository().answer(sessionId, callId, answer, signal)
+  }
+
+  public replyStatus(sessionId: string, callId: string, signal?: AbortSignal): Promise<QuestionReplyStatus> {
+    const repository = this.repository()
+    if (repository.readReplyStatus !== undefined) return repository.readReplyStatus(sessionId, callId, signal)
+    throw new AppError({
+      code: 'CAPABILITY_UNAVAILABLE',
+      message: 'The connected DSH cannot read the question reply state.',
+      retryable: false,
+    })
   }
 
   private repository(): UserQuestionRepository {

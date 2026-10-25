@@ -59,6 +59,13 @@ export interface AlphaLoopbackApiClientOptions {
   readonly requireModelSelectionProjection?: boolean
   /** Version-specific queue projection for Session/follow opening snapshots. */
   readonly normalizeSessionQueueProjection?: (sessionId: string, projection: unknown) => unknown
+  readonly createQuestionReplyObserver?: (sessionId: string) => {
+    snapshot(
+      projection: unknown,
+      events: readonly Record<string, unknown>[],
+    ): readonly Record<string, unknown>[]
+    accept(event: Record<string, unknown>): readonly Record<string, unknown>[]
+  }
   /** Session Controller control profile; alpha.2 replaces queue snapshots with Inbox projections. */
   readonly controlWireVersion?: AlphaSessionControlWireVersion
   /** Workspace follow profile; alpha171 adds a registry-global pinned-session set. */

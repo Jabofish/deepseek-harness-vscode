@@ -1,4 +1,4 @@
-import type { PluginInstallProgressView, SubagentCatalog } from '@dsh-vscode/domain'
+import type { PluginInstallProgressView, SubagentCatalog, QuestionSettlements } from '@dsh-vscode/domain'
 import type { ProtocolClient } from '../protocol-client.js'
 import type { PluginInstallRecoveryController } from '../plugin-install-recovery.js'
 import type { AppState, StateSetter } from './types.js'
@@ -16,6 +16,7 @@ import { backendEventSessionId, applyHostMessage } from './host-message-reducers
 import { object } from './unknown-record.js'
 import { parsePermissionCatalog } from './permission-catalog.js'
 import { connectionIdentity } from './session-projection.js'
+import type { QuestionReplies } from './question-replies.js'
 
 type AccountEventActions = Pick<
   ReturnType<typeof createAccountActions>,
@@ -40,6 +41,8 @@ export interface HostEventSubscriptionLifecycle {
 }
 
 export interface HostEventSubscriptionDependencies {
+  readonly questionSettlements: QuestionSettlements
+  readonly questionReplies: QuestionReplies
   readonly accountActions: AccountEventActions
   readonly callbacks: { openCreatedSession?: (sessionId: string) => Promise<void> }
   readonly client: ProtocolClient
@@ -66,6 +69,7 @@ export interface HostEventSubscriptionDependencies {
 
 /** Owns both protocol subscriptions and translates events into store actions. */
 export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): () => void {
+  let questionBackendInstance: string | undefined
   const {
     accountActions,
     callbacks,
@@ -176,6 +180,25 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
       accountActions.applyConnectionIdentity(identity)
     }
     const parsedEvent = parseHostDomainEvent(message)
+    if (message.type === 'event' && message.name === 'connection.snapshot') {
+      const snapshot = object(message.payload)
+      const instance = snapshot?.backendInstanceId
+      if (snapshot?.kind === 'connected' && typeof instance === 'string') {
+        if (questionBackendInstance !== undefined && instance !== questionBackendInstance) {
+          deps.questionSettlements.clear()
+          deps.questionReplies.clear()
+        }
+        questionBackendInstance = instance
+      }
+    }
+    if (parsedEvent?.type === 'question.resolved') {
+      deps.questionSettlements.resolve(parsedEvent, getState().questions)
+      setState((current) => ({ ...current }))
+    }
+    if (parsedEvent?.type === 'question.reply.status') {
+      deps.questionReplies.observe(parsedEvent)
+      setState((current) => ({ ...current }))
+    }
     if (parsedEvent?.type === 'goal.updated' && parsedEvent.sessionId === getState().activeSessionId)
       lifecycle.incrementGoalReadGeneration()
     if (parsedEvent?.type === 'turn.started' || parsedEvent?.type === 'turn.ended')
