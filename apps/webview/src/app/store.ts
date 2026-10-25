@@ -641,6 +641,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     featureActions,
     getState: () => state,
     invalidateFeedback,
+    invalidateJobFollow: jobActions.invalidateAfterControlLoss,
     lifecycle: {
       invalidateGlobalCatalogs: globalCatalogs.invalidate,
       retireSessionReads: () => {

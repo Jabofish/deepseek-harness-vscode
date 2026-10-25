@@ -50,6 +50,7 @@ export interface HostEventSubscriptionDependencies {
   readonly featureActions: FeatureEventActions
   readonly getState: () => AppState
   readonly invalidateFeedback: () => void
+  readonly invalidateJobFollow: () => void
   readonly lifecycle: HostEventSubscriptionLifecycle
   readonly loadSubagentCatalog: (sessionId: string) => Promise<SubagentCatalog | undefined>
   readonly pendingOpenBuffer: PendingOpenBuffer
@@ -157,6 +158,7 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
     // reach the conversation pipeline.
     if (surfaceActions.applySurfaceEvent(message)) return
     if (message.type === 'event' && message.name === 'ui.resync') {
+      deps.invalidateJobFollow()
       turnWatchers.disposeAll()
       recoverGlobalState()
       return

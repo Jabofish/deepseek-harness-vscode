@@ -176,6 +176,91 @@ function hasStopRequest(client: JobClient, sessionId: string, jobId: string, fol
 }
 
 describe('AppStore Job follow', () => {
+  it('makes lost control output retryable from its accepted byte cursor without affecting transcript-only recovery', async () => {
+    const { client, store } = await openJobStore()
+    try {
+      await store.followJob(job.id)
+      const originalFollowId = store.jobFollow!.followId
+      emitFollowFrame(client, { type: 'opened', job, from: 0 })
+      emitFollowFrame(client, { type: 'output', chunks: [{ at: 0, text: '中' }], next: 3 })
+      const following = store.jobFollow
+
+      client.emit('session.transcript.invalidated', { sessionId: SESSION_ID })
+      expect(store.jobFollow).toBe(following)
+      expect(hasStopRequest(client, SESSION_ID, job.id)).toBe(false)
+
+      for (let index = 0; index < 3; index++) client.emit('ui.resync', {})
+      expect(store.jobFollow).toMatchObject({
+        next: 3,
+        chunks: [{ at: 0, text: '中' }],
+        error: 'stream-failed',
+      })
+      expect(client.requests.filter((request) => request.type === 'job.follow.stop')).toHaveLength(1)
+      expect(hasStopRequest(client, SESSION_ID, job.id, originalFollowId)).toBe(true)
+      emitFollowFrame(
+        client,
+        { type: 'output', chunks: [{ at: 3, text: 'stale' }], next: 8 },
+        originalFollowId,
+      )
+      expect(store.jobFollow?.next).toBe(3)
+
+      await store.followJob(job.id)
+      const starts = client.requests.filter((request) => request.type === 'job.follow.start')
+      expect(starts).toHaveLength(2)
+      expect(starts[1]?.payload).toMatchObject({ sessionId: SESSION_ID, jobId: job.id, from: 3 })
+      expect(store.jobFollow?.followId).not.toBe(originalFollowId)
+      expect(store.jobFollow?.error).toBeUndefined()
+      emitFollowFailure(client, { followId: originalFollowId })
+      expect(store.jobFollow?.error).toBeUndefined()
+      emitFollowFrame(client, { type: 'opened', job, from: 3 })
+      emitFollowFrame(client, { type: 'output', chunks: [{ at: 3, text: 'tail' }], next: 7 })
+      emitFollowFrame(client, { type: 'status', job: { ...settledJob, output: { total: 7, earliest: 0 } } })
+      expect(store.jobFollow).toMatchObject({ next: 7, terminalStatusReceived: true })
+      expect(store.jobFollow?.chunks.map((chunk) => chunk.text).join('')).toBe('中tail')
+    } finally {
+      store.dispose()
+    }
+  })
+
+  it('keeps an invalidated opening follow retryable after its old start fails', async () => {
+    const { client, store } = await openJobStore()
+    try {
+      const deferred = client.deferNextRequest('job.follow.start')
+      const starting = store.followJob(job.id)
+      const rejected = expect(starting).rejects.toThrow('old start failed')
+      const oldFollowId = store.jobFollow!.followId
+      client.emit('ui.resync', {})
+      deferred.reject(new Error('old start failed'))
+      await rejected
+      expect(store.jobFollow).toMatchObject({ followId: oldFollowId, next: 0, error: 'stream-failed' })
+      await store.followJob(job.id)
+      expect(store.jobFollow?.followId).not.toBe(oldFollowId)
+      expect(store.jobFollow?.error).toBeUndefined()
+      expect(store.jobFollow?.awaitingOpenFrom).toBe(0)
+    } finally {
+      store.dispose()
+    }
+  })
+
+  it('preserves a fully settled observer during global control recovery', async () => {
+    const { client, store } = await openJobStore()
+    try {
+      client.emit('ui.resync', {})
+      expect(store.jobFollow).toBeUndefined()
+      await store.followJob(job.id)
+      emitFollowFrame(client, { type: 'opened', job, from: 0 })
+      emitFollowFrame(client, { type: 'output', chunks: [{ at: 0, text: 'done' }], next: 4 })
+      emitFollowFrame(client, { type: 'status', job: { ...settledJob, output: { total: 4, earliest: 0 } } })
+      const following = store.jobFollow
+      client.emit('ui.resync', {})
+      expect(store.jobFollow).toBe(following)
+      expect(store.jobFollow?.error).toBeUndefined()
+      expect(hasStopRequest(client, SESSION_ID, job.id)).toBe(false)
+    } finally {
+      store.dispose()
+    }
+  })
+
   it('keeps displayed chunks and does not restart an active follow for the same job', async () => {
     const { client, store } = await openJobStore()
 

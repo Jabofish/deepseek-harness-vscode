@@ -15,6 +15,8 @@ export interface JobActionHost {
 
 export interface JobActions {
   readonly methods: Pick<AppActions, 'followJob' | 'stopFollowingJob' | 'killJob'>
+  /** Retain the accepted output cursor, but retire an observer whose frames may be lost. */
+  readonly invalidateAfterControlLoss: () => void
   /** Release the live follow before the panel opens another Session. */
   readonly stopBeforeSessionOpen: () => void
 }
@@ -23,6 +25,32 @@ export function createJobActions(host: JobActionHost): JobActions {
   const readState = (): AppState => host.getState()
   const setState = host.setState
   let jobFollowGeneration = 0
+
+  const invalidateAfterControlLoss = (): void => {
+    const { activeSessionId: sessionId, jobFollow: following } = readState()
+    if (
+      sessionId === undefined ||
+      following === undefined ||
+      following.error !== undefined ||
+      following.terminalStatusReceived === true
+    )
+      return
+    const generation = ++jobFollowGeneration
+    setState((current) =>
+      current.jobFollow === following
+        ? { ...current, jobFollow: { ...following, generation, error: 'stream-failed' } }
+        : current,
+    )
+    // Stop only this observer. A late stop/start response must not retire a
+    // replacement follow or clear the output retained for retry.
+    void host.client
+      .request<unknown>({
+        type: 'job.follow.stop',
+        requestId: requestId(),
+        payload: { sessionId, jobId: following.jobId, followId: following.followId },
+      })
+      .catch(() => undefined)
+  }
 
   const stopBeforeSessionOpen = (): void => {
     const sessionId = readState().activeSessionId
@@ -148,5 +176,5 @@ export function createJobActions(host: JobActionHost): JobActions {
     },
   }
 
-  return { methods, stopBeforeSessionOpen }
+  return { methods, invalidateAfterControlLoss, stopBeforeSessionOpen }
 }
