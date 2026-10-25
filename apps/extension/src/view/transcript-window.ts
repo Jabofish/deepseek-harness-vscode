@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { TranscriptContentVersions } from './transcript-content-version.js'
 import {
   AppError,
   type BackendEvent,
@@ -81,12 +82,14 @@ interface WindowMetadataSource {
   readonly before: number | undefined
   readonly historical: boolean
   readonly omitted: string
+  readonly contentVersions: string
   readonly todos: readonly TodoView[] | undefined
   readonly todosOmitted: true | undefined
 }
 
 /** A presentation cache. DSH owns durable ordering, recovery and domain projections. */
 export class TranscriptWindowService {
+  private readonly contentVersions = new TranscriptContentVersions()
   private generation = 0
   private revision = 0
   private pending: PendingOpen | undefined
@@ -728,6 +731,8 @@ export class TranscriptWindowService {
         })
       }
       const suffix = tracked === undefined ? undefined : appendedNodeSuffix(tracked.node, node, event)
+      if (tracked !== undefined && suffix !== undefined)
+        this.contentVersions.append(tracked.node, node, suffix)
       resident.rawChars.set(node.id, {
         node,
         chars:
@@ -875,7 +880,11 @@ export class TranscriptWindowService {
         (clipped.rawSize > remaining && nodes.length > 0 && !resident.liveBodies.has(original.id))
       )
         break
-      remaining = Math.max(0, remaining - (resident.liveBodies.has(original.id) ? size : clipped.rawSize))
+      const versionChars = clipped.omitted ? JSON.stringify(original.id).length + 68 : 0
+      remaining = Math.max(
+        0,
+        remaining - (resident.liveBodies.has(original.id) ? size : clipped.rawSize) - versionChars,
+      )
       // Keep the single canonical body. Only publication projects a bounded
       // transport representation, so later deltas can never append to lost text.
       // The position sort below restores order after this newest-first walk.
@@ -972,6 +981,7 @@ export class TranscriptWindowService {
         hasMore: resident.hasMore,
         historical: resident !== this.tail,
         omittedNodeIds: [...resident.omitted],
+        ...(resident.omitted.size === 0 ? {} : { contentVersions: this.omittedContentVersions(resident) }),
         ...(resident.before === undefined ? {} : { beforeSequence: resident.before }),
         ...(resident.timeline.activeTurn === undefined ? {} : { activeTurn: resident.timeline.activeTurn }),
         ...(resident.timeline.tokenUsage === undefined ? {} : { tokenUsage: resident.timeline.tokenUsage }),
@@ -1006,6 +1016,14 @@ export class TranscriptWindowService {
   }
 
   /** Compare source identities before sanitizing unchanged metadata again. */
+  private omittedContentVersions(resident: Resident): Readonly<Record<string, string>> {
+    return Object.fromEntries(
+      resident.timeline.nodes
+        .filter((node) => resident.omitted.has(node.id))
+        .map((node) => [node.id, this.contentVersions.key(node)]),
+    )
+  }
+
   private metadataSource(resident: Resident): WindowMetadataSource {
     return {
       facts: resident.factCounter,
@@ -1016,6 +1034,8 @@ export class TranscriptWindowService {
       before: resident.before,
       historical: resident !== this.tail,
       omitted: JSON.stringify([...resident.omitted]),
+      contentVersions:
+        resident.omitted.size === 0 ? '' : JSON.stringify(this.omittedContentVersions(resident)),
       todos: this.tail?.currentTodos,
       todosOmitted: this.tail?.currentTodosOmitted,
     }

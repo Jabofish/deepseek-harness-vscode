@@ -85,6 +85,7 @@ export interface TimelineProps {
   readonly onFeedbackPrepare?: FeedbackPrepare
   /** Nodes whose wire projection clipped their Markdown. */
   readonly omittedNodeIds?: readonly string[]
+  readonly contentVersions?: Readonly<Record<string, string>>
   readonly loadFullNode?: (nodeId: string, signal?: AbortSignal) => Promise<TimelineNode>
   readonly loadFullContent?: (nodeId: string) => Promise<string>
   /** Whether an older DSH history window is available. */
@@ -194,6 +195,8 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
     props.nodes,
     props.omittedNodeIds,
     props.loadFullNode,
+    undefined,
+    props.contentVersions,
   )
   const sourceNodes = complete.nodes
   const changeStart = sourceNodes === props.nodes ? props.nodeChangeStart : undefined

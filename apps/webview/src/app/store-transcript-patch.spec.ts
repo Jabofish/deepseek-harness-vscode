@@ -37,6 +37,34 @@ function installed(): ReturnType<typeof installTranscript> {
 }
 
 describe('transcript patches', () => {
+  it('validates full-body versions and carries metadata-only changes through to the renderer', () => {
+    const initial = { ...window(), contentVersions: { 'omitted-1': 'a'.repeat(64) } }
+    const state = installTranscript(
+      { ...createInitialState({}), activeSessionId: sessionId },
+      parseTranscript(initial),
+    )
+    const { sessionId: _id, revision: _revision, nodes: _nodes, ...metadata } = initial
+    void _id
+    void _revision
+    void _nodes
+    const patch = {
+      sessionId,
+      revision: 5,
+      baseRevision: 4,
+      changedNodes: [],
+      metadata: { ...metadata, contentVersions: { 'omitted-1': 'b'.repeat(64) } },
+    }
+    expect(transcriptPatchSchema.safeParse(patch).success).toBe(true)
+    const result = installTranscriptPatch(state, patch)
+    expect(result.transcript!.contentVersions).toEqual({ 'omitted-1': 'b'.repeat(64) })
+    expect(state.transcript!.contentVersions).toEqual({ 'omitted-1': 'a'.repeat(64) })
+    for (const invalid of [{ 'omitted-1': 'private body' }, { 'omitted-1': 3 }])
+      expect(
+        transcriptPatchSchema.safeParse({ ...patch, metadata: { ...metadata, contentVersions: invalid } })
+          .success,
+      ).toBe(false)
+    expect(() => parseTranscript({ ...initial, contentVersions: { 'omitted-1': 'bad' } })).toThrow()
+  })
   it('keeps position indexes isolated when retained states receive independent patches', () => {
     const before = installed()
     const first = installTranscriptPatch(before, {

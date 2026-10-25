@@ -15,6 +15,7 @@
     }
   },
   "include": [
+    "../apps/extension/src/view/transcript-content-version.ts",
     "**/*.ts",
     "../packages/domain/src/**/*.ts",
     "../packages/application/src/**/*.ts",

@@ -409,6 +409,8 @@ export interface TranscriptWindow {
   readonly beforeSequence?: number
   readonly historical: boolean
   readonly omittedNodeIds: readonly string[]
+  /** Opaque fingerprints of complete omitted bodies, not preview text. */
+  readonly contentVersions?: Readonly<Record<string, string>>
   readonly tokenUsage?: TokenUsage
   readonly activeTurn?: number
   readonly eventFacts: readonly TranscriptEventFact[]
@@ -480,6 +482,10 @@ const transcriptWindowFields = {
   beforeSequence: count.optional(),
   historical: z.boolean(),
   omittedNodeIds: z.array(id).max(TRANSCRIPT_MAX_NODES),
+  contentVersions: z
+    .record(id, z.string().regex(/^[a-f0-9]{64}$/))
+    .refine((value) => Object.keys(value).length <= TRANSCRIPT_MAX_NODES)
+    .optional(),
   tokenUsage: usage.optional(),
   activeTurn: count.optional(),
 }
@@ -525,6 +531,7 @@ export const transcriptPatchSchema = z
         beforeSequence: transcriptWindowFields.beforeSequence,
         historical: transcriptWindowFields.historical,
         omittedNodeIds: transcriptWindowFields.omittedNodeIds,
+        contentVersions: transcriptWindowFields.contentVersions,
         tokenUsage: transcriptWindowFields.tokenUsage,
         activeTurn: transcriptWindowFields.activeTurn,
       })

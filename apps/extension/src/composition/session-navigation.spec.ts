@@ -237,9 +237,9 @@ describe('shared Host session navigation', () => {
     expect(retitleEditorTab).toHaveBeenCalledExactlyOnceWith('s1', 'Projected title')
   })
 
-  it('keeps a live title authoritative over later snapshot baselines and skips same-value re-emissions', () => {
+  it('ignores older snapshot baselines and skips same-value title re-emissions', () => {
     const { navigation, retitleEditorTab } = fixture()
-    navigation.acceptEvent('session.title', { sessionId: 's1', title: 'Live title' })
+    navigation.acceptEvent('session.title', { sessionId: 's1', title: 'Live title', sequence: 6 })
     expect(retitleEditorTab).toHaveBeenCalledExactlyOnceWith('s1', 'Live title')
     // A stale snapshot must not overwrite the live title.
     navigation.acceptEvent('session.projection.baseline', {
@@ -252,7 +252,7 @@ describe('shared Host session navigation', () => {
     })
     expect(retitleEditorTab).toHaveBeenCalledOnce()
     // A same-value live re-emission is a no-op.
-    navigation.acceptEvent('session.title', { sessionId: 's1', title: 'Live title' })
+    navigation.acceptEvent('session.title', { sessionId: 's1', title: 'Live title', sequence: 6 })
     expect(retitleEditorTab).toHaveBeenCalledOnce()
     // A genuinely new live title still applies.
     navigation.acceptEvent('session.title', { sessionId: 's1', title: 'Renamed' })
@@ -328,4 +328,53 @@ describe('shared Host session navigation', () => {
     deps.listCurrentArchivedSessionIds.mockRejectedValueOnce(new Error('lost'))
     await expect(navigation.archive('s1', signal)).rejects.toThrow('was archived')
   })
+})
+
+it('accepts a newer authoritative title baseline after an older live event', () => {
+  const { navigation, retitleEditorTab } = fixture()
+  const changed = vi.fn()
+  const listener = navigation.onDidChange(changed)
+  navigation.acceptEvent('session.title', { sessionId: 's1', title: 'Old live title', sequence: 6 })
+  navigation.acceptEvent('session.subscribed', {
+    sessionId: 's1',
+    projection: { asOfSequence: 12, values: { title: 'Renamed while unfollowed' } },
+  })
+  expect(retitleEditorTab).toHaveBeenLastCalledWith('s1', 'Renamed while unfollowed')
+  expect(changed).toHaveBeenLastCalledWith('directory')
+  navigation.acceptEvent('session.projection.baseline', {
+    projections: { s1: { asOfSequence: 13, values: { title: 'New control baseline' } } },
+  })
+  expect(retitleEditorTab).toHaveBeenLastCalledWith('s1', 'New control baseline')
+  navigation.acceptEvent('session.title', { sessionId: 's1', title: 'Old live title', sequence: 6 })
+  expect(retitleEditorTab).toHaveBeenLastCalledWith('s1', 'New control baseline')
+  listener.dispose()
+})
+
+it('coalesces equal baselines without suppressing changed session-list metadata', () => {
+  const { navigation } = fixture()
+  const changed = vi.fn()
+  const listener = navigation.onDidChange(changed)
+  const baseline = (blank: boolean): unknown => ({
+    projections: { s1: { asOfSequence: 12, values: { title: 'same', sessionListMetadata: { blank } } } },
+  })
+  navigation.acceptEvent('session.projection.baseline', baseline(true))
+  changed.mockClear()
+  navigation.acceptEvent('session.projection.baseline', baseline(true))
+  expect(changed).not.toHaveBeenCalled()
+  navigation.acceptEvent('session.projection.baseline', baseline(false))
+  expect(changed).toHaveBeenCalledExactlyOnceWith('directory')
+  listener.dispose()
+})
+
+it('resets title watermarks when the connected backend changes without a loss event', () => {
+  const { navigation, retitleEditorTab, deps } = fixture()
+  navigation.acceptEvent('connection.snapshot', { kind: 'connected' })
+  navigation.acceptEvent('session.title', { sessionId: 's1', title: 'Previous runtime', sequence: 100 })
+  vi.spyOn(deps.backendService, 'requireBackend').mockReturnValue({} as DshBackend)
+  navigation.acceptEvent('connection.snapshot', { kind: 'connected' })
+  navigation.acceptEvent('session.subscribed', {
+    sessionId: 's1',
+    projection: { asOfSequence: 2, values: { title: 'Replacement runtime' } },
+  })
+  expect(retitleEditorTab).toHaveBeenLastCalledWith('s1', 'Replacement runtime')
 })

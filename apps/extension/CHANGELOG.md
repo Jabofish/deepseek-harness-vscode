@@ -16,6 +16,8 @@
 - Session titles are latest-wins by durable sequence, so a replayed stale title no longer flips an open tab or reloads the session list.
 - 转瞬态分片缺口后的重新订阅按冷却窗口合并，思考分片大量掉帧不再反复重连并触发全量重订阅。
 - Re-subscription after a transient chunk gap is coalesced behind a cooldown, so a reasoning-delta flood no longer hot-loops reconnect and re-subscription.
+- 冷却期内的缺口会在到期后恢复，较新标题快照仍可生效；截断正文按完整内容版本更新，相同预览不会掩盖全文变化。
+- Gaps detected during cooldown recover when it expires, newer title snapshots remain authoritative, and clipped bodies refresh by full-content version even when their previews are identical.
 
 ## 0.4.0
 

@@ -81,6 +81,7 @@ it('does not re-read a re-baselined node whose content is unchanged', async () =
       sessionId="s"
       streaming={false}
       omittedNodeIds={['answer']}
+      contentVersions={{ answer: 'a'.repeat(64) }}
       nodes={[message('answer', 'Visible fragment')]}
       loadFullNode={loadFullNode}
     />,
@@ -94,6 +95,7 @@ it('does not re-read a re-baselined node whose content is unchanged', async () =
       sessionId="s"
       streaming={false}
       omittedNodeIds={['answer']}
+      contentVersions={{ answer: 'a'.repeat(64) }}
       nodes={[message('answer', 'Visible fragment')]}
       loadFullNode={loadFullNode}
     />,

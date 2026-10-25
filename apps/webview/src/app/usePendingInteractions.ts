@@ -110,6 +110,7 @@ export function usePendingInteractions({
     state.transcript?.omittedNodeIds,
     loadNode,
     pairedIds,
+    state.transcript?.contentVersions,
   )
   const pendingPermissions = useMemo(
     () =>

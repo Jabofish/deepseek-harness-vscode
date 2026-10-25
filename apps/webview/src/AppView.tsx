@@ -620,7 +620,10 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                       onFeedbackSubmit={timelineOnFeedbackSubmit}
                       {...(state.transcript === undefined
                         ? {}
-                        : { omittedNodeIds: state.transcript.omittedNodeIds })}
+                        : {
+                            omittedNodeIds: state.transcript.omittedNodeIds,
+                            contentVersions: state.transcript.contentVersions,
+                          })}
                       loadFullNode={(nodeId, signal) => store.loadTranscriptNode(nodeId, signal)}
                       loadFullContent={(nodeId) => store.loadTranscriptContent(nodeId)}
                     />
@@ -630,7 +633,10 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                       contentScope={`${state.connectionEpoch}:${state.timeline.sessionId ?? active.id}`}
                       {...(state.transcript === undefined
                         ? {}
-                        : { omittedNodeIds: state.transcript.omittedNodeIds })}
+                        : {
+                            omittedNodeIds: state.transcript.omittedNodeIds,
+                            contentVersions: state.transcript.contentVersions,
+                          })}
                       loadFullNode={(nodeId, signal) => store.loadTranscriptNode(nodeId, signal)}
                       panelId={CONVERSATION_VIEW_IDS.trajectory.panel}
                       panelLabelledBy={CONVERSATION_VIEW_IDS.trajectory.tab}

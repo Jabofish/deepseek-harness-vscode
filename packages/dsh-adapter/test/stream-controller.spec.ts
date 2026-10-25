@@ -576,40 +576,62 @@ describe('DshStreamController', () => {
     )
   })
 
-  it('coalesces repeated transient gaps behind a restart cooldown', async () => {
-    const first = new ControlledStream()
-    const second = new ControlledStream()
-    const third = new ControlledStream()
+  it('eventually heals a gap suppressed in the cooldown without needing another frame', async () => {
+    const first = new ControlledStream(),
+      second = new ControlledStream(),
+      third = new ControlledStream()
     const controller = new DshStreamController(streamTransport([]), undefined, undefined, {
       streamSource: controlledGenerationSource([first, second, third]),
       closeTransport: false,
     })
     controllers.push(controller)
-    const received: BackendEvent[] = []
-    controller.subscribe((event) => received.push(event))
-
-    // Generation 1: establish the transient baseline, then drop a chunk.
+    controller.subscribe(() => undefined)
     first.push(subscribeFrame('s1', 0))
     first.push(assistantFrame('s1', 1, 'first'))
-    first.push(assistantFrame('s1', 3, 'gap-1'))
+    first.push(assistantFrame('s1', 3, 'first gap'))
     await waitFor(() => second.signal !== undefined)
-
-    // Generation 2: re-establish the baseline, then drop another chunk inside
-    // the cooldown window. That gap must not open a third generation.
     second.push(subscribeFrame('s1', 0))
     second.push(assistantFrame('s1', 1, 'recovered'))
-    await waitFor(() =>
-      received.some((event) => event.type === 'message.delta' && event.delta === 'recovered'),
-    )
-    second.push(assistantFrame('s1', 3, 'gap-2'))
+    await vi.advanceTimersByTimeAsync(0)
+    second.push(assistantFrame('s1', 3, 'second gap'))
     await vi.advanceTimersByTimeAsync(0)
     expect(third.signal).toBeUndefined()
-
-    // Once the cooldown elapses, a further gap re-subscribes again.
-    await vi.advanceTimersByTimeAsync(1_000)
-    second.push(assistantFrame('s1', 5, 'gap-3'))
-    await waitFor(() => third.signal !== undefined)
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(third.signal).toBeDefined()
   })
+
+  it.each(['close', 'unsubscribe', 'manual-restart'] as const)(
+    'retires a pending cooldown recovery on %s',
+    async (action) => {
+      const first = new ControlledStream(),
+        second = new ControlledStream(),
+        third = new ControlledStream(),
+        fourth = new ControlledStream()
+      const controller = new DshStreamController(streamTransport([]), undefined, undefined, {
+        streamSource: controlledGenerationSource([first, second, third, fourth]),
+        closeTransport: false,
+      })
+      controllers.push(controller)
+      const unsubscribe = controller.subscribe(() => undefined)
+      first.push(subscribeFrame('s1', 0))
+      first.push(assistantFrame('s1', 1, 'one'))
+      first.push(assistantFrame('s1', 3, 'gap'))
+      await waitFor(() => second.signal !== undefined)
+      second.push(subscribeFrame('s1', 0))
+      second.push(assistantFrame('s1', 1, 'two'))
+      second.push(assistantFrame('s1', 3, 'gap'))
+      await vi.advanceTimersByTimeAsync(0)
+      if (action === 'close') await controller.close()
+      else if (action === 'unsubscribe') unsubscribe()
+      else {
+        await controller.restart()
+        await waitFor(() => third.signal !== undefined)
+      }
+      await vi.advanceTimersByTimeAsync(2000)
+      expect(fourth.signal).toBeUndefined()
+      if (action !== 'manual-restart') expect(third.signal).toBeUndefined()
+    },
+  )
 
   it('hands an unfinished durable drain to the next reconnect generation', async () => {
     const firstStream = new ControlledStream()

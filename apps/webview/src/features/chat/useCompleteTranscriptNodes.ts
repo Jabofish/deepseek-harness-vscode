@@ -3,16 +3,26 @@ import type { TimelineNode } from '@dsh-vscode/timeline'
 
 const EMPTY_PENDING_IDS: ReadonlySet<string> = new Set<string>()
 
-/**
- * A re-baseline re-projects an unchanged node into a new object, so reference
- * identity is not a reliable staleness signal. Compare content only when the
- * references differ; the transcript is a plain serializable tree, so a JSON
- * comparison is correct and runs only on the (rare) reference-change path.
- */
-function sameNodeContent(a: TimelineNode | undefined, b: TimelineNode | undefined): boolean {
-  if (a === b) return true
-  if (a === undefined || b === undefined) return false
-  return JSON.stringify(a) === JSON.stringify(b)
+/** A full-body version survives serialization; a bounded preview cannot prove equality. */
+interface LoadedNode {
+  readonly source: TimelineNode | undefined
+  readonly version: string | undefined
+  readonly node: TimelineNode
+}
+function contentVersion(
+  versions: Readonly<Record<string, string>> | undefined,
+  id: string,
+): string | undefined {
+  return versions !== undefined && Object.hasOwn(versions, id) ? versions[id] : undefined
+}
+function currentContent(
+  value: LoadedNode | undefined,
+  source: TimelineNode | undefined,
+  version: string | undefined,
+): boolean {
+  if (value === undefined) return false
+  // Missing version metadata is a legacy path; preview equality proves nothing.
+  return version === undefined ? value.source === source : value.version === version
 }
 
 /** Transport limits never become presentation limits. Refresh live bodies
@@ -23,6 +33,7 @@ export function useCompleteTranscriptNodes(
   omittedIds: readonly string[] | undefined,
   load: ((id: string, signal?: AbortSignal) => Promise<TimelineNode>) | undefined,
   requiredIds?: readonly string[],
+  contentVersions?: Readonly<Record<string, string>>,
 ): {
   readonly nodes: readonly TimelineNode[]
   readonly pending: boolean
@@ -31,24 +42,21 @@ export function useCompleteTranscriptNodes(
 } {
   const [loaded, setLoaded] = useState<{
     readonly sessionId: string
-    readonly values: ReadonlyMap<
-      string,
-      { readonly source: TimelineNode | undefined; readonly node: TimelineNode }
-    >
+    readonly values: ReadonlyMap<string, LoadedNode>
   }>({ sessionId, values: new Map() })
   const [failed, setFailed] = useState({ sessionId, value: false })
   const wake = useRef<(() => void) | undefined>(undefined)
-  const latest = useRef({ sessionId, nodes, omittedIds, load, requiredIds })
+  const latest = useRef({ sessionId, nodes, omittedIds, load, requiredIds, contentVersions })
   useLayoutEffect(() => {
-    latest.current = { sessionId, nodes, omittedIds, load, requiredIds }
-  }, [sessionId, nodes, omittedIds, load, requiredIds])
+    latest.current = { sessionId, nodes, omittedIds, load, requiredIds, contentVersions }
+  }, [sessionId, nodes, omittedIds, load, requiredIds, contentVersions])
 
   useEffect(() => {
     const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
     let retry = 0
     let running = false
-    const values = new Map<string, { source: TimelineNode | undefined; node: TimelineNode }>()
+    const values = new Map<string, LoadedNode>()
     let initialized = false
     const refresh = async (): Promise<void> => {
       if (controller.signal.aborted || running) return
@@ -75,7 +83,7 @@ export function useCompleteTranscriptNodes(
           const loaded = values.get(id)
           if (
             (!sources?.has(id) && !required.has(id)) ||
-            (loaded !== undefined && sameNodeContent(loaded.source, source))
+            currentContent(loaded, source, contentVersion(current.contentVersions, id))
           )
             continue
           // Required ids already represented by an intact transport node need no read.
@@ -85,7 +93,7 @@ export function useCompleteTranscriptNodes(
             const node = await current.load(id, controller.signal)
             if (controller.signal.aborted || latest.current.sessionId !== sessionId) return
             if (node.id !== id) throw new Error('Unexpected transcript node')
-            values.set(id, { source, node })
+            values.set(id, { source, node, version: contentVersion(current.contentVersions, id) })
             setLoaded({ sessionId, values: new Map(values) })
           } catch {
             if (controller.signal.aborted) return
@@ -108,7 +116,7 @@ export function useCompleteTranscriptNodes(
           next.nodes.some(
             (node) =>
               next.omittedIds?.includes(node.id) === true &&
-              !sameNodeContent(values.get(node.id)?.source, node),
+              !currentContent(values.get(node.id), node, contentVersion(next.contentVersions, node.id)),
           ) ||
           next.requiredIds?.some((id) => !next.nodes.some((node) => node.id === id) && !values.has(id)) ===
             true
@@ -136,7 +144,7 @@ export function useCompleteTranscriptNodes(
 
   useEffect(() => {
     wake.current?.()
-  }, [nodes, omittedIds, load, requiredIds])
+  }, [nodes, omittedIds, load, requiredIds, contentVersions])
 
   return useMemo(() => {
     // With nothing omitted and nothing required, every transport node is
@@ -147,16 +155,13 @@ export function useCompleteTranscriptNodes(
     )
       return { nodes, pending: false, pendingIds: EMPTY_PENDING_IDS, failed: false }
     const omitted = new Set(omittedIds)
-    const values =
-      loaded.sessionId === sessionId
-        ? loaded.values
-        : new Map<string, { readonly source: TimelineNode | undefined; readonly node: TimelineNode }>()
+    const values = loaded.sessionId === sessionId ? loaded.values : new Map<string, LoadedNode>()
     const pendingIds = new Set<string>()
     let changed = false
     const complete = nodes.map((node) => {
       if (!omitted.has(node.id)) return node
       const value = values.get(node.id)
-      if (!sameNodeContent(value?.source, node)) pendingIds.add(node.id)
+      if (!currentContent(value, node, contentVersion(contentVersions, node.id))) pendingIds.add(node.id)
       if (value === undefined) return node
       changed = true
       return value.node
@@ -177,5 +182,5 @@ export function useCompleteTranscriptNodes(
       pendingIds,
       failed: pending && failed.sessionId === sessionId && failed.value,
     }
-  }, [failed, loaded, nodes, omittedIds, requiredIds, sessionId])
+  }, [failed, loaded, nodes, omittedIds, requiredIds, sessionId, contentVersions])
 }
