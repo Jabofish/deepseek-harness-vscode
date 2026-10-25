@@ -39,7 +39,12 @@ export async function readAttachmentFile(
   return prepareAttachment(name, await fileSystem.readFile(filePath))
 }
 
-export function prepareAttachment(name: string, bytes: Buffer, hintMimeType?: string): StoredAttachmentInput {
+export function prepareAttachment(
+  name: string,
+  bytes: Buffer,
+  hintMimeType?: string,
+  canonicalBase64?: string,
+): StoredAttachmentInput {
   let mimeType = attachmentMimeType(name, bytes)
   // Pasted clipboard images often carry no filename extension. The declared
   // hint only fills that gap and is still verified against the image magic
@@ -68,7 +73,10 @@ export function prepareAttachment(name: string, bytes: Buffer, hintMimeType?: st
   return {
     name,
     mimeType,
-    dataUri: `data:${mimeType};base64,${bytes.toString('base64')}`,
+    // Ingest already proved the payload's own Base64 is the canonical encoding
+    // of these bytes (decodeCanonicalBase64 round-trips it), so the data URI
+    // reuses it instead of re-encoding up to 27MB a second time.
+    dataUri: `data:${mimeType};base64,${canonicalBase64 ?? bytes.toString('base64')}`,
   }
 }
 

@@ -440,9 +440,27 @@ function splitMarkdownBlocks(markdown: string): string[] {
   return blocks
 }
 
+/**
+ * Equivalent to `/\n\s*\n\s*$/u.test(text)`: the trailing whitespace run
+ * contains at least two newlines. The regex's two overlapping `\s*` backtrack
+ * cubically on long newline runs, which a streaming delta can append; a single
+ * backward scan keeps the same Unicode-whitespace semantics in linear time.
+ */
+function endsWithBlankLine(text: string): boolean {
+  const whitespace = /\s/u
+  let newlines = 0
+  for (let index = text.length - 1; index >= 0; index--) {
+    const char = text.charAt(index)
+    if (char === '\n') {
+      if (++newlines === 2) return true
+    } else if (!whitespace.test(char)) return false
+  }
+  return false
+}
+
 function stableBlockCount(markdown: string, blocks: readonly string[]): number {
   if (blocks.length === 0) return 0
-  if (/\n\s*\n\s*$/u.test(markdown)) return blocks.length
+  if (endsWithBlankLine(markdown)) return blocks.length
   const last = blocks[blocks.length - 1] ?? ''
   if (/^\s*(`{3,}|~{3,})[\s\S]*\n\s*\1\s*$/u.test(last)) return blocks.length
   return Math.max(0, blocks.length - 1)

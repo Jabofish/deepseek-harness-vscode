@@ -37,6 +37,32 @@ function installed(): ReturnType<typeof installTranscript> {
 }
 
 describe('transcript patches', () => {
+  it('keeps position indexes isolated when retained states receive independent patches', () => {
+    const before = installed()
+    const first = installTranscriptPatch(before, {
+      sessionId,
+      revision: 5,
+      baseRevision: 4,
+      changedNodes: [assistant('m-3', 'first branch')],
+    })
+    const second = installTranscriptPatch(before, {
+      sessionId,
+      revision: 5,
+      baseRevision: 4,
+      changedNodes: [assistant('m-4', 'second branch'), assistant('m-3', 'appended after m-4')],
+    })
+    expect(second.transcript!.nodes.map((node) => node.id)).toEqual(['m-1', 'm-2', 'm-4', 'm-3'])
+    // Continuing either branch must use that branch's own positions too.
+    const continued = installTranscriptPatch(first, {
+      sessionId,
+      revision: 6,
+      baseRevision: 5,
+      changedNodes: [assistant('m-4', 'first branch tail')],
+    })
+    expect(continued.transcript!.nodes.map((node) => node.id)).toEqual(['m-1', 'm-2', 'm-3', 'm-4'])
+    expect(before.transcript!.nodes).toHaveLength(2)
+  })
+
   it('appends reasoning and body independently and rejects an incorrect reasoning baseline', () => {
     const initial: TranscriptWindow = {
       ...window(),

@@ -17,6 +17,7 @@ import {
   normalizeAlpha171Event,
   readAlpha171HistoryRecord,
   readAlpha171SessionSnapshot,
+  readAlpha171SessionSnapshotEnvelope,
   UNREADABLE_HISTORY_EVENT,
   type AlphaV4SessionProfile,
   validAlpha171SessionEventFrame,
@@ -242,6 +243,40 @@ export function readAlphaWireSnapshot(
     ...snapshot,
     records: source.records,
     ...(source.assistantStream === undefined ? {} : { assistantStream: source.assistantStream }),
+  }
+}
+
+/** A validated snapshot envelope of any wire version whose records stay undecoded. */
+export interface AlphaWireSnapshotEnvelope {
+  readonly header: Record<string, unknown>
+  readonly cursor: number
+  readonly records: readonly unknown[]
+  readonly hasMore: boolean
+  readonly projections: Record<string, unknown> | undefined
+  readonly assistantStream?: unknown
+}
+
+/**
+ * Validate a snapshot envelope without decoding its history records. The v4
+ * per-record codec admission is the expensive part of a snapshot read; the
+ * history RPC needs only the cursor from a follow tail, and expands the rows
+ * it actually returns exactly once.
+ */
+export function readAlphaWireSnapshotEnvelope(
+  value: unknown,
+  wireVersion: AlphaSessionWireVersion,
+  profile?: AlphaV4SessionProfile,
+): AlphaWireSnapshotEnvelope | undefined {
+  if (wireVersion === 'v4') return readAlpha171SessionSnapshotEnvelope(value, profile)
+  const snapshot = readAlphaWireSnapshot(value, wireVersion, profile)
+  if (snapshot === undefined) return undefined
+  return {
+    header: snapshot.header,
+    cursor: snapshot.cursor,
+    records: snapshot.records,
+    hasMore: snapshot.hasMore,
+    projections: snapshot.projections,
+    ...(snapshot.assistantStream === undefined ? {} : { assistantStream: snapshot.assistantStream }),
   }
 }
 

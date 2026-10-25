@@ -424,6 +424,20 @@ describe('MarkdownContent', () => {
     expect(block?.querySelector('.line')?.textContent).toBe('const first = 1')
   })
 
+  it('stays responsive when a streaming message carries a long run of blank lines', () => {
+    // A delta can append thousands of newlines before the next paragraph. The
+    // trailing-blank-line check in stableBlockCount must scan that suffix in
+    // linear time; the previous regex backtracked cubically and a run of this
+    // size exceeded the per-test timeout before the component ever rendered.
+    const pathological = `summary\n\n${'\n'.repeat(4_000)}next paragraph`
+    const view = render(<MarkdownContent streaming markdown={pathological} />)
+    expect(view.container.textContent).toContain('next paragraph')
+
+    const withBlankTail = `${pathological}\n\n`
+    view.rerender(<MarkdownContent streaming markdown={withBlankTail} />)
+    expect(view.container.textContent).toContain('next paragraph')
+  })
+
   it('keeps completed streaming blocks in a frozen region', () => {
     const { container, rerender } = render(
       <MarkdownContent streaming markdown={'First paragraph.\n\nSecond paragraph is still growing'} />,

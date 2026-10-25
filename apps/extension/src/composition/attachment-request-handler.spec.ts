@@ -30,6 +30,37 @@ function fixture(): {
 }
 
 describe('native attachment picking across workspace and client filesystems', () => {
+  it('reuses canonical ingest bytes while rejecting noncanonical Base64 and mismatched image signatures', async () => {
+    const remember = vi.fn((input: unknown) => input)
+    const handler = createAttachmentRequestHandler({
+      attachmentTokens: { remember },
+      backendService: { requireBackend: () => ({ sessions: { supportsFileUploads: true } }) },
+    } as unknown as RequestGatewayDependencies)
+    const payload = { name: 'image.png', mimeType: 'image/png', dataBase64: 'iVBORw0KGgo=' }
+    expect(
+      await handler(
+        { type: 'attachment.ingest', requestId: 'ingest', payload },
+        new AbortController().signal,
+      ),
+    ).toEqual({
+      cancelled: false,
+      attachment: { name: 'image.png', mimeType: 'image/png', dataUri: 'data:image/png;base64,iVBORw0KGgo=' },
+    })
+    for (const dataBase64 of [
+      'iVBORw0KGgo',
+      'iVBORw0KGgo=\n',
+      Buffer.from('not an image').toString('base64'),
+    ]) {
+      await expect(
+        handler(
+          { type: 'attachment.ingest', requestId: 'invalid', payload: { ...payload, dataBase64 } },
+          new AbortController().signal,
+        ),
+      ).rejects.toThrow()
+    }
+    expect(remember).toHaveBeenCalledTimes(1)
+  })
+
   it.each(['file', 'vscode-remote', 'vscode-local'])(
     'reads the selected %s URI through its provider without exposing its authority or path',
     async (scheme) => {

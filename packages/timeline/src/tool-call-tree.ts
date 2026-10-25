@@ -59,15 +59,20 @@ function projectNode(
   if (node === undefined) throw new Error(`Missing tool call ${id}`)
   if (visited.has(id) || depth > MAX_TOOL_CALL_TREE_DEPTH) return { node, children: [] }
 
-  const nextVisited = new Set(visited)
-  nextVisited.add(id)
-  const childIds = depth === MAX_TOOL_CALL_TREE_DEPTH ? [] : (childrenByParent.get(id) ?? [])
-  return {
-    node,
-    children: childIds.map((childId) =>
-      projectNode(childId, nodesById, childrenByParent, nextVisited, depth + 1),
-    ),
+  // The set only ever guards the current ancestor path, so backtracking gives
+  // every child the same view a per-node copy would while allocating one set
+  // for the whole projection instead of one per visited node.
+  visited.add(id)
+  let children: ToolCallTreeNode[]
+  try {
+    const childIds = depth === MAX_TOOL_CALL_TREE_DEPTH ? [] : (childrenByParent.get(id) ?? [])
+    children = childIds.map((childId) =>
+      projectNode(childId, nodesById, childrenByParent, visited, depth + 1),
+    )
+  } finally {
+    visited.delete(id)
   }
+  return { node, children }
 }
 
 function createsCycle(

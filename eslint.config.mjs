@@ -67,10 +67,10 @@ export default tseslint.config(
     files: ['scripts/read-stylesheet.mjs', 'apps/extension/esbuild-import-meta-url.mjs'],
     languageOptions: {
       parserOptions: {
-        project: false,
-        projectService: {
-          allowDefaultProject: ['scripts/read-stylesheet.mjs', 'apps/extension/esbuild-import-meta-url.mjs'],
-        },
+        // Explicit implementation roots prevent sibling .d.mts declarations
+        // from shadowing these .mjs files when the whole tools project loads.
+        projectService: false,
+        project: './config/tsconfig.lint-scripts.json',
       },
     },
   },

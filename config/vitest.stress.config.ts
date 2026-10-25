@@ -3,6 +3,10 @@ import { configDefaults, defineConfig } from 'vitest/config'
 export default defineConfig({
   test: {
     environment: 'node',
+    // The memory probes require explicit collection in the worker process.
+    // Keep this scoped to stress tests; production and normal tests are unchanged.
+    pool: 'forks',
+    execArgv: ['--expose-gc'],
     maxWorkers: 1,
     fileParallelism: false,
     include: [

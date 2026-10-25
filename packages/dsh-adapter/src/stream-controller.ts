@@ -31,6 +31,19 @@ interface OrderedSessionDelivery {
   readonly abort: AbortController
   emittedSinceYield: number
   workMsSinceYield: number
+  /**
+   * Ascending cursor over the positions this delivery still owes, as lazily
+   * pruned min-heaps. Hole lookups peek here instead of rescanning both
+   * collections for every missing position; queued additions push into the
+   * heaps and removals are dropped when they reach the top.
+   */
+  rangeOrder?: OrderedRangeOrder
+}
+
+interface OrderedRangeOrder {
+  /** Min-heap of pending sequence numbers; see `heldSequencesAfter`. */
+  readonly pending: number[]
+  readonly skipped: number[]
 }
 
 /** One shared mux/host reader for every consumer in an Extension Host. */
@@ -383,6 +396,7 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
     if (pending.some((candidate) => sameBackendEvent(candidate, event))) return
     pending.push(event)
     delivery.pending.set(sequence, pending)
+    queueHeldSequence(delivery, sequence, false)
     this.lastSequences.set(sessionId, Math.max(this.lastSequences.get(sessionId) ?? -1, sequence))
     this.retryAttempt = 0
     this.startOrderedDrain(sessionId, signal)
@@ -482,12 +496,14 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
         !this.rememberProjectionSequence(event.sessionId, candidate.key, sequence)
       ) {
         delivery.skippedSequences.add(sequence)
+        queueHeldSequence(delivery, sequence, true)
         continue
       }
       const pending = delivery.pending.get(sequence) ?? []
       if (pending.some((existing) => sameBackendEvent(existing, candidate))) continue
       pending.push(candidate)
       delivery.pending.set(sequence, pending)
+      queueHeldSequence(delivery, sequence, false)
     }
     if (signal.aborted || this.closed) return
     this.lastSequences.set(event.sessionId, Math.max(previous, event.lastSequence))
@@ -558,7 +574,7 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
       }
       if (requiredThrough !== undefined) delete delivery.recoveryThrough
 
-      const firstPending = smallestPendingSequence(delivery.pending, next)
+      const firstPending = heldSequencesAfter(delivery, next).pending
       if (firstPending === undefined || firstPending <= next) return
       await this.recoverOrderedRange(sessionId, delivery, next, firstPending - 1, signal)
     }
@@ -597,12 +613,14 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
         !this.rememberProjectionSequence(sessionId, candidate.key, sequence)
       ) {
         delivery.skippedSequences.add(sequence)
+        queueHeldSequence(delivery, sequence, true)
         continue
       }
       const pending = delivery.pending.get(sequence) ?? []
       if (pending.some((existing) => sameBackendEvent(existing, candidate))) continue
       pending.push(candidate)
       delivery.pending.set(sequence, pending)
+      queueHeldSequence(delivery, sequence, false)
     }
 
     while (
@@ -612,8 +630,8 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
       this.orderedDeliveries.get(sessionId) === delivery
     ) {
       const next = delivery.nextSequence
-      const pending = delivery.pending.get(next)
-      if (pending !== undefined && pending.length > 0) {
+      const held = heldSequencesAfter(delivery, next)
+      if (held.pending === next) {
         if (
           delivery.emittedSinceYield >= STREAM_BATCH_SIZE ||
           delivery.workMsSinceYield >= STREAM_TIME_SLICE_MS
@@ -627,21 +645,44 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
         this.emitPendingSequence(sessionId, delivery, next)
         continue
       }
-      if (delivery.skippedSequences.delete(next)) {
+      if (held.skipped === next) {
+        // Skips and gap notices are drain work too. Without charging them
+        // against the yield budget, a range of filtered or unrecoverable rows
+        // could advance thousands of positions without letting the host
+        // heartbeat run.
+        if (
+          delivery.emittedSinceYield >= STREAM_BATCH_SIZE ||
+          delivery.workMsSinceYield >= STREAM_TIME_SLICE_MS
+        ) {
+          delivery.emittedSinceYield = 0
+          delivery.workMsSinceYield = 0
+          await yieldToEventLoop(AbortSignal.any([signal, delivery.abort.signal]))
+          continue
+        }
+        delivery.skippedSequences.delete(next)
         delivery.nextSequence = next + 1
+        delivery.emittedSinceYield++
         continue
       }
-      const nextPresent = smallestPendingSequence(delivery.pending, next + 1, toSequence)
-      const nextSkipped = smallestSkippedSequence(delivery.skippedSequences, next + 1, toSequence)
-      const firstPresent =
-        nextPresent === undefined
-          ? nextSkipped
-          : nextSkipped === undefined
-            ? nextPresent
-            : Math.min(nextPresent, nextSkipped)
-      const gapTo = firstPresent === undefined ? toSequence : firstPresent - 1
+      const firstKnown =
+        held.pending === undefined
+          ? held.skipped
+          : held.skipped === undefined
+            ? held.pending
+            : Math.min(held.pending, held.skipped)
+      const gapTo = Math.min(firstKnown === undefined ? toSequence : firstKnown - 1, toSequence)
+      if (
+        delivery.emittedSinceYield >= STREAM_BATCH_SIZE ||
+        delivery.workMsSinceYield >= STREAM_TIME_SLICE_MS
+      ) {
+        delivery.emittedSinceYield = 0
+        delivery.workMsSinceYield = 0
+        await yieldToEventLoop(AbortSignal.any([signal, delivery.abort.signal]))
+        continue
+      }
       this.emit({ type: 'session.gap', sessionId, fromSequence: next, toSequence: gapTo })
       delivery.nextSequence = gapTo + 1
+      delivery.emittedSinceYield += gapTo - next + 1
     }
   }
 
@@ -769,30 +810,88 @@ function createOrderedDelivery(nextSequence: number): OrderedSessionDelivery {
   }
 }
 
-function smallestPendingSequence(
-  pending: ReadonlyMap<number, BackendEvent[]>,
+/**
+ * Smallest durable positions at or above `minimum` that this delivery still
+ * holds, from lazily pruned min-heaps over `pending` and `skippedSequences`.
+ * The drain consumes positions in ascending order, so heap entries at or
+ * below the cursor (or whose row was removed) are popped once and never
+ * revisited; additions push in O(log n) and cannot be missed mid-walk.
+ */
+function heldSequencesAfter(
+  delivery: OrderedSessionDelivery,
   minimum: number,
-  maximum = Number.MAX_SAFE_INTEGER,
-): number | undefined {
-  let smallest: number | undefined
-  for (const sequence of pending.keys()) {
-    if (sequence < minimum || sequence > maximum) continue
-    if (smallest === undefined || sequence < smallest) smallest = sequence
+): { pending: number | undefined; skipped: number | undefined } {
+  if (delivery.rangeOrder === undefined) {
+    delivery.rangeOrder = {
+      pending: heapifySequences([...delivery.pending.keys()]),
+      skipped: heapifySequences([...delivery.skippedSequences]),
+    }
   }
-  return smallest
+  const order = delivery.rangeOrder
+  while (order.pending.length > 0) {
+    const sequence = order.pending[0]!
+    const bucket = delivery.pending.get(sequence)
+    if (sequence >= minimum && bucket !== undefined && bucket.length > 0) break
+    heapPopSequence(order.pending)
+  }
+  while (order.skipped.length > 0) {
+    const sequence = order.skipped[0]!
+    if (sequence >= minimum && delivery.skippedSequences.has(sequence)) break
+    heapPopSequence(order.skipped)
+  }
+  return { pending: order.pending[0], skipped: order.skipped[0] }
 }
 
-function smallestSkippedSequence(
-  skipped: ReadonlySet<number>,
-  minimum: number,
-  maximum: number,
-): number | undefined {
-  let smallest: number | undefined
-  for (const sequence of skipped) {
-    if (sequence < minimum || sequence > maximum) continue
-    if (smallest === undefined || sequence < smallest) smallest = sequence
+/** Make a queued position visible to an already armed drain cursor. */
+function queueHeldSequence(delivery: OrderedSessionDelivery, sequence: number, skipped: boolean): void {
+  const order = delivery.rangeOrder
+  if (order === undefined) return
+  heapPushSequence(skipped ? order.skipped : order.pending, sequence)
+}
+
+function heapifySequences(sequences: readonly number[]): number[] {
+  const heap = [...sequences]
+  for (let index = (heap.length >> 1) - 1; index >= 0; index--) siftHeapDown(heap, index)
+  return heap
+}
+
+function heapPushSequence(heap: number[], sequence: number): void {
+  let index = heap.push(sequence) - 1
+  while (index > 0) {
+    const parent = (index - 1) >> 1
+    if (heap[parent]! <= heap[index]!) break
+    const swap = heap[parent]!
+    heap[parent] = heap[index]!
+    heap[index] = swap
+    index = parent
   }
-  return smallest
+}
+
+function heapPopSequence(heap: number[]): number {
+  const top = heap[0]!
+  const last = heap.pop()
+  if (heap.length > 0 && last !== undefined) {
+    heap[0] = last
+    siftHeapDown(heap, 0)
+  }
+  return top
+}
+
+function siftHeapDown(heap: number[], start: number): void {
+  const length = heap.length
+  let index = start
+  for (;;) {
+    const left = 2 * index + 1
+    const right = left + 1
+    let smallest = index
+    if (left < length && heap[left]! < heap[smallest]!) smallest = left
+    if (right < length && heap[right]! < heap[smallest]!) smallest = right
+    if (smallest === index) return
+    const swap = heap[smallest]!
+    heap[smallest] = heap[index]!
+    heap[index] = swap
+    index = smallest
+  }
 }
 
 function sameBackendEvent(left: BackendEvent, right: BackendEvent): boolean {

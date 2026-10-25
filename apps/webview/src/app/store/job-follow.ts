@@ -54,10 +54,11 @@ export function reduceJobFollow(
       terminalStatusReceived: isTerminalJobStatus(frame.job.status),
     }
   if (frame.next < previous.next) return previous
-  const encoder = new TextEncoder()
+  const encoder = sharedUtf8Encoder
+  const chunkByteLengths = frame.chunks.map((chunk) => encoder.encode(chunk.text).byteLength)
   let lastByteEnd: number | undefined
-  for (const chunk of frame.chunks) {
-    const end = chunk.at + encoder.encode(chunk.text).byteLength
+  for (const [index, chunk] of frame.chunks.entries()) {
+    const end = chunk.at + chunkByteLengths[index]!
     if (!Number.isSafeInteger(end) || end > frame.next) return failJobFollow(previous)
     if (chunk.text.length === 0) {
       if (chunk.at !== frame.next || chunk.gapBefore !== true || frame.lossy !== true)
@@ -80,12 +81,12 @@ export function reduceJobFollow(
   const additions: JobOutputChunk[] = []
   let expected = previous.next
   for (const [index, chunk] of frame.chunks.entries()) {
-    const byteLength = encoder.encode(chunk.text).byteLength
-    const end = chunk.at + byteLength
+    const end = chunk.at + chunkByteLengths[index]!
     if (!Number.isSafeInteger(end)) return failJobFollow(previous)
     if (end <= previous.next) continue
 
     let acceptedChunk = chunk
+    let acceptedBytes = end - chunk.at
     if (chunk.at < previous.next) {
       if (previous.receivedOutputBytes === true) return failJobFollow(previous)
       const suffix = utf8TextSuffixAfterBytes(chunk.text, previous.next - chunk.at)
@@ -95,6 +96,7 @@ export function reduceJobFollow(
         text: suffix,
         ...(chunk.channel === undefined ? {} : { channel: chunk.channel }),
       }
+      acceptedBytes = encoder.encode(suffix).byteLength
     }
 
     if (
@@ -104,35 +106,54 @@ export function reduceJobFollow(
     )
       return failJobFollow(previous)
     if (acceptedChunk.at < expected) return failJobFollow(previous)
-    expected = acceptedChunk.at + encoder.encode(acceptedChunk.text).byteLength
+    expected = acceptedChunk.at + acceptedBytes
     if (acceptedChunk.text.length > 0) additions.push(acceptedChunk)
   }
 
   if (additions.length === 0 && frame.lossy !== true) return failJobFollow(previous)
-  const byOffset = new Map<number, JobOutputChunk>()
-  for (const chunk of previous.chunks) byOffset.set(chunk.at, chunk)
-  for (const chunk of additions) byOffset.set(chunk.at, chunk)
-  const chunks = [...byOffset.values()].sort((left, right) => left.at - right.at)
-  let chars = chunks.reduce((total, chunk) => total + chunk.text.length, 0)
-  while (chunks.length > 1 && chars > 256 * 1024) {
-    const removed = chunks.shift()
-    chars -= removed?.text.length ?? 0
+  // Both lists are ordered by `at`, additions start at or after previous.next,
+  // and every previous chunk ends at or before it, so a linear merge replaces
+  // the per-frame rebuild-and-sort of the whole output table.
+  const merged: JobOutputChunk[] = []
+  let olderIndex = 0
+  let newerIndex = 0
+  while (olderIndex < previous.chunks.length || newerIndex < additions.length) {
+    const older = previous.chunks[olderIndex]
+    const newer = additions[newerIndex]
+    if (newer === undefined || (older !== undefined && older.at < newer.at)) {
+      if (older !== undefined) merged.push(older)
+      olderIndex++
+    } else {
+      merged.push(newer)
+      newerIndex++
+    }
   }
+  const chunks = merged
+  let chars = chunks.reduce((total, chunk) => total + chunk.text.length, 0)
+  let firstKept = 0
+  while (chunks.length - firstKept > 1 && chars > 256 * 1024) {
+    chars -= chunks[firstKept]?.text.length ?? 0
+    firstKept++
+  }
+  const bounded = firstKept > 0 ? chunks.slice(firstKept) : chunks
   return {
     ...previous,
     next: frame.next,
-    chunks,
+    chunks: bounded,
     lossy,
     receivedOutputBytes: previous.receivedOutputBytes === true || additions.length > 0,
   }
 }
+
+/** Encoding is stateless; one shared instance serves every follow frame. */
+const sharedUtf8Encoder = new TextEncoder()
 
 function failJobFollow(current: JobFollowState): JobFollowState {
   return { ...current, error: 'stream-failed' }
 }
 
 function utf8TextSuffixAfterBytes(text: string, prefixBytes: number): string | undefined {
-  const bytes = new TextEncoder().encode(text)
+  const bytes = sharedUtf8Encoder.encode(text)
   if (prefixBytes <= 0 || prefixBytes >= bytes.byteLength) return undefined
   const nextByte = bytes[prefixBytes]
   if (nextByte === undefined || (nextByte & 0b1100_0000) === 0b1000_0000) return undefined

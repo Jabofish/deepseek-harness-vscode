@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { BillingSettings, BillingUsageRepository } from '@dsh-vscode/domain'
+import type { BillingRoute, BillingSettings, BillingUsageRepository } from '@dsh-vscode/domain'
 import { BillingUseCases } from './billing-use-cases.js'
 
 const route = { providerId: 'p', modelId: 'a' }
@@ -19,6 +19,43 @@ const useCases = new BillingUseCases({
 const usage = { inputTokens: 10, outputTokens: 2, totalTokens: 12 }
 
 describe('billing history use case', () => {
+  it('preserves first-seen resolver order and the latest route object across interleaved providers', async () => {
+    const routes: BillingRoute[] = [
+      { providerId: 'p1', modelId: 'a' },
+      { providerId: 'p2', modelId: 'b' },
+      { providerId: 'p1', modelId: 'c' },
+      { providerId: 'p1', modelId: 'a' },
+    ]
+    const received: (readonly BillingRoute[])[] = []
+    const unpriced = { ...settings, prices: [] }
+    const scoped = new BillingUseCases(
+      { read: () => Promise.resolve(unpriced), save: () => Promise.resolve(unpriced) },
+      {
+        resolve: (values) => {
+          received.push(values)
+          return Promise.resolve([])
+        },
+      },
+    )
+    await scoped.estimate(
+      's',
+      {
+        readBillingPage: () =>
+          Promise.resolve({
+            facts: routes.map((route, sequence) => ({ kind: 'message' as const, route, sequence, usage })),
+            eventCount: routes.length,
+            contiguous: true,
+            hasMore: false,
+            fromSequence: 0,
+            toSequence: routes.length - 1,
+          }),
+      },
+      signal(),
+    )
+    expect(received).toEqual([[routes[3], routes[1], routes[2]]])
+    expect(received[0]![0]).toBe(routes[3])
+  })
+
   it('projects the requested currency, leaves native prices intact and degrades safely when exchange reads fail', async () => {
     let calls = 0
     let fail = false

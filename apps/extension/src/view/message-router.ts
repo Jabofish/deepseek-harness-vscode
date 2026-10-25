@@ -76,12 +76,16 @@ export class WebviewMessageRouter {
     // with a fabricated id such as "invalid": that could settle an unrelated
     // live request which happens to use the same id.
     if (!protocolValueWithinBudget(rawMessage)) return
+    // A message the legacy envelope accepts is always routed as legacy
+    // (`isFeature` requires the legacy parse to fail), so that parse decides
+    // alone; only a legacy rejection needs the feature envelope.
     const legacy = webviewEnvelopeSchema.safeParse(rawMessage)
-    const feature = featureWebviewEnvelopeSchema.safeParse(rawMessage)
-    if (!legacy.success && !feature.success) return
-    const isFeature = feature.success && !legacy.success
-    const request = (isFeature ? feature.data.message : legacy.success ? legacy.data.message : undefined) as
-      WebviewRequest | FeatureRequest
+    const feature = legacy.success ? undefined : featureWebviewEnvelopeSchema.safeParse(rawMessage)
+    if (!legacy.success && !(feature?.success === true)) return
+    const isFeature = feature?.success === true
+    const request = (
+      isFeature && feature.success ? feature.data.message : legacy.success ? legacy.data.message : undefined
+    ) as WebviewRequest | FeatureRequest
     // Once a request id is occupied, a second envelope cannot be answered
     // independently: both responses would target the same Webview promise.
     // Ignore the duplicate and preserve the original operation's ownership.
