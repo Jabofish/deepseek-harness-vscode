@@ -5,9 +5,9 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for taking the time to file a bug. Please **never include API keys, passwords,
-        access tokens, or prompt bodies**. For safe output, run the command
-        `DSH: Show Redacted Diagnostics` and paste that instead.
+        English or 中文 is welcome. Include reproduction steps and the versions below.
+        Use `DSH: Show Redacted Diagnostics` for diagnostics and inspect the output before posting.
+        Remove API keys, passwords, tokens, prompts, tool bodies and private paths.
   - type: dropdown
     id: os
     attributes:
@@ -22,14 +22,14 @@ body:
     id: vscode-version
     attributes:
       label: VS Code version
-      placeholder: e.g. 1.125.0 (Help → About)
+      placeholder: Paste the version from Help → About.
     validations:
       required: true
   - type: input
     id: extension-version
     attributes:
       label: Extension version
-      placeholder: e.g. 0.0.8
+      placeholder: Paste the installed extension version from the Extensions view.
     validations:
       required: true
   - type: input
@@ -37,7 +37,7 @@ body:
     attributes:
       label: DSH version
       description: 'Output of `dsh --version`, or "not installed".'
-      placeholder: e.g. 0.1.1-rc.2
+      placeholder: Paste the exact output, including any prerelease suffix, or "not installed".
     validations:
       required: true
   - type: dropdown
@@ -55,7 +55,7 @@ body:
     id: steps
     attributes:
       label: Steps to reproduce
-      description: Minimal, deterministic steps starting from a clean VS Code window.
+      description: Minimal steps, including any workspace or session state needed to reproduce the problem.
     validations:
       required: true
   - type: textarea
@@ -65,6 +65,11 @@ body:
     validations:
       required: true
   - type: textarea
+    id: validation
+    attributes:
+      label: Checks already performed (optional)
+      description: Commands or manual steps you tried, and their results. Developer test suites are optional for bug reports.
+  - type: textarea
     id: diagnostics
     attributes:
       label: Redacted diagnostics
@@ -72,5 +77,5 @@ body:
   - type: textarea
     id: logs
     attributes:
-      label: Extension Host log excerpt
-      description: The `DeepSeek Harness` output channel. Redact anything sensitive; secrets and prompt bodies are already redacted by the extension.
+      label: Output channel excerpt
+      description: The `DeepSeek Harness` output channel. Inspect the excerpt and remove secrets, prompts, tool bodies and private paths before posting; prefer the redacted diagnostics above.

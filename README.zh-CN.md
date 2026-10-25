@@ -1,9 +1,8 @@
-# DeepSeek Harness for VS Code
+# DeepSeek Harness Companion for VS Code
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
 [![CI](https://github.com/Jabofish/deepseek-harness-vscode/actions/workflows/ci.yml/badge.svg)](https://github.com/Jabofish/deepseek-harness-vscode/actions/workflows/ci.yml)
-[![Marketplace](https://img.shields.io/badge/Marketplace-Install-0078D4?logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=Direwolf.deepseek-harness-client)
 [![GitHub Release](https://img.shields.io/github/v/release/Jabofish/deepseek-harness-vscode)](https://github.com/Jabofish/deepseek-harness-vscode/releases)
 [![License](https://img.shields.io/github/license/Jabofish/deepseek-harness-vscode)](LICENSE)
 
@@ -13,7 +12,7 @@
 
 - 在工作区中创建、切换、恢复和归档会话。
 - 发送文本、图片和受支持的文件，用 `@` 引用文件或会话。
-- 跟进工具进度、回答问题与审批，并通过 VS Code 打开产出文件。
+- 跟进工具进度、回答问题与审批，并通过 VS Code 打开生成的文件。
 - 选择当前 DSH 运行时提供的模型、Provider、权限和 Agent 选项。
 - 在满足前提时使用本地 Prompt 模板、检查点、变更视图和任务中心。
 - 使用接近 DSH 原版的聚焦布局，按需展开过程详情，并使用紧凑输入栏。在 **设置 → 常规 → 会话布局** 中可以选择聚焦或经典布局；选择保存在本地。
@@ -22,11 +21,11 @@
 
 高级能力取决于连接的 DSH 版本；不支持的操作会明确显示不可用。[兼容契约](docs/dsh-contract.md)列出精确 Adapter 边界；[能力矩阵](docs/capability-matrix.md)概述具体功能、限制和完成状态。
 
-可选的[编辑器集成](packages/dsh-editor-bridge/README.md)仅在你选择 **设置 → 常规 → 编辑器集成 → 安装并启用配套插件** 后加载。启用后自动跟随当前会话及扩展更新，F5 同样遵循安装选择。支持未保存文本、选区、诊断、语言服务、导航和可撤销编辑。设置中可查看状态、持久关闭、切换只读、重试、修复、重启、恢复缓存版本或撤销。能力独立协商；不安装插件也可聊天和手动添加上下文。
+可选的[编辑器集成](packages/dsh-editor-bridge/README.md)提供未保存文本、选区、诊断、语言服务、导航和可撤销编辑。在 **设置 → 常规 → 编辑器集成 → 安装并启用配套插件** 中安装后，会自动跟随当前会话及扩展更新。设置页提供状态、关闭/只读开关及恢复操作，也可撤销编辑。具体工具取决于配套插件和 DSH 版本；不安装也可聊天和手动添加上下文。
 
 ## 安装与开始使用
 
-从 [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=Direwolf.deepseek-harness-client) 安装扩展，或从[最新 GitHub Release](https://github.com/Jabofish/deepseek-harness-vscode/releases/latest)下载对应平台的 VSIX，再执行 **Extensions: Install from VSIX...**。
+从[最新 GitHub Release](https://github.com/Jabofish/deepseek-harness-vscode/releases/latest)下载与 Extension Host 操作系统和架构匹配的 VSIX，再执行 **Extensions: Install from VSIX...**；也提供 universal 包。[Marketplace 页面](https://marketplace.visualstudio.com/items?itemName=Direwolf.deepseek-harness-client)不可用时，也可通过这些 VSIX 文件安装。
 
 1. 打开 **DeepSeek Harness** 视图。
 2. 如果缺少 DSH，使用引导安装、选择现有可执行文件，或复制视图显示的精确安装命令。安装器会显示 npm 输出并验证安装版本；npm 警告本身不会导致安装失败。
@@ -40,9 +39,9 @@ DeepSeek Harness 的 Chat 视图默认注册在辅助侧边栏（VS Code 默认�
 
 选择 **在编辑器区打开** 或执行 **DSH: Open Chat in Editor Area**（`/moveto:editor`）打开标签，`/moveto:sidebar` 可移回侧边栏。也可拖动已打开的编辑器标签分栏。手动排序时，列表内拖动仍用于调整顺序。
 
-要直接拖拽会话分栏，可执行 **DSH: Open Drag Sessions**，在资源管理器中打开 **DSH Sessions**，将会话行拖到编辑器边缘即可分栏打开。该原生列表默认隐藏，不占用聊天区域；原浮层列表继续保留。
+要直接拖拽会话分栏，可执行 **DSH: Open Drag Sessions**，在资源管理器中打开 **DSH Sessions**，将会话行拖到编辑器边缘即可分栏打开。运行该命令后才会显示资源管理器中的会话列表。
 
-未指定目标时，auto 优先校验上次成功的本机连接，再发现其他实例，最后按需启动。手动指定服务地址或附加端口列表后，只连接这些目标；失败后仍可修改设置或重试。扩展绝不会停止不是自己创建的 DSH 进程。
+未指定目标时，auto 优先校验上次成功的本机连接，再发现其他实例，最后按需启动。手动指定服务地址或附加端口列表后，只连接这些目标；失败后仍可修改设置或重试。扩展只会停止自己创建且仍持有句柄的 DSH 进程。
 
 | 连接模式       | 行为                                                       |
 | -------------- | ---------------------------------------------------------- |
@@ -61,7 +60,7 @@ DeepSeek Harness 的 Chat 视图默认注册在辅助侧边栏（VS Code 默认�
 
 HTTPS 要求可信证书。远程 HTTP 必须确认明文传输，DNS 地址变化后需重新授权。服务端也需接受配置的主机地址；支持时可用 DSH 的 `--trusted-host host:port` 允许代理地址。远程连接不授予本地工作区文件或本地检查器访问权限。
 
-凭据按执行环境和完整 origin 存入 VS Code SecretStorage。当前执行环境没有对应授权时，需要先授权再连接。使用 **DSH: Clear External Connection Credentials** 清除当前执行环境的授权。
+凭据按执行环境和完整 origin 存入 VS Code SecretStorage。更换环境或 origin 后需要重新授权；使用 **DSH: Clear External Connection Credentials** 清除当前执行环境的授权。
 
 ## 远程工作区
 
@@ -71,6 +70,6 @@ HTTPS 要求可信证书。远程 HTTP 必须确认明文传输，DNS 地址变�
 
 ## 隐私与支持
 
-网络连接、凭据、文件和进程控制均由 Extension Host 处理。Webview 不接收密钥，也不能直接访问文件系统或网络，诊断会脱敏。详见[安全模型](docs/architecture.md)和[支持说明](apps/extension/SUPPORT.md)。
+网络连接、凭据、文件和进程控制均由 Extension Host 处理。Webview 不接收密钥，也不能直接访问文件系统或网络。分享前仍需检查脱敏诊断，并移除截图和日志节选中残留的私人内容。详见[安全模型](docs/architecture.md)、[安全报告策略](.github/SECURITY.md)和[支持说明](apps/extension/SUPPORT.md)。
 
-开发者文档从[文档索引](docs/README.md)开始；[贡献指南](.github/CONTRIBUTING.md)说明验证与证据要求。版本更新见[扩展更新日志](apps/extension/CHANGELOG.md)。项目使用 [MIT 许可](LICENSE)。
+开发者文档从[文档索引](docs/README.md)开始；贡献入口提供 [English guide](.github/CONTRIBUTING.md) 和[中文指南](.github/CONTRIBUTING.zh-CN.md)，并共用[测试指南](docs/quality.md)与 [Agent 规范](AGENTS.md)。版本更新见[扩展更新日志](apps/extension/CHANGELOG.md)。项目使用 [MIT 许可](LICENSE)。

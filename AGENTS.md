@@ -1,41 +1,65 @@
-# 实现代理操作规范
+# Coding agent instructions
 
-本文件是代理的强制约束。长期说明分别见 [架构与安全](docs/architecture.md)、[DSH 契约](docs/dsh-contract.md)、[能力矩阵](docs/capability-matrix.md)和[质量流程](docs/quality.md)；不要把某次改动记录追加到这些规范。
+These rules apply throughout this repository. Follow the user's task and scope; do not turn a focused change into unrelated cleanup. Human onboarding: [English](.github/CONTRIBUTING.md) / [简体中文](.github/CONTRIBUTING.zh-CN.md). Keep shared agent rules here; `CLAUDE.md` only imports this file.
 
-## 修改前
+## Before editing
 
-1. 阅读 `README.md`、`docs/quality.md` 和目标能力对应的矩阵行。
-2. 阅读目标文件中完整的 `TODO`/`unimplemented` 要求；它们是验收条件，不能为了通过测试而删除。
-3. 按目标 DSH 版本在固定 tag/commit 的真实接口源码、事件和工具目录核对契约。历史 Host API 固定提交只适用于对应家族，不能拿它猜新版 Remote；来源见 `docs/dsh-contract.md`。
-4. 每次只选一个可验证的垂直切片，并检查 Domain、Adapter、Application、Extension/Protocol、Webview 和测试中确有需要的层。
-5. 先检查工作区状态。保留用户未提交内容、`.codegraph/` 和无关本地产物。
+1. Check `git status --short --branch` and the diff. Preserve uncommitted work, `.codegraph/`, local tool state and unrelated artifacts. Never reset, clean or overwrite another contributor's changes.
+2. Read the [README](README.md), [testing guide](docs/quality.md) and relevant [capability matrix](docs/capability-matrix.en.md) row. Read the full TODO/`unimplemented` requirements in files you touch; they are acceptance criteria.
+3. For DSH changes, verify the exact target tag/commit and real interfaces in the [upstream contract](docs/dsh-contract.en.md). A historical Host API reference is not a contract for another Remote/version family.
+4. Complete the requested behaviour through the necessary layers. For parallel work, agree on file ownership or use separate worktrees, then check the combined result.
 
-## 绝对禁止
+If a `.codegraph/` index exists, use `codegraph_explore` or `codegraph explore "<symbol or question>"` before locating or tracing code. If CodeGraph is unavailable, use `rg` and targeted reads. Without an index, skip CodeGraph; do not create one just to contribute.
 
-- Webview 直接 fetch DSH，或接收 endpoint、PID、Cookie、API key、Secret、绝对路径及原始诊断正文。
-- Domain 引入 VS Code、React、HTTP、子进程或平台 API；DSH Adapter 调用 `vscode.*`；上游 wire 类型向 Application/Webview 泄漏。
-- 解析 TUI/ANSI，或从模型文本猜测工具、审批、Goal、Job、Workflow 等状态。
-- `auto` 发现完成前启动 DSH；停止、重启、kill 或接管外部 DSH；仅凭 PID 推断进程所有权。
-- 扫描任意端口范围，自动发现连接非验证 loopback 目标，或使用 shell 拼接子进程命令。远程 HTTP(S) 仅允许用户显式选择并原生授权的 `custom` 端点；凭据按完整 origin 隔离，禁止自动重定向，HTTPS 必须验证证书，远程 HTTP 必须明确确认明文风险。
-- 硬编码 Provider、Model、Skill、Plugin、动态命令或第三方工具清单。
-- 删除 TODO 验收条件、弱化严格类型、跳过错误分支，或把自动测试冒充真实运行验证。
-- 提交 `DSH_VSCODE_IMPLEMENTATION_PLAN.md`、`LOCAL_*.md`、真实凭据、用户路径、构建产物或 `.vsix`。
+## Repository map and dependency boundaries
 
-## 实现顺序与完成条件
+| Location                        | Owns                                                       | Must not do                                                |
+| ------------------------------- | ---------------------------------------------------------- | ---------------------------------------------------------- |
+| `packages/domain/`              | Stable types, repository contracts and pure rules          | Import VS Code, React, HTTP, process or platform APIs      |
+| `packages/application/`         | Use cases, connection coordination and ports               | Depend on upstream wire types or Webview components        |
+| `packages/dsh-adapter/`         | Version detection, RPC/events, errors and recovery         | Call `vscode.*` or leak upstream types into higher layers  |
+| `packages/timeline/`            | Pure reduction into immutable transcript nodes             | Import React/platform APIs or mutate published snapshots   |
+| `packages/webview-protocol/`    | Strict request/event schemas and safe DTOs                 | Carry secrets, endpoints or raw diagnostics to the Webview |
+| `apps/extension/`               | VS Code composition, Host routes and privileged operations | Trust Webview input or claim an external process by PID    |
+| `apps/webview/`, `packages/ui/` | View state, React rendering and interaction                | Fetch DSH directly or access privileged files/processes    |
+| `packages/dsh-editor-bridge/`   | Optional bundle inside DSH                                 | Bypass Host workspace/session authorisation                |
 
-先定 Domain 与仓储接口；用脱敏 fixture 写 Adapter 契约测试使缺口可见；实现目标版本 mapper/RPC/错误；再接 Application、Host route 与协议 schema；最后完成 Webview 状态、组件及可访问性测试。新 DSH 大版本在 `packages/dsh-adapter/src/versions/<version>/` 建独立入口，版本判断不散落到 UI 或用例。
+Read the [English architecture overview](docs/architecture.en.md) and [detailed Chinese specification](docs/architecture.md) for dependency and lifecycle rules. Tests are colocated; `tests/` holds cross-layer, live and Electron suites. Shared configuration is in `config/`; keep root tool-discovery entrypoints in place.
 
-移除一个 `unimplemented` 调用，必须同时覆盖原 TODO 的每项行为、适用的成功/业务错误/协议错误/超时/取消/畸形响应/资源释放测试，更新矩阵状态与证据，执行 `pnpm check && pnpm build`。涉及真实 DSH 的核心能力还需记录目标版本、平台、步骤和结果；缺少现场证据时维持 `PARTIAL`，不能标 `DONE`。
+## Implementation rules
 
-Secret 只经 VS Code 密码输入或 SecretStorage 由 Extension Host 处理；Webview 只显示 configured/missing。日志采用 allowlist，prompt、body、response、工具输入输出、key、token、authorization、secret 和 password 默认脱敏。附件、导出和文件选择通过用户操作及 Host 的 VS Code API 完成。
+- Work from domain rules and ports through Adapter mapping, Application/Host routes and schemas, then Store/UI. For Adapter changes, add a sanitised contract fixture and cover RPC errors. Touch only necessary layers; keep version differences in `packages/dsh-adapter/src/versions/`.
+- Follow TypeScript strictness, nearby code, Prettier and ESLint. Do not weaken types, delete TODOs, skip failing branches or update snapshots merely to make checks green.
+- Use structured DSH state. Never parse TUI/ANSI or infer tool, approval, question, Goal, Job or Workflow state from model text. Discover provider/model/skill/plugin/command catalogues rather than hardcoding them.
+- Validate user controls through Store, protocol client and Host router. Preserve cancellation, refusal and stop operations, stale-generation checks, per-surface ownership and visible retryable failures.
+- Preserve immutable identities for unchanged nodes, bounded buffers and cleanup. Internal performance work must retain rendered content, grouping, order, styling and interactions unless the user requested a UI change.
+- Put Webview text in both locale JSON files under `apps/webview/src/locales/`; use `pnpm i18n` and `pnpm i18n:check`. Keep English/Chinese user documentation consistent.
+- Write documentation as concrete actions, results and limits. Remove filler, repeated explanations and forced contrasts. Keep technical terms and security requirements precise.
 
-交付前检查：
+## Trust and lifecycle rules
 
-```powershell
+- The Webview never receives endpoints, PIDs, command lines, cookies, API keys, secrets, absolute workspace paths or raw diagnostic bodies. The Host revalidates IDs, enum values, lengths, paths, ownership and workspace trust after schema validation.
+- Secrets enter through native VS Code password input or SecretStorage; the Webview sees configured/missing state only. Logs use an allowlist and redact prompts, bodies, tool input/output and credentials.
+- In `auto` mode, discovery finishes before launch. Stop/restart only a process created and still held by this extension; never take over an external DSH or use its PID as proof of ownership.
+- Automatic discovery is bounded and loopback-only, without arbitrary port scans. Remote access requires the user's explicit `custom` endpoint and native authorisation: origin-scoped credentials, no redirects, HTTPS certificate validation and consent for remote plaintext HTTP. Do not concatenate untrusted input into shell commands.
+- File, attachment, export and editor actions use Host-owned VS Code APIs, user intent and trusted roots. Preserve path traversal, symlink, size, overwrite and cancellation checks. Release sockets, listeners, timers, pending reads and owned process handles on errors/cancellation/disposal as well as success.
+
+## Verification and handoff
+
+Use the [validation matrix](docs/quality.md#choose-validation-by-change). Typical commands, from the repository root:
+
+```sh
+pnpm test:changed
 pnpm check
 pnpm build
 git diff --check
 git status --short
 ```
 
-不要自动 commit、push 或发布，除非当前用户明确要求。
+For documentation-only changes, run the documentation checks in that matrix. UI, transport, process and Adapter changes also need the applicable interaction/live checks; automated success does not replace them. Add tests for new behaviour or regressions at the nearest meaningful boundary, not copies of the implementation or duplicate assertions at every layer.
+
+When implementing an `unimplemented` path, cover its applicable TODO requirements: success, business/protocol errors, timeout, cancellation, malformed input and resource cleanup. Keep capabilities `PARTIAL` when required runtime/UI evidence is missing. Use the [result format](docs/quality.md#report-test-results) for commands, pass/fail/skipped results, versions, manual steps and untested areas. Never claim an unavailable check ran or confuse virtual-clock results with measured CPU time or UI latency.
+
+Update rules in the relevant document. Keep exact DSH versions in the two language versions of the upstream contract and release changelogs. Do not append task logs to specifications. Do not commit credentials, private paths, `DSH_VSCODE_IMPLEMENTATION_PLAN.md`, `LOCAL_*.md`, generated media, build outputs or VSIX files.
+
+Commit, push, open/merge a PR, tag or publish only when the user's task authorises that step. Opening a PR authorises its necessary commit/push, not a merge. Otherwise leave changes uncommitted and report what changed, why, checks and gaps. Continue routine, reversible work within the authorised scope without unnecessary confirmation.

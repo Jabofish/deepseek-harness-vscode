@@ -1,5 +1,11 @@
 blank_issues_enabled: false
 contact_links:
+  - name: Security reporting / 安全报告
+    url: https://github.com/Jabofish/deepseek-harness-vscode/blob/main/.github/SECURITY.md
+    about: Find a private reporting channel before sharing vulnerability details.
+  - name: Contributor setup and testing / 贡献与测试
+    url: https://github.com/Jabofish/deepseek-harness-vscode/blob/main/.github/CONTRIBUTING.md
+    about: English and Chinese contribution guides, test scope and result reporting.
   - name: Questions & discussions
     url: https://github.com/Jabofish/deepseek-harness-vscode/discussions
     about: Ask questions or share workflows instead of opening an issue.

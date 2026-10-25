@@ -1,15 +1,17 @@
 # Architecture
 
-This is the canonical architecture document for the **DeepSeek Harness Client** VS Code extension. It describes how the system is structured, how its parts communicate, and why. The DSH version, wire types and RPC/event shapes are specified separately in the [upstream contract](dsh-contract.md); capability completion status lives in the [capability matrix](capability-matrix.md).
+[English](architecture.en.md) | [简体中文](architecture.md)
+
+This is the canonical English architecture document for the **DeepSeek Harness Client** VS Code extension. It describes how the system is structured, how its parts communicate, and why. The DSH version, wire types and RPC/event shapes are specified separately in the [upstream contract](dsh-contract.en.md); capability completion status lives in the [capability matrix](capability-matrix.en.md). Detailed lifecycle limits are in the [Chinese specification](architecture.md); validation steps are in the [testing guide](quality.md).
 
 ## Goals
 
 The architecture is shaped by five goals:
 
-1. **Keep the Webview untrusted and stateless.** Authoritative state, secrets and every privileged operation live only in the Extension Host; the Webview is a disposable rendering surface that can be rebuilt or reconnected without loss.
+1. **Keep the Webview untrusted and disposable.** Authoritative state, secrets and every privileged operation live only in the Extension Host; the Webview keeps bounded display state and can be rebuilt or reconnected from Host state.
 2. **Isolate upstream change.** Differences between DSH versions are absorbed inside the versioned adapter, so Domain, Application and the Webview never depend on upstream types.
 3. **Never take over a user's process.** Discovery precedes any start, and only a process this extension spawned — and still holds the handle for — may be stopped.
-4. **Bound resident resources.** Every long-lived surface, stream and reply is bounded, so reconnection and rebuild stay cheap and replay-free.
+4. **Bound resident resources.** Every long-lived surface, stream and reply is bounded, so reconnection and rebuild have explicit resource limits.
 5. **One structured channel.** All session, tool, approval and Agent state flows over DSH's Web Host API; the client never parses TUI/ANSI or model text.
 
 ## System context
@@ -36,7 +38,7 @@ The architecture is shaped by five goals:
 
 The extension is a client for a DeepSeek Harness (DSH) agent. DSH is a separate process — one already running (locally or remotely), or one the extension starts and manages. All session, tool, approval and Agent state flows over DSH's **Web Host API**, a structured RPC/Event channel — never the TUI/ANSI terminal and never model text.
 
-The Web Host API uses **HTTP for unary request/response RPC** and a **WebSocket mux for streaming events and tokens** (frames such as `open`/`cancel`/`item`/`error`/`end`). Authentication and the handshake belong to the DSH Web Host API itself and run against the validated origin; the exact wire shapes are in the [upstream contract](dsh-contract.md).
+The Web Host API uses **HTTP for unary request/response RPC** and a **WebSocket mux for streaming events and tokens** (frames such as `open`/`cancel`/`item`/`error`/`end`). Authentication and the handshake belong to the DSH Web Host API itself and run against the validated origin; the exact wire shapes are in the [upstream contract](dsh-contract.en.md).
 
 Optionally the user enables the **editor companion**, a DSH-side plugin bundle that lets the Agent read and edit the workspace. It runs inside DSH and talks back to the Host over DSH's existing authenticated Remote connection, so it adds no new listening port.
 
@@ -106,7 +108,7 @@ On the Host side the Webview interface is the message router (`WebviewMessageRou
                         └─▶ start a local instance (managed)
 ```
 
-Discovery runs **before** any start and gathers candidates in priority order — configured endpoint, last-known endpoint, companion registry, bounded OS process scan, default port. Every candidate is validated by the adapter Probe (a real protocol handshake) before attach; a candidate is never trusted on sight. Discovery is loopback-only for automatic modes, never scans arbitrary port ranges, and a recorded PID is a lookup hint only — never evidence of identity or ownership. A default port must not override the last-known endpoint.
+Discovery runs **before** any start. An explicit endpoint or attach-port list restricts the targets; otherwise `auto` validates the last-known local endpoint first, then completes bounded discovery before launch. Every candidate is validated by the adapter Probe (a real protocol handshake) before attach; a candidate is never trusted on sight. Discovery is loopback-only for automatic modes, never scans arbitrary port ranges, and a recorded PID is a lookup hint only — never evidence of identity or ownership. A default port must not override the last-known endpoint.
 
 Two ownership classes decide what "disconnect" means:
 
@@ -129,11 +131,11 @@ Ownership is the **explicit child handle** from spawn — never the PID. If the 
      │ ◀────────────────────────────────────────── │  streamed, ordered, deduplicated
 ```
 
-Every Webview request carries a unique `requestId` and receives at most one terminal response; long-lived events carry an increasing `sequence` so the client can ignore duplicates and stale deliveries. There is one authoritative backend stream per connection; the Host dispatches increments and terminal states immediately — it never batches on a timer or waits for a paint frame. Reconnection re-subscribes by server sequence, pages in the gap, deduplicates and commits through the reducer — never by re-sorting timestamps.
+Every Webview request carries a unique `requestId` and receives at most one terminal response; long-lived events carry an increasing `sequence` so the client can ignore duplicates and stale deliveries. There is one authoritative backend stream per connection. The Host sends immediately when idle; under load, per-surface consumption acknowledgements advance bounded queues. Replaceable snapshots may coalesce while interactions retain order, without timer or paint-frame batching. Reconnection re-subscribes by server sequence, pages in the gap, deduplicates and commits through the reducer — never by re-sorting timestamps.
 
 State reconciliation is bounded and replay-free:
 
-- A transcript window is bounded in node count and character budget, derived from the `TRANSCRIPT_MAX_*` constants in `packages/webview-protocol/src/transcript.ts`. Loading older history raises the node ceiling but not the character ceiling, and the Webview keeps using a virtualised list. The live reply tail is bounded separately — small enough that per-token streaming stays cheap — so it rolls forward rather than freezing into history.
+- A transcript window is bounded in node count and character budget, derived from the `TRANSCRIPT_MAX_*` constants in `packages/webview-protocol/src/transcript.ts`. Explicit older-history loads can raise both ceilings within separate expanded-window limits, and the Webview keeps using a virtualised list. The live reply tail is bounded separately and rolls forward rather than freezing into history. Resident-window limits do not bound RPC decoding or native-editor peak memory.
 - Host→Webview window sends are credit-bounded. When the credit or size budget is exhausted only the latest state is kept and coalesced after acknowledgement; no delta ledger is retained.
 - Each surface — the sidebar and each editor-area chat panel — owns its own history window, navigation cursor, confirmations and visibility. Closing one frees only that window, and messages queued by a closed window can never be delivered to a same-id new window. A hidden Webview may pause expensive rendering but must never drop approvals, questions or connection state.
 
@@ -178,5 +180,5 @@ Each decision below is the means by which the goals above are achieved.
 - **Versioned adapter** _(goal 2)_ — upstream changes are absorbed inside version boundaries so Domain, Application and Webview never depend on upstream types.
 - **Editor companion as a DSH bundle, not a separate process** _(goal 5)_ — the Agent's tools must live inside DSH's runtime; a bundle rides DSH's existing authenticated Remote connection and adds no port.
 - **Timeline as a shared pure reduction, not presentation** _(goal 1)_ — the timeline reduces the stream into immutable node snapshots that are themselves the transcript-window wire DTOs, so the protocol and the Host legitimately share one data model while React/UI stays on the Webview side.
-- **Stateless, bounded Webview** _(goals 1, 4)_ — the Webview is untrusted and disposable; authoritative state and secrets live in the Host, and resident budgets plus view credits keep any surface bounded, so the Webview can be rebuilt or reconnected without loss.
+- **Disposable, bounded Webview** _(goals 1, 4)_ — the Webview is untrusted and disposable; authoritative state and secrets live in the Host, and resident budgets plus view credits keep any surface bounded, so the Webview can be rebuilt or reconnected without loss.
 - **Secrets in the Host** _(goal 1)_ — the Webview never handles provider secrets, so no secret can leak through rendering or diagnostics.

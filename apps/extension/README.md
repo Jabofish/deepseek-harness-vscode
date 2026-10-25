@@ -2,7 +2,7 @@
 
 Bring local or remote [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) sessions into VS Code. Follow streaming replies, thinking, tools, approvals, questions, and conversation history beside your code.
 
-## Use the companion
+## Use the extension
 
 - Create, switch, resume, and archive sessions by workspace.
 - Send text, images, and supported files; reference files and sessions with `@`.
@@ -14,9 +14,11 @@ Bring local or remote [DeepSeek Harness](https://github.com/deepseek-ai/deepseek
 
 Available operations depend on the connected DSH runtime. Unsupported capabilities are shown explicitly; [exact compatibility and current limitations](https://github.com/Jabofish/deepseek-harness-vscode/tree/main/docs) are documented in the repository.
 
-The optional [editor integration](https://github.com/Jabofish/deepseek-harness-vscode/tree/main/packages/dsh-editor-bridge) is installed only when you choose **Settings → General → Editor integration → Install and enable companion**. Once enabled, it follows your selected session and extension updates, including F5 builds. It provides unsaved text/selection, diagnostics, language services, navigation and undoable edits. Settings offers off/read-only switches, retry, repair, restart, cached-version recovery and Undo. Runtime capabilities are negotiated independently; chat and manual context attachment remain available without the companion. External processes are never stopped.
+The optional [editor integration](https://github.com/Jabofish/deepseek-harness-vscode/tree/main/packages/dsh-editor-bridge) provides unsaved text/selection, diagnostics, language services, navigation and undoable edits. Choose **Settings → General → Editor integration → Install and enable companion** to install it. Once enabled, it follows your selected session and extension updates. Settings provides status, off/read-only switches and recovery actions, including Undo. Available tools depend on the companion and DSH versions. Chat and manual context attachment remain available without it.
 
 ## Get started
+
+Download a matching platform VSIX (or the universal package) from [GitHub Releases](https://github.com/Jabofish/deepseek-harness-vscode/releases/latest) and run **Extensions: Install from VSIX...**. Match the Extension Host's platform for remote workspaces. Use these files if the Marketplace listing is unavailable.
 
 1. Open the **DeepSeek Harness** view.
 2. If DSH is missing, use the guided installer, select an existing executable, or copy the exact install command shown in the view. The installer shows npm output and verifies the installed version; npm warnings alone do not fail the installation.
@@ -28,11 +30,11 @@ Choose **Open in Editor Area** or run **DSH: Open Chat in Editor Area** (`/movet
 
 **Open Web UI** uses VS Code's integrated browser by default. To use your system browser, set `dsh.webUi.browser` to `external` in VS Code Settings.
 
-To drag a session directly into a split, run **DSH: Open Drag Sessions** to open **DSH Sessions** in Explorer, then drag a session row to an editor edge. This native list is hidden initially and keeps the chat area free; the existing switcher remains available.
+To drag a session directly into a split, run **DSH: Open Drag Sessions** to open **DSH Sessions** in Explorer, then drag a session row to an editor edge. The Explorer list is hidden until you run that command.
 
 Without a specified target, auto validates the last successful local connection first, then discovers compatible instances before starting one. An explicit server URL or attachment port list restricts connection to those targets; failure leaves Settings and Retry available. Connection modes also let you attach only, start an isolated extension-owned instance, or probe one configured HTTP(S) endpoint (which may be remote). It never stops an external DSH. Runtime updates install a verified exact version and do not restart external processes.
 
-For an external instance, select `custom`, set `dsh.connection.serverUrl` to its HTTP(S) origin and `dsh.connection.runtimeVersion` to its exact supported version. Run **DSH: Authorize External Connection**, enter its launch token (leave blank for anonymous access), then connect. Credentials stay in SecretStorage per execution environment and full origin; **DSH: Clear External Connection Credentials** removes the current environment's grant. Connections without a grant for the current execution environment require authorization.
+For an external instance, select `custom`, set `dsh.connection.serverUrl` to its HTTP(S) origin and `dsh.connection.runtimeVersion` to its exact supported version. Run **DSH: Authorize External Connection**, enter its launch token (leave blank for anonymous access), then connect. Credentials stay in SecretStorage per execution environment and full origin; **DSH: Clear External Connection Credentials** removes the current environment's grant. Authorise again after changing execution environments or origins.
 
 HTTPS requires a trusted certificate. Remote HTTP needs explicit plaintext confirmation and renewed authorization after DNS address changes. The server must accept the configured host; use `--trusted-host host:port` where supported for a proxy. Remote connections do not grant local file or inspector access. See the [connection guide](https://github.com/Jabofish/deepseek-harness-vscode#connect-to-an-external-instance).
 
@@ -42,9 +44,12 @@ Remote SSH, WSL, Dev Containers and Remote Tunnels run the extension and DSH on 
 
 ## Privacy and help
 
-DSH connections, credentials, file access, and process ownership stay in the VS Code Extension Host. The Webview receives no secrets or direct filesystem/network access; diagnostics are redacted.
+DSH connections, credentials, file access, and process ownership stay in the VS Code Extension Host. The Webview receives no secrets or direct filesystem/network access. Inspect redacted diagnostics and screenshots before posting; remove private prompts, tool bodies, paths and credentials.
 
-- [Documentation and compatibility](https://github.com/Jabofish/deepseek-harness-vscode)
+- [User guide](https://github.com/Jabofish/deepseek-harness-vscode)
+- [Exact compatibility](https://github.com/Jabofish/deepseek-harness-vscode/blob/main/docs/dsh-contract.en.md)
 - [中文说明](https://github.com/Jabofish/deepseek-harness-vscode/blob/main/README.zh-CN.md)
 - [Extension versions](https://github.com/Jabofish/deepseek-harness-vscode/blob/main/apps/extension/CHANGELOG.md)
-- [Support](https://github.com/Jabofish/deepseek-harness-vscode/issues)
+- [Support and safe diagnostic collection](https://github.com/Jabofish/deepseek-harness-vscode/blob/main/apps/extension/SUPPORT.md)
+- [Security reporting](https://github.com/Jabofish/deepseek-harness-vscode/blob/main/.github/SECURITY.md)
+- [Contributing and testing](https://github.com/Jabofish/deepseek-harness-vscode/blob/main/.github/CONTRIBUTING.md)

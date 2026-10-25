@@ -9,7 +9,9 @@ const expectedDocs = new Set([
   'architecture.md',
   'architecture.en.md',
   'dsh-contract.md',
+  'dsh-contract.en.md',
   'capability-matrix.md',
+  'capability-matrix.en.md',
   'ui.md',
   'quality.md',
 ])
@@ -24,9 +26,16 @@ function markdownFiles(directory) {
 }
 
 const files = [
-  ...['README.md', 'README.zh-CN.md', 'CHANGELOG.md', '.github/CONTRIBUTING.md', 'AGENTS.md'].map((name) =>
-    path.join(root, name),
-  ),
+  ...[
+    'README.md',
+    'README.zh-CN.md',
+    'CHANGELOG.md',
+    '.github/CONTRIBUTING.md',
+    '.github/CONTRIBUTING.zh-CN.md',
+    'AGENTS.md',
+    'CLAUDE.md',
+    'packages/dsh-editor-bridge/README.md',
+  ].map((name) => path.join(root, name)),
   ...markdownFiles(docsRoot),
   ...markdownFiles(path.join(root, 'apps', 'extension')),
   ...markdownFiles(path.join(root, '.github')),
@@ -52,7 +61,7 @@ for (const file of files) {
       const target = match[1].replace(/^<|>$/gu, '')
       const linkedPath = decodeURIComponent(target.split(/[?#]/u, 1)[0])
       if (
-        name === 'docs/capability-matrix.md' &&
+        /^docs\/capability-matrix(?:\.en)?\.md$/u.test(name) &&
         !/\.(?:md|mdx|rst|txt|html?|pdf)$/iu.test(linkedPath) &&
         (/\.(?:[cm]?[jt]sx?|jsonc?|css|scss|less|py|rs|go|sh|ps1)$/iu.test(linkedPath) ||
           /(?:^|\/)(?:apps|packages|src|tests|scripts)(?:\/|$)/u.test(linkedPath))
@@ -65,11 +74,11 @@ for (const file of files) {
       if (!existsSync(resolved)) errors.push(`${name}:${index + 1}: broken local link ${target}`)
     }
   }
-  if (name !== 'docs/dsh-contract.md' && name !== 'apps/extension/CHANGELOG.md') {
+  if (!/^docs\/dsh-contract(?:\.en)?\.md$/u.test(name) && name !== 'apps/extension/CHANGELOG.md') {
     if (/\b\d+\.\d+\.\d+-(?:rc|alpha)\.\d+\b/u.test(source))
       errors.push(`${name}: DSH version belongs in docs/dsh-contract.md or the release changelog`)
   }
-  if (name.startsWith('docs/') && name !== 'docs/dsh-contract.md') {
+  if (name.startsWith('docs/') && !/^docs\/dsh-contract(?:\.en)?\.md$/u.test(name)) {
     if (/^#{2,}\s+(?:\d{4}[-/]|证据补充|审计记录|本次变更)/mu.test(source))
       errors.push(`${name}: history-like section in a current specification`)
   }
@@ -132,9 +141,52 @@ const localTargets = (source) =>
   [...source.matchAll(/\]\(([^)\s]+)\)/gu)]
     .map((match) => match[1])
     .filter((target) => !/^(?:https?:|mailto:)/iu.test(target))
+    .map((target) => target.replace(/\.(?:en|zh-CN)\.md(?=$|#)/u, '.md'))
     .sort()
 if (JSON.stringify(localTargets(readme)) !== JSON.stringify(localTargets(chineseReadme)))
   errors.push('README translations link to different local documentation')
+
+const contributing = readFileSync(path.join(root, '.github', 'CONTRIBUTING.md'), 'utf8')
+const chineseContributing = readFileSync(path.join(root, '.github', 'CONTRIBUTING.zh-CN.md'), 'utf8')
+if (headings(contributing) !== headings(chineseContributing))
+  errors.push('CONTRIBUTING translations have different section counts')
+if (JSON.stringify(localTargets(contributing)) !== JSON.stringify(localTargets(chineseContributing)))
+  errors.push('CONTRIBUTING translations link to different local documentation')
+const shellExamples = (source) =>
+  [...source.matchAll(/```sh\r?\n([\s\S]*?)```/gu)].map((match) => match[1].replaceAll('\r\n', '\n'))
+if (JSON.stringify(shellExamples(contributing)) !== JSON.stringify(shellExamples(chineseContributing)))
+  errors.push('CONTRIBUTING translations have different shell examples')
+const pnpmCommands = (source) => [...new Set(source.match(/`pnpm [^`\n]+`/gu))].sort()
+if (JSON.stringify(pnpmCommands(contributing)) !== JSON.stringify(pnpmCommands(chineseContributing)))
+  errors.push('CONTRIBUTING translations have different pnpm commands')
+
+const englishMatrix = readFileSync(path.join(docsRoot, 'capability-matrix.en.md'), 'utf8')
+const capabilityStates = (source) =>
+  [...source.matchAll(/^\|\s*([A-Z]+-\d+)\s*\|.*\|\s*(DONE|PARTIAL|TODO)\s*\|\s*$/gmu)]
+    .map((match) => `${match[1]}:${match[2]}`)
+    .sort()
+if (JSON.stringify(capabilityStates(matrix)) !== JSON.stringify(capabilityStates(englishMatrix)))
+  errors.push('Capability matrix translations have different IDs or statuses')
+
+const versionFacts = (source) => [...new Set(source.match(/\b\d+\.\d+\.\d+-(?:rc|alpha)\.\d+\b/gu))].sort()
+const pinnedSources = (source) => [...new Set(source.match(/\b[0-9a-f]{40}\b/gu))].sort()
+const remoteTargets = (source) =>
+  [...source.matchAll(/\]\((https?:\/\/[^)\s]+)\)/gu)].map((match) => match[1]).sort()
+// The architecture overview and detailed specification have different structures.
+for (const topic of ['dsh-contract', 'capability-matrix']) {
+  const chinese = readFileSync(path.join(docsRoot, `${topic}.md`), 'utf8')
+  const english = readFileSync(path.join(docsRoot, `${topic}.en.md`), 'utf8')
+  if (headings(chinese) !== headings(english))
+    errors.push(`${topic}: translations have different section counts`)
+  if (JSON.stringify(localTargets(chinese)) !== JSON.stringify(localTargets(english)))
+    errors.push(`${topic}: translations link to different local documentation`)
+  if (JSON.stringify(versionFacts(chinese)) !== JSON.stringify(versionFacts(english)))
+    errors.push(`${topic}: translations have different version identities`)
+  if (JSON.stringify(pinnedSources(chinese)) !== JSON.stringify(pinnedSources(english)))
+    errors.push(`${topic}: translations have different pinned source commits`)
+  if (JSON.stringify(remoteTargets(chinese)) !== JSON.stringify(remoteTargets(english)))
+    errors.push(`${topic}: translations link to different remote sources`)
+}
 
 if (errors.length > 0) {
   for (const error of errors) process.stderr.write(`${error}\n`)

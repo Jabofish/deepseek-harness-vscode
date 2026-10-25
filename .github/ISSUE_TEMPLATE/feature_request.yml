@@ -2,6 +2,11 @@ name: Feature request
 description: Suggest an idea for the DeepSeek Harness extension
 labels: [enhancement]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        English or 中文 is welcome. Search existing issues first; a concise proposal is enough.
+        For development and testing, see the [contribution guide](https://github.com/Jabofish/deepseek-harness-vscode/blob/main/.github/CONTRIBUTING.md).
   - type: textarea
     id: problem
     attributes:
@@ -16,12 +21,17 @@ body:
     validations:
       required: true
   - type: textarea
+    id: acceptance
+    attributes:
+      label: Scope and acceptance (optional)
+      description: Affected capability or runtime when relevant, an observable success example, and boundaries that should stay unchanged. No need to write a full test plan.
+  - type: textarea
     id: alternatives
     attributes:
       label: Alternatives considered
   - type: markdown
     attributes:
       value: |
-        Note: capabilities that depend on upstream DSH (models, tools, agent features) follow the
-        connected DSH instance — the extension cannot invent RPCs that upstream does not provide.
-        See [docs/dsh-contract.md](https://github.com/Jabofish/deepseek-harness-vscode/blob/main/docs/dsh-contract.md).
+        Available models, tools and agent features depend on the connected DSH runtime.
+        Check the upstream interface requirements when proposing an integration.
+        See the [upstream contract](https://github.com/Jabofish/deepseek-harness-vscode/blob/main/docs/dsh-contract.en.md).

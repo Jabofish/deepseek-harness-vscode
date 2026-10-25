@@ -1,32 +1,34 @@
-# 开发者文档
+# Developer documentation
 
-本目录描述**当前有效的架构、契约、功能边界和验收条件**。
+Start with [Contributing in English](../.github/CONTRIBUTING.md) or [中文贡献指南](../.github/CONTRIBUTING.zh-CN.md) for setup, development and PR submission.
 
-## 唯一职责
+## Find a document
 
-| 文档                                         | 唯一职责                                                                                   |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| [architecture.md](architecture.md)           | 分层、连接与进程所有权、Extension Host/Webview 协议、安全边界及其决策理由                  |
-| [dsh-contract.md](dsh-contract.md)           | DSH 版本身份、上游来源、wire 差异、启动参数与兼容策略；开发文档中唯一列出 DSH 版本号的文件 |
-| [capability-matrix.md](capability-matrix.md) | 按功能分组列出具体能力、可用范围、限制和完成状态                                           |
-| [ui.md](ui.md)                               | Webview 的颜色、排版、布局、动效及可访问性规则                                             |
-| [quality.md](quality.md)                     | 开发环境、垂直切片、测试、联调、PR 和发布门禁                                              |
+| Topic                                       | English                                                         | 简体中文                                     |
+| ------------------------------------------- | --------------------------------------------------------------- | -------------------------------------------- |
+| Development and PRs                         | [Contributing](../.github/CONTRIBUTING.md)                      | [贡献指南](../.github/CONTRIBUTING.zh-CN.md) |
+| Architecture, protocols and trust           | [Architecture overview](architecture.en.md)                     | [详细架构规范](architecture.md)              |
+| Exact DSH versions and interfaces           | [Upstream contract](dsh-contract.en.md)                         | [上游契约](dsh-contract.md)                  |
+| Supported features and limits               | [Capability matrix](capability-matrix.en.md)                    | [能力矩阵](capability-matrix.md)             |
+| Automated tests, manual checks and releases | [Testing guide](quality.md)                                     | —                                            |
+| Layout, styles, motion and accessibility    | [UI specification](ui.md)                                       | —                                            |
+| DSH-side editor tools                       | [Companion guide](../packages/dsh-editor-bridge/README.md)      | —                                            |
+| Agent instructions                          | [AGENTS.md](../AGENTS.md); [CLAUDE.md](../CLAUDE.md) imports it | —                                            |
+| Bug reports and diagnostics                 | [Support](../apps/extension/SUPPORT.md)                         | Chinese reports are welcome                  |
+| Vulnerability reports                       | [Security policy](../.github/SECURITY.md)                       | 中文说明在同一文件中                         |
 
-[AGENTS.md](../AGENTS.md) 是实现代理的操作规则；[CONTRIBUTING.md](../.github/CONTRIBUTING.md) 是 GitHub 贡献入口。用户说明分别见 [README.md](../README.md)、[README.zh-CN.md](../README.zh-CN.md) 和 Marketplace 使用的 [扩展说明](../apps/extension/README.md)。发布内容见[扩展更新日志](../apps/extension/CHANGELOG.md)。
+The English architecture overview covers components, interfaces and key flows; the Chinese specification records detailed implementation limits. The contract and capability matrix have complete English and Chinese versions. The other developer guides use English; contribution instructions are available in both languages.
 
-## 文档范围
+## Update the right file
 
-| 主题                             | 事实来源                                     |
-| -------------------------------- | -------------------------------------------- |
-| 上游 DSH 契约或适配器            | `dsh-contract.md`                            |
-| 跨层、进程、文件、凭据或消息边界 | `architecture.md`                            |
-| UI 布局与可访问性                | `ui.md`                                      |
-| 能力范围、限制与完成度           | `capability-matrix.md`                       |
-| 工作流、测试或发布要求           | `quality.md`；实现代理操作规则见 `AGENTS.md` |
-| 用户操作、安装或支持信息         | 英文、中文 README 与 Marketplace 扩展说明    |
+Keep version lists and interface details in the contract, capability scope/status in the matrix, and test commands in the testing guide. Update both languages of a document together, including technical limits, examples and links. Keep shared agent rules in `AGENTS.md`; `CLAUDE.md` imports them.
 
-能力矩阵只记录具体能力、可用范围、限制和完成状态，不列源码和测试文件链接，也不保存验证流水；必要的文档引用可以保留。完成状态仍须满足质量流程中的验证要求；构建成功不等于能力完整可用。
+User instructions are in the [English README](../README.md), [中文 README](../README.zh-CN.md) and [Marketplace description](../apps/extension/README.md). Update the relevant guides when behaviour changes. Release notes live in the [extension changelog](../apps/extension/CHANGELOG.md), linked by the [root changelog](../CHANGELOG.md). Licence terms are in [LICENSE](../LICENSE).
 
-## 防退化门禁
+Put test results and run logs in PRs or release records.
 
-`pnpm docs:check` 检查本地链接、文档结构、能力 ID、版本事实来源及安装默认与代码的一致性，并作为 `pnpm check` 的一部分运行。上游契约以目标 tag 的源码和脱敏 fixture 为依据；英文、中文与 Marketplace 文案描述相同的产品行为。
+## Check documentation
+
+Run `pnpm docs:check`, `pnpm format:check` and `git diff --check` for documentation changes. The documentation checker verifies local file links, document ownership, version facts against code, capability IDs/statuses, and translation consistency for navigation, commands and pinned sources. `pnpm check` also runs it.
+
+Read the changed instructions and follow their links. Check heading anchors, translations and command prerequisites manually; automated consistency checks cannot verify the meaning of a translation. Test installation and reporting links when changing those instructions. The [testing guide](quality.md#choose-validation-by-change) lists any additional checks for documentation tooling.

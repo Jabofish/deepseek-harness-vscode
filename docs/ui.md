@@ -1,83 +1,89 @@
-# Webview 界面规范
+# Webview UI specification
 
-本文件规定 Webview 的视觉 token、内容尺寸、动效与可访问性。**具体 token 值以 CSS 为准**：`packages/ui/src/styles.css` 拥有基础字体、行高、图标、动效和宿主语义色；`apps/webview/src/styles/theme.css` 拥有显式亮色/暗色调色板。其余全局与 feature 样式只消费语义 token。界面样式不得改变 Host 协议或业务状态的含义。
+Use these rules when changing visual tokens, content sizing, motion or accessibility. Start with the [architecture specification](architecture.en.md) for state/trust boundaries and use the [manual test guide](quality.md#manual-interaction-checks) for evidence. 本文为英文界面规范；中文贡献入口见[贡献指南](../.github/CONTRIBUTING.zh-CN.md)。
 
-## 颜色与主题
+**CSS is the source of token values**: `packages/ui/src/styles.css` owns base typography, icons, motion and Host semantic colours; `apps/webview/src/styles/theme.css` owns explicit light/dark palettes. Other global and feature styles consume semantic tokens. Styling must not redefine Host protocol or business-state semantics.
 
-`system` 模式使用带回退值的 `--vscode-*` 宿主颜色，不定义 `--dsh-theme-*`；显式 `light`/`dark` 只覆盖 Webview 自己的 `--dsh-*`，绝不定义或修改 `--vscode-*`。主题属性同时位于 `document.documentElement` 和主应用容器，保证挂在 `body` 的菜单、对话框与 Toast 也获得相同调色板。
+## Colour and themes
 
-| 角色           | Token                            | 用途                                                         |
-| -------------- | -------------------------------- | ------------------------------------------------------------ |
-| 填充强调       | `--dsh-accent` / `--dsh-primary` | 主按钮、开关轨道、选中底色，文字由 `--dsh-primary-text` 配对 |
-| 线条与文字强调 | `--dsh-accent-line`              | 边框、轮廓、图标、链接和状态标记                             |
+`system` uses Host `--vscode-*` colours with fallbacks and does not define `--dsh-theme-*`. Explicit `light`/`dark` overrides only Webview-owned `--dsh-*` tokens, never `--vscode-*`. Apply theme attributes to both `document.documentElement` and the app container so body-mounted menus, dialogs and toasts share the palette.
 
-填充色不能代替线条色：在暗色表面上，两者需要不同明度才能同时可读。字面颜色只允许在 `theme.css` 的调色板定义中出现；其他样式只用语义 token。每个 `--vscode-*` 引用必须有回退值。状态不能只靠颜色表达，须有对应的 `aria-*`、`data-*` 或类名语义。
+| Role             | Token                            | Use                                                                                  |
+| ---------------- | -------------------------------- | ------------------------------------------------------------------------------------ |
+| Filled accent    | `--dsh-accent` / `--dsh-primary` | Primary buttons, switch tracks and selection fills, paired with `--dsh-primary-text` |
+| Line/text accent | `--dsh-accent-line`              | Borders, outlines, icons, links and state markers                                    |
 
-`apps/webview/src/styles/theme.spec.ts` 是对比度自动守卫：承载文字的 `TEXT_PAIRS` 至少 4.5:1，控件和焦点边界的 `UI_PAIRS` 至少 3:1。新增颜色或承载文字的 token 必须同步纳入配对。`color`、边框、轮廓、阴影、文本装饰、`fill` 与 `stroke` 不使用填充强调 token；只有同一填充控件规则内的背景及其边框可例外。
+Do not substitute the fill accent for the line accent: they need different luminance on dark surfaces. Literal palette colours belong only in `theme.css`; other styles use semantic tokens. Every `--vscode-*` reference needs a fallback. Express state through semantics such as `aria-*`, `data-*` or a state class as well as colour.
 
-## 排版与图标
+`apps/webview/src/styles/theme.spec.ts` guards contrast: text-bearing `TEXT_PAIRS` require at least 4.5:1, and control/focus `UI_PAIRS` at least 3:1. Add new text-bearing colours/tokens to the pairs. Do not use filled accents for text, outlines, shadows, text decoration, `fill` or `stroke`; the border of the same filled control is the existing exception.
 
-字号、行高和图标尺寸只使用 `--dsh-font-size-*`、角色字号、`--dsh-line-height-*` 与 `--dsh-icon-size*`。字号角色依次为密集元信息、时间/状态、次级文字、正文、标题；同一角色跨页面保持同一 token。菜单、工具细节和 Markdown 标题使用已有角色别名；标题必须有角色规则或落到 `app.css` 的零特异性标题兜底，不依赖浏览器默认 `em` 刻度。
+## Typography and icons
 
-`.dsh-conversation` 按用户“字号”设置在局部重声明字号 token 和角色别名；新增 token 必须在该缩放块中同步声明。仅在根部定义 `var()` 别名会使其在根部解析，无法跟随局部字号变化。TSX 不写字号 `style`，CSS 不写裸数值字号或行高。`inherit` 与 Webview 根部的宿主字号是有说明的例外；图标字形用图标 token，不借文字字号实现。`apps/webview/src/styles/typography-scale.spec.ts` 守卫裸字号、局部角色别名和菜单角色；真实渲染仍须检查设置档位、行高和图标大小。
+Use `--dsh-font-size-*`, role aliases, `--dsh-line-height-*` and `--dsh-icon-size*`. Dense metadata, timestamps/status, secondary copy, body and headings each keep the same role across features. Menus, tool details and Markdown headings use existing roles; headings need an explicit role or the zero-specificity fallback in `app.css`, not browser `em` defaults.
 
-同级菜单入口统一使用菜单字号、行高、常规字重及次级文字色，图标、间距和悬停反馈保持一致；对应 token 为 `--dsh-menu-font-size`、`--dsh-menu-line-height` 和 `--dsh-muted`。规则只作用于入口自身，不向内层表单、标题及说明扩散。共享选择菜单不继承外层表单的文字角色。验收比较最终计算样式，覆盖两种布局、三档会话字号、中英文及主题。
+`.dsh-conversation` redeclares font tokens and role aliases for the user's conversation font-size preference. Add new aliases inside that scaling block too: a root-level `var()` alias resolves at the root and will not track the local size. Do not add TSX font-size styles or bare CSS font-size/line-height values. Documented exceptions are `inherit`, the Webview root's Host font size and icon glyph sizing through icon tokens. `typography-scale.spec.ts` guards the structure; inspect actual rendered sizes, line heights and icons as well.
 
-## 内容宽度与溢出
+Peer menu entries use `--dsh-menu-font-size`, `--dsh-menu-line-height`, normal weight and `--dsh-muted`, with consistent icons, spacing and hover feedback. Scope entry styling to the entry itself, not nested forms/headings/help. Shared selector menus do not inherit an outer form's text role. Compare computed styles in both conversation layouts, all three conversation font sizes, both locales and the affected themes.
 
-外部标题、路径、URL、工具名和模型名都可能是不可断词的长串；任何内容不得把侧栏祖先撑出视口。
+## Content width and overflow
 
-1. 普通文本默认 `overflow-wrap: anywhere`，降低 min-content 宽度；代码、diff 和终端等保留空白的内容在自己的盒子内横向滚动。
-2. Grid 的弹性列使用 `minmax(0, 1fr)`，Flex 子项使用 `min-width: 0`；从文本到视口沿祖先链检查内容尺寸，不能只修叶节点。
-3. 单行省略号只用于已定宽的有界标签，并同时写 `overflow: hidden`、`text-overflow: ellipsis`、`white-space: nowrap`；用户或模型文本标题优先用两行截断、`white-space: normal` 和完整文本提示。
-4. 隐藏溢出不能掩盖祖先超宽或无提示裁切。窄侧栏、普通侧栏和编辑器宽度均须用超长 token 检查可见溢出、裁切和焦点可达性。
+Titles, paths, URLs, tool names and model names can be long unbroken strings. No content may push a sidebar ancestor outside the viewport.
 
-全局零特异性换行规则位于 `apps/webview/src/styles/app.css`，feature CSS 只约束自己的容器。布局验证使用仓库已有 UI 测试与真实 Webview；本地一次性探针可以辅助排查，但不把临时 `artifacts/` 脚本写成项目必需命令。
+1. Ordinary text uses `overflow-wrap: anywhere` to lower min-content width. Rendered Markdown code wraps to the available width with whitespace/indentation preserved, matching `apps/webview/src/styles/components/03-markdown.css`; copying retains the original text. Surfaces whose contract requires unwrapped diff/terminal content scroll within their own bounded box.
+2. Flexible grid columns use `minmax(0, 1fr)` and flex children use `min-width: 0`. Inspect each ancestor from the text container to the viewport.
+3. Single-line ellipsis is for bounded labels and needs `overflow: hidden`, `text-overflow: ellipsis` and `white-space: nowrap`. Prefer two-line clamping, normal whitespace and a full-text hint for user/model titles.
+4. Hidden overflow must not conceal an oversized ancestor or silently cut useful content. Test long tokens at narrow/normal sidebar and editor widths, including focus reachability.
 
-选择项统一使用 `SelectMenu`，不能以原生 `select` 打开平台默认菜单；lint 阻止新增此类 JSX。列表的状态与操作按钮必须参与实际布局，不能以固定预留宽度猜测动态按钮数量。空状态和错误说明应完整换行，不复用行内状态徽标的截断规则。
+Global wrapping defaults live in `apps/webview/src/styles/app.css`; feature CSS constrains its own containers. Use the existing UI tests and a real Webview for layout acceptance.
 
-选择器的可用态使用正文颜色，禁用态使用弱色；界面偏好和辅助设置读取状态不能代替上游能力判断。两种会话布局共用选择器尺寸规则，窄栏先收紧间距、按需展开统计详情，再整体分行，不把 Agent、模型等文字选择器统一压成固定宽度图标。完整名称须能通过提示或菜单查看，发送和停止保持可达。
+Use `SelectMenu` for selectors; native HTML `select` is lint-restricted. State/action buttons participate in real layout rather than a guessed fixed reserve for a variable button count. Empty/error copy wraps completely and does not inherit inline badge truncation.
 
-有可添加的当前文件时，其快捷按钮常驻；附件按钮随输入区悬停或聚焦显示，均可直接操作。已添加的附件保持单行滚动，完整名称和移除入口始终可达。加载进度不增加输入栏高度；实际内容增减使用可中断的高度过渡，跟随尾部时保持连续移动，自由阅读时保留用户位置。Reduced Motion 下直接完成布局变化。
+Enabled selectors use body text and disabled selectors muted text; UI preferences and advisory reads do not establish upstream capability. Both conversation layouts share sizing. At narrow widths, tighten spacing, disclose statistics and wrap controls before replacing all text selectors with fixed icon boxes. Full names remain available through hints/menus, and send/stop remain reachable.
 
-常驻更新、连接、错误和欢迎提示合并为默认收起的单行通知栏，在聊天主体之前参与排版；展开列表有高度预算并在内部滚动。通知不得抢走输入焦点、丢失草稿或改变自由阅读位置；跟随尾部时由共享滚动所有者校正布局。返回最新消息按钮位于消息区底部，轨迹详情单独布局，均不得遮挡正文或输入操作。
+The current-file shortcut stays visible when available. Attachment actions appear on composer hover/focus and remain directly usable; attached items keep a single scrollable row with reachable names/removal. Loading progress does not add composer height. The existing interruptible composer-height/scroll hooks follow the tail when appropriate and preserve a reader's position otherwise; Reduced Motion completes layout changes directly.
 
-短窗口或大字号下，消息区须保留可读高度；会话外层在空间不足时纵向滚动，让标题、消息和输入区均可到达，不能以裁剪或重叠维持单屏布局。验收要检查实际边界、命中元素、长通知滚动及输入框可达性，并覆盖通知新增、展开、收起和关闭。
+Persistent update, connection, error and welcome notices share a collapsed single-line strip before the chat body. Expanded notices have a height budget and internal scrolling. They must not steal input focus, lose a draft or move free reading; the shared scroll owner corrects tail-follow layout. Place return-to-latest at the bottom of the message area and keep trajectory details separate. Keep both clear of message content and input.
 
-流式正文按当前 Host 视图及时绘制，稳定的 Markdown 前缀保持 DOM 身份，不随每次尾部更新重建。虚拟列表测量期间的内部滚动与重复 scroll 事件不能被当作用户离开尾部；该例外只属于虚拟画布的短暂布局保护，滚轮、键盘和滚动条操作仍立即取得阅读位置的控制权。
+Short windows and large font sizes must retain readable message space. When necessary, the conversation scrolls vertically so header, messages and composer remain reachable instead of clipping/overlapping to fit one screen. Inspect boundaries and hit targets while notices appear, expand, collapse and close.
 
-## 弹层与焦点
+Streamed text follows the installed Host view promptly; stable Markdown prefixes retain DOM identity while the tail changes. Virtual-list measurement and duplicate internal scroll events do not imply the user left the tail; this exception is limited to transient layout protection. Wheel, keyboard and scrollbar actions immediately regain control of the reading position.
 
-权限审批采用紧凑卡片：标题与风险同排，不重复显示等待提示；理由和命令在有界正文内滚动，全部上游审批选项始终位于正文之外。长会话的完整内容列表只在会话“更多”菜单中按需展开，不在消息区顶部常驻。
+## Popovers and focus
 
-目标与任务共享头部入口，默认收起；窄栏只显示图标和计数，展开后查看目标操作及清单。重复工具入口在窄栏收进“更多”，新会话和编辑器标签仍可访问会话列表、新建、提醒和设置；隐藏按钮不能连带隐藏其抽屉，关闭后焦点须回到可见入口。
+Approval cards are compact: title and risk share a row, waiting text is not repeated, reason/command content scrolls within bounds, and every upstream choice stays outside the scrolling body. Full-content lists open on demand from the session's More menu, not permanently above messages.
 
-提问使用短标题，完整问题和选项在有界正文内滚动，提交和取消位于正文之外；多条交互由外层列表滚动到达。计划默认收起，展开后按需挂载正文；工具详情、队列、扩展面板和功能菜单均有高度上限。紧凑规则须覆盖两种会话布局，不得裁掉内容操作或被通用卡片样式重新放大。
+Goals/tasks share a collapsed header entry; narrow layouts show icon/count with details on demand. Secondary tool entries move into More. New sessions and editor tabs retain session-list, create, schedule and settings access; hiding a button does not disable its drawer. Focus returns to a visible trigger on close.
 
-运行中及等待审批或提问时保留聊天输入、附件和命令入口，普通补充消息使用上游 Queue / Steer；输入中的草稿独立于正在执行的消息。停止使用独立按钮事件，不依赖表单提交或发送回执。断线保留可编辑草稿，Adapter 继续有退避的流重连；收到有效上游帧后，Host 恢复连接状态并重读当前会话与目录。
+Questions use a short title and bounded scrolling body for full questions/options; submit/cancel remain outside it. Multiple interactions stay reachable through the outer list. Plans begin collapsed and mount content on demand. Tool details, queues, extra panels and feature menus have height limits. Both layouts preserve content actions; generic card styling must not undo compact rules.
 
-菜单依据触发器的实际位置，使用共享定位逻辑测量宽度、翻转方向并限制在视口内；不得写死屏幕顶部坐标。打开独立对话框时关闭来源菜单。导出使用 `ModalDialog`，抽屉和其余模态表面通过共享 `useDismissibleLayer` 处理背景隔离、Tab 范围及内层优先的 Esc；关闭后恢复入口焦点，普通重渲染不能抢焦点。折叠的 `details` 只让 summary 参与键盘顺序。
+While running or waiting for an interaction, keep chat input, attachments and commands available; ordinary follow-up uses upstream Queue/Steer. Drafts are independent of the running message. Stop has its own event, not form submission or a send receipt. Disconnect retains an editable draft, while bounded Adapter recovery and authoritative reads restore the connection/view.
 
-弹层中的长列表必须有明确的滚动所有者；检查器由抽屉正文滚动，选中详情紧邻条目，不能再叠加固定高度的内层列表。父菜单样式只作用于直接入口，不穿透到子弹层的刷新、筛选、操作按钮。
+Shared menu positioning measures the trigger and width, flips direction and clamps to the viewport; never hardcode a top-screen coordinate. Opening a separate dialog closes its source menu. Export uses `ModalDialog`; drawers and other modal surfaces use `useDismissibleLayer` for background isolation, Tab scope, inner-first Escape and focus restoration. Normal rerenders must not steal focus. Only the summary of a collapsed `details` remains in keyboard order.
 
-## 动效
+Long popover lists have a clear scroll owner. Inspector details appear beside the selected entry within the drawer body and share its scroll owner. Parent-menu rules target direct entries, not nested refresh/filter/action controls.
 
-动效只反馈状态、层级和操作结果，不用于装饰；TSX 只切换 class 或 `data-*`，不注入 `<style>` 或动画 `style`，不新增动画运行时。持续时间、缓动、缩放、共享 keyframes 和 Reduced Motion 降级都由 `packages/ui/src/styles.css` 拥有。小控件使用 fast、轻量披露和提示使用 standard、大表面使用 slow；退场比入场短一档。循环 token 只用于当前等待或进行中状态，完成和历史项保持静态。
+## Motion and announcements
 
-轻量常驻内容可用 `dsh-disclosure` 的 grid 行过渡；其折叠区必须同步不可聚焦。工具详情、diff 和代码块等重量内容继续条件挂载。只动画 `transform`、`opacity`、`background-position`、`color` 和 `border-color`；小披露的 `grid-template-rows` 是唯一已评审的结构性例外。虚拟化行的定位 transform 不得被入场类覆盖，首屏、会话切换和历史回填不做逐行动画。
+Use motion to show state changes, hierarchy and action results. TSX selects classes/`data-*` for CSS animations; do not inject styles/keyframes or add an animation runtime. Durations, easing, scale, shared keyframes and reduced-motion fallbacks belong to `packages/ui/src/styles.css`. Small controls use fast tokens, light disclosure/notices standard, larger surfaces slow; exit is shorter than entry. Looping tokens apply only to current waiting/running states; completed/history entries stay static.
 
-包含菜单的表面不能在入场后保留动画 transform：即使是单位矩阵，也会把内层 fixed 菜单的坐标系改为祖先容器。共享入场动画使用 `backwards` 释放变换，由 motion 规格防止 `both` / `forwards` 回归；退场动画仍保留最终状态直到卸载。
+Light resident disclosure can use the reviewed `dsh-disclosure` grid-row transition; collapsed content becomes unfocusable immediately. Heavy tool/diff/code content remains conditionally mounted. Normal animation properties are `transform`, `opacity`, `background-position`, `color` and `border-color`. Keep layout effects within the existing disclosure grid-row transition and controlled composer-height hook. Do not overwrite virtual-row positioning transforms; initial paint, session switches and historical backfill have no per-row entry animations.
 
-`prefers-reduced-motion: reduce` 或 `body.vscode-reduce-motion` 任一启用时，关闭平滑滚动、过渡和循环；JavaScript 的滚动、附件翻页与输入区高度动效采用同一策略，运行时切换立即结束当前动效。媒体查询与 body class 变化由 Webview 内共享订阅观察，最后一个消费者卸载后释放监听与观察器，不逐组件增加全局监听或轮询。Esc、点击外部、焦点陷阱、焦点恢复与 `aria-live` 不等待动画。Drawer 退场时立刻停止交互并标记隐藏，视觉收尾不延迟语义关闭。
+A surface containing menus must release its entry transform: even an identity transform changes the containing block of fixed descendants. Shared entry animation uses `backwards`, guarded against persistent `both`/`forwards`; exit retains its final visual state only until unmount.
 
-设置中的本地“过程显示”偏好提供自动、实时与安静；自动模式响应 `body.vscode-using-screen-reader` 的初始值与运行时变化，实时与安静允许用户明确覆盖。该偏好独立于 DSH 的会话紧凑程度和用量显示，不写入 DSH 设置。安静模式不挂载折叠中流式思考的正文和预览；工具运行时只显示固定摘要，完成或用户展开后显示当前详情，用户主动收起的工具保持收起。工具批次追加时保留摘要的 DOM 身份与焦点，披露操作基于最新展开集合更新，不能覆盖其他披露状态。读屏模式切换替换工具控件时，只恢复被移除控件所在行的焦点，不抢走设置或输入区焦点。提交计划作为独立产物保留在工具折叠体之外，并在显示策略切换时保留自身的展开状态；提示展开查看错误的文本只在工具组折叠时出现。两种会话布局使用相同策略，错误仍可见，主回答持续流式绘制，审批、提问、停止与展开操作保持可用。底层事件与业务状态照常保留。
+Either `prefers-reduced-motion: reduce` or `body.vscode-reduce-motion` disables smooth scrolling, transitions and loops. JavaScript scroll/attachment/composer-height effects use the same policy and stop immediately when it changes. Share subscriptions for media/body-class changes and release them after the final consumer; do not add per-component global polling/listeners. Escape, outside click, focus traps/restoration and `aria-live` never wait for animation. A closing drawer becomes non-interactive and semantically hidden immediately.
 
-思考正文没有 live region。聊天与轨迹视图的常规进度各自通过一个稳定区域播报响应开始与结束；区域身份与 ARIA 角色不随运行状态切换，回合内的模型步骤和工具执行间隙不触发结束播报；工具名称、计数和处理阶段不进入该区域，安静模式下任务进度和轨迹搜索匹配计数也不自动播报。错误与用户主动操作的反馈保留。DOM mutation、语义和浏览器测试不能替代真实 VS Code 辅助技术的播报验证。
+The local Process display preference has automatic/live/quiet modes. Automatic follows the initial and changing `body.vscode-using-screen-reader`; explicit live/quiet can override it. This preference is independent of DSH compactness/usage and never writes DSH settings. Quiet does not mount collapsed streaming reasoning/previews; running tools retain a stable summary, with details shown at completion or explicit expansion. User-collapsed tools stay collapsed.
 
-## 表面与交接
+Tool batches retain summary DOM identity and focus; disclosure updates use the latest expanded set. On a screen-reader mode change, restore focus only when the focused row control was removed, without stealing it from settings/input. Submitted plans stay outside the tool fold and preserve expansion across display-policy changes. Expansion-to-see-error hints appear only for collapsed groups. Both conversation layouts keep errors, streaming answers, approval/question/stop/disclosure controls and underlying business events intact.
 
-把会话打开到编辑器区后，侧边栏保留完整的新建、会话列表和输入入口，可与编辑器标签同时使用；普通会话选择在侧边栏本地打开，“在编辑器区打开”按钮和编辑器接受的会话拖放可新建或显示编辑器标签。其他标签的数量与生命周期不能覆盖侧边栏当前会话或草稿。标签标题必须可主题化、可键盘操作，并保留焦点归属；把会话移动到编辑器区或移回不得依赖颜色或动画来表达状态。编辑器标签使用 Webview 面板自身的宽度，因此排版、长文本与虚拟列表在编辑器宽度下同样按上一节的规则验收。跨区域拖放从资源管理器中的原生 DSH Sessions 列表发起，使用 VS Code 的资源拖放和目标分栏；浮层列表内拖动仍用于调整手动顺序。外部松手、离开 Webview 与 Esc 不能自行触发打开；只有编辑器实际接受资源后才校验工作区归属并打开会话。
+Reasoning text has no live region. Chat and trajectory each use a stable progress region for response start/end, with identity and ARIA role independent of running state. Intermediate model steps/tool gaps do not announce completion. Tool names/counts/stages stay out; quiet mode does not automatically announce task progress or trajectory search counts. Preserve errors and feedback for explicit user actions. DOM/browser/semantic tests do not replace actual assistive-technology acceptance in VS Code.
 
-## 验收
+## Surfaces and drag handoff
 
-在 240px 窄侧栏、普通侧栏和编辑器宽度分别检查亮色、暗色、高对比与 Reduced Motion；验证键盘操作、焦点归属与恢复、屏幕阅读器、菜单/弹层、长文本、流式尾部和大量历史节点。自动测试只能覆盖规则的一部分，能力矩阵中 UI 条目需要真实 VS Code Webview 的人工或端到端证据才能提升状态。
+Opening an editor chat leaves sidebar create/session/input actions usable. Normal sidebar selection opens locally; Open in Editor Area and accepted editor drops create/reveal a tab. Other tabs cannot replace the sidebar's current session/draft. Tab titles are themeable and keyboard accessible, with explicit focus ownership; moving between surfaces is not communicated through colour/motion alone.
+
+Editor panels use their own width and the same long-text/virtual-list rules. Cross-area session drag starts in the native Explorer **DSH Sessions** list and uses VS Code resource drops/target groups; dragging inside the floating switcher still reorders manual entries. Outside release, Webview exit or Escape must not trigger an open. Only an actual editor-accepted resource passes through workspace-ownership validation and opens a session.
+
+## Acceptance
+
+For affected UI changes, check 240px/normal sidebar and editor widths with light/dark/high-contrast themes and Reduced Motion, keyboard/focus restoration, screen-reader behaviour, menus, long text, live tails and large histories. Report actual scenarios and limitations through the [quality guide](quality.md#report-test-results). Automated checks cover rules, not every rendered/assistive experience; preserve `PARTIAL` until the required native Webview evidence exists.
