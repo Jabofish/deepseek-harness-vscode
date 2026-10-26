@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { AppError } from '@dsh-vscode/domain'
 import { configuration, configurationFixture, deferred } from './support/session-configuration-fixture.js'
-import { normalizeTransportError } from '../src/transport-errors.js'
 
 describe('session configuration transactions', () => {
   it('honors an explicit Plan choice even while applying a model choice', async () => {

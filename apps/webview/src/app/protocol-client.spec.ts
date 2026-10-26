@@ -373,10 +373,7 @@ async function completeSlowRequest(
   vi.useFakeTimers()
   const timer = vi
     .spyOn(window, 'setTimeout')
-    .mockImplementation(
-      (handler, delay) =>
-        setTimeout(handler as () => void, delay) as unknown as ReturnType<typeof window.setTimeout>,
-    )
+    .mockImplementation((handler, delay) => setTimeout(handler as () => void, delay))
   const clear = vi.spyOn(window, 'clearTimeout').mockImplementation((id) => clearTimeout(id))
   const client = new ProtocolClient({
     postMessage: () => undefined,
