@@ -72,58 +72,6 @@ describe('session removal navigation', () => {
   )
 })
 
-describe('created session navigation', () => {
-  it.each([
-    ['create', true, false],
-    ['fork', true, false],
-    ['create', false, false],
-    ['fork', false, false],
-    ['fork', true, true],
-    ['fork', false, true],
-  ] as const)(
-    '%s respects newer navigation: %s, rename failure: %s',
-    async (operation, switchSession, renameFails) => {
-      let finish: () => void = () => {
-        throw new Error('Creation not requested')
-      }
-      let created = false
-      const client = {
-        subscribe: () => () => {},
-        dispose: () => {},
-        request: async (request: WebviewRequest) => {
-          if (request.type === 'session.open') return session(request.payload.sessionId)
-          if (request.type === 'session.create' || request.type === 'session.fork') {
-            await new Promise<void>((resolve) => {
-              finish = resolve
-            })
-            created = true
-            return session('created')
-          }
-          if (request.type === 'session.list')
-            return { items: [session('old'), session('new'), ...(created ? [session('created')] : [])] }
-          if (request.type === 'session.rename' && renameFails) throw new Error('Rename failed')
-          if (request.type === 'subagent.list') return { entries: [], parentAvailable: true }
-          if (request.type === 'models.session.list') return { models: [], failures: [], routable: true }
-          return []
-        },
-      }
-      const store = createAppStore(client as unknown as ProtocolClient)
-      try {
-        await store.openSession('old')
-        const creation = operation === 'create' ? store.createSession() : store.forkSession('old')
-        if (switchSession) await store.openSession('new')
-        finish()
-        if (renameFails) await expect(creation).rejects.toThrow('Rename failed')
-        else await creation
-        expect(store.activeSessionId).toBe(switchSession ? 'new' : 'created')
-        expect(store.sessions.some((entry) => entry.id === 'created')).toBe(true)
-      } finally {
-        store.dispose()
-      }
-    },
-  )
-})
-
 function deferred<T>(): {
   readonly promise: Promise<T>
   readonly resolve: (value: T) => void

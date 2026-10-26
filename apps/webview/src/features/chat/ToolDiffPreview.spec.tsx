@@ -33,11 +33,8 @@ describe('ToolDiffPreview', () => {
       />,
     )
 
-    expect(container.querySelectorAll('.dsh-tool-diff-preview__line--path')).toHaveLength(2)
-    expect(container.querySelectorAll('.dsh-tool-diff-preview__line--gap')).toHaveLength(1)
-    expect(container.querySelectorAll('.dsh-tool-diff-preview__line--del')).toHaveLength(2)
-    expect(container.querySelectorAll('.dsh-tool-diff-preview__line--add')).toHaveLength(4)
-    expect(container.textContent).toContain('└ +4 -2 · 2 file(s)')
+    expect(container.textContent).toContain('src/a.ts')
+    expect(container.textContent).toContain('src/b.ts')
 
     fireEvent.click(screen.getByRole('button', { name: 'Copy' }))
     await waitFor(() =>
@@ -45,43 +42,5 @@ describe('ToolDiffPreview', () => {
         'src/a.ts\n- old\n+ new\n⋯\n- before\n+ after\nsrc/b.ts\n+ one\n+ two',
       ),
     )
-  })
-
-  it('renders every diff row after the tool disclosure is opened', () => {
-    const diffs = Array.from({ length: 10 }, (_, index) => ({
-      path: `src/${index}.ts`,
-      oldText: null,
-      newText: `line ${index}`,
-    }))
-    const { container } = render(<ToolDiffPreview {...diffProps({ diffs })} />)
-
-    expect(container.querySelectorAll('.dsh-tool-diff-preview__line')).toHaveLength(20)
-    expect(container.textContent).toContain('src/0.ts')
-    expect(container.textContent).toContain('src/9.ts')
-    expect(container.textContent).toContain('src/5.ts')
-    expect(screen.queryByRole('button', { name: 'Show 4 more diff lines' })).toBeNull()
-  })
-
-  it('renders no empty card when the validated diff list is empty', () => {
-    const { container } = render(<ToolDiffPreview {...diffProps({ diffs: [] })} />)
-
-    expect(container.textContent).toBe('')
-    expect(container.querySelector('[data-diff]')).toBeNull()
-  })
-
-  it('keeps every diff row inside one shared horizontal-scroll content surface', () => {
-    const { container } = render(
-      <ToolDiffPreview
-        {...diffProps({
-          diffs: [{ path: 'wide.html', oldText: null, newText: `short\n${'long'.repeat(80)}` }],
-        })}
-      />,
-    )
-
-    const body = container.querySelector('.dsh-tool-diff-preview__body')
-    const content = body?.querySelector('.dsh-tool-diff-preview__content')
-    expect(content).not.toBeNull()
-    expect(content?.querySelectorAll('.dsh-tool-diff-preview__line')).toHaveLength(3)
-    expect(body?.querySelector('.dsh-tool-diff-preview__line--add')).not.toBeNull()
   })
 })

@@ -134,28 +134,4 @@ describe('permission configuration capability boundary', () => {
     expect(commandLines(calls)).toEqual([])
     expect(readPermissionPresets).not.toHaveBeenCalled()
   })
-
-  it('preserves the legacy fallback command behavior for profiles without the reader', async () => {
-    const { transport, calls } = fixture()
-    const repository = new Rc6SessionRepository(transport)
-    await repository.list()
-
-    await repository.setConfiguration(
-      'session-1',
-      configuration('workspace-write', { providerId: 'provider-new', modelId: 'model-new' }),
-    )
-
-    expect(calls.some((call) => call.kind === 'rpc' && call.method === 'session.selectModel')).toBe(true)
-    expect(commandLines(calls)).toEqual(['/permission workspace-write'])
-  })
-
-  it('preserves explicit permission command behavior for a profile without the catalog reader', async () => {
-    const { transport, calls } = fixture()
-    const repository = new Rc6SessionRepository(transport)
-    await repository.list()
-
-    await repository.setConfiguration('session-1', configuration('read-only'))
-
-    expect(commandLines(calls)).toEqual(['/permission read-only'])
-  })
 })

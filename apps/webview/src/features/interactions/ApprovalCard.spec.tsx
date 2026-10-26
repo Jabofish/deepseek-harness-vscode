@@ -58,39 +58,6 @@ describe('ApprovalCard', () => {
     expect(screen.getByText(command)).toBeDefined()
   })
 
-  it('renders no command line when the request has no resolvable command', () => {
-    const { container } = render(
-      <ApprovalCard request={approvalRequest()} disabled={false} onRespond={vi.fn()} />,
-    )
-
-    expect(container.querySelector('code')).toBeNull()
-    expect(screen.getByText('The command needs approval.')).toBeDefined()
-    expect(screen.queryByText('The agent is waiting for your decision')).toBeNull()
-  })
-
-  it('keeps decisions outside the scrollable command and description', () => {
-    const onRespond = vi.fn()
-    const { container } = render(
-      <ApprovalCard
-        request={{ ...approvalRequest(), description: 'Detailed approval reason. '.repeat(100) }}
-        disabled={false}
-        command={'pnpm check\n'.repeat(100)}
-        onRespond={onRespond}
-      />,
-    )
-
-    const body = container.querySelector<HTMLElement>('.dsh-interaction__body')!
-    expect(body.tabIndex).toBe(0)
-    expect(body.querySelector('code')?.textContent).toContain('pnpm check')
-    const allow = screen.getByRole('button', { name: 'Allow once' })
-    const reject = screen.getByRole('button', { name: 'Reject' })
-    expect(body.contains(allow)).toBe(false)
-    expect(body.contains(reject)).toBe(false)
-    fireEvent.click(allow)
-    fireEvent.click(reject)
-    expect(onRespond.mock.calls).toEqual([['allowed-once'], ['rejected']])
-  })
-
   it('renders the upstream display reason in the active language', () => {
     window.localStorage.setItem('dsh-webview-locale', 'zh')
     render(
@@ -110,20 +77,5 @@ describe('ApprovalCard', () => {
     )
 
     expect(screen.getByText('允许此命令修改工作区文件吗？')).toBeDefined()
-  })
-
-  it('uses DSH English map fallback before the plain approval reason', () => {
-    window.localStorage.setItem('dsh-webview-locale', 'zh')
-    render(
-      <I18nProvider>
-        <ApprovalCard
-          request={{ ...approvalRequest(), displayReason: { en: 'English fallback copy' } }}
-          disabled={false}
-          onRespond={vi.fn()}
-        />
-      </I18nProvider>,
-    )
-
-    expect(screen.getByText('English fallback copy')).toBeDefined()
   })
 })

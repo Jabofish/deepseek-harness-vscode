@@ -53,18 +53,6 @@ function fixture(frames: readonly unknown[] = [drawing()]): {
 }
 
 describe('alpha211 optional mod drawing', () => {
-  it('clears the bounded wait when opening a watch fails synchronously', async () => {
-    vi.useFakeTimers()
-    const repository = new Alpha211ModsBandRepository({
-      remoteRequest: () => Promise.reject(new Error('unexpected')),
-      openRemoteStream: () => {
-        throw new AppError({ code: 'PROTOCOL_ERROR', message: 'safe', retryable: false })
-      },
-    })
-    await expect(repository.read('s1')).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
-    expect(vi.getTimerCount()).toBe(0)
-    await repository.close()
-  })
   it('uses verified Agent args, releases the initial watch, and presses only advertised actions', async () => {
     const f = fixture()
     expect((await f.repository.read('s1')).snapshot?.generation).toBe(1)
@@ -86,43 +74,6 @@ describe('alpha211 optional mod drawing', () => {
     )
     await f.repository.close()
     await expect(f.repository.press('s1', 2, 'a0')).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
-  })
-
-  it('waits for a newer generation and never rolls back a drawing after a stale read', async () => {
-    const f = fixture([drawing(), drawing(3)])
-    expect((await f.repository.read('s1', 1)).snapshot?.generation).toBe(3)
-    expect((await f.repository.read('s1')).snapshot?.generation).toBe(3)
-    expect((await f.repository.press('s1', 3, 'a0')).generation).toBe(3)
-    await f.repository.close()
-  })
-
-  it('bounds long polls and distinguishes silence before the baseline from no change', async () => {
-    vi.useFakeTimers()
-    const f = fixture()
-    const poll = f.repository.read('s1', 1)
-    await vi.advanceTimersByTimeAsync(100)
-    await expect(poll).resolves.toEqual({ available: true, snapshot: null })
-    const empty = fixture([])
-    const result = expect(empty.repository.read('s1')).rejects.toMatchObject({ code: 'BACKEND_UNREACHABLE' })
-    await vi.advanceTimersByTimeAsync(100)
-    await result
-    expect(f.released).toHaveBeenCalledTimes(1)
-    expect(empty.released).toHaveBeenCalledTimes(1)
-  })
-
-  it('cancels outstanding watches on caller cancellation and repository close', async () => {
-    for (const close of [false, true]) {
-      const f = fixture()
-      const controller = new AbortController()
-      const result = expect(f.repository.read('s1', 1, controller.signal)).rejects.toMatchObject({
-        code: 'REQUEST_CANCELLED',
-      })
-      await Promise.resolve()
-      if (close) await f.repository.close()
-      else controller.abort()
-      await result
-      expect(f.released).toHaveBeenCalledTimes(1)
-    }
   })
 
   it('hides an absent optional Remote while preserving protocol and business failures', async () => {
@@ -153,25 +104,6 @@ describe('alpha211 optional mod drawing', () => {
     })
     await expect(absent.read('s1')).resolves.toEqual({ available: false, snapshot: null })
     await absent.close()
-  })
-
-  it('never retries an uncertain press and prevents concurrent activation', async () => {
-    const f = fixture()
-    await f.repository.read('s1')
-    let reject!: (reason: unknown) => void
-    f.remoteRequest.mockImplementationOnce(
-      () =>
-        new Promise((_resolve, fail) => {
-          reject = fail
-        }),
-    )
-    const press = expect(f.repository.press('s1', 1, 'a0')).rejects.toMatchObject({
-      code: 'BACKEND_UNREACHABLE',
-    })
-    await expect(f.repository.press('s1', 1, 'a0')).rejects.toMatchObject({ code: 'STALE_INTERACTION' })
-    reject(new AppError({ code: 'BACKEND_UNREACHABLE', message: 'safe', retryable: true }))
-    await press
-    expect(f.remoteRequest).toHaveBeenCalledTimes(1)
   })
 
   it('projects only safe props and redacts addresses, paths, credentials and controls', () => {

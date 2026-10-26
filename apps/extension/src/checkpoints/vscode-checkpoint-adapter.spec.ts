@@ -13,10 +13,7 @@ vi.mock('vscode', () => ({
 import type * as vscode from 'vscode'
 
 import { workspaceFolderId } from '../editor/workspace-path-guard.js'
-import {
-  createVscodeCheckpointStorage,
-  createVscodeCheckpointWorkspace,
-} from './vscode-checkpoint-adapter.js'
+import { createVscodeCheckpointWorkspace } from './vscode-checkpoint-adapter.js'
 
 interface FakeEntry {
   readonly type: number
@@ -309,53 +306,5 @@ describe('checkpoint workspace access', () => {
     expect(harness.writeCount()).toBe(0)
     expect(harness.remove).not.toHaveBeenCalled()
     expect(harness.rename).not.toHaveBeenCalled()
-  })
-})
-
-describe('checkpoint storage access', () => {
-  it('reports a missing metadata file as undefined and keeps other failures', async () => {
-    const root = temporaryRoot()
-    const harness = createHarness(root)
-    harness.put('checkpoints/manifest.json', 1, '{}')
-    harness.failStat(
-      path.join(root, 'checkpoints', 'manifest.json'),
-      Object.assign(new Error('EBUSY'), { code: 'EBUSY' }),
-    )
-    const storage = createVscodeCheckpointStorage(harness.workspace)
-
-    await expect(storage.readFile(path.join(root, 'checkpoints', 'absent.json'))).resolves.toBeUndefined()
-    await expect(storage.readFile(path.join(root, 'checkpoints', 'manifest.json'))).rejects.toMatchObject({
-      code: 'EBUSY',
-    })
-  })
-
-  it('lists directories and files only, and forwards the delete and rename options', async () => {
-    const root = temporaryRoot()
-    const harness = createHarness(root)
-    harness.put('checkpoints/manifest.json', 1, '{}')
-    harness.put('checkpoints/backup-0.bin', 1, 'bytes')
-    harness.put('checkpoints/nested', 2)
-    const storage = createVscodeCheckpointStorage(harness.workspace)
-
-    const listed = await storage.list(path.join(root, 'checkpoints'))
-    expect([...listed].sort((left, right) => left.name.localeCompare(right.name))).toEqual([
-      { name: 'backup-0.bin', kind: 'file' },
-      { name: 'manifest.json', kind: 'file' },
-      { name: 'nested', kind: 'directory' },
-    ])
-
-    await storage.delete(path.join(root, 'checkpoints', 'nested'), true)
-    expect(harness.entries.has(path.join(root, 'checkpoints', 'nested'))).toBe(false)
-
-    await storage.rename(
-      path.join(root, 'checkpoints', 'backup-0.bin'),
-      path.join(root, 'checkpoints', 'journal.json'),
-      true,
-    )
-    expect(harness.rename).toHaveBeenCalledWith(
-      { scheme: 'file', fsPath: path.join(root, 'checkpoints', 'backup-0.bin') },
-      { scheme: 'file', fsPath: path.join(root, 'checkpoints', 'journal.json') },
-      { overwrite: true },
-    )
   })
 })

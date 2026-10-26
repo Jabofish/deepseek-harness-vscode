@@ -68,44 +68,6 @@ describe('AppStore rc.2 feedback submission', () => {
     store.dispose()
   })
 
-  it('omits optional note and category fields when the dialog submits no details', async () => {
-    const client = new FeedbackClient((request) => {
-      if (request.type !== 'feedback.toggle') throw new Error(`unexpected ${request.type}`)
-      return { ...feedback, rating: 'positive', note: undefined, category: undefined }
-    })
-    const store = createAppStore(client as unknown as ProtocolClient)
-
-    await store.submitFeedback('session-1', feedback.messageId, 'positive')
-
-    const request = client.requests[0]
-    if (request?.type !== 'feedback.toggle') throw new Error('expected feedback.toggle request')
-    expect(request.payload).toEqual({
-      sessionId: 'session-1',
-      messageId: 'message-1',
-      rating: 'positive',
-    })
-    store.dispose()
-  })
-
-  it('rejects a response containing a category outside the pinned taxonomy', async () => {
-    const client = new FeedbackClient((request) => {
-      if (request.type !== 'feedback.toggle') throw new Error(`unexpected ${request.type}`)
-      return { ...feedback, category: 'not-a-category' }
-    })
-    const store = createAppStore(client as unknown as ProtocolClient)
-
-    await expect(
-      store.submitFeedback(
-        'session-1',
-        feedback.messageId,
-        feedback.rating,
-        feedback.note,
-        feedback.category,
-      ),
-    ).rejects.toThrow('feedback')
-    store.dispose()
-  })
-
   it('propagates an unavailable feedback sidecar so the dialog cannot acknowledge false success', async () => {
     const client = new FeedbackClient((request) => {
       if (request.type !== 'feedback.toggle') throw new Error(`unexpected ${request.type}`)

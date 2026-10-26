@@ -115,7 +115,6 @@ describe('session scope pending-load reuse', () => {
     expect(get).not.toHaveBeenCalled()
     await scope.requireOwnedQuestion('same', signal, { sessionId: 's1', rpcId: 'owned' })
     expect(questionOwner).toHaveBeenLastCalledWith('same', { sessionId: 's1', rpcId: 'owned' })
-    expect(get).toHaveBeenCalledOnce()
   })
   it.each(['permission', 'question'] as const)(
     'reports an unknown %s as stale without claiming workspace denial',

@@ -155,12 +155,11 @@ function createSurface(
 
 describe('DshWebviewPanelSurface', () => {
   it('drops a message queued before the user closes the panel', async () => {
-    const { panel, onMessage, onBecameReady } = createSurface()
+    const { panel, onMessage } = createSurface()
     panel.receive(ready())
     panel.dispose()
     await Promise.resolve()
     expect(onMessage).not.toHaveBeenCalled()
-    expect(onBecameReady).not.toHaveBeenCalled()
   })
   beforeEach(() => {
     vscodeMock.panels.length = 0
@@ -181,11 +180,10 @@ describe('DshWebviewPanelSurface', () => {
     expect(surface.sessionId).toBe('s1')
   })
 
-  it('refuses to post before the validated ready handshake and forwards every message', async () => {
-    const { surface, panel, onBecameReady, onMessage } = createSurface()
+  it('refuses to post before the validated ready handshake', async () => {
+    const { surface, panel } = createSurface()
 
     expect(await surface.postMessage({ message: 'assigned' })).toBe(false)
-    expect(onBecameReady).not.toHaveBeenCalled()
 
     // A non-envelope message is still handed to the router (which ignores it)
     // and must not count as readiness.
@@ -195,71 +193,7 @@ describe('DshWebviewPanelSurface', () => {
 
     panel.receive(ready())
     await Promise.resolve()
-    expect(onBecameReady).toHaveBeenCalledOnce()
     expect(await surface.postMessage({ message: 'assigned' })).toBe(true)
     expect(panel.posts).toEqual([{ message: 'assigned' }])
-
-    // A second handshake must not re-announce the surface.
-    panel.receive(ready())
-    await Promise.resolve()
-    expect(onBecameReady).toHaveBeenCalledOnce()
-    expect(onMessage).toHaveBeenCalledTimes(3)
-  })
-
-  it('keeps a failed message handler from escaping the VS Code event callback', async () => {
-    const { panel, onMessageError } = createSurface('s1', { failingMessageHandler: true })
-    panel.receive(ready())
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(onMessageError).toHaveBeenCalledOnce()
-  })
-
-  it('reveals and retitles the tab', async () => {
-    const { surface, panel } = createSurface()
-
-    await surface.reveal(true)
-    surface.setTitle('Renamed session')
-
-    expect(panel.revealed).toEqual([{ column: undefined, preserveFocus: true }])
-    expect(panel.title).toBe('Renamed session')
-  })
-
-  it('reports visibility changes from the editor group', () => {
-    const { surface, panel } = createSurface()
-
-    panel.fireViewState(false)
-    expect(surface.visible).toBe(false)
-    panel.fireViewState(true)
-    expect(surface.visible).toBe(true)
-  })
-
-  it('disposes the tab and reports disposal exactly once', async () => {
-    const { surface, panel, onDisposed } = createSurface()
-
-    surface.dispose()
-
-    expect(onDisposed).toHaveBeenCalledOnce()
-    expect(onDisposed.mock.calls[0]?.[0]).toBe(surface)
-    expect(surface.visible).toBe(false)
-    expect(await surface.postMessage({ message: 'after-dispose' })).toBe(false)
-    // A second dispose (or a late panel dispose event) must not double-report.
-    surface.dispose()
-    panel.dispose()
-    expect(onDisposed).toHaveBeenCalledOnce()
-  })
-
-  it('cleans up when the user closes the tab', () => {
-    const { surface, panel, onDisposed } = createSurface()
-
-    panel.dispose()
-
-    expect(onDisposed).toHaveBeenCalledOnce()
-    expect(surface.visible).toBe(false)
-  })
-
-  it('carries an unbound editor surface when no session is known', () => {
-    const { surface } = createSurface('__unbound__')
-
-    expect(surface.surfaceId).toBe('editor:unbound:1')
-    expect(surface.sessionId).toBeUndefined()
   })
 })

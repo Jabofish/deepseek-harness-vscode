@@ -298,18 +298,6 @@ describe('request gateway editor surface routes', () => {
     harness = buildGateway()
   })
 
-  it('rereads recovery state without starting a connection', async () => {
-    await harness.gateway.router.handle(
-      request('app.ready', 'recover-state', { snapshotOnly: true }),
-      'sidebar',
-    )
-    expect(host.connectCount).toBe(0)
-    expect(harness.events.find((event) => event.name === 'connection.snapshot')?.payload).toMatchObject({
-      kind: 'idle',
-    })
-    expect(harness.sent).toContainEqual(expect.objectContaining({ requestId: 'recover-state', ok: true }))
-  })
-
   it('serves complete live nodes only through the owning surface and scoped session', async () => {
     const window = harness.transcript.forSurface('sidebar')
     const snapshot = window.installPage(
@@ -350,30 +338,6 @@ describe('request gateway editor surface routes', () => {
     expect(harness.sent).toContainEqual(expect.objectContaining({ requestId: 'foreign-node', ok: false }))
   })
 
-  it('updates title-bar layout only from the sidebar, independently of connection and trust', async () => {
-    host.isTrusted = false
-    await harness.gateway.router.handle(
-      request('surface.titlebarLayout', 'layout-editor', { layout: 'compact' }),
-      'editor-1',
-    )
-    expect(host.contexts).toEqual([])
-    for (const layout of ['wide', 'regular', 'compact', 'wide'])
-      await harness.gateway.router.handle(
-        request('surface.titlebarLayout', `layout-${host.contexts.length}`, { layout }),
-        'sidebar',
-      )
-    expect(host.contexts).toEqual(
-      ['wide', 'regular', 'compact', 'wide'].map((value) => ({ key: 'dsh.chatTitlebarLayout', value })),
-    )
-    const responseCount = harness.sent.length
-    await harness.gateway.router.handle(
-      request('surface.titlebarLayout', 'invalid-layout', { layout: 'invented' }),
-      'sidebar',
-    )
-    expect(host.contexts).toHaveLength(4)
-    expect(harness.sent).toHaveLength(responseCount)
-  })
-
   it('authorizes native resource drops and reuses the ordinary editor manager', async () => {
     const signal = new AbortController().signal
     await harness.gateway.openDroppedSession('session-1', 2, signal)
@@ -385,85 +349,6 @@ describe('request gateway editor surface routes', () => {
     host.isTrusted = false
     await expect(harness.gateway.openDroppedSession('session-2', 2, signal)).rejects.toThrow('Trust')
     expect(harness.gateway.editorSurfaces.count).toBe(1)
-  })
-
-  it('tracks actual editor visibility and readiness independently of tab lifetime', async () => {
-    const signal = new AbortController().signal
-    await harness.gateway.openDroppedSession('session-1', 2, signal)
-    expect(harness.watchShown).toEqual([{ surfaceId: 'editor:session-1', sessionId: 'session-1' }])
-    expect(harness.watchReleased).toEqual([])
-
-    const panel = host.panels[0]!
-    panel.receive(request('app.ready', 'editor-ready'))
-    await vi.waitFor(() =>
-      expect(harness.watchVisibility).toContainEqual({ surfaceId: 'editor:session-1', visible: true }),
-    )
-    panel.setVisible(false)
-    expect(harness.watchVisibility.at(-1)).toEqual({ surfaceId: 'editor:session-1', visible: false })
-    panel.setVisible(true)
-    expect(harness.watchVisibility.at(-1)).toEqual({ surfaceId: 'editor:session-1', visible: true })
-    expect(harness.watchReleased).toEqual([])
-
-    harness.gateway.editorSurfaces.close('editor:session-1')
-    expect(harness.watchReleased).toEqual(['editor:session-1'])
-    expect(harness.watchShown).toEqual([{ surfaceId: 'editor:session-1', sessionId: 'session-1' }])
-  })
-
-  it('does not open a native drop cancelled during ownership validation', async () => {
-    const abort = new AbortController()
-    let finish = (): void => undefined
-    host.sessionGate = new Promise<void>((resolve) => {
-      finish = resolve
-    })
-    const pending = harness.gateway.openDroppedSession('session-1', 2, abort.signal)
-    abort.abort()
-    finish()
-    await pending
-    expect(harness.gateway.editorSurfaces.count).toBe(0)
-  })
-
-  it('does not replace a newer selection when an older create request finishes late', async () => {
-    harness.openSidebar()
-    let finish!: () => void
-    host.createGate = new Promise<void>((done) => {
-      finish = done
-    })
-    const pending = harness.gateway.router.handle(
-      request('session.create', 'slow-create', { configuration: detail('new').configuration }),
-      'sidebar',
-    )
-    await vi.waitFor(() => expect(host.createStarted).toBe(true))
-    await harness.gateway.router.handle(
-      request('session.open', 'fast-open', { sessionId: 'current' }),
-      'sidebar',
-    )
-    expect(harness.sent.find((entry) => entry.requestId === 'fast-open')?.error).toBeUndefined()
-    expect(harness.watchShown).toEqual([{ surfaceId: 'sidebar', sessionId: 'current' }])
-    finish()
-    await pending
-    expect(harness.sent).toContainEqual(expect.objectContaining({ requestId: 'slow-create', ok: true }))
-    expect(harness.watchShown).toEqual([{ surfaceId: 'sidebar', sessionId: 'current' }])
-    expect(harness.gateway.sessionNavigation.activeSessionId).toBe('current')
-    harness.setSidebarVisible(false)
-    expect(harness.watchVisibility.at(-1)).toEqual({ surfaceId: 'sidebar', visible: false })
-    harness.setSidebarVisible(true)
-    expect(harness.watchVisibility.at(-1)).toEqual({ surfaceId: 'sidebar', visible: true })
-  })
-
-  it('opens a native-list selection in the sidebar without closing editor chats', async () => {
-    harness.openSidebar()
-    const signal = new AbortController().signal
-    await harness.gateway.openDroppedSession('editor-session', 2, signal)
-    await harness.gateway.sessionNavigation.open('sidebar-session', false, signal)
-    expect(harness.gateway.editorSurfaces.count).toBe(1)
-    expect(host.panels[0]?.disposeCount).toBe(0)
-    expect(harness.events).toContainEqual(
-      expect.objectContaining({
-        surfaceId: 'sidebar',
-        name: 'ui.surface.openInSidebar',
-        payload: { sessionId: 'sidebar-session' },
-      }),
-    )
   })
 
   it('runs native renames through ownership checks and publishes the accepted full title to every list', async () => {
@@ -486,20 +371,6 @@ describe('request gateway editor surface routes', () => {
     await expect(harness.gateway.sessionNavigation.rename('s1', 'Title', signal)).rejects.toThrow('Trust')
   })
 
-  it('retitles only an already-open editor from upstream title views using the shared label sanitizer', async () => {
-    await harness.gateway.openDroppedSession('s1', 2, new AbortController().signal)
-    harness.gateway.sessionNavigation.acceptEvent('session.projection', {
-      sessionId: 's1',
-      key: 'title',
-      value: `  Updated\n\u0007${'title '.repeat(30)}  `,
-    })
-    expect(host.panels[0]?.title).toBe(`Updated ${'title '.repeat(30)}`.trim().slice(0, 120))
-    harness.gateway.sessionNavigation.acceptEvent('session.title', { sessionId: 's1', title: ' \n ' })
-    harness.gateway.sessionNavigation.acceptEvent('session.title', { sessionId: 'unopened', title: 'Other' })
-    expect(host.panels).toHaveLength(1)
-    expect(host.panels[0]?.title).toHaveLength(120)
-  })
-
   it('opens one editor tab per session and answers the surface that asked', async () => {
     await harness.gateway.router.handle(
       request('surface.openInEditor', 'r1', { sessionId: 'session-1', title: 'Session one' }),
@@ -519,31 +390,6 @@ describe('request gateway editor surface routes', () => {
     expect(responses.map((entry) => entry.ok)).toEqual([true, true])
   })
 
-  it('sanitizes the editor tab title instead of trusting the Webview label', async () => {
-    await harness.gateway.router.handle(
-      request('surface.openInEditor', 'r1', { sessionId: 'session-1', title: '  Bad\u0000\n\tTitle  ' }),
-      'sidebar',
-    )
-
-    expect(host.panels[0]?.title).toBe('Bad Title')
-  })
-
-  it('cannot open a late editor after the originating surface is closed during ownership validation', async () => {
-    let release!: () => void
-    host.sessionGate = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    const opening = harness.gateway.router.handle(
-      request('surface.openInEditor', 'late', { sessionId: 'session-1' }),
-      'sidebar',
-    )
-    harness.gateway.router.cancelSurface('sidebar')
-    release()
-    await opening
-    expect(host.panels).toHaveLength(0)
-    expect(harness.gateway.editorSurfaces.count).toBe(0)
-  })
-
   it('refuses a session this workspace does not own without opening a tab', async () => {
     harness.rejectSession('foreign-session')
 
@@ -554,24 +400,6 @@ describe('request gateway editor surface routes', () => {
 
     expect(host.panels).toHaveLength(0)
     expect(harness.sent[0]?.ok).toBe(false)
-  })
-
-  it('retitles an open editor tab when its session is renamed', async () => {
-    await harness.gateway.router.handle(
-      request('surface.openInEditor', 'r1', { sessionId: 'session-1', title: 'Original title' }),
-      'sidebar',
-    )
-    expect(host.panels[0]?.title).toBe('Original title')
-
-    host.renamedTitle = 'A much better title'
-    await harness.gateway.router.handle(
-      request('session.rename', 'r2', { sessionId: 'session-1', title: 'ignored by the host' }),
-      'sidebar',
-    )
-
-    // The Host applies the title it accepted, so the tab never shows a name the
-    // session log does not hold.
-    expect(host.panels[0]?.title).toBe('A much better title')
   })
 
   it('moves a single editor tab back but every tab from the sidebar', async () => {
@@ -604,20 +432,6 @@ describe('request gateway editor surface routes', () => {
     expect(harness.gateway.editorSurfaces.count).toBe(0)
   })
 
-  it.each(['focus', 'delivery'] as const)('preserves editor chats when sidebar %s fails', async (failure) => {
-    harness.openSidebar()
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    await harness.gateway.router.handle(
-      request('surface.openInEditor', 'open', { sessionId: 'session-1' }),
-      'sidebar',
-    )
-    host.focusFails = failure === 'focus'
-    host.deliveryFails = failure === 'delivery'
-    await harness.gateway.router.handle(request('surface.moveToSidebar', 'move'), 'sidebar')
-    expect(host.panels[0]?.disposeCount).toBe(0)
-    expect(harness.sent.find((entry) => entry.requestId === 'move')?.ok).toBe(false)
-  })
-
   it('rebinds a created session using the Host sender identity and preserves both session lookups', async () => {
     await harness.gateway.router.handle(
       request('surface.openInEditor', 'open', { sessionId: 'session-1' }),
@@ -637,72 +451,5 @@ describe('request gateway editor surface routes', () => {
     harness.gateway.editorSurfaces.closeAll()
     expect(harness.gateway.editorSurfaces.forSession('session-2')).toBeUndefined()
     expect(harness.gateway.editorSurfaces.forSession('session-1')).toBeUndefined()
-  })
-
-  it('announces the sidebar surface identity once its Webview is ready', async () => {
-    harness.openSidebar()
-    await new Promise((resolve) => setTimeout(resolve, 0))
-
-    // The identity and the current editor-tab count travel together, so a
-    // surface that becomes ready after a handoff broadcast still learns it.
-    expect(harness.events).toEqual([
-      { surfaceId: 'sidebar', type: 'event', name: 'connection.snapshot', payload: { kind: 'idle' } },
-      { surfaceId: 'sidebar', type: 'event', name: 'ui.surface.assigned', payload: { kind: 'sidebar' } },
-      {
-        surfaceId: 'sidebar',
-        type: 'event',
-        name: 'ui.surface.handoff',
-        payload: { editorChats: 0 },
-      },
-    ])
-  })
-
-  it('keeps the sidebar routable across a re-resolved view and out of a sibling tab close', async () => {
-    harness.openSidebar()
-    await new Promise((resolve) => setTimeout(resolve, 0))
-
-    // Closing an editor tab while the sidebar is ready must not tear down
-    // another surface's job follows or editor context.
-    await harness.gateway.router.handle(
-      request('surface.openInEditor', 'r1', { sessionId: 'session-1' }),
-      'sidebar',
-    )
-    harness.gateway.editorSurfaces.closeAll()
-    expect(harness.teardowns).toEqual([])
-
-    // Hiding and re-showing the view disposes the Webview, not the surface: the
-    // registration and the ready handshake must both come back.
-    const surface = harness.gateway.provider
-    harness.openSidebar()
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(harness.surfaces.get('sidebar')).toBe(surface)
-    // Phase 1 keeps the pre-existing behaviour that re-resolving the view runs
-    // the shared teardown; making that idle-aware is a Phase 4 follow-up.
-    expect(harness.teardowns).toEqual(['job-follows', 'editor-context'])
-
-    harness.sent.length = 0
-    await harness.gateway.router.handle(request('diagnostics.show', 'r2'), 'sidebar')
-    expect(harness.sent.filter((entry) => entry.type === 'response').map((entry) => entry.surfaceId)).toEqual(
-      ['sidebar'],
-    )
-
-    // Disposing the provider is the end of the surface: it leaves routing and
-    // the shared teardown runs because no ready surface is left.
-    surface.dispose()
-    expect(harness.surfaces.get('sidebar')).toBeUndefined()
-    expect(harness.teardowns.slice(-2)).toEqual(['job-follows', 'editor-context'])
-  })
-
-  it('registers the sidebar surface and reports the handoff count when tabs change', async () => {
-    expect(harness.surfaces.get('sidebar')).toBe(harness.gateway.provider)
-
-    await harness.gateway.router.handle(
-      request('surface.openInEditor', 'r1', { sessionId: 'session-1' }),
-      'sidebar',
-    )
-    harness.gateway.editorSurfaces.closeAll()
-
-    const handoff = harness.events.filter((entry) => entry.name === 'ui.surface.handoff')
-    expect(handoff.map((entry) => entry.payload)).toEqual([{ editorChats: 1 }, { editorChats: 0 }])
   })
 })

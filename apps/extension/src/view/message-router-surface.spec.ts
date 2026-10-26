@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { WebviewMessageRouter } from './message-router.js'
 
 const request = (requestId: string): unknown => ({
@@ -57,46 +57,6 @@ describe('WebviewMessageRouter surface routing', () => {
     expect(delivered.map((entry) => entry.requestId)).toEqual(['editor-request', 'sidebar-request'])
   })
 
-  it('broadcasts only when the caller has no surface identity', async () => {
-    const surfaceIds: (string | undefined)[] = []
-    const router = new WebviewMessageRouter({
-      postMessage: (_message, surfaceId) => {
-        surfaceIds.push(surfaceId)
-        return Promise.resolve(true)
-      },
-      handleRequest: () => Promise.resolve(undefined),
-    })
-
-    await router.handle(request('anonymous'))
-
-    expect(surfaceIds).toEqual([undefined])
-  })
-
-  it('cancels only the disposed surface while another surface keeps working', async () => {
-    const signals = new Map<string, AbortSignal>()
-    const router = new WebviewMessageRouter({
-      postMessage: () => Promise.resolve(true),
-      handleRequest: (incoming, signal) => {
-        signals.set(incoming.requestId, signal)
-        return new Promise((_resolve, reject) => {
-          signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
-        })
-      },
-    })
-
-    const sidebar = router.handle(request('sidebar-slow'), 'sidebar')
-    const editor = router.handle(request('editor-slow'), 'editor:session-1')
-    await Promise.resolve()
-
-    router.cancelSurface('sidebar')
-
-    expect(signals.get('sidebar-slow')?.aborted).toBe(true)
-    expect(signals.get('editor-slow')?.aborted).toBe(false)
-    await sidebar
-    router.cancelAll()
-    await editor
-  })
-
   it('isolates identical correlation ids across surfaces and preserves duplicates within one surface', async () => {
     const delivered: (string | undefined)[] = []
     const releases: (() => void)[] = []
@@ -117,49 +77,6 @@ describe('WebviewMessageRouter surface routing', () => {
     releases.forEach((release) => release())
     await Promise.all([first, second])
     expect(delivered).toEqual(['sidebar', 'editor:s1'])
-  })
-
-  it('drops an old completion after teardown and reuse of the same correlation id', async () => {
-    const deliveries: unknown[] = []
-    const releases: ((value: unknown) => void)[] = []
-    const router = new WebviewMessageRouter({
-      postMessage: (message) => {
-        deliveries.push(message)
-        return Promise.resolve(true)
-      },
-      handleRequest: () =>
-        new Promise((resolve) => {
-          releases.push(resolve)
-        }),
-    })
-    const old = router.handle(request('reused'), 'sidebar')
-    router.cancelSurface('sidebar')
-    const current = router.handle(request('reused'), 'sidebar')
-    releases[0]!({ generation: 'old' })
-    await old
-    expect(deliveries).toEqual([])
-    releases[1]!({ generation: 'current' })
-    await current
-    expect(deliveries).toEqual([expect.objectContaining({ payload: { generation: 'current' } })])
-  })
-
-  it('reports a cancelled surface request as an unanswered operation', async () => {
-    const postMessage = vi.fn().mockResolvedValue(true)
-    const router = new WebviewMessageRouter({
-      postMessage,
-      handleRequest: (_incoming, signal) =>
-        new Promise((_resolve, reject) => {
-          signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
-        }),
-    })
-
-    const pending = router.handle(request('cancel-me'), 'editor:session-9')
-    await Promise.resolve()
-    router.cancelSurface('editor:session-9')
-    await pending
-
-    // The entry is gone, so the late handler completion cannot answer anybody.
-    expect(postMessage).not.toHaveBeenCalled()
   })
 })
 

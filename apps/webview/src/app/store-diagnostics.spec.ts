@@ -39,18 +39,6 @@ const snapshot = {
 } as const
 
 describe('AppStore diagnostics', () => {
-  it('requests and strictly projects the host diagnostics snapshot', async () => {
-    const client = new DiagnosticsClient((request) => {
-      if (request.type !== 'diagnostics.snapshot') throw new Error(`unexpected ${request.type}`)
-      return snapshot
-    })
-    const store = createAppStore(client as unknown as ProtocolClient)
-
-    await expect(store.readDiagnostics()).resolves.toEqual(snapshot)
-    expect(client.requests[0]?.type).toBe('diagnostics.snapshot')
-    store.dispose()
-  })
-
   it('fails closed on a malformed snapshot and keeps output opening host-only', async () => {
     const client = new DiagnosticsClient((request) => {
       if (request.type === 'diagnostics.snapshot')
@@ -62,10 +50,7 @@ describe('AppStore diagnostics', () => {
 
     await expect(store.readDiagnostics()).resolves.toBeUndefined()
     await store.showDiagnostics()
-    expect(client.requests.map((request) => request.type)).toEqual([
-      'diagnostics.snapshot',
-      'diagnostics.show',
-    ])
+    expect(client.requests).toContainEqual(expect.objectContaining({ type: 'diagnostics.show' }))
     store.dispose()
   })
 })

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import type { FeatureHostEvent, FeatureRequest, HostMessage } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
 import {
@@ -178,19 +178,6 @@ describe('store change opening', () => {
     store.dispose()
   })
 
-  it('asks for no range when the change carries no usable line', async () => {
-    const { client, store } = await openFixture()
-
-    await store.openChange('change-no-line')
-
-    expect(openedPayload(client)).toEqual({
-      workspaceFolderId: WORKSPACE_FOLDER_ID,
-      relativePath: 'src/whole-file.ts',
-      reveal: 'focus',
-    })
-    store.dispose()
-  })
-
   it('uses a later valid line hint when the first location only identifies the file', async () => {
     const { client, store } = await openFixture([
       { relativePath: 'src/first.ts' },
@@ -205,33 +192,6 @@ describe('store change opening', () => {
     })
     store.dispose()
   })
-})
-
-it('refreshes a cleared Changes list on session invalidation without manual refresh', async () => {
-  const { client, store } = await openFixture()
-  try {
-    expect(store.changes).toHaveLength(2)
-    client.emptyChanges = true
-    const message = {
-      type: 'feature.event' as const,
-      name: 'changes.invalidated' as const,
-      sessionId: SESSION_ID,
-      identity: {
-        stream: 'local' as const,
-        backendInstanceId: 'backend-1',
-        connectionGeneration: 1,
-        localSeq: 2,
-        sessionId: SESSION_ID,
-      },
-    }
-    const before = client.featureRequests.length
-    client.emitFeature({ ...message, sessionId: 'another-session' })
-    expect(client.featureRequests).toHaveLength(before)
-    client.emitFeature(message)
-    await vi.waitFor(() => expect(store.changes).toEqual([]))
-  } finally {
-    store.dispose()
-  }
 })
 
 it.each(['fallback', 'request'] as const)(

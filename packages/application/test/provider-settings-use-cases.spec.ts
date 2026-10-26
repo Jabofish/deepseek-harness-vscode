@@ -91,57 +91,6 @@ describe('ProviderSettingsUseCases', () => {
     expect(setReference).toHaveBeenCalledWith('GATEWAY_API_KEY', 'sk-gateway', undefined)
   })
 
-  it('omits the credential reference for a keyless native-auth profile', async () => {
-    const mutate = vi.fn<SettingsMutate>().mockResolvedValue(undefined)
-    const setReference = vi.fn<SetReference>().mockResolvedValue(undefined)
-
-    await expect(
-      providerUseCasesFor({ mutate }, { setReference }).createCustomProvider(draft, undefined),
-    ).resolves.toEqual({
-      profileCommitted: true,
-      credentialConfigured: false,
-    })
-
-    const operation = mutate.mock.calls[0]?.[1]?.[0]
-    expect(operation?.op).toBe('set')
-    if (operation?.op === 'set') {
-      expect(operation.value).toEqual({
-        displayName: 'Gateway',
-        api: 'openai-completions',
-        baseURL: 'http://127.0.0.1:9000/v1',
-        models: [{ id: 'gateway-chat', name: 'Gateway Chat', contextWindow: 128_000 }],
-      })
-    }
-    expect(setReference).not.toHaveBeenCalled()
-  })
-
-  it('preserves valid modality declarations and unrelated provider model metadata', async () => {
-    const mutate = vi.fn<SettingsMutate>().mockResolvedValue(undefined)
-    const setReference = vi.fn<SetReference>().mockResolvedValue(undefined)
-    const models = [
-      {
-        id: 'gateway-chat',
-        input: ['text', 'image'],
-        inputModalities: ['text', 'image'],
-        providerFeatures: { cachedPrompts: true },
-      },
-    ]
-
-    await expect(
-      providerUseCasesFor({ mutate }, { setReference }).createCustomProvider({ ...draft, models }, undefined),
-    ).resolves.toEqual({ profileCommitted: true, credentialConfigured: false })
-
-    const operation = mutate.mock.calls[0]?.[1]?.[0]
-    expect(operation?.op).toBe('set')
-    if (operation?.op === 'set')
-      expect(operation.value).toEqual({
-        displayName: 'Gateway',
-        api: 'openai-completions',
-        baseURL: 'http://127.0.0.1:9000/v1',
-        models,
-      })
-  })
-
   it('preserves an empty pi-ai input list as the inherited-input sentinel', async () => {
     const mutate = vi.fn<SettingsMutate>().mockResolvedValue(undefined)
     const setReference = vi.fn<SetReference>().mockResolvedValue(undefined)

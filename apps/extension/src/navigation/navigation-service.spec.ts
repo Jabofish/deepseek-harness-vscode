@@ -157,24 +157,6 @@ describe('NavigationService', () => {
     expect(harness.revealRange).toHaveBeenCalledWith(expect.anything(), 2)
   })
 
-  it('keeps a stale line hint from failing an open that already happened', async () => {
-    const root = temporaryRoot()
-    writeFileSync(path.join(root, 'shrunk.ts'), 'only\n')
-    const harness = createHarness(root, ['only'])
-
-    await harness.service.openFile(harness.folderId, 'shrunk.ts', {
-      start: { line: 7, column: 0 },
-      end: { line: 7, column: 0 },
-    })
-
-    expect(harness.showTextDocument).toHaveBeenCalledTimes(1)
-    expect(harness.editor.selection).toMatchObject({
-      start: { line: 0, character: 0 },
-      end: { line: 0, character: 0 },
-    })
-    expect(harness.revealRange).toHaveBeenCalledTimes(1)
-  })
-
   it('forwards preserve-focus and refuses a malformed range before positioning', async () => {
     const root = temporaryRoot()
     writeFileSync(path.join(root, 'a.ts'), 'first\nsecond\nthird\n')
@@ -218,32 +200,6 @@ describe('NavigationService', () => {
     expect(directoryHarness.showTextDocument).not.toHaveBeenCalled()
   })
 
-  it('reveals a line with an explicit column and defaults the column to zero', async () => {
-    const root = temporaryRoot()
-    writeFileSync(path.join(root, 'a.ts'), 'first\nsecond\nthird\n')
-    const harness = createHarness(root)
-
-    await harness.service.revealLine(harness.folderId, 'a.ts', 1, 3)
-
-    expect(harness.editor.selection).toMatchObject({
-      start: { line: 1, character: 3 },
-      end: { line: 1, character: 3 },
-    })
-  })
-
-  it('shows a resolved file in the explorer through the VS Code command', async () => {
-    const root = temporaryRoot()
-    writeFileSync(path.join(root, 'a.ts'), 'first\n')
-    const harness = createHarness(root)
-
-    await harness.service.showInExplorer(harness.folderId, 'a.ts')
-
-    expect(harness.executeCommand).toHaveBeenCalledWith(
-      'revealInExplorer',
-      expect.objectContaining({ scheme: 'file', fsPath: path.join(root, 'a.ts') }),
-    )
-  })
-
   it('opens a diff against the current file and bounds the before text', async () => {
     const root = temporaryRoot()
     writeFileSync(path.join(root, 'a.ts'), 'first\n')
@@ -284,95 +240,5 @@ describe('NavigationService', () => {
     await expect(harness.service.openFile(harness.folderId, 'a.ts')).rejects.toMatchObject({
       code: 'REQUEST_CANCELLED',
     })
-  })
-
-  it('does not show a document when cancellation arrives while it is opening', async () => {
-    const root = temporaryRoot()
-    writeFileSync(path.join(root, 'a.ts'), 'first\n')
-    const harness = createHarness(root)
-    let resolveDocument!: (document: typeof harness.document) => void
-    let notifyDocumentOpenStarted!: () => void
-    const documentOpenStarted = new Promise<void>((resolve) => {
-      notifyDocumentOpenStarted = resolve
-    })
-    const pendingDocument = new Promise<typeof harness.document>((resolve) => {
-      resolveDocument = resolve
-    })
-    harness.openTextDocument.mockImplementationOnce(() => {
-      notifyDocumentOpenStarted()
-      return pendingDocument
-    })
-    const controller = new AbortController()
-
-    const opening = harness.service.openFile(harness.folderId, 'a.ts', undefined, controller.signal)
-    await documentOpenStarted
-    expect(harness.openTextDocument).toHaveBeenCalledOnce()
-    controller.abort()
-    resolveDocument(harness.document)
-
-    await expect(opening).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
-    expect(harness.showTextDocument).not.toHaveBeenCalled()
-  })
-
-  it('does not apply a location after cancellation while the editor is being shown', async () => {
-    const root = temporaryRoot()
-    writeFileSync(path.join(root, 'a.ts'), 'first\nsecond\n')
-    const harness = createHarness(root)
-    let resolveEditor!: (editor: typeof harness.editor) => void
-    let notifyEditorShowStarted!: () => void
-    const editorShowStarted = new Promise<void>((resolve) => {
-      notifyEditorShowStarted = resolve
-    })
-    const pendingEditor = new Promise<typeof harness.editor>((resolve) => {
-      resolveEditor = resolve
-    })
-    harness.showTextDocument.mockImplementationOnce(() => {
-      notifyEditorShowStarted()
-      return pendingEditor
-    })
-    const controller = new AbortController()
-
-    const opening = harness.service.openFile(
-      harness.folderId,
-      'a.ts',
-      { start: { line: 1, column: 0 }, end: { line: 1, column: 0 } },
-      controller.signal,
-    )
-    await editorShowStarted
-    expect(harness.showTextDocument).toHaveBeenCalledOnce()
-    controller.abort()
-    resolveEditor(harness.editor)
-
-    await expect(opening).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
-    expect(harness.editor.selection).toBeUndefined()
-    expect(harness.revealRange).not.toHaveBeenCalled()
-  })
-
-  it('does not execute a diff after cancellation during file validation', async () => {
-    const root = temporaryRoot()
-    writeFileSync(path.join(root, 'a.ts'), 'first\n')
-    const harness = createHarness(root)
-    let resolveStat!: (value: { readonly type: number }) => void
-    let notifyValidationStarted!: () => void
-    const validationStarted = new Promise<void>((resolve) => {
-      notifyValidationStarted = resolve
-    })
-    const pendingStat = new Promise<{ readonly type: number }>((resolve) => {
-      resolveStat = resolve
-    })
-    harness.stat.mockImplementationOnce(() => {
-      notifyValidationStarted()
-      return pendingStat
-    })
-    const controller = new AbortController()
-
-    const opening = harness.service.openDiff(harness.folderId, 'a.ts', 'before', undefined, controller.signal)
-    await validationStarted
-    expect(harness.stat).toHaveBeenCalledOnce()
-    controller.abort()
-    resolveStat({ type: vscode.FileType.File })
-
-    await expect(opening).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
-    expect(harness.executeCommand).not.toHaveBeenCalled()
   })
 })

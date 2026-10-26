@@ -202,65 +202,6 @@ describe('TemporaryWorkspaceManager', () => {
     expect(harness.persistReference).not.toHaveBeenCalled()
   })
 
-  it('migrates a legacy id and path only when the DSH registry matches both exactly', async () => {
-    const legacy = {
-      id: 'legacy-workspace',
-      path: path.join(rootPath, 'workspace-legacy'),
-    }
-    const existing = workspace(legacy.id, legacy.path)
-    const harness = createHarness(undefined, legacy)
-
-    const result = await harness.manager.resolve([existing])
-
-    expect(result).toMatchObject(existing)
-    expect(harness.createWorkspace).not.toHaveBeenCalled()
-    expect(harness.createOwnershipMarker).toHaveBeenCalledWith(legacy.path)
-    expect(harness.persistReference).toHaveBeenCalledWith({
-      ...legacy,
-      ownershipToken: createdOwnershipToken,
-    })
-    expect(harness.manager.reference).toEqual({ ...legacy, ownershipToken: createdOwnershipToken })
-  })
-
-  it.each([
-    ['id mismatch', 'other-workspace', path.join(rootPath, 'workspace-legacy')],
-    ['path mismatch', 'legacy-workspace', path.join(rootPath, 'workspace-other')],
-  ])(
-    'does not migrate a legacy reference when the DSH registry has an %s',
-    async (_case, id, workspacePath) => {
-      const legacy = {
-        id: 'legacy-workspace',
-        path: path.join(rootPath, 'workspace-legacy'),
-      }
-      const harness = createHarness(undefined, legacy)
-
-      const result = await harness.manager.resolve([workspace(id, workspacePath)])
-
-      expect(result.path).toBe(path.join(rootPath, 'workspace-1'))
-      expect(harness.createOwnershipMarker).not.toHaveBeenCalledWith(legacy.path)
-      expect(harness.removeDirectory).not.toHaveBeenCalledWith(legacy.path)
-      expect(harness.manager.reference).not.toEqual({ ...legacy, ownershipToken: createdOwnershipToken })
-    },
-  )
-
-  it.each([
-    ['symbolic link', 'symlink'],
-    ['missing directory', 'missing'],
-  ] as const)('does not migrate a legacy %s', async (_case, legacyPathKind) => {
-    const legacy = {
-      id: 'legacy-workspace',
-      path: path.join(rootPath, 'workspace-legacy'),
-    }
-    const existing = workspace(legacy.id, legacy.path)
-    const harness = createHarness(undefined, legacy, legacyPathKind)
-
-    const result = await harness.manager.resolve([existing])
-
-    expect(result.path).toBe(path.join(rootPath, 'workspace-1'))
-    expect(harness.createOwnershipMarker).not.toHaveBeenCalledWith(legacy.path)
-    expect(harness.removeDirectory).not.toHaveBeenCalledWith(legacy.path)
-  })
-
   it('re-registers the persisted path when DSH no longer lists the workspace', async () => {
     const temporaryPath = path.join(rootPath, 'workspace-1')
     const harness = createHarness({

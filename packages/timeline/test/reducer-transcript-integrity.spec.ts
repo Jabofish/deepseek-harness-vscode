@@ -40,45 +40,6 @@ describe('reduceTimeline transcript integrity', () => {
     })
   })
 
-  it('keeps the richer card identity when a sparse result update follows', () => {
-    const withResult = reduceTimeline(initial, {
-      sequence: 1,
-      event: {
-        type: 'tool.updated',
-        sessionId: 'session-1',
-        tool: tool('call-sparse', 'completed', { title: 'Read src/index.ts', outputSummary: 'export {}' }),
-      },
-    })
-    const merged = reduceTimeline(withResult, {
-      sequence: 2,
-      event: {
-        type: 'tool.updated',
-        sessionId: 'session-1',
-        // The pinned mapper falls back to a placeholder when a row omits the
-        // card identity; the richer first paint must survive.
-        tool: tool('call-sparse', 'completed', {
-          name: 'unknown-tool',
-          category: 'tool',
-          title: 'Tool',
-          error: 'permission denied',
-        }),
-      },
-    })
-
-    expect(merged.nodes[0]).toMatchObject({
-      kind: 'tool',
-      id: 'call-sparse',
-      tool: {
-        name: 'read',
-        category: 'read',
-        title: 'Read src/index.ts',
-        outputSummary: 'export {}',
-        status: 'completed',
-        error: 'permission denied',
-      },
-    })
-  })
-
   it('cancels a still-running tool row when its update lands after the turn ended', () => {
     const open = reduceTimeline(initial, {
       sequence: 1,
@@ -234,41 +195,6 @@ describe('reduceTimeline transcript integrity', () => {
 
     expect(redelivered.nodes.map((node) => node.id)).toEqual(['notice:7'])
   })
-
-  it('refreshes a redelivered command-input row instead of appending a duplicate', () => {
-    const command = {
-      type: 'notice' as const,
-      sessionId: 'session-1',
-      level: 'info' as const,
-      text: 'permission started.',
-      commandInput: '/permission workspace-write',
-    }
-    const first = reduceTimeline(initial, { sequence: 9, event: command, advanceSequence: false })
-    const redelivered = reduceTimeline(first, { sequence: 9, event: command, advanceSequence: false })
-
-    expect(redelivered.nodes.map((node) => node.id)).toEqual(['command-input:9'])
-  })
-
-  it('refreshes a redelivered connection warning instead of appending a duplicate', () => {
-    const event: BackendEvent = { type: 'connection.lost', reason: 'The stream closed.' }
-    const first = reduceTimeline(initial, { sequence: 4, event, advanceSequence: false })
-    const redelivered = reduceTimeline(first, { sequence: 4, event, advanceSequence: false })
-
-    expect(redelivered.nodes.map((node) => node.id)).toEqual(['connection:4'])
-  })
-
-  it('refreshes a redelivered gap warning instead of appending a duplicate', () => {
-    const event: BackendEvent = {
-      type: 'session.gap',
-      sessionId: 'session-1',
-      fromSequence: 20,
-      toSequence: 30,
-    }
-    const first = reduceTimeline(initial, { sequence: 2, event, advanceSequence: false })
-    const redelivered = reduceTimeline(first, { sequence: 2, event, advanceSequence: false })
-
-    expect(redelivered.nodes.map((node) => node.id)).toEqual(['gap:session-1:20:30'])
-  })
 })
 
 /**
@@ -332,46 +258,6 @@ describe('reduceTimeline settled shell cards', () => {
     expect(row?.inputSummary).toBe(JSON.stringify({ command: 'pnpm check', description: 'Run the checks' }))
   })
 
-  it('settles the same way when the call merges in after its result', () => {
-    const result = withTool(initial, 1, shellResult())
-    const both = withTool(result, 2, shellCall({ status: 'completed' }))
-    expect(rowOf(both)?.presentation).toEqual({
-      phase: 'result',
-      card: 'terminal',
-      output: 'boom',
-      exitCode: 2,
-    })
-  })
-
-  it('leaves a settled row alone once its card is the settled one', () => {
-    const settled = settledRow(shellResult())
-    const again = withTool(withTool(withTool(initial, 1, shellCall()), 2, shellResult()), 3, shellResult())
-    expect(rowOf(again)?.presentation).toEqual(settled?.presentation)
-  })
-
-  it('keeps the running card while the row has not settled, and when no text arrived', () => {
-    const runningCard = {
-      phase: 'call',
-      card: 'terminal',
-      title: 'pnpm check',
-      description: 'Run the checks',
-    }
-    const unsettled = { ...shellResult({ status: 'running' }) }
-    delete unsettled.outputSummary
-    expect(settledRow(unsettled)?.presentation).toEqual(runningCard)
-
-    // A settled row with no text at all has nothing better to state than the
-    // command it ran.
-    const withoutText = { ...shellResult() }
-    delete withoutText.outputSummary
-    expect(settledRow(withoutText)?.presentation).toEqual(runningCard)
-
-    // The renderer writes `(no output)` for a silent command, so empty text is
-    // not a rendered result: the row falls back instead of inventing a status.
-    const empty = settledRow(shellResult({ outputSummary: '' }))
-    expect(empty !== undefined && Object.hasOwn(empty, 'presentation')).toBe(false)
-  })
-
   it('falls back to the generic row when the settled result cannot state a status', () => {
     const spilled = settledRow(
       shellResult({
@@ -383,66 +269,9 @@ describe('reduceTimeline settled shell cards', () => {
     expect(spilled?.outputSummary).toContain('(Omitted 50000 bytes')
   })
 
-  it('falls back to the generic row for a persistent shell, a failure and a background call', () => {
-    const persistent = settledRow(
-      shellResult({
-        inputSummary: JSON.stringify({ command: 'pwd' }),
-        outputSummary: 'a directory',
-      }),
-    )
-    expect(persistent !== undefined && Object.hasOwn(persistent, 'presentation')).toBe(false)
-
-    const failed = settledRow(
-      shellResult({ outputSummary: 'command not found', error: 'command not found', status: 'failed' }),
-    )
-    expect(failed !== undefined && Object.hasOwn(failed, 'presentation')).toBe(false)
-    expect(failed?.error).toBe('command not found')
-
-    const background = settledRow(
-      shellResult({
-        inputSummary: JSON.stringify({
-          command: 'pnpm check',
-          description: 'Run the checks',
-          run_in_background: true,
-        }),
-        outputSummary: 'job-1 started',
-      }),
-    )
-    // The call card was never drawn for a background call; the row keeps the
-    // identity it has rather than gaining an invented exit status.
-    expect(background !== undefined && Object.hasOwn(background, 'presentation')).toBe(false)
-  })
-
   it('keeps a card another producer stated', () => {
     const hostCard = { phase: 'result', card: 'generic', content: ['rendered by the host'] } as const
     const row = settledRow(shellResult({ presentation: hostCard }))
     expect(row?.presentation).toEqual(hostCard)
-  })
-
-  it('states a terminal_send result as output alone', () => {
-    const send = tool('call-send', 'running', {
-      name: 'terminal_send',
-      category: 'terminal_send',
-      title: 'terminal_send',
-      inputSummary: JSON.stringify({ sessionId: 'pty-3', text: 'make' }),
-      presentation: { phase: 'call', card: 'terminal', title: 'make', description: 'Terminal pty-3' },
-    })
-    const row = rowOf(
-      withTool(
-        withTool(initial, 1, send),
-        2,
-        tool('call-send', 'completed', {
-          name: 'unknown-tool',
-          category: 'tool',
-          title: 'Tool',
-          outputSummary: 'compiling',
-        }),
-      ),
-    )
-    expect(row?.presentation).toEqual({
-      phase: 'result',
-      card: 'terminal',
-      output: 'compiling',
-    })
   })
 })

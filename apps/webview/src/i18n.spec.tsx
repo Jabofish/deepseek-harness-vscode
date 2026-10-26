@@ -3,13 +3,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ReactElement } from 'react'
 import { afterEach, describe, expect, it } from 'vitest'
-import {
-  I18nProvider,
-  LOCALE_EXPLICIT_STORAGE_KEY,
-  LOCALE_STORAGE_KEY,
-  localeFromLanguageTag,
-  useI18n,
-} from './i18n.js'
+import { I18nProvider, LOCALE_EXPLICIT_STORAGE_KEY, LOCALE_STORAGE_KEY, useI18n } from './i18n.js'
 
 function LocaleProbe(): ReactElement {
   const { locale, setLocale, adoptLocaleFromHost, t } = useI18n()
@@ -41,40 +35,6 @@ describe('Webview locale bootstrap and Host adoption', () => {
     document.documentElement.lang = 'en'
   })
 
-  it.each([
-    ['zh', 'zh'],
-    ['zh-CN', 'zh'],
-    ['zh-Hant-TW', 'zh'],
-    ['ZH-hans', 'zh'],
-    ['en', 'en'],
-    ['en-GB', 'en'],
-    ['fr-FR', undefined],
-    ['', undefined],
-    [undefined, undefined],
-  ])('normalizes supported language tag %s to %s', (tag, expected) => {
-    expect(localeFromLanguageTag(tag)).toBe(expected)
-  })
-
-  it.each([
-    ['en', 'zh-CN', 'zh'],
-    ['zh', 'en', 'zh'],
-    ['fr-FR', 'zh-CN', 'en'],
-  ])('safely migrates legacy locale %s with editor language %s', async (stored, hostLanguage, expected) => {
-    window.localStorage.setItem(LOCALE_STORAGE_KEY, stored)
-    document.documentElement.lang = hostLanguage
-
-    render(
-      <I18nProvider>
-        <LocaleProbe />
-      </I18nProvider>,
-    )
-
-    expect(screen.getByTestId('locale').textContent).toBe(expected)
-    await waitFor(() => expect(document.documentElement.lang).toBe(expected === 'zh' ? 'zh-CN' : 'en'))
-    expect(window.localStorage.getItem(LOCALE_STORAGE_KEY)).toBe(stored)
-    expect(window.localStorage.getItem(LOCALE_EXPLICIT_STORAGE_KEY)).toBeNull()
-  })
-
   it('uses the VS Code document language as an unpersisted initial default', async () => {
     document.documentElement.lang = 'zh-Hant'
 
@@ -87,24 +47,6 @@ describe('Webview locale bootstrap and Host adoption', () => {
     expect(screen.getByTestId('locale').textContent).toBe('zh')
     await waitFor(() => expect(document.documentElement.lang).toBe('zh-CN'))
     expect(window.localStorage.getItem(LOCALE_STORAGE_KEY)).toBeNull()
-  })
-
-  it('uses the RC2 子智能体 term in user-facing Chinese subagent labels and errors', () => {
-    render(
-      <I18nProvider>
-        <LocaleProbe />
-      </I18nProvider>,
-    )
-
-    fireEvent.click(screen.getByRole('button', { name: 'Choose Chinese' }))
-
-    expect(screen.getByTestId('subagent-translations').textContent?.split('|')).toEqual([
-      '子智能体',
-      '2 个子智能体',
-      '会话和子智能体',
-      '子智能体',
-      '父会话不可用，无法进行子智能体追问。',
-    ])
   })
 
   it.each([

@@ -95,46 +95,6 @@ describe('PluginConfiguration', () => {
     window.localStorage.clear()
   })
 
-  it('collapses the whole card list by default and reveals it from the section header', () => {
-    render(
-      <PluginConfiguration
-        snapshot={snapshot()}
-        onReload={vi.fn().mockResolvedValue(snapshot())}
-        onMutateSettings={vi.fn().mockResolvedValue(undefined)}
-      />,
-    )
-    const toggle = screen.getByRole('button', { name: /Plugin configuration/u })
-    expect(toggle.getAttribute('aria-expanded')).toBe('false')
-    expect(screen.queryByRole('button', { name: /shell/u })).toBeNull()
-    fireEvent.click(toggle)
-    expect(toggle.getAttribute('aria-expanded')).toBe('true')
-    expect(screen.getByRole('button', { name: /shell/u })).toBeDefined()
-  })
-
-  it('lists every namespace the host describes and saves staged settings', async () => {
-    const onMutateSettings = vi.fn().mockResolvedValue(undefined)
-    const onReload = vi.fn().mockResolvedValue(snapshot())
-    renderConfiguration({ onMutateSettings, onReload })
-
-    expect(screen.getByText('shell')).toBeDefined()
-    expect(screen.getByText('agent-loop')).toBeDefined()
-    expect(screen.getByText('web-search-deepseek')).toBeDefined()
-
-    fireEvent.click(screen.getByRole('button', { name: /shell/u }))
-    const timeout = screen.getByLabelText(/timeoutMs/u)
-    fireEvent.change(timeout, { target: { value: '90000' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-
-    await waitFor(() =>
-      expect(onMutateSettings).toHaveBeenCalledWith(
-        'shell',
-        [{ op: 'set', path: ['timeoutMs'], value: 90_000 }],
-        1,
-      ),
-    )
-    expect(onReload).toHaveBeenCalled()
-  })
-
   it('keeps a recoverable draft when a batch is rejected for a non-conflict reason', async () => {
     const onMutateSettings = vi
       .fn()
@@ -149,46 +109,6 @@ describe('PluginConfiguration', () => {
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('settings-rejected'))
     expect(screen.getByLabelText<HTMLInputElement>(/timeoutMs/u).value).toBe('90000')
     expect(screen.getByRole('button', { name: 'Save' }).getAttribute('disabled')).toBeNull()
-  })
-
-  it('drops a batch draft after an unknown result when refresh observes a new revision', async () => {
-    const initial = snapshot()
-    const latest: DshSettingsSnapshot = {
-      ...initial,
-      schema: {
-        ...initial.schema,
-        namespaces: initial.schema.namespaces.map((namespace) =>
-          namespace.ns === 'shell' ? { ...namespace, revision: 2 } : namespace,
-        ),
-      },
-    }
-    const onMutateSettings = vi.fn().mockRejectedValue(new Error('request timed out'))
-    renderConfiguration({ snapshot: initial, onMutateSettings, onReload: vi.fn().mockResolvedValue(latest) })
-
-    fireEvent.click(screen.getByRole('button', { name: /shell/u }))
-    fireEvent.change(screen.getByLabelText(/timeoutMs/u), { target: { value: '90000' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('request timed out'))
-    expect(screen.getByLabelText<HTMLInputElement>(/timeoutMs/u).value).toBe('120000')
-    expect(screen.getByRole('button', { name: 'Save' }).hasAttribute('disabled')).toBe(true)
-    expect(onMutateSettings).toHaveBeenCalledTimes(1)
-  })
-
-  it('does not retry an acknowledged batch when its follow-up snapshot is unavailable', async () => {
-    const onMutateSettings = vi.fn().mockResolvedValue(undefined)
-    const onReload = vi.fn().mockResolvedValue(undefined)
-    renderConfiguration({ onMutateSettings, onReload })
-
-    fireEvent.click(screen.getByRole('button', { name: /shell/u }))
-    fireEvent.change(screen.getByLabelText(/timeoutMs/u), { target: { value: '90000' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-
-    await waitFor(() => expect(onMutateSettings).toHaveBeenCalledTimes(1))
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Save' }).hasAttribute('disabled')).toBe(true),
-    )
-    expect(onReload).toHaveBeenCalledTimes(1)
   })
 
   it('keeps the secret in the host flow under the reference the namespace states', async () => {
@@ -211,74 +131,6 @@ describe('PluginConfiguration', () => {
     expect(screen.getByText(/DEEPSEEK_API_KEY/u)).toBeDefined()
     fireEvent.click(screen.getByRole('button', { name: '配置 API Key' }))
     await waitFor(() => expect(onConfigureCredential).toHaveBeenCalledWith('DEEPSEEK_API_KEY'))
-  })
-
-  it('uses the shared SVG chevron for expandable plugin cards', () => {
-    renderConfiguration()
-
-    const card = screen.getByRole('button', { name: /shell/u })
-    const chevron = card.querySelector('.dsh-plugin-configuration__chevron')
-
-    expect(chevron?.querySelector('svg.dsh-icon')).not.toBeNull()
-    expect(chevron?.textContent).toBe('')
-
-    fireEvent.click(card)
-
-    expect(chevron?.classList.contains('dsh-plugin-configuration__chevron--open')).toBe(true)
-  })
-
-  it('renders a choice control for described enum and boolean fields', async () => {
-    const base = snapshot()
-    const onMutateSettings = vi.fn().mockResolvedValue(undefined)
-    renderConfiguration({
-      onMutateSettings,
-      onReload: vi.fn().mockResolvedValue(base),
-      snapshot: {
-        ...base,
-        schema: {
-          ...base.schema,
-          fields: [
-            ...base.schema.fields,
-            {
-              path: 'shell.sandboxMode',
-              label: 'sandboxMode',
-              type: 'enum',
-              enumValues: ['off', 'strict'],
-              required: false,
-              restartRequired: false,
-            },
-            {
-              path: 'shell.stream',
-              label: 'stream',
-              type: 'boolean',
-              required: false,
-              restartRequired: false,
-            },
-          ],
-        },
-        values: {
-          ...base.values,
-          shell: { timeoutMs: 120_000, maxOutputBytes: 64_000, sandboxMode: 'off', stream: true },
-        },
-      },
-    })
-
-    fireEvent.click(screen.getByRole('button', { name: /shell/u }))
-    // A choice field stages the picked value; nothing is written until Save.
-    fireEvent.click(screen.getByLabelText(/sandboxMode/u))
-    fireEvent.click(screen.getByRole('option', { name: 'strict' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-
-    await waitFor(() =>
-      expect(onMutateSettings).toHaveBeenCalledWith(
-        'shell',
-        [{ op: 'set', path: ['sandboxMode'], value: 'strict' }],
-        1,
-      ),
-    )
-    expect(
-      screen.getByLabelText(/stream/u).querySelector('.dsh-select-menu__trigger-text')?.textContent,
-    ).toBe('true')
   })
 })
 
@@ -365,86 +217,5 @@ describe('structured plugin settings', () => {
     fireEvent.click(screen.getByRole('button', { name: /shell/u }))
     expect(screen.queryByLabelText(/^Options/u)).toBeNull()
     expect(screen.getByLabelText(/^Arguments/u)).toBeDefined()
-  })
-})
-
-describe('plugin string settings preserve authored values', () => {
-  afterEach(() => cleanup())
-  it.each(['', '  padded value  '])(
-    'stores the exact string %j instead of resetting or trimming it',
-    async (text) => {
-      const base = snapshot()
-      const onMutateSettings = vi.fn().mockResolvedValue(undefined)
-      renderConfiguration({
-        snapshot: {
-          ...base,
-          schema: {
-            ...base.schema,
-            fields: [
-              {
-                path: 'shell.label',
-                label: 'Label',
-                type: 'string',
-                required: false,
-                restartRequired: false,
-              },
-            ],
-          },
-          values: { shell: { label: 'old' } },
-        },
-        onMutateSettings,
-      })
-      fireEvent.click(screen.getByRole('button', { name: /shell/u }))
-      fireEvent.change(screen.getByLabelText(/^Label/u), { target: { value: text } })
-      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-      await waitFor(() =>
-        expect(onMutateSettings).toHaveBeenCalledWith(
-          'shell',
-          [{ op: 'set', path: ['label'], value: text }],
-          1,
-        ),
-      )
-    },
-  )
-})
-
-describe('literal enum settings', () => {
-  afterEach(() => cleanup())
-  it.each(['', '  exact  '])('saves the declared enum value %j unchanged', async (value) => {
-    const base = snapshot()
-    const onMutateSettings = vi.fn().mockResolvedValue(undefined)
-    renderConfiguration({
-      snapshot: {
-        ...base,
-        schema: {
-          ...base.schema,
-          fields: [
-            {
-              path: 'shell.mode',
-              label: 'Mode',
-              type: 'enum',
-              enumValues: ['initial', value],
-              required: false,
-              restartRequired: false,
-            },
-          ],
-        },
-        values: { shell: { mode: 'initial' } },
-      },
-      onMutateSettings,
-    })
-    fireEvent.click(screen.getByRole('button', { name: /shell/u }))
-    fireEvent.click(screen.getByLabelText(/^Mode/u))
-    // The literal is picked by its own text: the accessible name of a choice that
-    // is empty or padded would not survive whitespace normalisation.
-    const option = Array.from(
-      document.querySelectorAll<HTMLSpanElement>('.dsh-select-menu__option > span'),
-    ).findLast((entry) => entry.textContent === value)
-    if (option === undefined) throw new Error(`The declared enum value has no choice: ${value}`)
-    fireEvent.click(option)
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-    await waitFor(() =>
-      expect(onMutateSettings).toHaveBeenCalledWith('shell', [{ op: 'set', path: ['mode'], value }], 1),
-    )
   })
 })

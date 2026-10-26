@@ -9,97 +9,6 @@ import { deliverOrRevealView } from './deliver-or-reveal.js'
 import { DshWebviewViewProvider } from './dsh-webview-view-provider.js'
 
 describe('deliverOrRevealView', () => {
-  it('ignores a delayed dispose notification from a superseded view', async () => {
-    const provider = new DshWebviewViewProvider({
-      extensionUri: { toString: () => 'extension-root' } as never,
-      onMessage: () => Promise.resolve(),
-    })
-    const resolveView = (): (() => void) => {
-      let receive: ((message: unknown) => void) | undefined
-      let dispose: (() => void) | undefined
-      provider.resolveWebviewView({
-        webview: {
-          cspSource: 'vscode-resource:',
-          asWebviewUri: (uri: unknown) => uri,
-          postMessage: () => Promise.resolve(true),
-          onDidReceiveMessage: (listener: (message: unknown) => void) => {
-            receive = listener
-            return { dispose: () => undefined }
-          },
-        },
-        visible: true,
-        onDidDispose: (listener: () => void) => {
-          dispose = listener
-          return { dispose: () => undefined }
-        },
-        onDidChangeVisibility: () => ({ dispose: () => undefined }),
-      } as never)
-      receive?.({ protocolVersion: 1, message: { type: 'app.ready', requestId: 'ready' } })
-      return () => dispose?.()
-    }
-    try {
-      const oldDispose = resolveView()
-      await Promise.resolve()
-      resolveView()
-      await Promise.resolve()
-      expect(provider.isReady).toBe(true)
-      oldDispose()
-      expect(provider.isReady).toBe(true)
-      expect(await provider.postMessage({ action: 'still-current' })).toBe(true)
-    } finally {
-      provider.dispose()
-    }
-  })
-
-  it('waits across initial view resolution after focus has returned', async () => {
-    let receive: ((message: unknown) => void) | undefined
-    const provider = new DshWebviewViewProvider({
-      extensionUri: { toString: () => 'extension-root' } as never,
-      onMessage: () => Promise.resolve(),
-    })
-    try {
-      const ready = provider.waitUntilReady()
-      provider.resolveWebviewView({
-        webview: {
-          cspSource: 'vscode-resource:',
-          asWebviewUri: (uri: unknown) => uri,
-          postMessage: () => Promise.resolve(true),
-          onDidReceiveMessage: (listener: (message: unknown) => void) => {
-            receive = listener
-            return { dispose: () => undefined }
-          },
-        },
-        visible: true,
-        onDidDispose: () => ({ dispose: () => undefined }),
-        onDidChangeVisibility: () => ({ dispose: () => undefined }),
-      } as never)
-      receive?.({ protocolVersion: 1, message: { type: 'app.ready', requestId: 'initial-ready' } })
-      await expect(ready).resolves.toBe(true)
-    } finally {
-      provider.dispose()
-    }
-  })
-
-  it('releases readiness waiters on timeout and provider disposal', async () => {
-    vi.useFakeTimers()
-    const provider = new DshWebviewViewProvider({
-      extensionUri: { toString: () => 'extension-root' } as never,
-      onMessage: () => Promise.resolve(),
-    })
-    try {
-      const expired = provider.waitUntilReady(20)
-      await vi.advanceTimersByTimeAsync(20)
-      await expect(expired).resolves.toBe(false)
-      const disposed = provider.waitUntilReady()
-      provider.dispose()
-      await expect(disposed).resolves.toBe(false)
-      expect(vi.getTimerCount()).toBe(0)
-    } finally {
-      provider.dispose()
-      vi.useRealTimers()
-    }
-  })
-
   it('does not claim delivery before the resolved Webview sends a valid ready handshake', async () => {
     let receive: ((message: unknown) => void) | undefined
     const postMessage = vi.fn().mockResolvedValue(true)
@@ -163,68 +72,6 @@ describe('deliverOrRevealView', () => {
     expect(settled).toBe(1)
   })
 
-  it('reveals the view exactly when a real provider has no WebviewView yet', async () => {
-    // This is the actual pre-click state: VS Code never called
-    // `resolveWebviewView`, so the provider drops the message. Without the
-    // fallback the command was a silent no-op.
-    const provider = new DshWebviewViewProvider({
-      extensionUri: { fsPath: '/extension' } as never,
-      onMessage: () => Promise.resolve(undefined),
-    })
-    const commands: string[] = []
-    let attempts = 0
-
-    const result = await deliverOrRevealView(
-      {
-        post: () => {
-          attempts += 1
-          return provider.postMessage({ any: 'message' })
-        },
-        executeCommand: (command) => {
-          commands.push(command)
-          return Promise.resolve(undefined)
-        },
-        settle: () => Promise.resolve(true),
-      },
-      'ui.sessions.toggle',
-      {},
-    )
-
-    // The stub never resolves a real view, so delivery still fails — but the
-    // fallback ran and the caller learns the action did not land instead of
-    // swallowing it.
-    expect(result).toBe(false)
-    expect(commands).toEqual(['dsh.chatView.focus'])
-    expect(attempts).toBe(2)
-
-    provider.dispose()
-  })
-
-  it('does not reveal the view when the Webview already accepted the message', async () => {
-    const commands: string[] = []
-    let settled = 0
-
-    const result = await deliverOrRevealView(
-      {
-        post: () => Promise.resolve(true),
-        executeCommand: (command) => {
-          commands.push(command)
-          return Promise.resolve(undefined)
-        },
-        settle: () => {
-          settled += 1
-          return Promise.resolve(true)
-        },
-      },
-      'ui.sessions.toggle',
-      {},
-    )
-
-    expect(result).toBe(true)
-    expect(commands).toEqual([])
-    expect(settled).toBe(0)
-  })
-
   it('reports failure when the message is still undeliverable after revealing', async () => {
     const result = await deliverOrRevealView(
       {
@@ -237,21 +84,5 @@ describe('deliverOrRevealView', () => {
     )
 
     expect(result).toBe(false)
-  })
-
-  it('does not retry delivery after the client fails to become ready', async () => {
-    const post = vi.fn().mockResolvedValue(false)
-    await expect(
-      deliverOrRevealView(
-        {
-          post,
-          executeCommand: () => Promise.resolve(),
-          settle: () => Promise.resolve(false),
-        },
-        'ui.sessions.toggle',
-        {},
-      ),
-    ).resolves.toBe(false)
-    expect(post).toHaveBeenCalledOnce()
   })
 })

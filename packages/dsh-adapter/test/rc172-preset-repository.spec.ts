@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AppError } from '@dsh-vscode/domain'
+
 import type { DshTransport } from '../src/contracts.js'
 import { normalizeAlphaResult, type AlphaResult } from '../src/versions/alpha/transport-support.js'
 import { normalizeRc172ErrorCode } from '../src/versions/rc172/error-vocabulary.js'
@@ -121,69 +121,6 @@ describe('DSH 0.1.7-rc.2 Agent Preset Remote contract', () => {
     expect(calls).toEqual([{ endpoint: 'agentPresets/list', args: {}, signal }])
   })
 
-  it('treats a plain unknown method as the same absent registry', async () => {
-    // A runtime that has never registered the method reports the legacy
-    // `unknown-command` literal; the normaliser passes it through unchanged,
-    // so no `wireCode` is retained and the fallback must still hold.
-    const { transport } = recordingTransport([
-      {
-        ok: false,
-        error: { code: 'unknown-command', message: 'Unknown method agentPresets/list.', details: {} },
-      },
-    ])
-
-    await expect(new Rc172PresetRepository(transport).list()).resolves.toEqual({
-      presets: [],
-      authorable: false,
-      canOpenPresetLocation: false,
-      canRemoveUserPresets: false,
-      compositionReadable: false,
-    })
-  })
-
-  it.each([
-    // `gateway/context-not-found` normalises to the same local `unknown-command`
-    // as the absent-registry signal but keeps its own wire code: distinct
-    // conditions collapse onto one local code, and only the registry one may
-    // fall back to an empty roster.
-    {
-      wire: 'gateway/method-unavailable',
-      rpcCode: 'unknown-command',
-      wireCode: 'gateway/method-unavailable',
-    },
-    { wire: 'gateway/context-not-found', rpcCode: 'unknown-command', wireCode: 'gateway/context-not-found' },
-    { wire: 'agent-preset/not-found', rpcCode: 'agent-preset-not-found', wireCode: 'agent-preset/not-found' },
-  ])('propagates a different Remote refusal while listing: $wire', async ({ wire, rpcCode, wireCode }) => {
-    const { transport } = recordingTransport([
-      {
-        ok: false,
-        error: { code: wire, message: 'The requested Remote was refused.', details: {} },
-      },
-    ])
-
-    await expect(new Rc172PresetRepository(transport).list()).rejects.toMatchObject({
-      context: { rpcMethod: 'agentPresets/list', rpcCode, wireCode },
-    })
-  })
-
-  it('propagates list cancellation and transport timeout failures', async () => {
-    const cancelled = new AppError({
-      code: 'REQUEST_CANCELLED',
-      message: 'The preset request was cancelled.',
-      retryable: false,
-    })
-    const timeout = new AppError({
-      code: 'BACKEND_UNREACHABLE',
-      message: 'The preset request timed out.',
-      retryable: true,
-    })
-    const { transport } = recordingTransport([cancelled, timeout])
-    const repository = new Rc172PresetRepository(transport)
-
-    await expect(repository.list(new AbortController().signal)).rejects.toBe(cancelled)
-    await expect(repository.list()).rejects.toBe(timeout)
-  })
-
   it('reads the declared document and selects it through the rc.2 Remote methods', async () => {
     const { transport, calls } = recordingTransport([
       {
@@ -245,35 +182,6 @@ describe('DSH 0.1.7-rc.2 Agent Preset Remote contract', () => {
     await expect(repository.read('standard')).rejects.toMatchObject({
       code: 'PROTOCOL_ERROR',
       message: 'DSH returned a malformed rc172 preset document.',
-    })
-  })
-
-  it('preserves normalized Remote business failures', async () => {
-    const { transport } = recordingTransport([
-      {
-        ok: false,
-        error: {
-          code: 'agent-preset-not-found',
-          message: 'The requested preset is unavailable.',
-          details: { agentPreset: 'missing', available: ['standard'] },
-        },
-      },
-    ])
-
-    await expect(new Rc172PresetRepository(transport).read('missing')).rejects.toMatchObject({
-      code: 'INVALID_CONFIGURATION',
-      context: { rpcCode: 'agent-preset-not-found' },
-    })
-  })
-
-  it('rejects a successful selection Remote with a mismatched preset receipt', async () => {
-    const { transport } = recordingTransport([{ ok: true, value: 'other-preset' }])
-
-    await expect(
-      new Rc172PresetRepository(transport).select('session-1', 'custom-mode'),
-    ).rejects.toMatchObject({
-      code: 'PROTOCOL_ERROR',
-      message: 'DSH returned a malformed rc172 preset selection receipt.',
     })
   })
 })

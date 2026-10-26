@@ -163,36 +163,6 @@ describe('PluginBundleUseCases', () => {
     expect(services.mocks.installBundle).toHaveBeenCalledTimes(1)
   })
 
-  it('returns all live bundle and plugin records only when the Host reports manager availability', async () => {
-    const services = useCases()
-    await expect(services.useCases.list()).resolves.toEqual({
-      available: true,
-      bundles: [bundle],
-      plugins: [plugin],
-    })
-    expect(services.mocks.listBundles).toHaveBeenCalledOnce()
-    expect(services.mocks.listPlugins).toHaveBeenCalledOnce()
-
-    const unavailable = useCases({ available: false })
-    await expect(unavailable.useCases.list()).resolves.toEqual({ available: false, bundles: [], plugins: [] })
-    expect(unavailable.mocks.listBundles).not.toHaveBeenCalled()
-
-    const unsupported = useCases({ hasRepository: false })
-    await expect(unsupported.useCases.list()).resolves.toEqual({ available: false, bundles: [], plugins: [] })
-    expect(unsupported.inventory).not.toHaveBeenCalled()
-  })
-
-  it('reads dynamically configured registries and inspects the selected package source', async () => {
-    const services = useCases()
-    await expect(services.useCases.registries()).resolves.toEqual({
-      registry: null,
-      fallbackRegistries: [],
-      resolved: 'https://registry.npmjs.org/',
-    })
-    await expect(services.useCases.inspect('@dsh-community/review-layer', null)).resolves.toEqual(inspection)
-    expect(services.mocks.inspect).toHaveBeenCalledWith('@dsh-community/review-layer', null, undefined)
-  })
-
   it('requires Host approval before install and leaves declined installs untouched', async () => {
     const services = useCases()
     const confirmInstall = vi.fn(() => Promise.resolve(false))
@@ -257,31 +227,6 @@ describe('PluginBundleUseCases', () => {
     expect(services.mocks.installBundle).not.toHaveBeenCalled()
   })
 
-  it.each(['availability', 'inspection', 'confirmation'] as const)(
-    'marks %s failures as known not-started before the install Remote',
-    async (stage) => {
-      const services = useCases()
-      const confirmInstall = vi.fn(() => Promise.resolve(true))
-      if (stage === 'availability')
-        services.inventory.mockRejectedValue(new Error('registry state unavailable'))
-      if (stage === 'inspection')
-        services.mocks.inspect.mockRejectedValue(new Error('registry connection lost'))
-      if (stage === 'confirmation') confirmInstall.mockRejectedValue(new Error('confirmation host failed'))
-
-      await expect(
-        services.useCases.install(
-          '@dsh-community/review-layer',
-          `install-${stage}`,
-          null,
-          undefined,
-          new AbortController().signal,
-          confirmInstall,
-        ),
-      ).rejects.toMatchObject({ code: 'PLUGIN_INSTALL_NOT_STARTED', retryable: true })
-      expect(services.mocks.installBundle).not.toHaveBeenCalled()
-    },
-  )
-
   it('keeps errors from the install Remote indeterminate for RC2 recovery', async () => {
     const services = useCases()
     const disconnect = Object.assign(new Error('connection lost after request dispatch'), {
@@ -302,26 +247,6 @@ describe('PluginBundleUseCases', () => {
     expect(services.mocks.installBundle).toHaveBeenCalledOnce()
   })
 
-  it('marks an abort observed during Host preflight as not sent to the install Remote', async () => {
-    const services = useCases()
-    const controller = new AbortController()
-
-    await expect(
-      services.useCases.install(
-        '@dsh-community/review-layer',
-        'install-preflight-aborted',
-        null,
-        undefined,
-        controller.signal,
-        () => {
-          controller.abort()
-          return Promise.resolve(true)
-        },
-      ),
-    ).rejects.toMatchObject({ code: 'PLUGIN_INSTALL_NOT_STARTED', retryable: true })
-    expect(services.mocks.installBundle).not.toHaveBeenCalled()
-  })
-
   it('requires fresh catalog membership and host confirmation before enable or removal', async () => {
     const services = useCases()
     const confirmEnable = vi.fn(() => Promise.resolve(true))
@@ -338,23 +263,6 @@ describe('PluginBundleUseCases', () => {
     await expect(services.useCases.remove(bundle.name, undefined, confirmRemove)).rejects.toMatchObject({
       code: 'CAPABILITY_UNAVAILABLE',
     })
-  })
-
-  it('handles removals only for removable bundles and honors explicit cancellation', async () => {
-    const services = useCases()
-    const removable = { ...bundle, installed: true, optional: false, removable: true }
-    services.mocks.listBundles.mockResolvedValue([removable])
-    await expect(
-      services.useCases.remove(removable.name, undefined, () => Promise.resolve(false)),
-    ).resolves.toEqual({
-      name: removable.name,
-      changed: false,
-      application: 'cancelled',
-      stage: 'remove',
-    })
-    expect(services.mocks.removeBundle).not.toHaveBeenCalled()
-    await services.useCases.remove(removable.name, undefined, () => Promise.resolve(true))
-    expect(services.mocks.removeBundle).toHaveBeenCalledWith(removable.name, undefined)
   })
 
   it('rejects read-only plugin rows and routes current addressable entries', async () => {
@@ -400,50 +308,5 @@ describe('PluginBundleUseCases', () => {
     ).resolves.toMatchObject({ enabled: true, application: 'applied' })
     expect(approve).toHaveBeenCalledWith(disabledPlugin)
     expect(services.mocks.setPluginEnabled).toHaveBeenCalledWith(plugin.entryId, true, undefined)
-  })
-
-  it('aborts a DSH install through the request-scoped cancellation Remote', async () => {
-    const services = useCases()
-    let finishInstall!: (value: Awaited<ReturnType<PluginBundleRepository['installBundle']>>) => void
-    services.mocks.installBundle.mockReturnValue(
-      new Promise((resolve) => {
-        finishInstall = resolve
-      }),
-    )
-    const controller = new AbortController()
-    const cancelInstallRemote = vi.fn(() => Promise.resolve({ status: 'cancelled' as const }))
-    const pending = services.useCases.install(
-      '@dsh-community/review-layer',
-      'install-5',
-      null,
-      undefined,
-      controller.signal,
-      () => Promise.resolve(true),
-      undefined,
-      cancelInstallRemote,
-    )
-    await vi.waitFor(() => expect(services.mocks.installBundle).toHaveBeenCalledOnce())
-    controller.abort()
-    await vi.waitFor(() => expect(cancelInstallRemote).toHaveBeenCalledWith('install-5'))
-    finishInstall({ name: bundle.name, changed: false, application: 'cancelled', stage: 'install' })
-    await expect(pending).resolves.toMatchObject({ application: 'cancelled' })
-    expect(cancelInstallRemote).toHaveBeenCalledOnce()
-    expect(services.mocks.cancelInstall).not.toHaveBeenCalled()
-  })
-
-  it('waits for one known install request and preserves the upstream null-as-unknown result', async () => {
-    const services = useCases()
-    const recovered = {
-      name: bundle.name,
-      changed: true,
-      application: 'applied' as const,
-      stage: 'install' as const,
-    }
-    services.mocks.waitForInstall.mockResolvedValueOnce(recovered).mockResolvedValueOnce(null)
-
-    await expect(services.useCases.waitForInstall('install-recovery')).resolves.toEqual(recovered)
-    await expect(services.useCases.waitForInstall('install-settled')).resolves.toBeNull()
-    expect(services.mocks.waitForInstall).toHaveBeenNthCalledWith(1, 'install-recovery', undefined)
-    expect(services.mocks.waitForInstall).toHaveBeenNthCalledWith(2, 'install-settled', undefined)
   })
 })

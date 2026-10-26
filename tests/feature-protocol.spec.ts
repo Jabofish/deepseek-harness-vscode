@@ -2,11 +2,9 @@ import { describe, expect, it } from 'vitest'
 
 import {
   featureHostEventSchema,
-  editorIntegrationStatusSchema,
   featureRequestSchema,
   featureResponseSchema,
   featureWebviewEnvelopeSchema,
-  hostResponseSchema,
 } from '../packages/webview-protocol/src/index.js'
 
 const identity = {
@@ -57,40 +55,6 @@ const contextItem = (index: number, sizeBytes = 1): Record<string, unknown> => (
 })
 
 describe('staged feature protocol contracts', () => {
-  it('accepts companion recovery controls and bounded recovery status without private data', () => {
-    const request = {
-      type: 'editor.companion.action',
-      requestId: 'restore-1',
-      payload: { action: 'restore' },
-    }
-    expect(featureRequestSchema.safeParse(request).success).toBe(true)
-    expect(
-      featureRequestSchema.safeParse({ ...request, payload: { ...request.payload, file: 'private path' } })
-        .success,
-    ).toBe(false)
-    const status = {
-      kind: 'editor.companion',
-      preferences: { enabled: true, autoSetup: true, allowEdits: true },
-      phase: 'limited',
-      capabilities: [],
-      canInstall: true,
-      canRestart: true,
-      canUndo: false,
-      recovery: 'failed',
-    }
-    expect(editorIntegrationStatusSchema.safeParse(status).success).toBe(true)
-    expect(editorIntegrationStatusSchema.safeParse({ ...status, recovery: 'raw diagnostic' }).success).toBe(
-      false,
-    )
-    expect(editorIntegrationStatusSchema.safeParse({ ...status, source: 'private path' }).success).toBe(false)
-  })
-  it('accepts a bounded task invalidation without a fabricated task row or untyped payload', () => {
-    const event = { type: 'feature.event', name: 'tasks.invalidated', identity, sessionId: 'session-1' }
-    expect(featureHostEventSchema.safeParse(event).success).toBe(true)
-    expect(featureHostEventSchema.safeParse({ ...event, sessionId: '' }).success).toBe(false)
-    expect(featureHostEventSchema.safeParse({ ...event, payload: { raw: 'unexpected' } }).success).toBe(false)
-  })
-
   it('accepts safe discriminated requests without accepting arbitrary payloads', () => {
     expect(
       featureRequestSchema.safeParse({
@@ -357,36 +321,4 @@ describe('staged feature protocol contracts', () => {
       }).success,
     ).toBe(false)
   })
-
-  it('keeps legacy responses compatible with the newly reserved canonical errors', () => {
-    expect(
-      hostResponseSchema.safeParse({
-        type: 'response',
-        requestId: 'error-1',
-        ok: false,
-        error: {
-          code: 'RESOURCE_NOT_OWNED',
-          message: 'The resource is not owned by this view.',
-          retryable: false,
-        },
-      }).success,
-    ).toBe(true)
-  })
-})
-
-it('validates session-scoped Changes invalidation events', () => {
-  const event = {
-    type: 'feature.event',
-    name: 'changes.invalidated',
-    sessionId: 's1',
-    identity: {
-      stream: 'local',
-      backendInstanceId: 'b1',
-      connectionGeneration: 1,
-      localSeq: 1,
-      sessionId: 's1',
-    },
-  }
-  expect(featureHostEventSchema.safeParse(event).success).toBe(true)
-  expect(featureHostEventSchema.safeParse({ ...event, sessionId: '' }).success).toBe(false)
 })

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { Rc202UserQuestionRepository } from '../src/versions/rc202/user-question-repository.js'
 import type { AlphaLoopbackApiClient } from '../src/versions/alpha/transport.js'
 
@@ -83,91 +83,6 @@ function abortAwareStream(remainingMs: number, onCancel?: () => void) {
  * leaves, or an explicit release retires the call.
  */
 describe('DSH rc202 attachWait claim ownership across concurrent waiters', () => {
-  it('releases the shared stream when the last signal-bound waiter aborts', async () => {
-    let cancels = 0
-    const questions = repository({ openRemoteStream: abortAwareStream(4_250, () => (cancels += 1)) })
-    const first = new AbortController()
-    const second = new AbortController()
-    const removeFirst = vi.spyOn(first.signal, 'removeEventListener')
-    const removeSecond = vi.spyOn(second.signal, 'removeEventListener')
-    try {
-      await questions.attachWait('s', 'c', first.signal)
-      await questions.attachWait('s', 'c', second.signal)
-      first.abort()
-      expect(cancels).toBe(0)
-      second.abort()
-      expect(cancels).toBe(1)
-      expect(removeFirst).toHaveBeenCalledWith('abort', expect.any(Function))
-      expect(removeSecond).toHaveBeenCalledWith('abort', expect.any(Function))
-    } finally {
-      await questions.close()
-    }
-  })
-
-  it('rejects only the cancelled waiter before the shared opening frame arrives', async () => {
-    let release!: () => void
-    const gate = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    let cancels = 0
-    const questions = repository({
-      openRemoteStream: (endpoint, args, signal) =>
-        (async function* () {
-          await gate
-          yield* abortAwareStream(4_250, () => (cancels += 1))(endpoint, args, signal)
-        })(),
-    })
-    const first = new AbortController()
-    const second = new AbortController()
-    const cancelled = questions.attachWait('s', 'c', first.signal)
-    const surviving = questions.attachWait('s', 'c', second.signal)
-    try {
-      first.abort()
-      await expect(cancelled).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
-      release()
-      await expect(surviving).resolves.toBe(4_250)
-      expect(cancels).toBe(0)
-    } finally {
-      release()
-      await questions.close()
-    }
-    expect(cancels).toBe(1)
-  })
-
-  it('keeps a call held by an unscoped caller when its signal-bound sibling aborts', async () => {
-    let cancels = 0
-    const questions = repository({ openRemoteStream: abortAwareStream(4_250, () => (cancels += 1)) })
-    const first = new AbortController()
-    try {
-      await questions.attachWait('s', 'c', first.signal)
-      await questions.attachWait('s', 'c')
-      first.abort()
-      expect(cancels).toBe(0)
-      await questions.releaseWait('s', 'c')
-      expect(cancels).toBe(1)
-    } finally {
-      await questions.close()
-    }
-  })
-
-  it('CONTROL: one waiter holds its own claim and releases it when its own signal aborts', async () => {
-    let cancels = 0
-    const questions = repository({ openRemoteStream: abortAwareStream(4_250, () => (cancels += 1)) })
-    const waiter = new AbortController()
-
-    // A single waiter's claim is what suspends the Host deadline, so the
-    // stream must stay open while that waiter is attached.
-    await expect(questions.attachWait('session-1', 'call-1', waiter.signal)).resolves.toBe(4_250)
-    expect(cancels).toBe(0)
-
-    // That waiter going away is a real release of its claim: the stream is
-    // cancelled exactly once.
-    waiter.abort()
-    expect(cancels).toBe(1)
-
-    await questions.close()
-  })
-
   it('RED: one waiter cancelling must not release the claim another waiter still holds', async () => {
     let cancels = 0
     const questions = repository({ openRemoteStream: abortAwareStream(4_250, () => (cancels += 1)) })

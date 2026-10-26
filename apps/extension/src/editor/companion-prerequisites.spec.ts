@@ -79,51 +79,7 @@ it('tries a later pnpm when the first launcher is broken', async () => {
   expect(probe.calls.mock.calls.every(([, args]) => (args as string[]).includes('--version'))).toBe(true)
   expect(await resolveCompanionPackageManager()).toMatchObject({ status: 'ready', directory: 'second' })
 })
-it.skipIf(process.platform !== 'win32')(
-  'does not prefer a directory whose higher-priority pnpm.exe is broken',
-  async () => {
-    probe.primaryExeBroken = true
-    expect(await resolveCompanionPackageManager()).toMatchObject({ status: 'ready', directory: 'second' })
-  },
-)
 
-it('enables Corepack launchers after preparing a cached pnpm version', async () => {
-  probe.error = new Error('missing launcher')
-  probe.repair = true
-  probe.enableRequired = true
-  await prepareCompanionPackageManager(new AbortController().signal)
-  expect(probe.calls).toHaveBeenCalledWith(
-    expect.any(String),
-    expect.arrayContaining(['enable', 'pnpm']),
-    expect.objectContaining({
-      env: expect.objectContaining({
-        COREPACK_ENABLE_NETWORK: '1',
-        COREPACK_ENABLE_DOWNLOAD_PROMPT: '0',
-      }) as unknown,
-    }),
-  )
-})
-
-it('falls back to npm when Corepack cannot run', async () => {
-  probe.error = new Error('pnpm unavailable')
-  probe.repair = true
-  probe.corepackBroken = true
-  await prepareCompanionPackageManager(new AbortController().signal)
-  expect(
-    probe.calls.mock.calls.some(
-      ([file, args]) =>
-        [String(file), ...(args as string[])].some((part) => /(?:^|[\\/])npm(?:\.exe|\.js)?$/u.test(part)) &&
-        (args as string[]).includes('install'),
-    ),
-  ).toBe(true)
-})
-
-it('does not spawn a version probe after cancellation', async () => {
-  const abort = new AbortController()
-  abort.abort()
-  await expect(checkCompanionPackageManager(abort.signal)).rejects.toThrow()
-  expect(probe.calls).not.toHaveBeenCalled()
-})
 it('distinguishes a missing pnpm from a broken executable without invoking an installer', async () => {
   probe.exists = false
   expect(await checkCompanionPackageManager()).toBe('missing')

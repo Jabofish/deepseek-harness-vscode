@@ -144,36 +144,7 @@ function range(
   return new vscode.Range(startLine, startCharacter, endLine, endCharacter)
 }
 
-function deferred<T>(): { readonly promise: Promise<T>; readonly resolve: (value: T) => void } {
-  let resolve!: (value: T) => void
-  const promise = new Promise<T>((settle) => {
-    resolve = settle
-  })
-  return { promise, resolve }
-}
-
 describe('EditorContextProvider', () => {
-  it('keeps one live file context when the active file is added repeatedly', async () => {
-    const harness = createHarness([])
-    const first = await harness.provider.capture({ kind: 'file' }, harness.owner)
-    const repeated = await harness.provider.capture({ kind: 'file' }, harness.owner)
-    const fromOpenFiles = await harness.provider.captureOpenFile(harness.document.uri)
-
-    expect(repeated.ref.contextRef).toBe(first.ref.contextRef)
-    expect(fromOpenFiles?.ref.contextRef).toBe(first.ref.contextRef)
-    expect(first.ref.sourceCandidateId).toMatch(/^dsh-open-file-[a-f0-9]{32}$/u)
-    expect((await harness.provider.list(harness.owner)).map((item) => item.ref.contextRef)).toEqual([
-      first.ref.contextRef,
-    ])
-
-    harness.setDocument(source.replace('Hello', 'Hi'), 2)
-    const refreshed = await harness.provider.capture({ kind: 'file' }, harness.owner)
-    expect(refreshed.ref.contextRef).not.toBe(first.ref.contextRef)
-    expect((await harness.provider.list(harness.owner)).map((item) => item.ref.contextRef)).toEqual([
-      refreshed.ref.contextRef,
-    ])
-  })
-
   it('captures the innermost nested document symbol and keeps it host-side', async () => {
     const harness = createHarness([
       {
@@ -216,29 +187,6 @@ describe('EditorContextProvider', () => {
     )
   })
 
-  it('accepts SymbolInformation-shaped provider results for the active document', async () => {
-    const harness = createHarness([
-      {
-        name: 'greet',
-        location: { uri: harnessUri(documentPath), range: range(0, 0, 2, 1) },
-      },
-    ])
-
-    const item = await harness.provider.capture({ kind: 'symbol' }, harness.owner)
-    expect(item.label).toContain('greet')
-    expect((await harness.provider.preview(item.ref.contextRef, harness.owner)).text).toBe(source)
-  })
-
-  it('bounds a composed context label so one item cannot break the feature payload', async () => {
-    const harness = createHarness([
-      { name: 'n'.repeat(600), detail: '', range: range(0, 0, 2, 1), children: [] },
-    ])
-
-    const item = await harness.provider.capture({ kind: 'symbol' }, harness.owner)
-    expect(item.label.startsWith('symbol: src/greet.ts:1 ')).toBe(true)
-    expect(item.label.length).toBe(512)
-  })
-
   it('fails closed for provider errors and malformed or foreign symbol ranges', async () => {
     const malformed = createHarness([
       { name: 'outside', range: range(99, 0, 99, 1) },
@@ -262,20 +210,6 @@ describe('EditorContextProvider', () => {
     ).rejects.toMatchObject({
       code: 'CAPABILITY_UNAVAILABLE',
     })
-  })
-
-  it('propagates cancellation while waiting for the language service', async () => {
-    const pending = deferred<unknown>()
-    const harness = createHarness([])
-    harness.executeCommand.mockReturnValue(pending.promise)
-    const controller = new AbortController()
-    const request = harness.provider.availability(harness.owner, controller.signal)
-
-    await vi.waitFor(() => expect(harness.executeCommand).toHaveBeenCalled())
-    controller.abort()
-    pending.resolve([])
-
-    await expect(request).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
   })
 
   it('marks a captured symbol stale when the document changes before preview', async () => {

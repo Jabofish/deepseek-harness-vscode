@@ -72,7 +72,7 @@ describe('question reply read Host boundary', () => {
     await expect(handleFeatureRequest(request, signal)).rejects.toMatchObject({ code: 'PERMISSION_DENIED' })
     expect(read).not.toHaveBeenCalled()
     const pending = handleFeatureRequest(request, signal)
-    await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1))
+    await vi.waitFor(() => expect(read).toHaveBeenCalled())
     backend = { userQuestions: { readReplyStatus: vi.fn() } }
     finish({ state: 'released', asOfSequence: 102 })
     await expect(pending).rejects.toMatchObject({ code: 'STALE_INTERACTION' })

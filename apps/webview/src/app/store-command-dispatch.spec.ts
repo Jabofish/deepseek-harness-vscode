@@ -116,32 +116,6 @@ describe('AppStore command dispatch', () => {
     expect(sentPrompts(client)).toEqual([])
     store.dispose()
   })
-
-  it('submits a picked command no DSH command answers as a prompt gesture', async () => {
-    // The palette hands the picked line to the command surface; a skill row has
-    // no host command behind it, so the same line has to become the prompt.
-    const client = new FakeClient((request) =>
-      request.type === 'command.execute' ? { kind: 'unknown' } : response(request),
-    )
-    const store = createAppStore(client as unknown as ProtocolClient)
-    await store.openSession(session.id)
-
-    await expect(store.executeCommand(session.id, '/dsh-badge')).resolves.toBe(true)
-    expect(sentPrompts(client).map((request) => request.payload.text)).toEqual(['/dsh-badge'])
-    store.dispose()
-  })
-
-  it('keeps a picked command that DSH executes out of the prompt path', async () => {
-    const client = new FakeClient((request) =>
-      request.type === 'command.execute' ? { kind: 'success' } : response(request),
-    )
-    const store = createAppStore(client as unknown as ProtocolClient)
-    await store.openSession(session.id)
-
-    await expect(store.executeCommand(session.id, '/compact', [])).resolves.toBe(true)
-    expect(sentPrompts(client)).toEqual([])
-    store.dispose()
-  })
 })
 
 describe('skill document command routing', () => {

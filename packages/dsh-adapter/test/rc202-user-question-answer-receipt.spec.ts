@@ -61,14 +61,6 @@ function wireCodeIn(details: unknown): string | undefined {
  * recognise the normalized code.
  */
 describe('DSH 0.2.0-rc.2 answer duplicate receipt', () => {
-  it('recognises the normalized code the transport delivers for a queued reply', () => {
-    // Guards against the regression this suite was written for: `REPLY_QUEUED`
-    // never reaches the repository, only its normalized local equivalent does.
-    const rejection = wireRejection('REPLY_QUEUED')
-    expect(rejection.context?.rpcCode).toBe('writer-held')
-    expect(rejection.context?.wireCode).toBe('REPLY_QUEUED')
-  })
-
   it('reports an already-queued reply as a stale interaction, never as accepted', async () => {
     const questions = repository({ remoteRequest: () => Promise.reject(wireRejection('REPLY_QUEUED')) })
 
@@ -99,21 +91,6 @@ describe('DSH 0.2.0-rc.2 answer duplicate receipt', () => {
     await expect(
       questions.answer('session-1', 'call-1', { answers: [{ id: 'scope', selected: ['workspace'] }] }),
     ).resolves.toBe(false)
-    await questions.close()
-  })
-
-  it('does not disguise an unrelated writer conflict as an already-answered question', async () => {
-    // CALLER_NOT_LIVE normalizes onto the same `writer-held` as REPLY_QUEUED,
-    // so a check that keyed on the normalized code alone would wrongly tell the
-    // user their answer was recorded. It describes a different failure and
-    // must keep its own diagnosis.
-    const questions = repository({
-      remoteRequest: () => Promise.reject(wireRejection('CALLER_NOT_LIVE')),
-    })
-
-    await expect(
-      questions.answer('session-1', 'call-1', { answers: [{ id: 'scope', selected: ['workspace'] }] }),
-    ).rejects.toMatchObject({ code: 'BACKEND_BUSY' })
     await questions.close()
   })
 

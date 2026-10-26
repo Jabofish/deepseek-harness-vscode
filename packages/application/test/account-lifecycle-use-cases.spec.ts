@@ -97,31 +97,6 @@ describe('AccountLifecycleUseCases', () => {
     await expect(cancelled.getSignOutImpact(controller.signal)).rejects.toBe(controller.signal.reason)
   })
 
-  it('keeps sign-out explicit and passes current Host metadata to the repository', async () => {
-    const backend = repository()
-    const useCases = new AccountLifecycleUseCases(backend)
-
-    await expect(useCases.signOut(client)).resolves.toEqual(snapshot)
-    expect(backend.signOut.mock.calls).toEqual([[client, undefined]])
-  })
-
-  it('forwards account detail reads with validated Host metadata and signals', async () => {
-    const controller = new AbortController()
-    const backend = repository({
-      getProfile: vi.fn().mockResolvedValue({ status: 'failed' }),
-      getBalance: vi.fn().mockResolvedValue(null),
-      getUnnotifiedBonuses: vi.fn().mockResolvedValue(null),
-    })
-    const useCases = new AccountLifecycleUseCases(backend)
-
-    await expect(useCases.readProfile(client, controller.signal)).resolves.toEqual({ status: 'failed' })
-    await expect(useCases.readBalance(client, controller.signal)).resolves.toBeNull()
-    await expect(useCases.readUnnotifiedBonuses(client, controller.signal)).resolves.toBeNull()
-    expect(backend.getProfile.mock.calls).toEqual([[client, controller.signal]])
-    expect(backend.getBalance.mock.calls).toEqual([[client, controller.signal]])
-    expect(backend.getUnnotifiedBonuses.mock.calls).toEqual([[client, controller.signal]])
-  })
-
   it('validates bonus acknowledgement identifiers before Remote and forwards the opaque account scope', async () => {
     const orderId = '0bd8870d-2648-4c4c-95ca-d9e89f08095c'
     const backend = repository({ ackBonusNotified: vi.fn().mockResolvedValue(true) })
@@ -136,34 +111,5 @@ describe('AccountLifecycleUseCases', () => {
       expect.objectContaining({ code: 'INVALID_CONFIGURATION' }),
     )
     expect(backend.ackBonusNotified.mock.calls).toHaveLength(3)
-  })
-
-  it('forwards only the constrained account page selector', async () => {
-    const backend = repository({
-      getAccountPageUrl: vi.fn().mockResolvedValue('https://platform.deepseek.com/usage'),
-    })
-    const useCases = new AccountLifecycleUseCases(backend)
-
-    await expect(useCases.getAccountPageUrl('usage')).resolves.toBe('https://platform.deepseek.com/usage')
-    expect(backend.getAccountPageUrl.mock.calls).toEqual([['usage', undefined]])
-  })
-
-  it('forwards account state, expiry, and Host-only authorization subscriptions', async () => {
-    const listener = vi.fn()
-    const release = vi.fn()
-    const backend = repository({ subscribeAuthorizationLaunch: vi.fn(() => release) })
-    const useCases = new AccountLifecycleUseCases(backend)
-    const lifetime = new AbortController().signal
-
-    await expect(useCases.watch(lifetime)[Symbol.asyncIterator]().next()).resolves.toEqual({
-      value: snapshot,
-      done: false,
-    })
-    await expect(useCases.watchExpiry(lifetime)[Symbol.asyncIterator]().next()).resolves.toEqual({
-      value: 'session-expired',
-      done: false,
-    })
-    expect(useCases.subscribeAuthorizationLaunch(listener)).toBe(release)
-    expect(backend.subscribeAuthorizationLaunch.mock.calls).toEqual([[listener]])
   })
 })

@@ -5,6 +5,28 @@ import { Rc6SettingsRepository } from '../src/repositories/settings-repository.j
 import { callRpc } from '../src/versions/rc6/rpc.js'
 import { bodyText, endpoint, transportOptions, wrappedResponse } from './support/contract-harness.js'
 import { listingSettings, modelCatalog, namedBlank } from './fixtures/rc213-contract.js'
+import { candidate } from './support/contract-harness.js'
+import { ProbeFixtureTransport } from './support/probe-fixture.js'
+import type { DshTransport } from '../src/contracts.js'
+
+it('admits the current runtime through its real probe and refuses an unknown runtime', async () => {
+  const fixture = new ProbeFixtureTransport()
+  class FixtureAdapter extends Rc213VersionAdapter {
+    public override createTransport(): DshTransport {
+      return fixture
+    }
+  }
+  const adapter = new FixtureAdapter(transportOptions(globalThis.fetch))
+  expect(await adapter.probe(candidate('0.2.1-rc.3'))).toMatchObject({
+    dshVersion: '0.2.1-rc.3',
+    protocolVersion: 'rc213',
+    adapterId: 'dsh-0.2.1-rc.3',
+    blankSessionReuse: true,
+  })
+  expect(await adapter.probe(candidate('0.2.1-rc.4'))).toBeUndefined()
+  expect(await adapter.probeCompatibility()).toBeUndefined()
+  await fixture.close()
+})
 
 describe('rc.3 consumed wire increments', () => {
   it('names the blank and explicit preset using native create, without the retired reuse flag', async () => {

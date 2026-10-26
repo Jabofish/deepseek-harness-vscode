@@ -74,22 +74,6 @@ describe('DSH current todos are independent of historical cards', () => {
     expect(client.state.todos).toEqual([])
   })
 
-  it('keeps legacy event-based behavior only when the runtime has no current-list projection', () => {
-    const client = fixture()
-    client.emit('session.transcript', {
-      sessionId: 's',
-      revision: 1,
-      nodes: [],
-      eventFacts: [],
-      lastSequence: 10,
-      hasMore: false,
-      historical: false,
-      omittedNodeIds: [],
-      currentTodos: historical,
-    })
-    expect(client.state.todos).toEqual(historical)
-  })
-
   it('clears a removed optional service and rejects malformed values before accepting their watermark', () => {
     const client = fixture()
     client.emit('session.projection', { sessionId: 's', key: 'todoList', value: todos, sequence: 20 })

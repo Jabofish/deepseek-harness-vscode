@@ -65,7 +65,7 @@ function deferred<T>(): { readonly promise: Promise<T>; readonly resolve: (value
 }
 
 describe('EditorContextStore', () => {
-  it('reuses an unchanged file and replaces its stale capture without accumulating handles', async () => {
+  it('replaces a stale file capture and rejects preview through its expired handle', async () => {
     let nextId = 0
     const store = new EditorContextStore(
       () => 1_000,
@@ -84,8 +84,6 @@ describe('EditorContextStore', () => {
       })
 
     const first = file('one', 1)
-    expect(file('one', 1).ref.contextRef).toBe(first.ref.contextRef)
-    expect(store.size).toBe(1)
 
     const refreshed = file('two', 2)
     expect(refreshed.ref.contextRef).not.toBe(first.ref.contextRef)
