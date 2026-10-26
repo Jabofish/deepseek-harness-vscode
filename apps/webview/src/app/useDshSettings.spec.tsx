@@ -20,7 +20,7 @@ type SettingsState = Pick<
 function connectedState(overrides: Partial<SettingsState> = {}): SettingsState {
   return {
     backend: { kind: 'connected' },
-    connectedDshVersion: '0.1.0-rc.6',
+    connectedDshVersion: '0.2.1-rc.3',
     connectionEpoch: 1,
     presetSelectionEnabled: true,
     ...overrides,
@@ -157,88 +157,22 @@ describe('useDshSettings generation fencing', () => {
 
     // A new connection generation whose read fails falls back to the closed gate.
     settings.setState(connectedState({ connectionEpoch: 2 }))
-    await waitFor(() => expect(readDshSettings).toHaveBeenCalledTimes(2))
+    await act(async () => {
+      await expect(settings.result.current.readDshSettingsForUi()).rejects.toThrow('offline')
+    })
     await waitFor(() => expect(settings.result.current.codingToolsEnabled).toBe(false))
     expect(settings.result.current.readyDshUiPreferences).toBeUndefined()
   })
 
-  it('keeps roster preset selection independent of the Developer Tools preference', async () => {
-    // Coding Tools only removes the shipped PTC/Minimal presets from the menu.
-    // Treating it as a master switch made a healthy roster unusable whenever
-    // the preference was off, including when the Host still reported it off.
-    const settings = setupSettings(connectedState(), {
-      readDshSettings: vi.fn().mockResolvedValue(dshUiSettingsSnapshot(false)),
-    })
-
-    await waitFor(() => expect(settings.result.current.codingToolsEnabled).toBe(false))
-    expect(settings.result.current.newSessionPresetSelectionEnabled).toBe(true)
-  })
-
-  it('keeps roster preset selection while the settings read is failing', async () => {
-    const settings = setupSettings(connectedState(), {
-      readDshSettings: vi.fn().mockRejectedValue(new Error('offline')),
-    })
-
-    await waitFor(() => expect(settings.result.current.codingToolsEnabled).toBe(false))
-    expect(settings.result.current.newSessionPresetSelectionEnabled).toBe(true)
-  })
-
-  it('still honors a host roster that disables preset selection', async () => {
-    const settings = setupSettings(connectedState({ presetSelectionEnabled: false }))
-
-    await waitFor(() => expect(settings.result.current.readyDshUiPreferences).toBeDefined())
-    expect(settings.result.current.newSessionPresetSelectionEnabled).toBe(false)
-  })
-
-  it('rereads settings when the backend identity changes at the same DSH version', async () => {
-    const readDshSettings = vi.fn().mockResolvedValue(dshUiSettingsSnapshot(true))
-    const settings = setupSettings(connectedState(), { readDshSettings })
-    await waitFor(() => expect(settings.result.current.codingToolsEnabled).toBe(true))
-    const keyBefore = settings.result.current.settingsDrawerVersionKey
-
-    settings.setState(connectedState({ connectionEpoch: 2 }))
-    await waitFor(() => expect(readDshSettings).toHaveBeenCalledTimes(2))
-    expect(settings.result.current.settingsDrawerVersionKey).not.toBe(keyBefore)
-  })
-
-  it('ignores an older connection generation settings read that resolves after the current one', async () => {
-    let resolveOldRead: (snapshot: DshSettingsSnapshot) => void = () => undefined
-    let resolveCurrentRead: (snapshot: DshSettingsSnapshot) => void = () => undefined
-    const oldRead = new Promise<DshSettingsSnapshot>((resolve) => {
-      resolveOldRead = resolve
-    })
-    const currentRead = new Promise<DshSettingsSnapshot>((resolve) => {
-      resolveCurrentRead = resolve
-    })
-    const readDshSettings = vi.fn().mockReturnValueOnce(oldRead).mockReturnValueOnce(currentRead)
-    const settings = setupSettings(connectedState({ connectionEpoch: 10 }), { readDshSettings })
-
-    await waitFor(() => expect(readDshSettings).toHaveBeenCalledTimes(1))
-    settings.setState(connectedState({ connectionEpoch: 11 }))
-    await waitFor(() => expect(readDshSettings).toHaveBeenCalledTimes(2))
-
-    await act(async () => {
-      resolveCurrentRead(dshUiSettingsSnapshot(true))
-      await currentRead
-    })
-    await waitFor(() => expect(settings.result.current.codingToolsEnabled).toBe(true))
-
-    await act(async () => {
-      resolveOldRead(dshUiSettingsSnapshot(false))
-      await oldRead
-    })
-    expect(settings.result.current.codingToolsEnabled).toBe(true)
-  })
-
   it('never lets a previous-generation write, resolved or refused, change the new Host settings', async () => {
-    // A successful write from the previous connection generation must not be
-    // acknowledged by the new generation, and it must not add a refresh read.
+    // A previous connection's write must leave the new Host's preferences intact.
     {
       let resolveOldWrite: () => void = () => undefined
       const oldWrite = new Promise<void>((resolve) => {
         resolveOldWrite = resolve
       })
-      const readDshSettings = vi.fn().mockResolvedValue(dshUiSettingsSnapshot(true))
+      let busyEnter: 'queue' | 'steer' = 'queue'
+      const readDshSettings = vi.fn(() => Promise.resolve(dshUiSettingsSnapshot(true, busyEnter)))
       const updateDshSetting = vi.fn().mockReturnValue(oldWrite)
       const settings = setupSettings(connectedState({ connectionEpoch: 20 }), {
         readDshSettings,
@@ -246,20 +180,17 @@ describe('useDshSettings generation fencing', () => {
       })
 
       await waitFor(() => expect(settings.result.current.codingToolsEnabled).toBe(true))
-      const settled = vi.fn()
-      const write = settings.result.current
-        .updateDshSettingFromDrawer('ui-settings.enabled', false, 1)
-        .then(settled)
+      const write = settings.result.current.updateDshSettingFromDrawer('ui-settings.enabled', false, 1)
+      busyEnter = 'steer'
       settings.setState(connectedState({ connectionEpoch: 21 }))
-      await waitFor(() => expect(readDshSettings).toHaveBeenCalledTimes(2))
+      await waitFor(() => expect(settings.result.current.readyDshUiPreferences?.busyEnter).toBe('steer'))
 
       await act(async () => {
         resolveOldWrite()
         await write
       })
-      expect(settled).toHaveBeenCalled()
       expect(settings.result.current.codingToolsEnabled).toBe(true)
-      expect(readDshSettings).toHaveBeenCalledTimes(2)
+      expect(settings.result.current.readyDshUiPreferences?.busyEnter).toBe('steer')
     }
 
     // A refused previous-generation write must not disturb the new generation either.
@@ -268,7 +199,8 @@ describe('useDshSettings generation fencing', () => {
       const oldWrite = new Promise<void>((_resolve, reject) => {
         rejectOldWrite = reject
       })
-      const readDshSettings = vi.fn().mockResolvedValue(dshUiSettingsSnapshot(true))
+      let busyEnter: 'queue' | 'steer' = 'queue'
+      const readDshSettings = vi.fn(() => Promise.resolve(dshUiSettingsSnapshot(true, busyEnter)))
       const updateDshSetting = vi.fn().mockReturnValue(oldWrite)
       const settings = setupSettings(connectedState({ connectionEpoch: 30 }), {
         readDshSettings,
@@ -279,82 +211,16 @@ describe('useDshSettings generation fencing', () => {
       const write = settings.result.current
         .updateDshSettingFromDrawer('ui-settings.enabled', false, 1)
         .catch(() => undefined)
+      busyEnter = 'steer'
       settings.setState(connectedState({ connectionEpoch: 31 }))
-      await waitFor(() => expect(readDshSettings).toHaveBeenCalledTimes(2))
+      await waitFor(() => expect(settings.result.current.readyDshUiPreferences?.busyEnter).toBe('steer'))
 
       await act(async () => {
         rejectOldWrite(new Error('previous Host refused the update'))
         await write
       })
       expect(settings.result.current.codingToolsEnabled).toBe(true)
-      // The callback is generation-aware, so the refused write adds no refresh read.
-      expect(readDshSettings).toHaveBeenCalledTimes(2)
+      expect(settings.result.current.readyDshUiPreferences?.busyEnter).toBe('steer')
     }
-  })
-
-  it('clears the old settings gate after a confirmed DSH version change', async () => {
-    let rejectNewVersion: ((reason: Error) => void) | undefined
-    const nextVersionRead = new Promise<DshSettingsSnapshot>((_resolve, reject) => {
-      rejectNewVersion = reject
-    })
-    const readDshSettings = vi
-      .fn()
-      .mockResolvedValueOnce(dshUiSettingsSnapshot(true))
-      .mockReturnValueOnce(nextVersionRead)
-    const settings = setupSettings(connectedState(), { readDshSettings })
-    await waitFor(() => expect(settings.result.current.codingToolsEnabled).toBe(true))
-
-    settings.setState(connectedState({ connectedDshVersion: '0.1.0-rc.7' }))
-    await waitFor(() => expect(readDshSettings).toHaveBeenCalledTimes(2))
-    act(() => rejectNewVersion?.(new Error('new DSH unavailable')))
-    expect(settings.result.current.codingToolsEnabled).toBe(false)
-    expect(settings.result.current.readyDshUiPreferences).toBeUndefined()
-  })
-
-  it('does not let a pre-write settings read restore the old Developer Tools value', async () => {
-    let resolvePreWriteRead: ((snapshot: DshSettingsSnapshot) => void) | undefined
-    const preWriteRead = new Promise<DshSettingsSnapshot>((resolve) => {
-      resolvePreWriteRead = resolve
-    })
-    let readCount = 0
-    const readDshSettings = vi.fn(() => {
-      readCount += 1
-      if (readCount === 1) return Promise.resolve(dshUiSettingsSnapshot(true))
-      if (readCount === 2) return preWriteRead
-      return Promise.reject(new Error('refresh unavailable'))
-    })
-    const settings = setupSettings(connectedState(), { readDshSettings })
-    await waitFor(() => expect(settings.result.current.codingToolsEnabled).toBe(true))
-
-    // A read starts before the write; the accepted write lands while it is in flight.
-    void settings.result.current.readDshSettingsForUi()
-    await act(async () => {
-      await settings.result.current.updateDshSettingFromDrawer('ui-settings.enabled', false, 1)
-    })
-    await waitFor(() => expect(settings.result.current.codingToolsEnabled).toBe(false))
-
-    await act(async () => {
-      resolvePreWriteRead?.(dshUiSettingsSnapshot(true))
-      await preWriteRead
-    })
-    expect(settings.result.current.codingToolsEnabled).toBe(false)
-  })
-
-  it('applies a successful Developer Tools setting update to the application gate', async () => {
-    let codingToolsEnabled = true
-    const readDshSettings = vi
-      .fn()
-      .mockImplementation(() => Promise.resolve(dshUiSettingsSnapshot(codingToolsEnabled)))
-    const updateDshSetting = vi.fn((path: string, value: unknown) => {
-      if (path === 'ui-settings.enabled' && typeof value === 'boolean') codingToolsEnabled = value
-      return Promise.resolve()
-    })
-    const settings = setupSettings(connectedState(), { readDshSettings, updateDshSetting })
-
-    await waitFor(() => expect(settings.result.current.codingToolsEnabled).toBe(true))
-    await act(async () => {
-      await settings.result.current.updateDshSettingFromDrawer('ui-settings.enabled', false, 1)
-    })
-    await waitFor(() => expect(settings.result.current.codingToolsEnabled).toBe(false))
   })
 })

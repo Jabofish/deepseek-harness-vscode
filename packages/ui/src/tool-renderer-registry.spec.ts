@@ -1,70 +1,37 @@
-import { describe, expect, it } from 'vitest'
-import { createElement } from 'react'
+// @vitest-environment jsdom
+import { cleanup, render, screen } from '@testing-library/react'
+import { afterEach, expect, it } from 'vitest'
 import type { ToolCallView } from '@dsh-vscode/domain'
-
-import { ToolCard } from './components/ToolCard.js'
-import { ToolRow } from './components/ToolRow.js'
 import { ToolRendererRegistry } from './tool-renderer-registry.js'
 
-function tool(name: string): ToolCallView {
-  return {
-    id: `call-${name}`,
-    name,
-    category: 'tool',
-    title: name,
-    status: 'completed',
-    metadata: {},
-  }
+afterEach(cleanup)
+
+const tool: ToolCallView = {
+  id: 'custom-tool',
+  name: 'custom_tool',
+  category: 'tool',
+  title: 'Custom tool',
+  status: 'completed',
+  outputSummary: 'Complete fallback output',
+  metadata: {},
 }
 
-describe('ToolRendererRegistry', () => {
-  it('keeps legacy payloads on the generic path except for the safe skill view', () => {
-    const registry = new ToolRendererRegistry()
-    expect(registry.render(tool('read')).type).toBe(ToolCard)
-    expect(registry.render(tool('skill')).type).toBe(ToolRow)
-    expect(registry.render(tool('future_tool')).type).toBe(ToolCard)
-
-    const dispose = registry.register('future_tool', ({ tool: value }) =>
-      createElement('span', { 'data-tool': value.name }, 'custom'),
-    )
-    expect(registry.render(tool('FUTURE_TOOL')).type).not.toBe(ToolCard)
-    dispose()
-    expect(registry.render(tool('future_tool')).type).toBe(ToolCard)
-  })
-
-  it('isolates a broken custom renderer and preserves generic recovery', () => {
-    const registry = new ToolRendererRegistry()
-    registry.register('broken_tool', () => {
-      throw new Error('renderer failure')
-    })
-    expect(registry.render(tool('broken_tool')).type).toBe(ToolCard)
-  })
-
-  it('routes Auto review denials through the safe system card before a custom renderer', () => {
-    const registry = new ToolRendererRegistry()
-    registry.register('future_tool', () => createElement('span', undefined, 'custom renderer'))
-
-    expect(
-      registry.render({
-        ...tool('future_tool'),
-        status: 'failed',
-        autoReviewDenial: {},
-      }).type,
-    ).toBe(ToolRow)
-  })
-
-  it('passes the host link opener to the generic compatibility card', () => {
-    const registry = new ToolRendererRegistry()
-    const onOpenLink = (): void => undefined
-    const element = registry.render(
+it('routes a generic tool denial to its safe explanation without exposing call data', () => {
+  const registry = new ToolRendererRegistry()
+  const { container } = render(
+    registry.render(
       {
-        ...tool('future_tool'),
-        locations: [{ path: 'src/future.ts', line: 0 }],
+        ...tool,
+        status: 'failed',
+        inputSummary: 'private arguments',
+        outputSummary: 'private result',
+        autoReviewDenial: { reason: 'Outside the approved scope' },
       },
-      { onOpenLink },
-    )
-
-    expect(element.type).toBe(ToolCard)
-    expect((element.props as { readonly onOpenLink?: (href: string) => void }).onOpenLink).toBe(onOpenLink)
-  })
+      { expanded: true },
+    ),
+  )
+  expect(screen.getByRole('alert').textContent).toContain('Outside the approved scope')
+  expect(screen.getByRole('alert').textContent).toContain('Tool was not executed.')
+  expect(container.textContent).not.toContain('private arguments')
+  expect(container.textContent).not.toContain('private result')
 })

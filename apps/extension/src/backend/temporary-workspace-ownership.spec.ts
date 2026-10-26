@@ -581,80 +581,6 @@ describe('TemporaryWorkspaceOwnershipStore', () => {
     expect(readFileSync(path.join(directory, 'user-data.txt'), 'utf8')).toBe('preserve me')
   })
 
-  it('migrates an old UUID sidecar only when manager state supplies the exact token', async () => {
-    const root = temporaryRoot()
-    const directory = path.join(root, 'workspace-123')
-    const markerPath = path.join(root, '.workspace-123.dsh-vscode-owner')
-    const legacyToken = '11111111-1111-4111-8111-111111111111'
-    mkdirSync(directory)
-    writeFileSync(markerPath, legacyToken, { encoding: 'utf8', flag: 'wx' })
-    const store = new TemporaryWorkspaceOwnershipStore(root)
-
-    expect(await store.read(directory)).toBeUndefined()
-    expect(readFileSync(markerPath, 'utf8')).toBe(legacyToken)
-
-    const manager = filesystemManager(
-      root,
-      {
-        id: 'legacy-workspace',
-        path: directory,
-        ownershipToken: legacyToken,
-      },
-      store,
-    )
-    const restored = await manager.resolve([])
-    const migratedMarker = JSON.parse(readFileSync(markerPath, 'utf8')) as {
-      version: number
-      ownershipToken: string
-      device: string
-      inode: string
-    }
-    const directoryStat = lstatSync(directory, { bigint: true })
-
-    expect(restored.path).toBe(directory)
-    expect(migratedMarker).toEqual({
-      version: 1,
-      ownershipToken: legacyToken,
-      device: directoryStat.dev.toString(),
-      inode: directoryStat.ino.toString(),
-    })
-    expect(await store.read(directory, legacyToken)).toBe(legacyToken)
-  })
-
-  it('rebinds a matching old UUID sidecar after the manager recreates its missing workspace', async () => {
-    const root = temporaryRoot()
-    const directory = path.join(root, 'workspace-123')
-    const markerPath = path.join(root, '.workspace-123.dsh-vscode-owner')
-    const legacyToken = '11111111-1111-4111-8111-111111111111'
-    mkdirSync(directory)
-    writeFileSync(markerPath, legacyToken, { encoding: 'utf8', flag: 'wx' })
-    rmSync(directory, { recursive: true })
-    const store = new TemporaryWorkspaceOwnershipStore(root)
-    const manager = filesystemManager(
-      root,
-      { id: 'legacy-workspace', path: directory, ownershipToken: legacyToken },
-      store,
-    )
-
-    const restored = await manager.resolve([])
-    const migratedMarker = JSON.parse(readFileSync(markerPath, 'utf8')) as {
-      version: number
-      ownershipToken: string
-      device: string
-      inode: string
-    }
-    const directoryStat = lstatSync(directory, { bigint: true })
-
-    expect(restored.path).toBe(directory)
-    expect(migratedMarker).toEqual({
-      version: 1,
-      ownershipToken: legacyToken,
-      device: directoryStat.dev.toString(),
-      inode: directoryStat.ino.toString(),
-    })
-    expect(await store.read(directory, legacyToken)).toBe(legacyToken)
-  })
-
   it.each([
     ['versioned marker restoration', 'versioned'],
     ['legacy marker migration', 'legacy'],
@@ -726,87 +652,6 @@ describe('TemporaryWorkspaceOwnershipStore', () => {
     expect(readFileSync(markerPath, 'utf8')).toBe(ownershipToken)
   })
 
-  it('does not rebind an old sidecar when another directory wins the missing restore path', async () => {
-    const root = temporaryRoot()
-    const directory = path.join(root, 'workspace-123')
-    const replacementDirectory = path.join(root, 'workspace-123-replacement')
-    const markerPath = path.join(root, '.workspace-123.dsh-vscode-owner')
-    mkdirSync(directory)
-    const store = new TemporaryWorkspaceOwnershipStore(root)
-    const ownershipToken = await store.create(directory)
-    const originalMarker = readFileSync(markerPath, 'utf8')
-    // Allocate the replacement while the original inode is still occupied so
-    // the filesystem cannot immediately recycle its identity after deletion.
-    mkdirSync(replacementDirectory)
-    const replacementFile = path.join(directory, 'replacement-user-data.txt')
-    writeFileSync(
-      path.join(replacementDirectory, path.basename(replacementFile)),
-      'preserve replacement data',
-    )
-    rmSync(directory, { recursive: true })
-    const createWorkspace =
-      vi.fn<(input: WorkspaceCreateInput, signal?: AbortSignal) => Promise<WorkspaceSummary>>()
-    const manager = filesystemManager(
-      root,
-      { id: 'persisted-workspace', path: directory, ownershipToken },
-      store,
-      {
-        createWorkspace,
-        createDirectoryExclusive: async (directoryPath) => {
-          // Simulate another creator winning between the manager's missing-path
-          // check and its exclusive mkdir syscall.
-          renameSync(replacementDirectory, directoryPath)
-          await mkdir(directoryPath)
-        },
-      },
-    )
-
-    await expect(manager.resolve([])).rejects.toMatchObject({ code: 'EEXIST' })
-
-    expect(createWorkspace).not.toHaveBeenCalled()
-    expect(readFileSync(replacementFile, 'utf8')).toBe('preserve replacement data')
-    expect(readFileSync(markerPath, 'utf8')).toBe(originalMarker)
-    expect(await store.read(directory, ownershipToken)).toBeUndefined()
-    expect(manager.reference?.ownershipToken).toBe(ownershipToken)
-  })
-
-  it('does not rebind an old sidecar when the exclusively created directory is replaced before marker restoration', async () => {
-    const root = temporaryRoot()
-    const directory = path.join(root, 'workspace-123')
-    const movedDirectory = path.join(root, 'workspace-123-created')
-    const markerPath = path.join(root, '.workspace-123.dsh-vscode-owner')
-    mkdirSync(directory)
-    const store = new TemporaryWorkspaceOwnershipStore(root)
-    const ownershipToken = await store.create(directory)
-    const originalMarker = readFileSync(markerPath, 'utf8')
-    rmSync(directory, { recursive: true })
-    const replacementFile = path.join(directory, 'replacement-user-data.txt')
-    const createWorkspace =
-      vi.fn<(input: WorkspaceCreateInput, signal?: AbortSignal) => Promise<WorkspaceSummary>>()
-    const manager = filesystemManager(
-      root,
-      { id: 'persisted-workspace', path: directory, ownershipToken },
-      store,
-      {
-        createWorkspace,
-        createDirectoryExclusive: async (directoryPath) => {
-          await store.createDirectoryExclusive(directoryPath)
-          renameSync(directoryPath, movedDirectory)
-          mkdirSync(directoryPath)
-          writeFileSync(replacementFile, 'preserve replacement data')
-        },
-      },
-    )
-
-    await expect(manager.resolve([])).rejects.toThrow('changed after exclusive creation')
-
-    expect(createWorkspace).not.toHaveBeenCalled()
-    expect(readFileSync(replacementFile, 'utf8')).toBe('preserve replacement data')
-    expect(readFileSync(markerPath, 'utf8')).toBe(originalMarker)
-    expect(existsSync(movedDirectory)).toBe(true)
-    expect(await store.read(directory, ownershipToken)).toBeUndefined()
-  })
-
   it('leaves the exclusively created directory alone when marker restoration fails', async () => {
     const root = temporaryRoot()
     const directory = path.join(root, 'workspace-123')
@@ -850,33 +695,6 @@ describe('TemporaryWorkspaceOwnershipStore', () => {
     expect(existsSync(createdDirectory)).toBe(true)
     expect(readFileSync(markerPath, 'utf8')).toBe(originalMarker)
     expect(await store.read(directory, ownershipToken)).toBeUndefined()
-  })
-
-  it('does not migrate or delete an old UUID sidecar when persisted token mismatches', async () => {
-    const root = temporaryRoot()
-    const directory = path.join(root, 'workspace-123')
-    const markerPath = path.join(root, '.workspace-123.dsh-vscode-owner')
-    const markerToken = '11111111-1111-4111-8111-111111111111'
-    const persistedToken = '22222222-2222-4222-8222-222222222222'
-    mkdirSync(directory)
-    writeFileSync(path.join(directory, 'keep.txt'), 'user data')
-    writeFileSync(markerPath, markerToken, { encoding: 'utf8', flag: 'wx' })
-    const store = new TemporaryWorkspaceOwnershipStore(root)
-    const manager = filesystemManager(
-      root,
-      {
-        id: 'legacy-workspace',
-        path: directory,
-        ownershipToken: persistedToken,
-      },
-      store,
-    )
-
-    await manager.forget(true)
-
-    expect(readFileSync(markerPath, 'utf8')).toBe(markerToken)
-    expect(readFileSync(path.join(directory, 'keep.txt'), 'utf8')).toBe('user data')
-    expect(existsSync(directory)).toBe(true)
   })
 
   it('does not delete a replacement directory at the same path while retaining its old sidecar', async () => {

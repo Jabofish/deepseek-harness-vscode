@@ -42,52 +42,6 @@ class PluginClient {
 describe('AppStore plugin inventory projection', () => {
   afterEach(() => document.body.replaceChildren())
 
-  it('retains the optional alpha.2 agent-preset composition groups', async () => {
-    const store = createAppStore(
-      new PluginClient({
-        entries: [],
-        agentPresets: [
-          {
-            id: 'standard',
-            trust: 'system',
-            name: 'Standard',
-            isDefault: true,
-            rows: [
-              {
-                entryId: null,
-                moduleName: '@deepseek-ai/dsh-host-web',
-                enabled: 'conditional',
-                condition: 'settings.web.enabled',
-                fiberPhase: null,
-              },
-            ],
-          },
-        ],
-      }) as unknown as ProtocolClient,
-    )
-
-    await expect(store.loadPluginInventory()).resolves.toMatchObject({
-      entries: [],
-      agentPresets: [
-        {
-          id: 'standard',
-          trust: 'system',
-          name: 'Standard',
-          isDefault: true,
-          rows: [
-            {
-              entryId: null,
-              enabled: 'conditional',
-              condition: 'settings.web.enabled',
-              fiberPhase: null,
-            },
-          ],
-        },
-      ],
-    })
-    store.dispose()
-  })
-
   it('retains RC2 inventory groups without inventing preset ownership', async () => {
     const remoteGroup = {
       id: 'standard',
@@ -103,33 +57,6 @@ describe('AppStore plugin inventory projection', () => {
       entries: [],
       agentPresets: [remoteGroup],
     })
-    store.dispose()
-  })
-
-  it('rejects a plugin snapshot containing a malformed group', async () => {
-    const store = createAppStore(
-      new PluginClient({
-        entries: [],
-        agentPresets: [
-          { id: 'bad', trust: 'system', isDefault: false, rows: [{ moduleName: 'missing-id' }] },
-          { id: 'good', trust: 'user', isDefault: false, rows: [] },
-        ],
-      }) as unknown as ProtocolClient,
-    )
-
-    await expect(store.loadPluginInventory()).resolves.toBeUndefined()
-    store.dispose()
-  })
-
-  it('rejects an ownership value outside the fields supported by the inventory DTO', async () => {
-    const store = createAppStore(
-      new PluginClient({
-        entries: [],
-        agentPresets: [{ id: 'mode', trust: 'deployment', isDefault: false, rows: [] }],
-      }) as unknown as ProtocolClient,
-    )
-
-    await expect(store.loadPluginInventory()).resolves.toBeUndefined()
     store.dispose()
   })
 

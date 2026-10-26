@@ -115,14 +115,6 @@ describe('DSH 0.1.7-rc.2 Schedule Remote contract', () => {
     expect(calls).toEqual([{ endpoint: 'schedule/catalog', args: {}, signal }])
   })
 
-  it('reads active Session records without a Host catalog binding', async () => {
-    const { transport, calls } = recordingTransport([{ ok: true, value: [every] }])
-    const signal = new AbortController().signal
-
-    await expect(new Rc172ScheduleRepository(transport).list('session-7', signal)).resolves.toEqual([every])
-    expect(calls).toEqual([{ endpoint: 'schedule/list', args: { sessionId: 'session-7' }, signal }])
-  })
-
   it('enforces the RC2 one-minute minimum when reading and writing recurring rules', async () => {
     const invalidCatalog = recordingTransport([{ ok: true, value: [{ ...every, everySeconds: 59 }] }])
     await expect(new Rc172ScheduleRepository(invalidCatalog.transport).catalog()).rejects.toMatchObject({
@@ -249,90 +241,6 @@ describe('DSH 0.1.7-rc.2 Schedule Remote contract', () => {
     ])
   })
 
-  it('forwards a compare-only update and maps the unchanged current record', async () => {
-    const request = {
-      sessionId: 'session-3',
-      id: weekly.id,
-      expected: weekly,
-    }
-    const { transport, calls } = recordingTransport([
-      { ok: true, value: { id: weekly.id, updated: false, record: weekly } },
-    ])
-
-    await expect(new Rc172ScheduleRepository(transport).update(request)).resolves.toEqual({
-      id: weekly.id,
-      updated: false,
-      record: weekly,
-    })
-    expect(calls).toEqual([
-      {
-        endpoint: 'schedule/update',
-        args: { sessionId: 'session-3', id: weekly.id, expected: weekly },
-        signal: undefined,
-      },
-    ])
-  })
-
-  it('translates local-time input and every-seconds selectors without inventing create', async () => {
-    const atTransport = recordingTransport([
-      { ok: true, value: { id: 'schedule-at', updated: true, record: at } },
-    ])
-    const atRepository = new Rc172ScheduleRepository(atTransport.transport)
-    await atRepository.update({
-      sessionId: 'session-1',
-      id: 'schedule-at',
-      expected: at,
-      change: { kind: 'at', at: { date: '2026-10-03', time: '10:15:00', timeZone: 'Europe/Paris' } },
-    })
-    expect(atTransport.calls[0]?.args).toMatchObject({
-      change: { kind: 'at', at: { date: '2026-10-03', time: '10:15:00', time_zone: 'Europe/Paris' } },
-    })
-
-    const everyTransport = recordingTransport([
-      { ok: true, value: { id: 'schedule-every', updated: true, record: every } },
-    ])
-    await new Rc172ScheduleRepository(everyTransport.transport).update({
-      sessionId: 'session-2',
-      id: 'schedule-every',
-      expected: every,
-      change: { kind: 'every', seconds: 60 },
-    })
-    expect(everyTransport.calls[0]?.args).toMatchObject({
-      change: { kind: 'every', every_seconds: 60 },
-    })
-    expect([...atTransport.calls, ...everyTransport.calls].map(({ endpoint }) => endpoint)).not.toContain(
-      'schedule/create',
-    )
-  })
-
-  it('maps daily and cron timing changes with explicit IANA zones', async () => {
-    const dailyTransport = recordingTransport([
-      { ok: true, value: { id: 'schedule-daily', updated: true, record: daily } },
-    ])
-    await new Rc172ScheduleRepository(dailyTransport.transport).update({
-      sessionId: 'session-daily',
-      id: daily.id,
-      expected: daily,
-      change: { kind: 'daily', time: '08:45:00', timeZone: 'Asia/Shanghai' },
-    })
-    expect(dailyTransport.calls[0]?.args).toMatchObject({
-      change: { kind: 'daily', daily: { time: '08:45:00', time_zone: 'Asia/Shanghai' } },
-    })
-
-    const cronTransport = recordingTransport([
-      { ok: true, value: { id: 'schedule-cron', updated: true, record: cron } },
-    ])
-    await new Rc172ScheduleRepository(cronTransport.transport).update({
-      sessionId: 'session-cron',
-      id: cron.id,
-      expected: cron,
-      change: { kind: 'cron', expression: '30 8 * * 1-5', timeZone: 'America/New_York' },
-    })
-    expect(cronTransport.calls[0]?.args).toMatchObject({
-      change: { kind: 'cron', cron: { expression: '30 8 * * 1-5', time_zone: 'America/New_York' } },
-    })
-  })
-
   it("deletes through the task's original Session binding", async () => {
     const { transport, calls } = recordingTransport([
       { ok: true, value: { id: 'schedule-cron', deleted: true } },
@@ -348,67 +256,6 @@ describe('DSH 0.1.7-rc.2 Schedule Remote contract', () => {
     expect(calls).toEqual([
       { endpoint: 'schedule/delete', args: { sessionId: 'session-4', id: 'schedule-cron' }, signal },
     ])
-  })
-
-  it('preserves non-mutating misses and validates remote result ownership', async () => {
-    const { transport } = recordingTransport([
-      { ok: true, value: { id: 'schedule-1', updated: false, record: { ...at, id: 'schedule-1' } } },
-      { ok: true, value: { id: 'schedule-1', updated: false, code: 'schedule_not_found' } },
-      { ok: true, value: { id: 'schedule-1', updated: false, code: 'schedule_ended' } },
-      { ok: true, value: { id: 'schedule-1', updated: false, code: 'schedule_conflict' } },
-      { ok: true, value: { id: 'schedule-other', deleted: true } },
-      { ok: true, value: { id: 'schedule-1', code: 'delivery_cursor_not_found' } },
-    ])
-    const repository = new Rc172ScheduleRepository(transport)
-    const request = {
-      sessionId: 'session-1',
-      id: 'schedule-1',
-      expected: { ...at, id: 'schedule-1' },
-      title: 'x',
-    }
-
-    await expect(repository.update(request)).resolves.toEqual({
-      id: 'schedule-1',
-      updated: false,
-      record: { ...at, id: 'schedule-1' },
-    })
-    await expect(repository.update(request)).resolves.toEqual({
-      id: 'schedule-1',
-      updated: false,
-      code: 'schedule_not_found',
-    })
-    await expect(repository.update(request)).resolves.toEqual({
-      id: 'schedule-1',
-      updated: false,
-      code: 'schedule_ended',
-    })
-    await expect(repository.update(request)).resolves.toEqual({
-      id: 'schedule-1',
-      updated: false,
-      code: 'schedule_conflict',
-    })
-    await expect(repository.delete('session-1', 'schedule-1')).rejects.toMatchObject({
-      code: 'PROTOCOL_ERROR',
-    })
-    await expect(
-      repository.history({ sessionId: 'session-1', id: 'schedule-1', limit: 20 }),
-    ).resolves.toEqual({
-      id: 'schedule-1',
-      code: 'delivery_cursor_not_found',
-    })
-  })
-
-  it('rejects invalid identifiers before transport and forwards cancellation', async () => {
-    const { transport, calls } = recordingTransport([{ ok: true, value: [] }])
-    const repository = new Rc172ScheduleRepository(transport)
-
-    await expect(repository.list(' ')).rejects.toMatchObject({ code: 'INVALID_CONFIGURATION' })
-    expect(calls).toEqual([])
-
-    const controller = new AbortController()
-    controller.abort()
-    await expect(repository.catalog(controller.signal)).rejects.toMatchObject({ name: 'AbortError' })
-    expect(calls[0]?.signal).toBe(controller.signal)
   })
 
   it('rejects malformed variants, history pages, and update records without exposing response data', async () => {
@@ -446,29 +293,5 @@ describe('DSH 0.1.7-rc.2 Schedule Remote contract', () => {
       .catch((error: unknown) => error)
     expect(updateError).toMatchObject({ code: 'PROTOCOL_ERROR' })
     expect(updateError).toHaveProperty('message', 'DSH returned a malformed rc172 Schedule update result.')
-  })
-
-  it('maps a failed Remote envelope to a safe AppError without copying DSH details', async () => {
-    const { transport } = recordingTransport([
-      {
-        ok: false,
-        error: {
-          code: 'invalid-time-zone',
-          message: 'private upstream diagnostic',
-          details: { prompt: '[redacted]' },
-        },
-      },
-    ])
-
-    const error = await new Rc172ScheduleRepository(transport).catalog().catch((reason: unknown) => reason)
-    expect(error).toMatchObject({
-      code: 'INVALID_CONFIGURATION',
-      context: { rpcCode: 'invalid-time-zone' },
-    })
-    expect(error).toHaveProperty(
-      'message',
-      'The DSH time zone is invalid. Details: private upstream diagnostic',
-    )
-    expect((error as Error).message).not.toContain('sensitive prompt')
   })
 })

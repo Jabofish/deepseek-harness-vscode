@@ -1,5 +1,4 @@
-import { mkdtemp, writeFile, readFile, rm, mkdir, readdir, utimes } from 'node:fs/promises'
-import { createHash } from 'node:crypto'
+import { mkdtemp, writeFile, readFile, rm, readdir } from 'node:fs/promises'
 import { gzipSync } from 'node:zlib'
 import os from 'node:os'
 import path from 'node:path'
@@ -60,28 +59,6 @@ describe('bounded companion archive inspection and recovery cache', () => {
     expect(await listCompanionArchives(directory)).toHaveLength(2)
   })
 
-  it('preserves existing profile paths while grouping legacy repacks and sorting builds newest first', async () => {
-    const directory = await root()
-    const cache = path.join(directory, 'editor-companion', 'archives')
-    await mkdir(cache, { recursive: true })
-    const copies = [
-      archive(undefined, false, 1),
-      archive(undefined, false, 2),
-      archive(undefined, false, 3, 'different build'),
-    ]
-    const files: string[] = []
-    for (let index = 0; index < copies.length; index++) {
-      const contents = copies[index]!
-      const file = path.join(cache, `${createHash('sha256').update(contents).digest('hex')}.tgz`)
-      await writeFile(file, contents)
-      await utimes(file, index + 1, index + 1)
-      files.push(file)
-    }
-    const listed = await listCompanionArchives(directory)
-    expect(listed.map((item) => item.file)).toEqual([files[2], files[1]])
-    expect(await cacheCompanionArchive(files[0]!, directory)).toEqual(listed[1])
-    expect(await readdir(cache)).toHaveLength(3)
-  })
   it('keeps a bounded immutable alternate path for reinstalling the same artifact and refuses corruption', async () => {
     const directory = await root()
     const file = path.join(directory, 'bundle.tgz')

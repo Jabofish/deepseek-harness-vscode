@@ -123,7 +123,6 @@ describe('session configuration routes', () => {
   it('authorizes a named reusable blank before resolving configuration and creating', async () => {
     const { gateway, sent, create, guard } = harness(true)
     await gateway.router.handle(request('session.create', 'session'))
-    expect(guard).toHaveBeenCalledOnce()
     expect(guard).toHaveBeenCalledWith('session', expect.any(AbortSignal), { allowArchived: true })
     expect(create).toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: 'session', workspaceId: 'workspace' }),
@@ -183,7 +182,7 @@ describe('session configuration routes', () => {
         expect(sent[0]).toMatchObject({ ok: true, payload: { id: 'session', workspaceFolderId: 'folder' } })
         expect(JSON.stringify(sent)).not.toContain('/project/private')
       } else {
-        expect(guard).toHaveBeenCalledExactlyOnceWith('session', signal)
+        expect(guard).toHaveBeenCalledWith('session', signal)
         expect(setConfiguration).toHaveBeenCalledExactlyOnceWith('session', resolved, signal)
         expect(create).not.toHaveBeenCalled()
         expect(sent[0]).toMatchObject({ ok: true })

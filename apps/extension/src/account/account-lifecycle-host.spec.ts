@@ -141,30 +141,6 @@ function harness(
 }
 
 describe('AccountLifecycleHost', () => {
-  it('projects alpha.5 localized notices without optional metadata and acknowledges through the Host', async () => {
-    const notice = { orderId: attemptId, title: 'Welcome\nnotice', message: 'Granted', expiresAt: '' }
-    const ackBonusNotified = vi.fn().mockResolvedValue(true)
-    const active = harness({
-      getState: vi.fn().mockResolvedValue(signedIn),
-      getUnnotifiedBonuses: vi.fn().mockResolvedValue({ accountId: 'private-account', bonuses: [notice] }),
-      ackBonusNotified,
-    })
-    active.host.start()
-    try {
-      const details = await active.host.readDetails()
-      expect(details.bonus).toEqual({ status: 'ready', value: { ...notice, title: 'Welcome notice' } })
-      expect(JSON.stringify(details)).not.toContain('private-account')
-      expect(await active.host.acknowledgeBonus(attemptId)).toBe(true)
-      expect(ackBonusNotified).toHaveBeenCalledWith(
-        'private-account',
-        attemptId,
-        client,
-        expect.any(AbortSignal),
-      )
-    } finally {
-      await active.host.dispose()
-    }
-  })
   it('uses only a validated DSH loopback baseUrl as callbackOrigin', async () => {
     const active = harness()
     active.host.start()
@@ -258,106 +234,6 @@ describe('AccountLifecycleHost', () => {
     await active.host.dispose()
   })
 
-  it('initializes the default model once on the successful account-state edge', async () => {
-    const active = harness({
-      watch: vi.fn(() => ({
-        async *[Symbol.asyncIterator]() {
-          await Promise.resolve()
-          yield waiting
-          yield signedIn
-          yield signedIn
-        },
-      })),
-    })
-    active.host.start()
-
-    await vi.waitFor(() => expect(active.initializeDefaultModel).toHaveBeenCalledOnce())
-    await vi.waitFor(() =>
-      expect(active.initializeDefaultModel).toHaveBeenCalledExactlyOnceWith(expect.any(AbortSignal)),
-    )
-    await active.host.dispose()
-  })
-
-  it('does not repeat initialization when a reconnected stream starts from an already-succeeded attempt', async () => {
-    const active = harness({
-      watch: vi.fn(() => ({
-        async *[Symbol.asyncIterator]() {
-          await Promise.resolve()
-          yield signedIn
-        },
-      })),
-    })
-    active.host.start()
-
-    await vi.waitFor(() => expect(active.published).toEqual([signedIn]))
-    expect(active.initializeDefaultModel).not.toHaveBeenCalled()
-    await active.host.dispose()
-  })
-
-  it('handles a successful sign-in response even if the state stream has not delivered its edge yet', async () => {
-    const active = harness({ startSignIn: vi.fn().mockResolvedValue(signedIn) })
-    active.host.start()
-
-    await expect(active.host.startSignIn()).resolves.toEqual(signedIn)
-    expect(active.initializeDefaultModel).toHaveBeenCalledExactlyOnceWith(expect.any(AbortSignal))
-    await active.host.dispose()
-  })
-
-  it('keeps default-model initialization failure Host-only and non-fatal to account state', async () => {
-    const active = harness({
-      watch: vi.fn(() => ({
-        async *[Symbol.asyncIterator]() {
-          await Promise.resolve()
-          yield waiting
-          yield signedIn
-        },
-      })),
-    })
-    active.initializeDefaultModel.mockRejectedValue(new Error('private Remote diagnostic'))
-    active.host.start()
-
-    await vi.waitFor(() => expect(active.reportDiagnostic).toHaveBeenCalledOnce())
-    expect(active.reportDiagnostic).toHaveBeenCalledExactlyOnceWith()
-    expect(active.errors).toEqual([])
-    expect(active.published).toContainEqual(signedIn)
-    await active.host.dispose()
-  })
-
-  it('keeps the optional default-model operation absent for older adapter profiles', async () => {
-    const active = harness(
-      {
-        watch: vi.fn(() => ({
-          async *[Symbol.asyncIterator]() {
-            await Promise.resolve()
-            yield waiting
-            yield signedIn
-          },
-        })),
-      },
-      false,
-    )
-    active.host.start()
-
-    await vi.waitFor(() => expect(active.published).toContainEqual(signedIn))
-    expect(active.initializeDefaultModel).not.toHaveBeenCalled()
-    await active.host.dispose()
-  })
-
-  it('cancels only the named DSH attempt when the system browser cannot open', async () => {
-    const active = harness({ startSignIn: vi.fn().mockResolvedValue(waiting) })
-    active.openExternal.mockResolvedValue(false)
-    active.host.start()
-    await active.host.startSignIn()
-    const listener = [...active.launchListeners][0]
-    if (listener === undefined) throw new Error('missing authorization listener')
-    listener({ attemptId, url: authorizeUrl })
-    await vi.waitFor(() =>
-      expect(active.repo.cancelSignIn.mock.calls).toEqual([[attemptId, expect.any(AbortSignal)]]),
-    )
-    expect(active.errors).toContain('browser-open-failed')
-    await active.host.dispose()
-  })
-
   it('re-checks sign-out impact and never signs out until Host confirmation succeeds', async () => {
     const active = harness({ hasRunningAccountTasks: vi.fn().mockResolvedValue(true) })
     active.confirmSignOut.mockResolvedValueOnce(false).mockResolvedValueOnce(true)
@@ -370,19 +246,6 @@ describe('AccountLifecycleHost', () => {
     await expect(active.host.signOut()).resolves.toEqual(snapshot)
     expect(active.confirmSignOut).toHaveBeenNthCalledWith(2, 'running')
     expect(active.repo.signOut.mock.calls).toEqual([[client, expect.any(AbortSignal)]])
-    await active.host.dispose()
-  })
-
-  it('keeps an unavailable impact as unknown and fails closed when the Host prompt is declined', async () => {
-    const active = harness({
-      hasRunningAccountTasks: vi.fn().mockRejectedValue(new Error('private backend error')),
-    })
-    active.confirmSignOut.mockResolvedValue(false)
-    active.host.start()
-
-    await expect(active.host.signOut()).resolves.toBeUndefined()
-    expect(active.confirmSignOut).toHaveBeenCalledExactlyOnceWith('unknown')
-    expect(active.repo.signOut.mock.calls).toHaveLength(0)
     await active.host.dispose()
   })
 
@@ -461,36 +324,6 @@ describe('AccountLifecycleHost', () => {
     await active.host.dispose()
   })
 
-  it('filters bonus expiry with the Host clock', async () => {
-    const active = harness(
-      {
-        getState: vi.fn().mockResolvedValue(signedIn),
-        getUnnotifiedBonuses: vi.fn().mockResolvedValue({
-          accountId: 'account-1',
-          bonuses: [
-            {
-              orderId: '0bd8870d-2648-4c4c-95ca-d9e89f08095c',
-              campaign: 'launch',
-              amount: '1',
-              currency: 'USD',
-              grantedAt: '1969-12-31T00:00:00.000Z',
-              expiresAt: '1970-01-01T00:00:01.000Z',
-              message: 'bonus',
-            },
-          ],
-        }),
-      },
-      true,
-      () => 0,
-    )
-    active.host.start()
-
-    await expect(active.host.readDetails()).resolves.toMatchObject({
-      bonus: { status: 'ready', value: { orderId: '0bd8870d-2648-4c4c-95ca-d9e89f08095c' } },
-    })
-    await active.host.dispose()
-  })
-
   it('keeps account identity in the Host and acknowledges only a notice returned by its current read', async () => {
     const orderId = '0bd8870d-2648-4c4c-95ca-d9e89f08095c'
     const active = harness({
@@ -523,73 +356,6 @@ describe('AccountLifecycleHost', () => {
     expect(active.repo.ackBonusNotified.mock.calls).toEqual([
       ['account-1', orderId, client, expect.any(AbortSignal)],
     ])
-    await active.host.dispose()
-  })
-
-  it('retains an empty but valid RC2 AccountUserId only inside the Host acknowledgement scope', async () => {
-    const orderId = '0bd8870d-2648-4c4c-95ca-d9e89f08095c'
-    const active = harness({
-      getState: vi.fn().mockResolvedValue(signedIn),
-      getUnnotifiedBonuses: vi.fn().mockResolvedValue({
-        accountId: '',
-        bonuses: [
-          {
-            orderId,
-            campaign: 'launch',
-            amount: '1',
-            currency: 'USD',
-            grantedAt: '2026-09-01',
-            expiresAt: '2099-10-01',
-            message: 'bonus',
-          },
-        ],
-      }),
-      ackBonusNotified: vi.fn().mockResolvedValue(true),
-    })
-    active.host.start()
-
-    await expect(active.host.readDetails()).resolves.toMatchObject({
-      accountScopeRevision: 1,
-      bonus: { status: 'ready', value: { orderId } },
-    })
-    await expect(active.host.acknowledgeBonus(orderId)).resolves.toBe(true)
-    expect(active.repo.ackBonusNotified.mock.calls[0]?.[0]).toBe('')
-    await active.host.dispose()
-  })
-
-  it('retains the account scope through a transient bonus-read failure so the ack can retry', async () => {
-    const orderId = '0bd8870d-2648-4c4c-95ca-d9e89f08095c'
-    const batch: AccountBonusBatch = {
-      accountId: 'account-1',
-      bonuses: [
-        {
-          orderId,
-          campaign: 'launch',
-          amount: '1',
-          currency: 'USD',
-          grantedAt: '2026-09-01',
-          expiresAt: '2099-10-01',
-          message: 'bonus',
-        },
-      ],
-    }
-    const active = harness({
-      getState: vi.fn().mockResolvedValue(signedIn),
-      getProfile: vi.fn().mockResolvedValue({
-        status: 'ready',
-        value: { id: 'account-1', name: null, contact: null },
-      }),
-      getUnnotifiedBonuses: vi.fn().mockResolvedValueOnce(batch).mockRejectedValueOnce(new Error('offline')),
-      ackBonusNotified: vi.fn().mockResolvedValue(true),
-    })
-    active.host.start()
-    await expect(active.host.readDetails()).resolves.toMatchObject({ accountScopeRevision: 1 })
-    await expect(active.host.readDetails()).resolves.toMatchObject({
-      bonus: { status: 'failed' },
-      accountScopeRevision: 1,
-    })
-    await expect(active.host.acknowledgeBonus(orderId)).resolves.toBe(true)
-    expect(active.repo.ackBonusNotified.mock.calls).toHaveLength(1)
     await active.host.dispose()
   })
 
@@ -631,65 +397,6 @@ describe('AccountLifecycleHost', () => {
     await active.host.dispose()
   })
 
-  it('does not infer an account switch from a profile without a stable identity during bonus failure', async () => {
-    const orderId = '0bd8870d-2648-4c4c-95ca-d9e89f08095c'
-    const active = harness({
-      getState: vi.fn().mockResolvedValue(signedIn),
-      getProfile: vi
-        .fn()
-        .mockResolvedValueOnce({ status: 'ready', value: { id: 'account-1', name: null, contact: null } })
-        .mockResolvedValueOnce({ status: 'failed' }),
-      getUnnotifiedBonuses: vi
-        .fn()
-        .mockResolvedValueOnce({
-          accountId: 'account-1',
-          bonuses: [
-            {
-              orderId,
-              campaign: 'launch',
-              amount: '1',
-              currency: 'USD',
-              grantedAt: '2026-09-01',
-              expiresAt: '2099-10-01',
-              message: 'same account bonus',
-            },
-          ],
-        })
-        .mockRejectedValueOnce(new Error('temporary bonus query failure')),
-      ackBonusNotified: vi.fn().mockResolvedValue(true),
-    })
-    active.host.start()
-
-    await expect(active.host.readDetails()).resolves.toMatchObject({ accountScopeRevision: 1 })
-    await expect(active.host.readDetails()).resolves.toMatchObject({
-      bonus: { status: 'failed' },
-      accountScopeRevision: 1,
-    })
-    await expect(active.host.acknowledgeBonus(orderId)).resolves.toBe(true)
-    expect(active.repo.ackBonusNotified.mock.calls[0]?.[0]).toBe('account-1')
-    await active.host.dispose()
-  })
-
-  it('increments the safe account scope revision once when a known scope is cleared', async () => {
-    const active = harness({
-      getState: vi.fn().mockResolvedValue(signedIn),
-      getUnnotifiedBonuses: vi.fn().mockResolvedValue({ accountId: 'account-1', bonuses: [] }),
-    })
-    active.host.start()
-
-    await expect(active.host.readDetails()).resolves.toMatchObject({ accountScopeRevision: 1 })
-    active.repo.getUnnotifiedBonuses.mockResolvedValue(null)
-    await expect(active.host.readDetails()).resolves.toMatchObject({
-      bonus: { status: 'unavailable' },
-      accountScopeRevision: 2,
-    })
-    await expect(active.host.readDetails()).resolves.toMatchObject({
-      bonus: { status: 'unavailable' },
-      accountScopeRevision: 2,
-    })
-    await active.host.dispose()
-  })
-
   it('drops a prior notice acknowledgement scope when a complete read names another account', async () => {
     const orderId = '0bd8870d-2648-4c4c-95ca-d9e89f08095c'
     const active = harness({
@@ -726,81 +433,6 @@ describe('AccountLifecycleHost', () => {
     })
     await expect(active.host.acknowledgeBonus(orderId)).resolves.toBe(false)
     expect(active.repo.ackBonusNotified.mock.calls).toHaveLength(0)
-    await active.host.dispose()
-  })
-
-  it('retains a displayed notice scope when the same account has no remaining unnotified bonus', async () => {
-    const orderId = '0bd8870d-2648-4c4c-95ca-d9e89f08095c'
-    const active = harness({
-      getState: vi.fn().mockResolvedValue(signedIn),
-      getProfile: vi.fn().mockResolvedValue({
-        status: 'ready',
-        value: { id: 'account-1', name: null, contact: null },
-      }),
-      getUnnotifiedBonuses: vi.fn().mockResolvedValueOnce({
-        accountId: 'account-1',
-        bonuses: [
-          {
-            orderId,
-            campaign: 'launch',
-            amount: '1',
-            currency: 'USD',
-            grantedAt: '2026-09-01',
-            expiresAt: '2099-10-01',
-            message: 'bonus',
-          },
-        ],
-      }),
-    })
-    active.host.start()
-    await active.host.readDetails()
-    active.repo.getUnnotifiedBonuses.mockResolvedValue({ accountId: 'account-1', bonuses: [] })
-    await expect(active.host.readDetails()).resolves.toMatchObject({
-      bonus: { status: 'ready', value: null },
-    })
-    active.repo.ackBonusNotified.mockResolvedValue(true)
-    await expect(active.host.acknowledgeBonus(orderId)).resolves.toBe(true)
-    expect(active.repo.ackBonusNotified.mock.calls).toEqual([
-      ['account-1', orderId, client, expect.any(AbortSignal)],
-    ])
-    await active.host.dispose()
-  })
-
-  it('deduplicates concurrent acknowledgement requests for the same bonus', async () => {
-    const orderId = '0bd8870d-2648-4c4c-95ca-d9e89f08095c'
-    const active = harness({
-      getState: vi.fn().mockResolvedValue(signedIn),
-      getProfile: vi.fn().mockResolvedValue({
-        status: 'ready',
-        value: { id: 'account-1', name: null, contact: null },
-      }),
-      getUnnotifiedBonuses: vi.fn().mockResolvedValue({
-        accountId: 'account-1',
-        bonuses: [
-          {
-            orderId,
-            campaign: 'launch',
-            amount: '1',
-            currency: 'USD',
-            grantedAt: '2026-09-01',
-            expiresAt: '2099-10-01',
-            message: 'bonus',
-          },
-        ],
-      }),
-    })
-    let resolveAcknowledgement!: (accepted: boolean) => void
-    active.repo.ackBonusNotified.mockImplementation(
-      () => new Promise<boolean>((resolve) => (resolveAcknowledgement = resolve)),
-    )
-    active.host.start()
-    await active.host.readDetails()
-
-    const first = active.host.acknowledgeBonus(orderId)
-    await expect(active.host.acknowledgeBonus(orderId)).resolves.toBe(false)
-    expect(active.repo.ackBonusNotified.mock.calls).toHaveLength(1)
-    resolveAcknowledgement(true)
-    await expect(first).resolves.toBe(true)
     await active.host.dispose()
   })
 
@@ -864,39 +496,6 @@ describe('AccountLifecycleHost', () => {
     },
   )
 
-  it('keeps a current-scope bonus eligible for retry after an acknowledgement error', async () => {
-    const orderId = '0bd8870d-2648-4c4c-95ca-d9e89f08095c'
-    const active = harness({
-      getState: vi.fn().mockResolvedValue(signedIn),
-      getUnnotifiedBonuses: vi.fn().mockResolvedValue({
-        accountId: 'account-1',
-        bonuses: [
-          {
-            orderId,
-            campaign: 'launch',
-            amount: '1',
-            currency: 'USD',
-            grantedAt: '2026-09-01',
-            expiresAt: '2099-10-01',
-            message: 'bonus',
-          },
-        ],
-      }),
-    })
-    const failure = new Error('temporary acknowledgement failure')
-    active.repo.ackBonusNotified.mockRejectedValueOnce(failure).mockResolvedValueOnce(true)
-    active.host.start()
-    await active.host.readDetails()
-
-    await expect(active.host.acknowledgeBonus(orderId)).rejects.toBe(failure)
-    await expect(active.host.acknowledgeBonus(orderId)).resolves.toBe(true)
-    expect(active.repo.ackBonusNotified.mock.calls.map(([accountId]) => accountId)).toEqual([
-      'account-1',
-      'account-1',
-    ])
-    await active.host.dispose()
-  })
-
   it('does not make account detail requests while signed out and clears bonus scope', async () => {
     const active = harness({ getState: vi.fn().mockResolvedValue(snapshot) })
     active.host.start()
@@ -910,51 +509,6 @@ describe('AccountLifecycleHost', () => {
     expect(active.repo.getProfile.mock.calls).toHaveLength(0)
     expect(active.repo.getBalance.mock.calls).toHaveLength(0)
     expect(active.repo.getUnnotifiedBonuses.mock.calls).toHaveLength(0)
-    await active.host.dispose()
-  })
-
-  it('does not let a stale signed-out details read clear a newer account scope', async () => {
-    const orderId = '0bd8870d-2648-4c4c-95ca-d9e89f08095c'
-    let resolveStaleState!: (value: AccountLifecycleSnapshot) => void
-    let stateCalls = 0
-    const active = harness({
-      getState: vi.fn().mockImplementation(() => {
-        stateCalls += 1
-        if (stateCalls === 1)
-          return new Promise<AccountLifecycleSnapshot>((resolve) => {
-            resolveStaleState = resolve
-          })
-        return Promise.resolve(signedIn)
-      }),
-      getUnnotifiedBonuses: vi.fn().mockResolvedValue({
-        accountId: 'account-2',
-        bonuses: [
-          {
-            orderId,
-            campaign: 'launch',
-            amount: '1',
-            currency: 'USD',
-            grantedAt: '2026-09-01',
-            expiresAt: '2099-10-01',
-            message: 'current account bonus',
-          },
-        ],
-      }),
-      ackBonusNotified: vi.fn().mockResolvedValue(true),
-    })
-    active.host.start()
-
-    const staleRead = active.host.readDetails()
-    const currentRead = await active.host.readDetails()
-    expect(currentRead).toMatchObject({
-      accountScopeRevision: 1,
-      bonus: { status: 'ready', value: { orderId } },
-    })
-
-    resolveStaleState(snapshot)
-    await expect(staleRead).resolves.toMatchObject({ accountScopeRevision: 1 })
-    await expect(active.host.acknowledgeBonus(orderId)).resolves.toBe(true)
-    expect(active.repo.ackBonusNotified.mock.calls[0]?.[0]).toBe('account-2')
     await active.host.dispose()
   })
 

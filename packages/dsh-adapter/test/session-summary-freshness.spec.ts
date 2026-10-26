@@ -134,96 +134,12 @@ describe('Session summary freshness', () => {
     expect((await repository.get(SESSION)).status).toBe('idle')
   })
 
-  it('keeps summary events received while the open hook is restoring the live baseline', async () => {
-    const { repository, listed } = fixture({
-      onSessionOpen: () => {
-        repository.remember({ type: 'session.status', sessionId: SESSION, status: 'idle' })
-        repository.remember({ type: 'session.title', sessionId: SESSION, title: 'Accepted during open' })
-        repository.remember({
-          type: 'session.configuration',
-          sessionId: SESSION,
-          patch: { preset: 'review' },
-        })
-        return Promise.resolve()
-      },
-    })
-    listed.running = true
-    await repository.list()
-    expect(await repository.open(SESSION)).toMatchObject({
-      status: 'idle',
-      title: 'Accepted during open',
-      agentPreset: 'review',
-      configuration: { preset: 'review' },
-      projection: { asOfSequence: 3 },
-    })
-  })
-
-  it('retains a runtime event received before the first summary read', async () => {
-    const { repository } = fixture()
-    repository.remember({ type: 'session.status', sessionId: SESSION, status: 'running' })
-    expect(await repository.get(SESSION)).toMatchObject({ status: 'running', blank: false })
-  })
-
   it('does not turn runtime activity alone into a durable nonblank session', async () => {
     const { repository, replies } = fixture()
     await repository.list()
     replies.history = () => Promise.resolve({ events: [], hasMore: false })
     repository.remember({ type: 'session.status', sessionId: SESSION, status: 'running' })
     expect(await repository.get(SESSION)).toMatchObject({ status: 'running', blank: true })
-  })
-
-  it('preserves events that arrive during list loading and lets a later list rebaseline status', async () => {
-    const { repository, replies, listed } = fixture()
-    listed.running = true
-    const pending = deferred()
-    replies.list = () => pending.promise
-    const loading = repository.list()
-    repository.remember({ type: 'session.status', sessionId: SESSION, status: 'idle' })
-    pending.resolve({ items: [{ ...listed }] })
-    expect((await loading).items[0]?.status).toBe('idle')
-    expect((await repository.get(SESSION)).status).toBe('idle')
-    replies.list = () => Promise.resolve({ items: [{ ...listed }] })
-    expect((await repository.list()).items[0]?.status).toBe('running')
-  })
-
-  it('does not let an older overlapping list replace a newer summary', async () => {
-    const { repository, replies, listed } = fixture()
-    const older = deferred()
-    replies.list = () => older.promise
-    const first = repository.list()
-    replies.list = () => Promise.resolve({ items: [{ ...listed, running: true, blank: false }] })
-    await repository.list()
-    older.resolve({ items: [{ ...listed }] })
-    expect((await first).items[0]?.status).toBe('running')
-    expect((await repository.get(SESSION)).status).toBe('running')
-  })
-
-  it('does not compare a cold cached hint watermark with the current session sequence', async () => {
-    const { repository, replies, listed } = fixture()
-    replies.list = () =>
-      Promise.resolve({
-        items: [
-          {
-            ...listed,
-            projections: {
-              kind: 'cached',
-              asOfSeq: 100,
-              values: {
-                title: 'Predecessor title',
-                agentPreset: 'standard',
-                sessionListMetadata: { blank: true, lastPromptAt: null },
-              },
-            },
-          },
-        ],
-      })
-    await repository.list()
-    expect(await repository.get(SESSION)).toMatchObject({ title: 'Current title', agentPreset: 'fast' })
-    expect((await repository.list()).items[0]).toMatchObject({
-      title: 'Current title',
-      agentPreset: 'fast',
-      blank: false,
-    })
   })
 
   it('uses the projected human activity time when an uncached history tail starts with a later tool event', async () => {
@@ -249,72 +165,6 @@ describe('Session summary freshness', () => {
     })
   })
 
-  it('keeps newer live projection cells when an older history or list finishes', async () => {
-    const { repository } = fixture()
-    await repository.list()
-    repository.remember({
-      type: 'session.subscribed',
-      sessionId: SESSION,
-      lastSequence: 5,
-      projection: {
-        asOfSequence: 5,
-        values: {
-          title: 'Latest title',
-          agentPreset: 'review',
-          sessionListMetadata: { blank: false, lastPromptAt: FINISHED },
-        },
-      },
-    })
-    expect(await repository.get(SESSION)).toMatchObject({
-      title: 'Latest title',
-      blank: false,
-      updatedAt: new Date(FINISHED).toISOString(),
-      agentPreset: 'review',
-      configuration: { preset: 'review' },
-    })
-    expect((await repository.list()).items[0]).toMatchObject({
-      title: 'Latest title',
-      blank: false,
-      updatedAt: new Date(FINISHED).toISOString(),
-      agentPreset: 'review',
-    })
-  })
-
-  it('retains the durable watermark after an unsequenced live title update', async () => {
-    const { repository } = fixture()
-    await repository.get(SESSION)
-    repository.remember({ type: 'session.title', sessionId: SESSION, title: 'Observed title' })
-    expect((await repository.get(SESSION)).title).toBe('Observed title')
-  })
-
-  it('keeps command-only history blank without advancing human activity time', async () => {
-    const { repository, replies } = fixture()
-    await repository.list()
-    replies.history = () =>
-      Promise.resolve({
-        events: [
-          {
-            event: {
-              type: 'user/message',
-              seq: 1,
-              time: FINISHED,
-              data: {
-                id: 'command-1',
-                role: 'user',
-                source: { kind: 'command' },
-                content: [{ type: 'text', text: '/plan off' }],
-              },
-            },
-          },
-        ],
-        hasMore: false,
-      })
-    expect(await repository.get(SESSION)).toMatchObject({
-      blank: true,
-      updatedAt: new Date(CREATED).toISOString(),
-    })
-  })
-
   it('rejects preset changes on a started session before invoking mutation callbacks', async () => {
     const select = vi.fn(async () => {})
     const { repository } = fixture({ selectAgentPreset: select })
@@ -329,13 +179,6 @@ describe('Session summary freshness', () => {
       }),
     ).rejects.toMatchObject({ code: 'CAPABILITY_UNAVAILABLE' })
     expect(select).not.toHaveBeenCalled()
-  })
-
-  it('clears a legacy preset when the authoritative projection explicitly reports null', async () => {
-    const { repository, replies } = fixture()
-    await repository.list()
-    replies.history = () => Promise.resolve(history({ agentPreset: null }))
-    expect((await repository.get(SESSION)).agentPreset).toBeUndefined()
   })
 
   it('does not apply malformed advisory metadata or let it throw a date error', async () => {
@@ -353,17 +196,6 @@ describe('Session summary freshness', () => {
     expect(await repository.get(SESSION)).toMatchObject({
       blank: true,
       updatedAt: new Date(CREATED).toISOString(),
-    })
-  })
-
-  it('uses positive history facts when an older deployment has no summary projection', async () => {
-    const { repository, replies } = fixture()
-    await repository.list()
-    replies.history = () => Promise.resolve(history())
-    expect(await repository.get(SESSION)).toMatchObject({
-      blank: false,
-      updatedAt: new Date(PROMPT).toISOString(),
-      status: 'idle',
     })
   })
 

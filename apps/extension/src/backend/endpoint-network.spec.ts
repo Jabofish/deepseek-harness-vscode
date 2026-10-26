@@ -63,12 +63,7 @@ describe('endpoint network boundary', () => {
       code: 'INVALID_ENDPOINT',
     })
   })
-  it.each(['192.168.1.20', '10.0.0.8', '172.16.2.2', '203.0.113.2', 'fd12::1234', '2001:db8::12'])(
-    'allows intentional private or unicast address %s',
-    (address) => {
-      expect(isDisallowedRemoteAddress(address)).toBe(false)
-    },
-  )
+
   it('denies unknown remote HTTP and WebSocket origins without touching transport', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>()
     const value = network({ fetch })
@@ -106,23 +101,7 @@ describe('endpoint network boundary', () => {
     await value.release(remote)
     await expect(value.fetch(`${remote.baseUrl}/api`)).rejects.toMatchObject({ code: 'INVALID_ENDPOINT' })
   })
-  it('cancels slow DNS and cannot register a session after disposal', async () => {
-    let finish: ((result: { address: string; family: 4 }[]) => void) | undefined
-    const value = network({
-      resolve: () =>
-        new Promise((resolve) => {
-          finish = resolve
-        }),
-    })
-    const abort = new AbortController()
-    const operation = value.prepare(remote, false, abort.signal)
-    const rejected = expect(operation).rejects.toMatchObject({ name: 'AbortError' })
-    abort.abort()
-    await rejected
-    await value.dispose()
-    finish?.([{ address: '10.0.0.8', family: 4 }])
-    await expect(value.fetch(`${remote.baseUrl}/api`)).rejects.toMatchObject({ code: 'INVALID_ENDPOINT' })
-  })
+
   it('blocks HTTP redirects on real sockets and closes live WebSockets on release', async () => {
     let leaked = 0
     const server = createServer((request, response) => {

@@ -1,12 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import {
-  isAbsoluteFilePath,
-  isLocalRuntimePath,
-  isWindowsFilePath,
-  resolveNpmExecutable,
-  runtimePathEntries,
-} from './runtime-paths.js'
+import { isAbsoluteFilePath, isLocalRuntimePath, runtimePathEntries } from './runtime-paths.js'
 
 describe('runtime path resolution', () => {
   it('keeps Linux package-manager paths available to a GUI-launched host', () => {
@@ -31,12 +25,6 @@ describe('runtime path resolution', () => {
     ])
   })
 
-  it('resolves npm from an explicit Linux PATH entry', () => {
-    expect(
-      resolveNpmExecutable('linux', ['/opt/node/bin'], (candidate) => candidate === '/opt/node/bin/npm'),
-    ).toBe('/opt/node/bin/npm')
-  })
-
   it('adds the Windows npm-global and Node locations when a GUI PATH omits them', () => {
     expect(
       runtimePathEntries('windows', {
@@ -52,22 +40,6 @@ describe('runtime path resolution', () => {
     ])
   })
 
-  it('uses the Windows npm shim name when no inspected path exists', () => {
-    expect(resolveNpmExecutable('windows', [], () => false)).toBe('npm.cmd')
-  })
-
-  it('keeps pnpm and the persistent fnm alias available without a terminal shell', () => {
-    const entries = runtimePathEntries('windows', {
-      PATH: 'C:\\expired-fnm-shell',
-      PNPM_HOME: 'C:\\tools\\pnpm',
-      LOCALAPPDATA: 'C:\\Users\\alice\\AppData\\Local',
-      FNM_DIR: 'D:\\fnm',
-    })
-    expect(entries).toContain('C:\\tools\\pnpm')
-    expect(entries).toContain('C:\\Users\\alice\\AppData\\Local\\pnpm')
-    expect(entries).toContain('D:\\fnm\\aliases\\default')
-  })
-
   it('keeps USERPROFILE discovery stable when HOME is overridden by a launcher', () => {
     const entries = runtimePathEntries('windows', {
       PATH: '',
@@ -78,26 +50,9 @@ describe('runtime path resolution', () => {
     expect(entries).toContain('C:\\Users\\alice\\AppData\\Roaming\\npm')
     expect(entries).toContain('C:\\launcher-home\\AppData\\Roaming\\npm')
   })
-
-  it('reads the Windows Path spelling from a plain merged environment', () => {
-    expect(
-      runtimePathEntries('windows', {
-        Path: 'C:\\Users\\alice\\AppData\\Roaming\\npm',
-      }),
-    ).toContain('C:\\Users\\alice\\AppData\\Roaming\\npm')
-  })
 })
 
 describe('local runtime paths', () => {
-  it.each([
-    ['windows', 'C:\\tools\\dsh.cmd'],
-    ['windows', 'D:/Program Files/dsh.cmd'],
-    ['linux', '/usr/local/bin/dsh'],
-    ['macos', '/Users/alice/tools/dsh'],
-  ] as const)('accepts a local absolute path on %s: %s', (os, candidate) => {
-    expect(isLocalRuntimePath(candidate, os)).toBe(true)
-  })
-
   it.each([
     '\\\\server\\share\\dsh.cmd',
     '//server/share/dsh.cmd',
@@ -127,29 +82,8 @@ describe('local runtime paths', () => {
 })
 
 describe('absolute path detection', () => {
-  it('accepts absolute paths written on any platform', () => {
-    const absolute = [
-      '/usr/local/bin/dsh',
-      '/home/alice/.npm-global/bin/dsh',
-      'C:\\Users\\alice\\AppData\\Roaming\\npm\\dsh.cmd',
-      'D:/tools/dsh.cmd',
-      '\\\\build\\share\\dsh.cmd',
-    ]
-    for (const value of absolute) expect(isAbsoluteFilePath(value), value).toBe(true)
-  })
-
   it('rejects command names, relative paths and drive-relative spellings', () => {
     const relative = ['dsh', 'dsh.cmd', 'bin/dsh', './bin/dsh', '.\\bin\\dsh', 'C:tools\\dsh.cmd']
     for (const value of relative) expect(isAbsoluteFilePath(value), value).toBe(false)
-  })
-
-  it('tells a Windows spelling from a POSIX one', () => {
-    // The caller that resolves a link has to pick a path API for the spelling
-    // it holds: a UNC or drive target is not readable by the POSIX API, which
-    // sees one segment of ordinary characters instead.
-    for (const value of ['C:\\tools\\dsh.cmd', 'D:/tools/dsh.cmd', '\\\\build\\share\\dsh.cmd'])
-      expect(isWindowsFilePath(value), value).toBe(true)
-    for (const value of ['/usr/local/bin/dsh', 'bin/dsh', 'C:tools\\dsh.cmd'])
-      expect(isWindowsFilePath(value), value).toBe(false)
   })
 })

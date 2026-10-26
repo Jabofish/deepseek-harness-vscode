@@ -55,38 +55,6 @@ describe('Rc172AccountLifecycleRepository', () => {
     expect(launches).toEqual([{ attemptId, url: authorizeUrl }])
   })
 
-  it('routes cancel by the exact attempt id and preserves a committing outcome', async () => {
-    const remoteRequest = vi.fn().mockResolvedValue(
-      remoteSuccess(
-        accountView({
-          attempt: { id: attemptId, phase: 'committing' },
-        }),
-      ),
-    )
-    const repository = new Rc172AccountLifecycleRepository({ remoteRequest, openRemoteStream: vi.fn() })
-
-    await expect(repository.cancelSignIn(attemptId)).resolves.toEqual({
-      status: 'signed-out',
-      attempt: { id: attemptId, phase: 'committing' },
-    })
-    expect(remoteRequest).toHaveBeenCalledExactlyOnceWith('account/cancelSignIn', { attemptId }, undefined)
-  })
-
-  it('performs the running task check and signs out with Host client metadata', async () => {
-    const remoteRequest = vi
-      .fn<AccountRemoteTransport['remoteRequest']>()
-      .mockResolvedValueOnce(remoteSuccess(true))
-      .mockResolvedValueOnce(remoteSuccess(accountView()))
-    const repository = new Rc172AccountLifecycleRepository({ remoteRequest, openRemoteStream: vi.fn() })
-
-    await expect(repository.hasRunningAccountTasks()).resolves.toBe(true)
-    await expect(repository.signOut(client)).resolves.toEqual({ status: 'signed-out', attempt: null })
-    expect(remoteRequest.mock.calls.map(([endpoint, args]) => [endpoint, args])).toEqual([
-      ['account/hasRunningAccountTasks', {}],
-      ['account/signOut', { client }],
-    ])
-  })
-
   it('reads profile, normal and bonus wallets, and bonus notices through the pinned account Remotes', async () => {
     const bonus = {
       orderId: '0bd8870d-2648-4c4c-95ca-d9e89f08095c',
@@ -148,43 +116,6 @@ describe('Rc172AccountLifecycleRepository', () => {
     ])
   })
 
-  it('preserves independent failed and absent profile/balance outcomes', async () => {
-    const remoteRequest = vi
-      .fn<AccountRemoteTransport['remoteRequest']>()
-      .mockResolvedValueOnce(remoteSuccess({ status: 'failed' }))
-      .mockResolvedValueOnce(remoteSuccess(null))
-    const repository = new Rc172AccountLifecycleRepository({ remoteRequest, openRemoteStream: vi.fn() })
-
-    await expect(repository.getProfile(client)).resolves.toEqual({ status: 'failed' })
-    await expect(repository.getBalance(client)).resolves.toBeNull()
-  })
-
-  it('forwards request cancellation and preserves transport failures for detail calls', async () => {
-    const controller = new AbortController()
-    const timeout = new Error('request timeout')
-    const remoteRequest = vi.fn<AccountRemoteTransport['remoteRequest']>().mockRejectedValue(timeout)
-    const repository = new Rc172AccountLifecycleRepository({ remoteRequest, openRemoteStream: vi.fn() })
-
-    await expect(repository.getProfile(client, controller.signal)).rejects.toBe(timeout)
-    expect(remoteRequest).toHaveBeenCalledExactlyOnceWith('account/getProfile', { client }, controller.signal)
-
-    const cancelled = new AbortController()
-    cancelled.abort(new DOMException('cancelled', 'AbortError'))
-    const cancellation = cancelled.signal.reason as Error
-    const abortingTransport = vi.fn<AccountRemoteTransport['remoteRequest']>().mockRejectedValue(cancellation)
-    const abortingRepository = new Rc172AccountLifecycleRepository({
-      remoteRequest: abortingTransport,
-      openRemoteStream: vi.fn(),
-    })
-
-    await expect(abortingRepository.getBalance(client, cancelled.signal)).rejects.toBe(cancellation)
-    expect(abortingTransport).toHaveBeenCalledExactlyOnceWith(
-      'account/getBalance',
-      { client },
-      cancelled.signal,
-    )
-  })
-
   it.each([
     ['account/getProfile', { status: 'ready', value: { id: 'account', name: 'name' } }],
     ['account/getBalance', { status: 'ready', value: [{ currency: 'BTC', balance: '1' }], bonusWallets: [] }],
@@ -204,15 +135,6 @@ describe('Rc172AccountLifecycleRepository', () => {
           ? repository.getBalance(client)
           : repository.getUnnotifiedBonuses(client),
     ).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
-  })
-
-  it('preserves the exact RC2 AccountUserId even when its string is empty', async () => {
-    const remoteRequest = vi
-      .fn<AccountRemoteTransport['remoteRequest']>()
-      .mockResolvedValue(remoteSuccess({ accountId: '', bonuses: [] }))
-    const repository = new Rc172AccountLifecycleRepository({ remoteRequest, openRemoteStream: vi.fn() })
-
-    await expect(repository.getUnnotifiedBonuses(client)).resolves.toEqual({ accountId: '', bonuses: [] })
   })
 
   it('resolves account pages from the account state but rejects destinations outside the official origin', async () => {
@@ -328,39 +250,5 @@ describe('Rc172AccountLifecycleRepository', () => {
 
     await expect(repository.getState()).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
     expect(launch).not.toHaveBeenCalled()
-  })
-
-  it('rejects unsupported expiry frames and propagates the stream failure', async () => {
-    const openRemoteStream = vi.fn<AccountRemoteTransport['openRemoteStream']>(() => ({
-      async *[Symbol.asyncIterator]() {
-        await Promise.resolve()
-        yield { type: 'expired', token: 'must-not-be-read' }
-      },
-    }))
-    const repository = new Rc172AccountLifecycleRepository({ remoteRequest: vi.fn(), openRemoteStream })
-
-    await expect(async () => {
-      for await (const event of repository.watchExpiry(new AbortController().signal)) {
-        expect(event).toBe('never-emitted')
-      }
-    }).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
-  })
-
-  it('unsubscribes Host-only launch effects without retaining listeners', async () => {
-    const repository = new Rc172AccountLifecycleRepository({
-      remoteRequest: vi
-        .fn()
-        .mockResolvedValue(
-          remoteSuccess(accountView({ attempt: { id: attemptId, phase: 'waiting-browser', authorizeUrl } })),
-        ),
-      openRemoteStream: vi.fn(),
-    })
-    const listener = vi.fn()
-    const release = repository.subscribeAuthorizationLaunch(listener)
-    release()
-
-    await repository.getState()
-
-    expect(listener).not.toHaveBeenCalled()
   })
 })

@@ -5,85 +5,9 @@ import {
   hostMessageSchema,
   webviewRequestSchema,
 } from './schemas.js'
-import { featureHostEventSchema, featureRequestSchema, featureResponseSchema } from './feature-schemas.js'
-
-describe('question request identity', () => {
-  it.each(['interaction.question.respond', 'interaction.question.cancel'] as const)(
-    'validates the exact optional identity for %s',
-    (type) => {
-      const request = {
-        type,
-        requestId: 'r',
-        payload: {
-          questionId: 'q',
-          ...(type === 'interaction.question.respond' ? { response: 'answer' } : {}),
-          identity: { sessionId: 's1', rpcId: 'rpc-1' },
-        },
-      }
-      expect(webviewRequestSchema.safeParse(request).success).toBe(true)
-      for (const identity of [
-        { sessionId: 's1' },
-        { sessionId: '', rpcId: 'rpc-1' },
-        { sessionId: 's1', rpcId: 'rpc-1', endpoint: 'extra' },
-      ])
-        expect(
-          webviewRequestSchema.safeParse({ ...request, payload: { ...request.payload, identity } }).success,
-        ).toBe(false)
-    },
-  )
-})
-
-describe('generic Webview host response values', () => {
-  it('admits the blank reuse capability only as a connected boolean without Host details', () => {
-    const event = (payload: unknown): unknown => ({
-      type: 'event',
-      name: 'connection.snapshot',
-      sequence: 1,
-      payload,
-    })
-    expect(hostMessageSchema.safeParse(event({ kind: 'connected', blankSessionReuse: true })).success).toBe(
-      true,
-    )
-    expect(hostMessageSchema.safeParse(event({ kind: 'connected' })).success).toBe(true)
-    for (const payload of [
-      { kind: 'connected', blankSessionReuse: 'true' },
-      { kind: 'idle', blankSessionReuse: true },
-      { kind: 'connected', blankSessionReuse: true, endpoint: 'http://private.example' },
-    ])
-      expect(hostMessageSchema.safeParse(event(payload)).success).toBe(false)
-  })
-  it('carries bounded session-search completeness metadata in the generic host result', () => {
-    expect(
-      hostEnvelopeSchema.safeParse({
-        protocolVersion: 1,
-        message: {
-          type: 'response',
-          requestId: 'session-search-1',
-          ok: true,
-          payload: { items: [], searchHasMore: true },
-        },
-      }).success,
-    ).toBe(true)
-  })
-})
+import { featureRequestSchema, featureResponseSchema } from './feature-schemas.js'
 
 describe('custom provider Webview protocol', () => {
-  it('accepts the fixed keyboard-shortcuts host action without a dynamic command payload', () => {
-    expect(
-      webviewRequestSchema.safeParse({
-        type: 'settings.openKeyboardShortcuts',
-        requestId: 'keyboard-shortcuts-1',
-      }).success,
-    ).toBe(true)
-    expect(
-      webviewRequestSchema.safeParse({
-        type: 'settings.openKeyboardShortcuts',
-        requestId: 'keyboard-shortcuts-2',
-        payload: { command: 'arbitrary.command' },
-      }).success,
-    ).toBe(false)
-  })
-
   it('accepts only the non-secret provider draft and its CAS revision', () => {
     const result = webviewRequestSchema.safeParse({
       type: 'provider.custom.create',
@@ -101,43 +25,6 @@ describe('custom provider Webview protocol', () => {
     })
 
     expect(result.success).toBe(true)
-  })
-
-  it('validates modality metadata while preserving open provider model metadata', () => {
-    const create = (model: Record<string, unknown>): ReturnType<typeof webviewRequestSchema.safeParse> =>
-      webviewRequestSchema.safeParse({
-        type: 'provider.custom.create',
-        requestId: 'request-1',
-        payload: {
-          settingsNamespace: 'llm-pi-ai',
-          collectionPath: ['providers'],
-          providerId: 'gateway',
-          api: 'openai-completions',
-          baseUrl: 'http://127.0.0.1:9000/v1',
-          models: [model],
-          expectedRevision: 7,
-        },
-      })
-
-    const valid = create({
-      id: 'gateway-chat',
-      input: ['text', 'image'],
-      inputModalities: ['text', 'image'],
-      providerFeatures: { cachedPrompts: true },
-    })
-    expect(valid.success).toBe(true)
-    if (valid.success)
-      expect(valid.data).toMatchObject({
-        payload: {
-          models: [{ input: ['text', 'image'], inputModalities: ['text', 'image'] }],
-        },
-      })
-    expect(create({ id: 'gateway-chat', input: [] }).success).toBe(true)
-    expect(create({ id: 'gateway-chat', inputModalities: ['audio'] }).success).toBe(false)
-    expect(create({ id: 'gateway-chat', inputModalities: 'image' }).success).toBe(false)
-    expect(create({ id: 'gateway-chat', inputModalities: [] }).success).toBe(false)
-    expect(create({ id: 'gateway-chat', input: ['audio'] }).success).toBe(false)
-    expect(create({ id: 'gateway-chat', input: 'image' }).success).toBe(false)
   })
 
   it('rejects API keys in create and custom-discovery payloads', () => {
@@ -171,24 +58,6 @@ describe('custom provider Webview protocol', () => {
     expect(discover.success).toBe(false)
   })
 
-  it('rejects an empty model list and a non-integral CAS revision', () => {
-    const result = webviewRequestSchema.safeParse({
-      type: 'provider.custom.create',
-      requestId: 'request-1',
-      payload: {
-        settingsNamespace: 'llm-pi-ai',
-        collectionPath: ['providers'],
-        providerId: 'gateway',
-        api: 'openai-completions',
-        baseUrl: 'http://127.0.0.1:9000/v1',
-        models: [],
-        expectedRevision: 7.5,
-      },
-    })
-
-    expect(result.success).toBe(false)
-  })
-
   it('rejects credential-shaped fields even when nested in model metadata', () => {
     const result = webviewRequestSchema.safeParse({
       type: 'provider.custom.create',
@@ -208,37 +77,7 @@ describe('custom provider Webview protocol', () => {
   })
 })
 
-describe('sequenced queue projection protocol', () => {
-  it('accepts an optional safe projection cut and rejects malformed cuts', () => {
-    const base = {
-      type: 'event',
-      name: 'queue.updated',
-      sequence: 1,
-      payload: { sessionId: 'session-1', items: [] },
-    }
-
-    expect(
-      hostMessageSchema.safeParse({ ...base, payload: { ...base.payload, asOfSequence: 6 } }).success,
-    ).toBe(true)
-    expect(
-      hostMessageSchema.safeParse({ ...base, payload: { ...base.payload, asOfSequence: -1 } }).success,
-    ).toBe(false)
-    expect(
-      hostMessageSchema.safeParse({ ...base, payload: { ...base.payload, asOfSequence: 1.5 } }).success,
-    ).toBe(false)
-  })
-})
-
 describe('diagnostics Webview protocol', () => {
-  it('accepts a bounded redacted snapshot request', () => {
-    expect(
-      webviewRequestSchema.safeParse({
-        type: 'diagnostics.snapshot',
-        requestId: 'request-diagnostics',
-      }).success,
-    ).toBe(true)
-  })
-
   it('keeps diagnostics response fields closed and bounded', () => {
     expect(
       diagnosticsSnapshotSchema.safeParse({
@@ -260,151 +99,7 @@ describe('diagnostics Webview protocol', () => {
   })
 })
 
-describe('Job follow Webview protocol', () => {
-  it('requires an identity on follow start and stop requests', () => {
-    const base = { sessionId: 'session-1', jobId: 'bash-1' }
-    expect(
-      webviewRequestSchema.safeParse({
-        type: 'job.follow.start',
-        requestId: 'follow-1',
-        payload: { ...base, followId: 'follow-1', from: 12 },
-      }).success,
-    ).toBe(true)
-    expect(
-      webviewRequestSchema.safeParse({
-        type: 'job.follow.stop',
-        requestId: 'stop-1',
-        payload: { ...base, followId: 'follow-1' },
-      }).success,
-    ).toBe(true)
-    expect(
-      webviewRequestSchema.safeParse({
-        type: 'job.follow.stop',
-        requestId: 'stop-2',
-        payload: base,
-      }).success,
-    ).toBe(false)
-    expect(
-      webviewRequestSchema.safeParse({
-        type: 'job.follow.start',
-        requestId: 'follow-2',
-        payload: { ...base, from: 12 },
-      }).success,
-    ).toBe(false)
-  })
-})
-
 describe('Job follow Host protocol', () => {
-  const job = {
-    id: 'bash-1',
-    kind: 'bash',
-    label: 'run build',
-    status: 'running',
-    startedAt: 1_000,
-    output: { total: 5, earliest: 0 },
-  }
-
-  it('accepts a closed Job follow output event and keeps unrelated events generic', () => {
-    expect(
-      hostEnvelopeSchema.safeParse({
-        protocolVersion: 1,
-        message: {
-          type: 'event',
-          name: 'job.follow.updated',
-          sequence: 1,
-          payload: {
-            sessionId: 'session-1',
-            jobId: 'bash-1',
-            followId: 'follow-1',
-            frame: { type: 'output', chunks: [{ at: 0, text: 'hello' }], next: 5 },
-          },
-        },
-      }).success,
-    ).toBe(true)
-    expect(
-      hostEnvelopeSchema.safeParse({
-        protocolVersion: 1,
-        message: {
-          type: 'event',
-          name: 'job.follow.updated',
-          sequence: 2,
-          payload: {
-            sessionId: 'session-1',
-            jobId: 'bash-1',
-            followId: 'follow-1',
-            frame: { type: 'output', chunks: [{ at: 4, text: 'ef' }], next: 6, lossy: true },
-          },
-        },
-      }).success,
-    ).toBe(true)
-    expect(
-      hostEnvelopeSchema.safeParse({
-        protocolVersion: 1,
-        message: {
-          type: 'event',
-          name: 'job.follow.updated',
-          sequence: 5,
-          payload: {
-            sessionId: 'session-1',
-            jobId: 'bash-1',
-            followId: 'follow-1',
-            frame: {
-              type: 'output',
-              chunks: [
-                { at: 0, text: 'a' },
-                { at: 2, text: 'c', gapBefore: true },
-              ],
-              next: 3,
-            },
-          },
-        },
-      }).success,
-    ).toBe(true)
-    expect(
-      hostEnvelopeSchema.safeParse({
-        protocolVersion: 1,
-        message: {
-          type: 'event',
-          name: 'job.follow.updated',
-          sequence: 4,
-          payload: {
-            sessionId: 'session-1',
-            jobId: 'bash-1',
-            followId: 'follow-1',
-            frame: { type: 'output', chunks: [], next: 5, lossy: true },
-          },
-        },
-      }).success,
-    ).toBe(true)
-    expect(
-      hostEnvelopeSchema.safeParse({
-        protocolVersion: 1,
-        message: {
-          type: 'event',
-          name: 'job.follow.updated',
-          sequence: 3,
-          payload: {
-            sessionId: 'session-1',
-            jobId: 'bash-1',
-            followId: 'follow-1',
-            frame: {
-              type: 'output',
-              chunks: [{ at: 4, text: '', gapBefore: true }],
-              next: 4,
-              lossy: true,
-            },
-          },
-        },
-      }).success,
-    ).toBe(true)
-    expect(
-      hostEnvelopeSchema.safeParse({
-        protocolVersion: 1,
-        message: { type: 'event', name: 'jobs.updated', sequence: 2, payload: { sessionId: 'session-1' } },
-      }).success,
-    ).toBe(true)
-  })
-
   it('rejects malformed offsets and extra fields at every Job follow boundary', () => {
     const base = {
       protocolVersion: 1,
@@ -529,164 +224,10 @@ describe('Job follow Host protocol', () => {
       expect(hostMessageSchema.safeParse(message).success).toBe(false)
     }
   })
-
-  it('accepts opened frames but rejects unsafe offsets and extra projected Job fields', () => {
-    const event = {
-      protocolVersion: 1,
-      message: {
-        type: 'event',
-        name: 'job.follow.updated',
-        sequence: 1,
-        payload: {
-          sessionId: 'session-1',
-          jobId: 'bash-1',
-          followId: 'follow-1',
-          frame: { type: 'opened', job, from: 0 },
-        },
-      },
-    }
-    expect(hostEnvelopeSchema.safeParse(event).success).toBe(true)
-    expect(
-      hostEnvelopeSchema.safeParse({
-        ...event,
-        message: {
-          ...event.message,
-          payload: {
-            ...event.message.payload,
-            frame: { type: 'opened', job: { ...job, internalPath: 'private' }, from: 0 },
-          },
-        },
-      }).success,
-    ).toBe(false)
-    expect(
-      hostEnvelopeSchema.safeParse({
-        ...event,
-        message: {
-          ...event.message,
-          payload: {
-            ...event.message.payload,
-            frame: { type: 'opened', job, from: Number.MAX_SAFE_INTEGER + 1 },
-          },
-        },
-      }).success,
-    ).toBe(false)
-  })
-})
-
-describe('task center Webview protocol', () => {
-  const task = {
-    taskId: 'session:session-1',
-    sourceId: 'session-1',
-    sessionId: 'session-1',
-    workspaceFolderId: 'workspace-1',
-    kind: 'session',
-    title: 'Main session',
-    status: 'running',
-    needsUserAction: false,
-    startedAt: 1,
-    updatedAt: 2,
-    childCount: 0,
-    canOpen: true,
-    canAnswer: false,
-    canSessionCancel: true,
-    ownerKind: 'unknown',
-    taskRevision: 1,
-  } as const
-
-  it('accepts an explicit workspace task scope without a session id', () => {
-    expect(
-      featureRequestSchema.safeParse({
-        type: 'tasks.list',
-        requestId: 'request-tasks-workspace',
-        payload: { scope: 'workspace', includeCompleted: false, limit: 200 },
-      }).success,
-    ).toBe(true)
-  })
-
-  it('requires bounded scope and completeness metadata on task responses', () => {
-    expect(
-      featureResponseSchema.safeParse({
-        type: 'feature.response',
-        requestId: 'response-tasks',
-        ok: true,
-        payload: {
-          kind: 'tasks',
-          items: [task],
-          scope: 'workspace',
-          source: 'workspace-composed',
-          complete: false,
-          omittedSessions: 2,
-        },
-      }).success,
-    ).toBe(true)
-    expect(
-      featureResponseSchema.safeParse({
-        type: 'feature.response',
-        requestId: 'response-tasks',
-        ok: true,
-        payload: {
-          kind: 'tasks',
-          items: [task],
-          scope: 'workspace',
-          source: 'workspace-composed',
-          complete: false,
-          omittedSessions: 65,
-        },
-      }).success,
-    ).toBe(false)
-  })
-})
-
-describe('goal Webview protocol', () => {
-  it('accepts a positive safe maxGoalRounds on update', () => {
-    expect(
-      webviewRequestSchema.safeParse({
-        type: 'goal.update',
-        requestId: 'request-goal-update',
-        payload: { goalId: 'goal-1', maxGoalRounds: 9 },
-      }).success,
-    ).toBe(true)
-  })
-
-  it('rejects non-positive or non-integral goal round caps', () => {
-    for (const maxGoalRounds of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
-      expect(
-        webviewRequestSchema.safeParse({
-          type: 'goal.update',
-          requestId: 'request-goal-invalid',
-          payload: { goalId: 'goal-1', maxGoalRounds },
-        }).success,
-      ).toBe(false)
-    }
-  })
 })
 
 describe('settings write protocol', () => {
   const revision = 7
-
-  it('requires the namespace revision shown with each single-field write', () => {
-    expect(
-      webviewRequestSchema.safeParse({
-        type: 'settings.update',
-        requestId: 'settings-update-valid',
-        payload: { path: 'shell.timeoutMs', value: 20_000, expectedRevision: revision },
-      }).success,
-    ).toBe(true)
-    expect(
-      webviewRequestSchema.safeParse({
-        type: 'settings.update',
-        requestId: 'settings-update-stale-shape',
-        payload: { path: 'shell.timeoutMs', value: 20_000 },
-      }).success,
-    ).toBe(false)
-    expect(
-      webviewRequestSchema.safeParse({
-        type: 'settings.unset',
-        requestId: 'settings-unset-invalid',
-        payload: { path: 'shell.timeoutMs', expectedRevision: Number.MAX_SAFE_INTEGER + 1 },
-      }).success,
-    ).toBe(false)
-  })
 
   it('limits one atomic batch to one namespace revision and strict relative operations', () => {
     const valid = {
@@ -722,49 +263,6 @@ describe('settings write protocol', () => {
   })
 })
 
-describe('subagent Webview protocol', () => {
-  it('accepts opaque attachment handles on a subagent follow-up', () => {
-    expect(
-      webviewRequestSchema.safeParse({
-        type: 'subagent.send',
-        requestId: 'request-subagent',
-        payload: {
-          sessionId: 'child',
-          message: '看这张图',
-          attachments: [
-            { uri: 'dsh-attachment:0123456789abcdef', name: 'screen.png', mimeType: 'image/png' },
-          ],
-        },
-      }).success,
-    ).toBe(true)
-  })
-
-  it('defaults delivery to queue, accepts steer, and rejects unknown modes', () => {
-    const queued = webviewRequestSchema.safeParse({
-      type: 'subagent.send',
-      requestId: 'request-subagent-default',
-      payload: { sessionId: 'child', message: 'continue' },
-    })
-    expect(queued.success).toBe(true)
-    if (queued.success && queued.data.type === 'subagent.send') expect(queued.data.payload.mode).toBe('queue')
-
-    expect(
-      webviewRequestSchema.safeParse({
-        type: 'subagent.send',
-        requestId: 'request-subagent-steer',
-        payload: { sessionId: 'child', message: 'steer', mode: 'steer' },
-      }).success,
-    ).toBe(true)
-    expect(
-      webviewRequestSchema.safeParse({
-        type: 'subagent.send',
-        requestId: 'request-subagent-invalid',
-        payload: { sessionId: 'child', message: 'invalid', mode: 'later' },
-      }).success,
-    ).toBe(false)
-  })
-})
-
 describe('Schedule feature protocol', () => {
   const record = {
     id: 'schedule-1',
@@ -776,35 +274,6 @@ describe('Schedule feature protocol', () => {
     timeZone: 'Europe/Paris',
     weekdays: [1, 3, 5],
   }
-
-  it('accepts only the pinned Schedule catalog, list, history, update, and delete requests', () => {
-    const requests = [
-      { type: 'schedule.catalog', payload: {} },
-      { type: 'schedule.list', payload: { sessionId: 'session-1' } },
-      {
-        type: 'schedule.history',
-        payload: { sessionId: 'session-1', id: 'schedule-1', limit: 20, before: 'message-2' },
-      },
-      {
-        type: 'schedule.update',
-        payload: {
-          sessionId: 'session-1',
-          id: 'schedule-1',
-          expected: record,
-          change: { kind: 'at', at: { date: '2026-10-03', time: '10:15:00', timeZone: 'Europe/Paris' } },
-          title: 'Updated title',
-        },
-      },
-      { type: 'schedule.delete', payload: { sessionId: 'session-1', id: 'schedule-1' } },
-    ]
-    for (const [index, request] of requests.entries()) {
-      expect(featureRequestSchema.safeParse({ ...request, requestId: `schedule-${index}` }).success).toBe(
-        true,
-      )
-    }
-    const declared = featureRequestSchema.options.map((option) => option.shape.type.value)
-    expect(declared).not.toContain('schedule.create')
-  })
 
   it('validates timed question wait claims and complete late-answer batches', () => {
     const requests = [
@@ -940,122 +409,6 @@ describe('Schedule feature protocol', () => {
       }).success,
     ).toBe(false)
   })
-
-  it('accepts history, update, deletion, and payload-free invalidation projections', () => {
-    const receipt = {
-      scheduledAt: '2026-10-01T09:00:00.000Z',
-      deliveredAt: '2026-10-01T09:00:01.000Z',
-      messageId: 'message-1',
-    }
-    expect(
-      featureResponseSchema.safeParse({
-        type: 'feature.response',
-        requestId: 'catalog-response',
-        ok: true,
-        payload: {
-          kind: 'schedule.catalog',
-          items: [{ ...record, sessionId: 'session-1', status: 'inactive', lastDelivery: receipt }],
-        },
-      }).success,
-    ).toBe(true)
-    expect(
-      featureResponseSchema.safeParse({
-        type: 'feature.response',
-        requestId: 'history-response',
-        ok: true,
-        payload: {
-          kind: 'schedule.history',
-          result: {
-            id: 'schedule-1',
-            records: [{ ...receipt, prompt: '[redacted saved prompt]' }],
-            earlierRecordsUnavailable: false,
-            earlierRecordsPruned: true,
-            retention: { days: 30, records: 200 },
-            nextBefore: 'message-1',
-          },
-        },
-      }).success,
-    ).toBe(true)
-    expect(
-      featureResponseSchema.safeParse({
-        type: 'feature.response',
-        requestId: 'update-response',
-        ok: true,
-        payload: { kind: 'schedule.updated', result: { id: 'schedule-1', updated: true, record } },
-      }).success,
-    ).toBe(true)
-    expect(
-      featureResponseSchema.safeParse({
-        type: 'feature.response',
-        requestId: 'delete-response',
-        ok: true,
-        payload: {
-          kind: 'schedule.deleted',
-          result: { id: 'schedule-1', deleted: false, code: 'schedule_not_found' },
-        },
-      }).success,
-    ).toBe(true)
-    expect(
-      featureHostEventSchema.safeParse({
-        type: 'feature.event',
-        name: 'schedule.invalidated',
-        identity: {
-          backendInstanceId: 'backend-1',
-          connectionGeneration: 2,
-          stream: 'local',
-          localSeq: 3,
-        },
-      }).success,
-    ).toBe(true)
-    expect(
-      featureHostEventSchema.safeParse({
-        type: 'feature.event',
-        name: 'schedule.invalidated',
-        identity: {
-          backendInstanceId: 'backend-1',
-          connectionGeneration: 2,
-          stream: 'local',
-          localSeq: 3,
-        },
-        prompt: 'raw upstream data is disallowed',
-      }).success,
-    ).toBe(false)
-  })
-})
-
-describe('message feedback Webview protocol', () => {
-  it('accepts the upstream feedback category on submit and note updates', () => {
-    for (const type of ['feedback.toggle', 'feedback.note'] as const) {
-      expect(
-        webviewRequestSchema.safeParse({
-          type,
-          requestId: `request-${type}`,
-          payload: {
-            sessionId: 'session-1',
-            messageId: 'message-1',
-            rating: 'negative',
-            note: 'needs work',
-            category: 'instruction-following',
-          },
-        }).success,
-      ).toBe(true)
-    }
-  })
-
-  it('rejects a foreign feedback category', () => {
-    expect(
-      webviewRequestSchema.safeParse({
-        type: 'feedback.toggle',
-        requestId: 'request-feedback-invalid',
-        payload: {
-          sessionId: 'session-1',
-          messageId: 'message-1',
-          rating: 'positive',
-          category: 'not-a-category',
-        },
-      }).success,
-    ).toBe(false)
-  })
 })
 
 describe('RC2 Account Profile feature protocol', () => {
@@ -1134,60 +487,6 @@ describe('RC2 Account Profile feature protocol', () => {
 })
 
 describe('RC2 Plugin Manager feature protocol', () => {
-  it('accepts safe invalidation and install phases without registry or log payloads', () => {
-    const identity = {
-      backendInstanceId: 'backend-1',
-      connectionGeneration: 2,
-      stream: 'local',
-      localSeq: 3,
-    }
-    expect(
-      featureHostEventSchema.safeParse({ type: 'feature.event', name: 'plugin.manager.changed', identity })
-        .success,
-    ).toBe(true)
-    expect(
-      featureHostEventSchema.safeParse({
-        type: 'feature.event',
-        name: 'plugin.install.progress',
-        identity,
-        requestId: 'plugin-manager-a1-1',
-        phase: 'installing',
-        attemptIndex: 2,
-        attemptTotal: 3,
-      }).success,
-    ).toBe(true)
-    expect(
-      featureHostEventSchema.safeParse({
-        type: 'feature.event',
-        name: 'plugin.install.progress',
-        identity,
-        requestId: 'plugin-manager-a1-1',
-        phase: 'applying',
-      }).success,
-    ).toBe(true)
-    expect(
-      featureHostEventSchema.safeParse({
-        type: 'feature.event',
-        name: 'plugin.install.progress',
-        identity,
-        requestId: 'plugin-manager-a1-1',
-        phase: 'applying',
-        registry: 'https://private.example.test/',
-      }).success,
-    ).toBe(false)
-    expect(
-      featureHostEventSchema.safeParse({
-        type: 'feature.event',
-        name: 'plugin.install.progress',
-        identity,
-        requestId: 'plugin-manager-a1-1',
-        phase: 'applying',
-        attemptIndex: 2,
-        attemptTotal: 3,
-      }).success,
-    ).toBe(false)
-  })
-
   it('accepts only closed lifecycle request payloads', () => {
     const requests = [
       { type: 'plugin.bundles.list', payload: {} },

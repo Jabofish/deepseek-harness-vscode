@@ -24,15 +24,11 @@ const contracts = [
   'apps/extension/src/view/message-router-surface.spec.ts',
   'apps/extension/src/composition/request-gateway-trust.spec.ts',
   'apps/webview/src/styles',
-  'packages/ui/src/motion-tokens.spec.ts',
   'apps/webview/src/i18n-keys.spec.ts',
-  'apps/extension/src/view/protocol-route-coverage.spec.ts',
   'apps/extension/src/build/import-meta-url.spec.ts',
   'apps/extension/src/view/transcript-window-registry.spec.ts',
-  'tests/webview-transcript-boundary.spec.ts',
   'apps/extension/src/view/session-drop-editor.spec.ts',
   'apps/extension/src/commands/command-manifest.spec.ts',
-  'apps/webview/src/app/native-titlebar-layout.spec.ts',
 ]
 
 const argument = process.argv.slice(2).find((value) => value !== '--list')

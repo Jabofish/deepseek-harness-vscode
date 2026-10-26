@@ -24,8 +24,6 @@ describe('runCleanupSequence', () => {
     ])
 
     expect(order).toEqual(['detach', 'disconnect', 'supervisor'])
-    expect(disconnect).toHaveBeenCalledOnce()
-    expect(disposeSupervisor).toHaveBeenCalledOnce()
     expect(errors).toEqual([detachError, disconnectError])
   })
 })

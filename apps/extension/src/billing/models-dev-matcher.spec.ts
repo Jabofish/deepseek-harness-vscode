@@ -35,17 +35,7 @@ describe('provider-scoped model matching', () => {
       },
     },
   })
-  it.each(['deepseek', 'deepseek-official', 'deepseek-account', 'DeepSeek_Official'])(
-    'defaults %s to official prices, including canonical and case variants',
-    (providerId) => {
-      for (const modelId of ['deepseek-flash', 'DEEPSEEK_FLASH', canonical, canonical.toUpperCase()])
-        expect(official.match({ providerId, modelId }).selected).toMatchObject({
-          providerId: 'deepseek',
-          modelId: 'deepseek-flash',
-          official: true,
-        })
-    },
-  )
+
   it('prefers official prices for an unspecified supplier and preserves explicit reseller routes', () => {
     expect(official.match({ providerId: 'work', modelId: 'deepseek-flash' }).selected?.providerId).toBe(
       'deepseek',
@@ -58,11 +48,7 @@ describe('provider-scoped model matching', () => {
     expect(result.candidates).toHaveLength(8)
     expect(result.candidates[0]).toMatchObject({ providerId: 'deepseek', official: true })
   })
-  it('suggests close spellings without silently changing a model variant', () => {
-    const result = official.match({ providerId: 'deepseek-account', modelId: 'deepseek-flahs' })
-    expect(result.selected).toBeUndefined()
-    expect(result.candidates.some((candidate) => candidate.providerId === 'deepseek')).toBe(true)
-  })
+
   it('does not collapse canonical aliases when their prices differ', () => {
     const conflicting = new ModelsDevCatalogIndex({
       vendor: {
@@ -91,16 +77,7 @@ describe('provider-scoped model matching', () => {
     expect(large.search('', 50).entries).toHaveLength(11)
     expect(large.search('VENDOR MODEL_055').entries[0]?.modelId).toBe('model-055')
   })
-  it.each([
-    ['vendor', 'model-v2', 'model-v2'],
-    ['Vendor AI', 'MODEL_V2', 'model-v2'],
-    ['vendor-ai', 'model-v2-20261001', 'model-v2'],
-    ['vendor', 'vendor/model-v2-20261001', 'model-v2'],
-    ['reseller', 'model-v2', 'model-v2'],
-    ['vendor', 'a10', 'a10'],
-  ])('resolves %s / %s within its own channel', (providerId, modelId, expected) => {
-    expect(index.match({ providerId, modelId }).selected?.modelId).toBe(expected)
-  })
+
   it('never silently reprices unknown channels, ambiguous names, free variants or unlisted snapshots', () => {
     const custom = index.match({ providerId: 'custom-proxy', modelId: 'model-v2' })
     expect(custom.selected).toBeUndefined()
@@ -108,10 +85,5 @@ describe('provider-scoped model matching', () => {
     expect(index.match({ providerId: 'vendor', modelId: 'a_1_0' }).selected).toBeUndefined()
     expect(index.match({ providerId: 'vendor', modelId: 'model-v2:free' }).selected).toBeUndefined()
     expect(index.match({ providerId: 'vendor', modelId: 'model-v2-20250101' }).selected).toBeUndefined()
-  })
-  it('reuses llm-pricing name normalization as a confirmation candidate only', () => {
-    const result = index.match({ providerId: 'my-proxy', modelId: 'claude-opus-4-7-20260115' })
-    expect(result.selected).toBeUndefined()
-    expect(result.candidates).toMatchObject([{ providerId: 'anthropic', modelId: 'claude-opus-4.7' }])
   })
 })

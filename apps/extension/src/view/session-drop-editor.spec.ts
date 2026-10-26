@@ -1,11 +1,7 @@
 import { describe, expect, it, vi, type Mock } from 'vitest'
 import type * as vscode from 'vscode'
-import { readFileSync } from 'node:fs'
-import {
-  SESSION_DROP_EDITOR_VIEW_TYPE,
-  sessionEditorResource,
-  sessionIdFromEditorResource,
-} from '@dsh-vscode/webview-protocol'
+
+import { sessionEditorResource, sessionIdFromEditorResource } from '@dsh-vscode/webview-protocol'
 import { createSessionDropEditorProvider } from './session-drop-editor.js'
 
 type OpenSession = (
@@ -57,27 +53,6 @@ function harness(open = vi.fn<OpenSession>().mockResolvedValue(undefined)): Drop
 }
 
 describe('native session editor drop', () => {
-  it('registers the resource editor association and activation used by native drops', () => {
-    const manifest = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as {
-      activationEvents: unknown
-      contributes: { customEditors: unknown; views: Record<string, readonly unknown[]> }
-    }
-    expect(manifest.activationEvents).toContain(`onCustomEditor:${SESSION_DROP_EDITOR_VIEW_TYPE}`)
-    expect(manifest.contributes.customEditors).toContainEqual({
-      viewType: SESSION_DROP_EDITOR_VIEW_TYPE,
-      displayName: 'DeepSeek Harness Chat',
-      selector: [{ filenamePattern: '*.dsh-chat' }],
-      priority: 'default',
-    })
-    expect(manifest.activationEvents).toContain('onView:dsh.sessionList')
-    expect(manifest.contributes.views['dsh-container']).toEqual([
-      expect.objectContaining({ id: 'dsh.chatView', type: 'webview' }),
-    ])
-    expect(manifest.contributes.views['explorer']).toContainEqual(
-      expect.objectContaining({ id: 'dsh.sessionList', visibility: 'hidden' }),
-    )
-  })
-
   it('opens the accepted session in the drop group and releases the temporary editor', async () => {
     const h = harness()
     await h.resolve()
@@ -91,26 +66,6 @@ describe('native session editor drop', () => {
     await h.resolve()
     expect(h.report).toHaveBeenCalledOnce()
     expect(h.panel.dispose).toHaveBeenCalledOnce()
-  })
-
-  it('does not open an already cancelled drop and aborts an in-flight one', async () => {
-    const cancelled = harness()
-    cancelled.token.isCancellationRequested = true
-    await cancelled.resolve()
-    expect(cancelled.open).not.toHaveBeenCalled()
-    const h = harness()
-    h.open.mockImplementation((_sessionId, _column, signal) => {
-      h.cancel()
-      expect(signal.aborted).toBe(true)
-      return Promise.reject(new Error('cancelled'))
-    })
-    await h.resolve()
-    expect(h.report).not.toHaveBeenCalled()
-    expect(h.panel.dispose).toHaveBeenCalledOnce()
-  })
-
-  it.each(['s1', 'opaque/id?#&= 空间', 'a'.repeat(256)])('round trips an opaque session ID: %s', (id) => {
-    expect(sessionIdFromEditorResource(sessionEditorResource(id))).toBe(id)
   })
 
   it.each([

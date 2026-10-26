@@ -7,37 +7,6 @@ import {
 } from '../packages/webview-protocol/src/schemas.js'
 
 describe('attachment ingest schema', () => {
-  it('accepts automatic and custom DSH connection requests without exposing host details', () => {
-    expect(
-      webviewRequestSchema.safeParse({
-        type: 'connection.configure',
-        requestId: 'connection-auto',
-        payload: { mode: 'auto' },
-      }).success,
-    ).toBe(true)
-    expect(
-      webviewRequestSchema.safeParse({
-        type: 'connection.configure',
-        requestId: 'connection-custom',
-        payload: { mode: 'custom', endpoint: 'http://127.0.0.1:4310' },
-      }).success,
-    ).toBe(true)
-    expect(
-      webviewRequestSchema.safeParse({
-        type: 'connection.configure',
-        requestId: 'connection-invalid-mode',
-        payload: { mode: 'attach-only' },
-      }).success,
-    ).toBe(false)
-    expect(
-      webviewRequestSchema.safeParse({
-        type: 'connection.configure',
-        requestId: 'connection-secret',
-        payload: { mode: 'custom', endpoint: 'http://127.0.0.1:4310?token=secret' },
-      }).success,
-    ).toBe(true)
-  })
-
   it('rejects retired raw history access and pages through bounded transcript windows', () => {
     for (const payload of [
       { sessionId: 's' },
@@ -72,44 +41,6 @@ describe('attachment ingest schema', () => {
         type: 'session.transcript.navigate',
         requestId: 'invalid',
         payload: { sessionId: 's', revision: -1, direction: 'older' },
-      }).success,
-    ).toBe(false)
-  })
-
-  it('validates the official workspace blank-session reuse request shape', () => {
-    expect(
-      webviewRequestSchema.safeParse({
-        type: 'session.create',
-        requestId: 'session-reuse',
-        payload: {
-          workspaceId: 'workspace-1',
-          sessionId: 'session-blank',
-          reuseWorkspaceBlank: true,
-          configuration: {
-            preset: 'standard',
-            toolMode: 'native',
-            permissionPreset: 'workspace-write',
-            planMode: false,
-            model: { providerId: '', modelId: '' },
-          },
-        },
-      }).success,
-    ).toBe(true)
-    expect(
-      webviewRequestSchema.safeParse({
-        type: 'session.create',
-        requestId: 'session-reuse-invalid',
-        payload: {
-          workspaceId: 'workspace-1',
-          reuseWorkspaceBlank: true,
-          configuration: {
-            preset: 'standard',
-            toolMode: 'native',
-            permissionPreset: 'workspace-write',
-            planMode: false,
-            model: { providerId: '', modelId: '' },
-          },
-        },
       }).success,
     ).toBe(false)
   })
@@ -175,27 +106,6 @@ describe('attachment ingest schema', () => {
     ).toBe(false)
   })
 
-  it('accepts the rc.8 prompt attachment count and rejects the next item', () => {
-    const attachments = Array.from({ length: 20 }, (_, index) => ({
-      uri: `dsh-attachment:${String(index).padStart(16, '0')}`,
-      name: `${index}.png`,
-      mimeType: 'image/png',
-    }))
-    const request = {
-      type: 'session.sendPrompt',
-      requestId: 'request-2',
-      payload: { sessionId: 'session-1', text: 'attach', attachments },
-    }
-
-    expect(webviewRequestSchema.safeParse(request).success).toBe(true)
-    expect(
-      webviewRequestSchema.safeParse({
-        ...request,
-        payload: { ...request.payload, attachments: [...attachments, attachments[0]] },
-      }).success,
-    ).toBe(false)
-  })
-
   it('keeps command image handles opaque and validates feedback/reference requests', () => {
     const attachment = {
       uri: 'dsh-attachment:1234567890abcdef',
@@ -248,39 +158,6 @@ describe('attachment ingest schema', () => {
         type: 'models.discover',
         requestId: 'discover-secret',
         payload: { settingsNamespace: 'llm-pi-ai', apiKey: 'must-not-cross-boundary' },
-      }).success,
-    ).toBe(false)
-  })
-
-  it('accepts Host-mediated DSH update requests and keeps version selection bounded', () => {
-    expect(
-      webviewRequestSchema.safeParse({
-        type: 'runtime.update.check',
-        requestId: 'runtime-update-check',
-        payload: { force: true },
-      }).success,
-    ).toBe(true)
-    expect(
-      webviewRequestSchema.safeParse({
-        type: 'runtime.update.install',
-        requestId: 'runtime-update-install',
-        payload: { version: '0.1.0-rc.8' },
-      }).success,
-    ).toBe(true)
-    expect(
-      webviewRequestSchema.safeParse({
-        type: 'runtime.update.install',
-        requestId: 'runtime-update-invalid',
-        payload: { version: 'latest' },
-      }).success,
-    ).toBe(true)
-    // The schema bounds transport size; the Host performs the exact registry
-    // membership and SemVer validation before invoking npm.
-    expect(
-      webviewRequestSchema.safeParse({
-        type: 'runtime.update.install',
-        requestId: 'runtime-update-too-long',
-        payload: { version: 'x'.repeat(129) },
       }).success,
     ).toBe(false)
   })

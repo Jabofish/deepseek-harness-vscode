@@ -147,13 +147,15 @@ const nodeIds = (store: ReturnType<typeof createAppStore>): readonly string[] =>
   store.getState().timeline.nodes.map((node) => node.id)
 
 describe('AppStore rebuild path integrity', () => {
-  it('keeps a host-only row when a subagent session is re-entered', async () => {
+  it('keeps a host-only row and an unhealed gap when a subagent session is re-entered', async () => {
     const { client, store } = open()
     await store.openSession(PARENT)
     await store.openSubagent(subagentEntry(CHILD), true)
     client.emit(hostOnlyNotice(CHILD, 21, 'The child run failed.'))
+    client.emit(event(22, 'session.gap', { sessionId: CHILD, fromSequence: 40, toSequence: 50 }))
     await settle()
-    expect(nodeIds(store)).toEqual(['notice:-1'])
+    const expected = ['notice:-1', `gap:${CHILD}:40:50`]
+    expect(nodeIds(store)).toEqual(expected)
 
     await store.openSession(PARENT)
     await settle()
@@ -163,30 +165,11 @@ describe('AppStore rebuild path integrity', () => {
     // Opening a child rebuilds from `subagent.history`, and DSH never replays
     // a host-only row, so the same restore step the parent open performs has
     // to run here too.
-    expect(nodeIds(store)).toEqual(['notice:-1'])
+    expect(nodeIds(store)).toEqual(expected)
     store.dispose()
   })
 
-  it('keeps an unhealed gap warning when a subagent session is re-entered', async () => {
-    const { client, store } = open()
-    await store.openSession(PARENT)
-    await store.openSubagent(subagentEntry(CHILD), true)
-    client.emit(event(1, 'session.gap', { sessionId: CHILD, fromSequence: 40, toSequence: 50 }))
-    await settle()
-
-    const gapId = `gap:${CHILD}:40:50`
-    expect(nodeIds(store)).toContain(gapId)
-
-    await store.openSession(PARENT)
-    await settle()
-    await store.openSubagent(subagentEntry(CHILD), true)
-    await settle()
-
-    expect(nodeIds(store)).toContain(gapId)
-    store.dispose()
-  })
-
-  it('keeps a host-only row when older history is prepended', async () => {
+  it('keeps a host-only row and an unhealed gap when older history is prepended', async () => {
     const { client, store } = open()
     client.history.set(
       PARENT,
@@ -195,6 +178,7 @@ describe('AppStore rebuild path integrity', () => {
     client.historyHasMore.add(PARENT)
     await store.openSession(PARENT)
     client.emit(hostOnlyNotice(PARENT, 22, 'The provider rejected the request.'))
+    client.emit(event(23, 'session.gap', { sessionId: PARENT, fromSequence: 40, toSequence: 50 }))
     await settle()
     expect(nodeIds(store)).toEqual([
       `user-${PARENT}-5`,
@@ -202,6 +186,7 @@ describe('AppStore rebuild path integrity', () => {
       `user-${PARENT}-7`,
       `user-${PARENT}-8`,
       'notice:-1',
+      `gap:${PARENT}:40:50`,
     ])
 
     client.olderPages.set(PARENT, {
@@ -223,33 +208,8 @@ describe('AppStore rebuild path integrity', () => {
       `user-${PARENT}-7`,
       `user-${PARENT}-8`,
       'notice:-1',
+      `gap:${PARENT}:40:50`,
     ])
-    store.dispose()
-  })
-
-  it('keeps an unhealed gap warning when an older history page is merged in', async () => {
-    const { client, store } = open()
-    client.history.set(
-      PARENT,
-      [5, 6, 7, 8].map((sequence) => userHistoryEntry(PARENT, sequence)),
-    )
-    client.historyHasMore.add(PARENT)
-    await store.openSession(PARENT)
-    client.emit(event(1, 'session.gap', { sessionId: PARENT, fromSequence: 40, toSequence: 50 }))
-    await settle()
-
-    const gapId = `gap:${PARENT}:40:50`
-    expect(nodeIds(store)).toContain(gapId)
-
-    client.olderPages.set(PARENT, {
-      events: [1, 2, 3, 4].map((sequence) => userHistoryEntry(PARENT, sequence)),
-      hasMore: true,
-      beforeSeq: 1,
-    })
-    await store.loadOlderHistory()
-    await settle()
-
-    expect(nodeIds(store)).toContain(gapId)
     store.dispose()
   })
 })

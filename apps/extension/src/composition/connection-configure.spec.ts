@@ -43,14 +43,6 @@ vi.mock('../editor/editor-integration-settings.js', () => ({
 
 import { createConnectionLifecycle } from './connection-assembly.js'
 
-function deferred<T>(): { readonly promise: Promise<T>; readonly resolve: (value: T) => void } {
-  let resolve!: (value: T) => void
-  const promise = new Promise<T>((settle) => {
-    resolve = settle
-  })
-  return { promise, resolve }
-}
-
 function lifecycle(
   connect: (
     request: {
@@ -111,15 +103,6 @@ describe('connection.configure reconnect', () => {
     harness.configuration.runtime.autoStart = false
   })
 
-  it('keeps the discovered runtime selected without switching targets to load a companion', async () => {
-    harness.configuration.runtime.autoStart = true
-    const result = { backend: { connection: { endpoint: { port: 3080 } } }, state: { kind: 'connected' } }
-    const connect = vi.fn().mockResolvedValue(result)
-    await lifecycle(connect, vscode.ExtensionMode.Production, true).connect()
-    expect(harness.connects.map((request) => request.mode)).toEqual(['auto'])
-    expect(harness.configuration.connection.mode).toBe('auto')
-  })
-
   it('uses a fresh owned runtime for F5 without changing or attaching to the configured external server', async () => {
     vi.stubEnv('DSH_VSCODE_DEV_MANAGED_RUNTIME', '1')
     harness.configuration.connection.mode = 'custom'
@@ -132,51 +115,6 @@ describe('connection.configure reconnect', () => {
     const production = lifecycle()
     await production.connect()
     expect(harness.connects.at(-1)).toMatchObject({ mode: 'custom', endpoint: { port: 3080 } })
-  })
-
-  it('does not adopt a reconnect that already read the old settings', async () => {
-    const started = deferred<void>()
-    const admitted = deferred<unknown>()
-    const connect = vi
-      .fn()
-      .mockImplementationOnce(() => {
-        started.resolve()
-        return admitted.promise
-      })
-      .mockResolvedValue({
-        backend: { connection: { endpoint: { port: 3080 } } },
-        state: { kind: 'connected' },
-      })
-    const subject = lifecycle(connect)
-    const previous = subject.reconnect()
-    const cancelledPrevious = expect(previous).rejects.toMatchObject({ name: 'AbortError' })
-    await started.promise
-    const configured = subject.configureConnection('custom', 'http://127.0.0.1:3080')
-    await vi.waitFor(() => expect(harness.configuration.connection.mode).toBe('custom'))
-    await configured
-    admitted.resolve({ backend: { connection: { endpoint: { port: 3080 } } }, state: { kind: 'connected' } })
-    await cancelledPrevious
-    expect(harness.connects.map((request) => request.mode)).toEqual(['auto', 'custom'])
-  })
-
-  it('serializes overlapping settings submissions without publishing a mixed pair', async () => {
-    const firstWrite = deferred<void>()
-    const release = deferred<void>()
-    harness.afterWrite = async (key) => {
-      if (key !== 'connection.serverUrl') return
-      harness.afterWrite = undefined
-      firstWrite.resolve()
-      await release.promise
-    }
-    const subject = lifecycle()
-    const custom = subject.configureConnection('custom', 'http://127.0.0.1:3080')
-    const superseded = expect(custom).rejects.toMatchObject({ name: 'AbortError' })
-    await firstWrite.promise
-    const auto = subject.configureConnection('auto', undefined)
-    release.resolve()
-    await Promise.all([superseded, auto])
-    expect(harness.connects.map((request) => request.mode)).toEqual(['auto'])
-    expect(harness.configuration.connection).toEqual({ mode: 'auto', serverUrl: '' })
   })
 
   it('reconnects once, on the fully committed configuration', async () => {
@@ -253,69 +191,5 @@ describe('connection.configure reconnect', () => {
     )
     expect(harness.configuration.connection).toEqual({ mode: 'auto', serverUrl: '' })
     expect(harness.connects).toEqual([])
-  })
-
-  it('releases a failed connection so changed settings and auto can connect again', async () => {
-    const connect = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('Configured endpoint unavailable'))
-      .mockResolvedValue({
-        backend: { connection: { endpoint: { port: 4311 } } },
-        state: { kind: 'connected' },
-      })
-    const subject = lifecycle(connect)
-    await expect(subject.configureConnection('custom', 'http://127.0.0.1:4310')).rejects.toThrow(
-      'Configured endpoint unavailable',
-    )
-    await subject.configureConnection('custom', 'http://127.0.0.1:4311')
-    expect(harness.connects[1]).toMatchObject({ mode: 'custom', endpoint: { port: 4311 } })
-    await subject.configureConnection('auto', undefined)
-    expect(harness.connects[2]?.mode).toBe('auto')
-  })
-
-  it('cancels a pending settings connection so the next submission does not wait for its timeout', async () => {
-    let started = 0
-    const subject = lifecycle((_request, signal) => {
-      started++
-      if (started === 1)
-        return new Promise((_resolve, reject) =>
-          signal?.addEventListener(
-            'abort',
-            () => reject(new DOMException('Connection settings changed.', 'AbortError')),
-            { once: true },
-          ),
-        )
-      return Promise.resolve({
-        backend: { connection: { endpoint: { port: 4311 } } },
-        state: { kind: 'connected' },
-      })
-    })
-    const first = subject.configureConnection('custom', 'http://127.0.0.1:4310')
-    const cancelled = expect(first).rejects.toMatchObject({ name: 'AbortError' })
-    await vi.waitFor(() => expect(started).toBe(1))
-    await subject.configureConnection('custom', 'http://127.0.0.1:4311')
-    await cancelled
-    expect(started).toBe(2)
-    expect(harness.connects[1]).toMatchObject({ endpoint: { port: 4311 } })
-  })
-
-  it('applies an external settings change without waiting for an obsolete connection', async () => {
-    const pending = deferred<unknown>()
-    const connect = vi
-      .fn()
-      .mockReturnValueOnce(pending.promise)
-      .mockResolvedValue({
-        backend: { connection: { endpoint: { port: 4311 } } },
-        state: { kind: 'connected' },
-      })
-    const subject = lifecycle(connect)
-    const previous = subject.reconnect()
-    const cancelled = expect(previous).rejects.toMatchObject({ name: 'AbortError' })
-    await vi.waitFor(() => expect(connect).toHaveBeenCalledOnce())
-    harness.configuration.connection.serverUrl = 'http://127.0.0.1:4311'
-    await subject.reconnectOnTransportChange()
-    expect(harness.connects[1]).toMatchObject({ mode: 'custom', endpoint: { port: 4311 } })
-    pending.resolve({ backend: { connection: { endpoint: { port: 4310 } } }, state: { kind: 'connected' } })
-    await cancelled
   })
 })

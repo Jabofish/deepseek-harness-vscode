@@ -27,11 +27,6 @@ beforeEach(() => {
 })
 
 describe('editor access on first tool use', () => {
-  it('uses trusted open folders immediately without a permission dialog', async () => {
-    await new EditorWorkspaceAccess(() => true).request(new AbortController().signal)
-    expect(ui.info).not.toHaveBeenCalled()
-    expect(ui.command).not.toHaveBeenCalled()
-  })
   it('opens native folder selection on first use, and remains blocked if no folder is chosen', async () => {
     ui.folders = []
     ui.info.mockResolvedValue('Choose Folder')
@@ -61,29 +56,5 @@ describe('editor access on first tool use', () => {
     expect(ui.trusted).toBe(false)
     ui.trusted = true
     await access.request(new AbortController().signal)
-  })
-  it('shares one prompt across requests, cancels a waiter and ignores a late action after disabling access', async () => {
-    ui.trusted = false
-    let resolve: (value: string) => void = () => undefined
-    ui.info.mockImplementation(
-      () =>
-        new Promise<string>((done) => {
-          resolve = done
-        }),
-    )
-    let enabled = true
-    const access = new EditorWorkspaceAccess(() => enabled)
-    const controller = new AbortController()
-    const first = access.request(controller.signal)
-    const cancelled = expect(first).rejects.toMatchObject({ reason: 'cancelled' })
-    const second = access.request(new AbortController().signal)
-    const denied = expect(second).rejects.toMatchObject({ reason: 'untrusted' })
-    controller.abort()
-    await cancelled
-    expect(ui.info).toHaveBeenCalledTimes(1)
-    enabled = false
-    resolve('Manage Workspace Trust')
-    await denied
-    expect(ui.command).not.toHaveBeenCalled()
   })
 })

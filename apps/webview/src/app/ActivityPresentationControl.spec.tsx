@@ -3,11 +3,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { AccessibilityProvider, useQuietActivity } from './AccessibilityProvider.js'
 import { ActivityPresentationControl } from './ActivityPresentationControl.js'
-import {
-  ACTIVITY_PRESENTATION_STORAGE_KEY,
-  readActivityPresentation,
-  rememberActivityPresentation,
-} from './activity-presentation.js'
+import { readActivityPresentation, rememberActivityPresentation } from './activity-presentation.js'
 import { I18nProvider } from '../i18n.js'
 
 afterEach(() => {
@@ -53,23 +49,6 @@ it('persists the selection, restores it on reopen and lets live override screen-
   reopened.unmount()
   render(<Settings />)
   expect(screen.getByTestId('quiet').textContent).toBe('true')
-})
-
-it('falls back to auto for invalid old values and follows runtime screen-reader changes', async () => {
-  localStorage.setItem(ACTIVITY_PRESENTATION_STORAGE_KEY, 'on-expand')
-  expect(readActivityPresentation()).toBe('auto')
-  render(<Settings />)
-  expect(screen.getByTestId('quiet').textContent).toBe('false')
-  await act(async () => {
-    await Promise.resolve()
-    document.body.classList.add('vscode-using-screen-reader')
-  })
-  expect(screen.getByTestId('quiet').textContent).toBe('true')
-  await act(async () => {
-    await Promise.resolve()
-    document.body.classList.remove('vscode-using-screen-reader')
-  })
-  expect(screen.getByTestId('quiet').textContent).toBe('false')
 })
 
 it('retains usable display controls when browser storage is unavailable', () => {

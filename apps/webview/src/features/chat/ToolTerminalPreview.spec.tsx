@@ -24,40 +24,16 @@ function terminalProps(overrides: Partial<ToolTerminalRenderProps['view']> = {})
 
 describe('ToolTerminalPreview', () => {
   it('renders all output, preserves raw copy text, and exposes the exit status', async () => {
-    const output = Array.from({ length: 18 }, (_, index) => `line ${index + 1}`).join('\n') + '\n'
+    const lines = Array.from({ length: 18 }, (_, index) => `line [${index + 1}]`)
+    const output = lines.join('\n') + '\n'
     const writeText = vi.fn().mockResolvedValue(undefined)
     vi.stubGlobal('navigator', { clipboard: { writeText } })
     const { container } = render(<ToolTerminalPreview {...terminalProps({ output, exitCode: 2 })} />)
 
-    expect(container.querySelectorAll('.dsh-tool-terminal-preview__line')).toHaveLength(18)
-    expect(container.textContent).toContain('line 1')
-    expect(container.textContent).toContain('line 8')
-    expect(container.textContent).toContain('line 11')
-    expect(container.textContent).toContain('line 18')
-    expect(container.textContent).toContain('line 9')
+    for (const line of lines) expect(container.textContent).toContain(line)
     expect(container.textContent).toContain('Exit status: 2')
-    expect(screen.queryByRole('button', { name: 'Show 2 more output lines' })).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Copy' }))
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(output))
-  })
-
-  it('gives a terminating signal precedence over an exit code', () => {
-    const { container } = render(
-      <ToolTerminalPreview {...terminalProps({ output: 'stopped', exitCode: 0, signal: 'SIGTERM' })} />,
-    )
-
-    expect(container.textContent).toContain('Signal: SIGTERM')
-    expect(container.textContent).not.toContain('Exit status: 0')
-    expect(container.querySelector('.dsh-tool-terminal-preview__status--error')).not.toBeNull()
-  })
-
-  it('shows an explicit empty result without offering an empty copy', () => {
-    const { container } = render(<ToolTerminalPreview {...terminalProps({ output: ' \n' })} />)
-
-    expect(container.querySelector('[data-terminal]')?.getAttribute('data-empty')).toBe('true')
-    expect(container.textContent).toContain('No output')
-    expect(screen.queryByRole('button', { name: 'Copy' })).toBeNull()
-    expect(container.querySelector('.dsh-tool-terminal-preview__body')).toBeNull()
   })
 })

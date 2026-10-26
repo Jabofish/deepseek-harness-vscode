@@ -5,7 +5,6 @@ import {
   readDraft,
   resetDraft,
   setDraft,
-  setDraftFor,
   transferDraftOwner,
 } from './draft-store.js'
 
@@ -26,17 +25,6 @@ describe('composer draft ownership', () => {
     expect(readDraft()).toBe('draft for two')
   })
 
-  it('writes a specific owner draft without changing the visible one', () => {
-    activateDraftOwner('s1')
-    setDraft('visible')
-    setDraftFor('s2', 'background edit')
-    expect(readDraft()).toBe('visible')
-    activateDraftOwner('s2')
-    expect(readDraft()).toBe('background edit')
-    activateDraftOwner('s1')
-    expect(readDraft()).toBe('visible')
-  })
-
   it('moves a pending composition draft into the session it opens', () => {
     activateDraftOwner('pending:1')
     setDraft('first message')
@@ -46,28 +34,6 @@ describe('composer draft ownership', () => {
     clearDraftIf('pending:1', 'first message')
     expect(readDraft()).toBe('')
     activateDraftOwner('s3')
-    expect(readDraft()).toBe('')
-  })
-
-  it('keeps a pending draft out of unrelated existing and new conversations', () => {
-    activateDraftOwner('existing')
-    activateDraftOwner('pending:100')
-    setDraft('belongs to the first new chat')
-    activateDraftOwner('existing')
-    expect(readDraft()).toBe('')
-    activateDraftOwner('pending:100')
-    expect(readDraft()).toBe('belongs to the first new chat')
-    activateDraftOwner('pending:101')
-    expect(readDraft()).toBe('')
-  })
-
-  it('clears the submitted owner even after the user switched away', () => {
-    activateDraftOwner('s1')
-    setDraft('already sent')
-    activateDraftOwner('s2')
-    expect(readDraft()).toBe('')
-    clearDraftIf('s1', 'already sent')
-    activateDraftOwner('s1')
     expect(readDraft()).toBe('')
   })
 

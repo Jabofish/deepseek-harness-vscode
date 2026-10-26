@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { useSyncExternalStore } from 'react'
 import { act, cleanup, renderHook } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi, type Mock } from 'vitest'
 import {
   AppError,
   type BackendEvent,
@@ -22,6 +22,15 @@ import { usePendingInteractions } from './usePendingInteractions.js'
 import { translate } from '../i18n.js'
 
 afterEach(cleanup)
+
+// Load the real Host stack outside each interaction's timeout on a cold cache.
+beforeAll(async () => {
+  await Promise.all([
+    vi.importActual('../../../extension/src/view/message-router.js'),
+    vi.importActual('../../../../packages/dsh-adapter/src/repositories/interaction-repository.js'),
+    vi.importActual('../../../extension/src/composition/session-payload.js'),
+  ])
+}, 30_000)
 
 const question = (overrides: Partial<UserQuestion> = {}): UserQuestion => ({
   id: 'first',
@@ -244,190 +253,7 @@ describe('question lifecycle through the real Store, protocol, Host router and r
       f.dispose()
     }
   })
-  it.each(['before-receipt', 'after-receipt'] as const)(
-    'rejects a delayed pre-submission snapshot above the last client cut (%s)',
-    async (order) => {
-      const f = await fixture()
-      const store = f.stores[0]!
-      try {
-        f.emit({
-          type: 'session.projection',
-          sessionId: 's1',
-          key: 'userQuestions',
-          sequence: 90,
-          value: {
-            active: [{ callId: 'call-q', state: 'continued', questions: question().items }],
-            settled: [],
-          },
-        })
-        f.emit({
-          type: 'session.projection',
-          sessionId: 's1',
-          key: 'inbox',
-          sequence: 90,
-          value: { 'next-step': [], 'next-turn': [] },
-        })
-        f.setReplyStatus(() =>
-          Promise.resolve({ kind: 'question.reply', status: { state: 'queued', asOfSequence: 101 } }),
-        )
-        let accept!: (value: unknown) => void
-        if (order === 'before-receipt')
-          f.setAnswerLate(
-            () =>
-              new Promise((resolve) => {
-                accept = resolve
-              }),
-          )
-        const hook = renderHook(() => useQuestions(store))
-        let response!: Promise<void>
-        act(() => {
-          response = hook.result.current.questionRespondFor(hook.result.current.pendingQuestions[0]!)(answers)
-        })
-        const stale = (): void =>
-          f.emit({
-            type: 'question.reply.status',
-            sessionId: 's1',
-            callId: 'call-q',
-            state: 'released',
-            asOfSequence: 100,
-          })
-        if (order === 'before-receipt') {
-          await vi.waitFor(() => expect(accept).toBeTypeOf('function'))
-          act(stale)
-          await act(async () => {
-            accept({ kind: 'question.answer', accepted: true })
-            await response
-          })
-        } else {
-          await act(async () => {
-            await response
-          })
-          act(stale)
-        }
-        expect(hook.result.current.pendingQuestions).toHaveLength(1)
-        expect(hook.result.current.pendingQuestions[0]?.replyQueued).toBe(true)
-        act(() =>
-          f.emit({
-            type: 'question.reply.status',
-            sessionId: 's1',
-            callId: 'call-q',
-            state: 'released',
-            asOfSequence: 102,
-          }),
-        )
-        expect(hook.result.current.pendingQuestions[0]?.replyQueued).not.toBe(true)
-        hook.unmount()
-      } finally {
-        f.dispose()
-      }
-    },
-  )
 
-  it.each(['snapshot', 'live'] as const)(
-    'honors a real discard that overtakes the post-acceptance read (%s)',
-    async (source) => {
-      const f = await fixture()
-      const store = f.stores[0]!
-      try {
-        f.emit({
-          type: 'session.projection',
-          sessionId: 's1',
-          key: 'userQuestions',
-          value: {
-            active: [{ callId: 'call-q', state: 'continued', questions: question().items }],
-            settled: [],
-          },
-        })
-        let finish!: (value: unknown) => void
-        f.setReplyStatus(
-          () =>
-            new Promise((resolve) => {
-              finish = resolve
-            }),
-        )
-        const hook = renderHook(() => useQuestions(store))
-        let response!: Promise<void>
-        act(() => {
-          response = hook.result.current.questionRespondFor(hook.result.current.pendingQuestions[0]!)(answers)
-        })
-        await vi.waitFor(() => expect(finish).toBeTypeOf('function'))
-        if (source === 'live')
-          act(() =>
-            f.emit({
-              type: 'question.reply.status',
-              sessionId: 's1',
-              callId: 'call-q',
-              state: 'released',
-              asOfSequence: 102,
-            }),
-          )
-        await act(async () => {
-          finish({
-            kind: 'question.reply',
-            status: {
-              state: source === 'snapshot' ? 'released' : 'queued',
-              asOfSequence: source === 'snapshot' ? 102 : 101,
-            },
-          })
-          await response
-        })
-        expect(hook.result.current.pendingQuestions[0]?.replyQueued).not.toBe(true)
-        hook.unmount()
-      } finally {
-        f.dispose()
-      }
-    },
-  )
-  it('does not unlock a newly accepted late reply from an older discard snapshot', async () => {
-    const f = await fixture()
-    const store = f.stores[0]!
-    try {
-      f.emit({
-        type: 'session.projection',
-        sessionId: 's1',
-        key: 'userQuestions',
-        sequence: 9,
-        value: {
-          active: [{ callId: 'call-q', state: 'continued', questions: question().items }],
-          settled: [],
-        },
-      })
-      f.emit({
-        type: 'session.projection',
-        sessionId: 's1',
-        key: 'inbox',
-        sequence: 10,
-        value: { 'next-step': [], 'next-turn': [] },
-      })
-      const hook = renderHook(() => useQuestions(store))
-      await act(async () => {
-        await hook.result.current.questionRespondFor(hook.result.current.pendingQuestions[0]!)(answers)
-      })
-      act(() =>
-        f.emit({
-          type: 'question.reply.status',
-          sessionId: 's1',
-          callId: 'call-q',
-          state: 'released',
-          asOfSequence: 9,
-        }),
-      )
-      expect(hook.result.current.pendingQuestions[0]?.replyQueued).toBe(true)
-      act(() =>
-        f.emit({
-          type: 'question.reply.status',
-          sessionId: 's1',
-          callId: 'call-q',
-          state: 'released',
-          asOfSequence: 12,
-        }),
-      )
-      expect(hook.result.current.pendingQuestions[0]?.replyQueued).not.toBe(true)
-      hook.unmount()
-    } finally {
-      f.dispose()
-    }
-  })
   it('broadcasts explicit timed cancellation as a terminal call without confusing foreground timeout', async () => {
     const f = await fixture()
     try {
@@ -573,6 +399,192 @@ describe('question lifecycle through the real Store, protocol, Host router and r
       release({ accepted: true })
       await old
       expect(f.stores[0]!.questions[0]?.rpcId).toBe('rpc-new')
+    } finally {
+      f.dispose()
+    }
+  })
+
+  it.each(['before-receipt', 'after-receipt'] as const)(
+    'rejects a delayed pre-submission snapshot above the last client cut (%s)',
+    async (order) => {
+      const f = await fixture()
+      const store = f.stores[0]!
+      try {
+        f.emit({
+          type: 'session.projection',
+          sessionId: 's1',
+          key: 'userQuestions',
+          sequence: 90,
+          value: {
+            active: [{ callId: 'call-q', state: 'continued', questions: question().items }],
+            settled: [],
+          },
+        })
+        f.emit({
+          type: 'session.projection',
+          sessionId: 's1',
+          key: 'inbox',
+          sequence: 90,
+          value: { 'next-step': [], 'next-turn': [] },
+        })
+        f.setReplyStatus(() =>
+          Promise.resolve({ kind: 'question.reply', status: { state: 'queued', asOfSequence: 101 } }),
+        )
+        let accept!: (value: unknown) => void
+        if (order === 'before-receipt')
+          f.setAnswerLate(
+            () =>
+              new Promise((resolve) => {
+                accept = resolve
+              }),
+          )
+        const hook = renderHook(() => useQuestions(store))
+        let response!: Promise<void>
+        act(() => {
+          response = hook.result.current.questionRespondFor(hook.result.current.pendingQuestions[0]!)(answers)
+        })
+        const stale = (): void =>
+          f.emit({
+            type: 'question.reply.status',
+            sessionId: 's1',
+            callId: 'call-q',
+            state: 'released',
+            asOfSequence: 100,
+          })
+        if (order === 'before-receipt') {
+          await vi.waitFor(() => expect(accept).toBeTypeOf('function'))
+          act(stale)
+          await act(async () => {
+            accept({ kind: 'question.answer', accepted: true })
+            await response
+          })
+        } else {
+          await act(async () => {
+            await response
+          })
+          act(stale)
+        }
+        expect(hook.result.current.pendingQuestions).toHaveLength(1)
+        expect(hook.result.current.pendingQuestions[0]?.replyQueued).toBe(true)
+        act(() =>
+          f.emit({
+            type: 'question.reply.status',
+            sessionId: 's1',
+            callId: 'call-q',
+            state: 'released',
+            asOfSequence: 102,
+          }),
+        )
+        expect(hook.result.current.pendingQuestions[0]?.replyQueued).not.toBe(true)
+        hook.unmount()
+      } finally {
+        f.dispose()
+      }
+    },
+  )
+
+  it.each(['snapshot', 'live'] as const)(
+    'honors a real discard that overtakes the post-acceptance read (%s)',
+    async (source) => {
+      const f = await fixture()
+      const store = f.stores[0]!
+      try {
+        f.emit({
+          type: 'session.projection',
+          sessionId: 's1',
+          key: 'userQuestions',
+          value: {
+            active: [{ callId: 'call-q', state: 'continued', questions: question().items }],
+            settled: [],
+          },
+        })
+        let finish!: (value: unknown) => void
+        f.setReplyStatus(
+          () =>
+            new Promise((resolve) => {
+              finish = resolve
+            }),
+        )
+        const hook = renderHook(() => useQuestions(store))
+        let response!: Promise<void>
+        act(() => {
+          response = hook.result.current.questionRespondFor(hook.result.current.pendingQuestions[0]!)(answers)
+        })
+        await vi.waitFor(() => expect(finish).toBeTypeOf('function'))
+        if (source === 'live')
+          act(() =>
+            f.emit({
+              type: 'question.reply.status',
+              sessionId: 's1',
+              callId: 'call-q',
+              state: 'released',
+              asOfSequence: 102,
+            }),
+          )
+        await act(async () => {
+          finish({
+            kind: 'question.reply',
+            status: {
+              state: source === 'snapshot' ? 'released' : 'queued',
+              asOfSequence: source === 'snapshot' ? 102 : 101,
+            },
+          })
+          await response
+        })
+        expect(hook.result.current.pendingQuestions[0]?.replyQueued).not.toBe(true)
+        hook.unmount()
+      } finally {
+        f.dispose()
+      }
+    },
+  )
+
+  it('does not unlock a newly accepted late reply from an older discard snapshot', async () => {
+    const f = await fixture()
+    const store = f.stores[0]!
+    try {
+      f.emit({
+        type: 'session.projection',
+        sessionId: 's1',
+        key: 'userQuestions',
+        sequence: 9,
+        value: {
+          active: [{ callId: 'call-q', state: 'continued', questions: question().items }],
+          settled: [],
+        },
+      })
+      f.emit({
+        type: 'session.projection',
+        sessionId: 's1',
+        key: 'inbox',
+        sequence: 10,
+        value: { 'next-step': [], 'next-turn': [] },
+      })
+      const hook = renderHook(() => useQuestions(store))
+      await act(async () => {
+        await hook.result.current.questionRespondFor(hook.result.current.pendingQuestions[0]!)(answers)
+      })
+      act(() =>
+        f.emit({
+          type: 'question.reply.status',
+          sessionId: 's1',
+          callId: 'call-q',
+          state: 'released',
+          asOfSequence: 9,
+        }),
+      )
+      expect(hook.result.current.pendingQuestions[0]?.replyQueued).toBe(true)
+      act(() =>
+        f.emit({
+          type: 'question.reply.status',
+          sessionId: 's1',
+          callId: 'call-q',
+          state: 'released',
+          asOfSequence: 12,
+        }),
+      )
+      expect(hook.result.current.pendingQuestions[0]?.replyQueued).not.toBe(true)
+      hook.unmount()
     } finally {
       f.dispose()
     }

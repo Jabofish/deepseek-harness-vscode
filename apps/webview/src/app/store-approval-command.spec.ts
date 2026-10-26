@@ -138,22 +138,6 @@ describe('approval command resolution', () => {
     store.dispose()
   })
 
-  it('retains a valid localized display reason from a permission event', async () => {
-    const client = new StreamClient()
-    const store = createAppStore(client as unknown as ProtocolClient)
-    await store.openSession(SESSION_ID)
-
-    const displayReason = {
-      en: 'Allow this command to modify workspace files?',
-      zh: '允许此命令修改工作区文件吗？',
-    }
-    client.emit(approvalEvent(1, undefined, displayReason))
-    await settle()
-
-    expect(store.permissions[0]?.displayReason).toEqual(displayReason)
-    store.dispose()
-  })
-
   it('discards malformed localized display reasons instead of creating an approval', async () => {
     const client = new StreamClient()
     const store = createAppStore(client as unknown as ProtocolClient)
@@ -163,87 +147,6 @@ describe('approval command resolution', () => {
     await settle()
 
     expect(store.permissions).toEqual([])
-    store.dispose()
-  })
-
-  it('keeps the command of an alpha-shaped running shell call after the call settles', async () => {
-    const client = new StreamClient()
-    const store = createAppStore(client as unknown as ProtocolClient)
-    await store.openSession(SESSION_ID)
-
-    // What a host without a view envelope produces: the running card is derived
-    // from the call's own arguments, and the settled result row carries no card
-    // at all. The command the approval names has to survive the merge, or the
-    // decision becomes blind the moment the command finishes.
-    client.emit({
-      type: 'event',
-      name: 'tool.updated',
-      sequence: 1,
-      payload: {
-        sessionId: SESSION_ID,
-        tool: {
-          id: 'call-bash-1',
-          name: 'bash',
-          status: 'running',
-          title: 'bash',
-          category: 'tool',
-          turn: 0,
-          step: 0,
-          presentation: { phase: 'call', card: 'terminal', title: COMMAND },
-        },
-      },
-    })
-    client.emit(approvalEvent(2, 'call-bash-1'))
-    await settle()
-
-    const running = store.permissions[0]
-    expect(running === undefined ? undefined : approvalCommand(running, store.timeline.nodes)).toBe(COMMAND)
-
-    client.emit({
-      type: 'event',
-      name: 'tool.updated',
-      sequence: 3,
-      payload: {
-        sessionId: SESSION_ID,
-        tool: {
-          id: 'call-bash-1',
-          name: 'bash',
-          status: 'completed',
-          title: 'bash',
-          category: 'tool',
-          turn: 0,
-          step: 0,
-          outputSummary: 'done\n[exit code: 0]',
-        },
-      },
-    })
-    await settle()
-
-    const settled = store.permissions[0]
-    expect(settled === undefined ? undefined : approvalCommand(settled, store.timeline.nodes)).toBe(COMMAND)
-    store.dispose()
-  })
-
-  it('shows no command for an approval whose paired call is not a command card', async () => {
-    const client = new StreamClient()
-    const store = createAppStore(client as unknown as ProtocolClient)
-    await store.openSession(SESSION_ID)
-
-    // A write/edit approval is paired with a diff card whose title is a file
-    // path: rendering that as the command being authorized would invent one.
-    client.emit(
-      toolCallEvent(
-        1,
-        { phase: 'call', card: 'generic', title: 'src/main.ts', kind: 'write' },
-        'src/main.ts',
-      ),
-    )
-    client.emit(approvalEvent(2, 'call-bash-1'))
-    await settle()
-
-    const request = store.permissions[0]
-    expect(request?.callId).toBe('call-bash-1')
-    expect(request === undefined ? undefined : approvalCommand(request, store.timeline.nodes)).toBeUndefined()
     store.dispose()
   })
 

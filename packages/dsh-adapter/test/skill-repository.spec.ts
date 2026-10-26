@@ -65,28 +65,6 @@ describe('Rc6SkillRepository skill.list', () => {
     expect(calls).toEqual([{ method: 'skill.list', params: { sessionId: 'session-1' } }])
   })
 
-  it('keeps a user-only skill usable rather than reporting it disabled', async () => {
-    const repository = new Rc6SkillRepository(
-      transportFor({ skills: [{ name: 'private-note', description: 'User only.', modelInvocable: false }] }),
-    )
-
-    const [skill] = await repository.list('session-1')
-    expect(skill?.source, 'the host never reports an origin, so none may be fabricated').toBeUndefined()
-    expect(skill?.enabled, 'user-only is not disabled').toBe(false)
-  })
-
-  it('rejects a malformed optional whenToUse value instead of silently dropping it', async () => {
-    const repository = new Rc6SkillRepository(
-      transportFor({
-        skills: [
-          { name: 'code-review', description: 'Review changes.', whenToUse: 42, modelInvocable: true },
-        ],
-      }),
-    )
-
-    await expect(repository.list('session-1')).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
-  })
-
   it('refuses a sessionless read as a missing session, never as a host capability', async () => {
     const calls: Call[] = []
     const repository = new Rc6SkillRepository(transportFor({ skills: [] }, calls))

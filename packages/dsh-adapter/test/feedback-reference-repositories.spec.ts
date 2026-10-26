@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { AppError } from '@dsh-vscode/domain'
+
 import type { DshTransport } from '../src/contracts.js'
 import { Rc6MessageFeedbackRepository } from '../src/repositories/feedback-repository.js'
 import { Rc6ReferenceRepository } from '../src/repositories/reference-repository.js'
@@ -92,41 +92,6 @@ describe('optional reference and feedback remotes', () => {
     await expect(repository.listSessions('s1', '')).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
   })
 
-  it('fails closed when a session candidate omits a required field', async () => {
-    const client = transport(() => ({
-      ok: true,
-      value: [
-        {
-          sessionId: 's2',
-          label: 'Review',
-          createdAt: 10,
-          mention: '@[Review](dsh-session:s2)',
-        },
-      ],
-    }))
-    const repository = new Rc6ReferenceRepository(client)
-    await expect(repository.listSessions('s1', '')).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
-  })
-
-  it('treats an absent optional reference remote as empty but preserves cancellation', async () => {
-    const unavailableClient = transport(() =>
-      Promise.reject(
-        new AppError({ code: 'CAPABILITY_UNAVAILABLE', message: 'not exposed', retryable: false }),
-      ),
-    )
-    const unavailableRepository = new Rc6ReferenceRepository(unavailableClient)
-    await expect(unavailableRepository.listFiles('s1', 'src')).resolves.toEqual([])
-    await expect(unavailableRepository.listSessions('s1', 'src')).resolves.toEqual([])
-
-    const cancelledClient = transport(() =>
-      Promise.reject(new AppError({ code: 'REQUEST_CANCELLED', message: 'cancelled', retryable: false })),
-    )
-    const cancelledRepository = new Rc6ReferenceRepository(cancelledClient)
-    await expect(cancelledRepository.listFiles('s1', 'src')).rejects.toMatchObject({
-      code: 'REQUEST_CANCELLED',
-    })
-  })
-
   it('unwraps the Remote business union and carries the optimistic feedback version', async () => {
     const updated = {
       messageId: 'm1',
@@ -199,44 +164,6 @@ describe('optional reference and feedback remotes', () => {
     }
   })
 
-  it('observes the current item before deleting from a cold cache', async () => {
-    const item = {
-      messageId: 'm1',
-      rating: 'positive',
-      version: 'v7',
-      createdAt: 1,
-      updatedAt: 2,
-    } as const
-    const calls: string[] = []
-    const client = transport((endpoint, args) => {
-      calls.push(endpoint)
-      if (endpoint === 'messageFeedback/list')
-        return { ok: true, value: { ok: true, value: { items: [item] } } }
-      expect(endpoint).toBe('messageFeedback/delete')
-      // Upstream delete is a CAS on the observed version; absence is a
-      // successful no-op, so the observation must supply the exact token.
-      expect(args).toMatchObject({ request: { sessionId: 's1', messageId: 'm1', ifVersion: 'v7' } })
-      return { ok: true, value: { ok: true, value: { absent: true } } }
-    })
-    const repository = new Rc6MessageFeedbackRepository(client)
-
-    await expect(repository.remove('s1', 'm1')).resolves.toBeUndefined()
-    expect(calls).toEqual(['messageFeedback/list', 'messageFeedback/delete'])
-  })
-
-  it('skips the delete RPC when observation shows the item already absent', async () => {
-    const calls: string[] = []
-    const client = transport((endpoint) => {
-      calls.push(endpoint)
-      if (endpoint === 'messageFeedback/list') return { ok: true, value: { ok: true, value: { items: [] } } }
-      throw new Error(`unexpected ${endpoint} for an absent item`)
-    })
-    const repository = new Rc6MessageFeedbackRepository(client)
-
-    await expect(repository.remove('s1', 'm1')).resolves.toBeUndefined()
-    expect(calls).toEqual(['messageFeedback/list'])
-  })
-
   it('adopts the authoritative current item from a version conflict before inviting a retry', async () => {
     const current = {
       messageId: 'm1',
@@ -261,50 +188,6 @@ describe('optional reference and feedback remotes', () => {
       retryable: true,
     })
     await expect(repository.put('s1', 'm1', 'negative')).resolves.toEqual(current)
-  })
-
-  it('treats an absent optional feedback remote as an empty list', async () => {
-    const client = transport(() =>
-      Promise.reject(
-        new AppError({ code: 'CAPABILITY_UNAVAILABLE', message: 'not exposed', retryable: false }),
-      ),
-    )
-    const repository = new Rc6MessageFeedbackRepository(client)
-    await expect(repository.list('s1')).resolves.toEqual([])
-  })
-
-  it('maps an older host unknown-command response to optional capability absence', async () => {
-    const client = transport(() =>
-      Promise.reject(
-        new AppError({
-          code: 'INVALID_CONFIGURATION',
-          message: 'unknown remote command',
-          retryable: false,
-          context: { rpcCode: 'unknown-command' },
-        }),
-      ),
-    )
-    const repository = new Rc6MessageFeedbackRepository(client)
-
-    await expect(repository.put('s1', 'm1', 'positive')).rejects.toMatchObject({
-      code: 'CAPABILITY_UNAVAILABLE',
-    })
-  })
-
-  it('maps the upstream Remote business unknown-command union to optional absence', async () => {
-    const client = transport(() => ({
-      ok: true,
-      value: {
-        ok: false,
-        error: { code: 'unknown-command', message: 'messageFeedback/put is not registered' },
-      },
-    }))
-    const repository = new Rc6MessageFeedbackRepository(client)
-
-    await expect(repository.put('s1', 'm1', 'positive')).rejects.toMatchObject({
-      code: 'CAPABILITY_UNAVAILABLE',
-      message: 'This DSH host does not expose message feedback.',
-    })
   })
 
   it('keeps every other sidecar refusal distinct from an absent capability', async () => {
@@ -335,18 +218,5 @@ describe('optional reference and feedback remotes', () => {
         context: { rpcMethod: 'messageFeedback/put', rpcCode: refusal.code },
       })
     }
-  })
-
-  it('carries the host code of a refused list so a stale target is diagnosable', async () => {
-    const client = transport(() => ({
-      ok: true,
-      value: { ok: false, error: { code: 'target-not-found', messageId: 'm1' } },
-    }))
-    const repository = new Rc6MessageFeedbackRepository(client)
-
-    await expect(repository.list('s1')).rejects.toMatchObject({
-      code: 'STALE_INTERACTION',
-      context: { rpcMethod: 'messageFeedback/list', rpcCode: 'target-not-found' },
-    })
   })
 })

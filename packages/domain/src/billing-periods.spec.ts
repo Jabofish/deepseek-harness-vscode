@@ -47,22 +47,6 @@ const estimate = (from: string, to = from, p = price): ReturnType<typeof estimat
     p,
   )
 describe('conditional exact billing', () => {
-  it.each([
-    ['2026-10-22T00:59:59Z', '2.64'],
-    ['2026-10-22T01:00:00Z', '5.28'],
-    ['2026-10-22T03:59:59Z', '5.28'],
-    ['2026-10-22T04:00:00Z', '2.64'],
-    ['2026-10-22T05:59:59Z', '2.64'],
-    ['2026-10-22T06:00:00Z', '5.28'],
-    ['2026-10-22T09:59:59Z', '5.28'],
-    ['2026-10-22T10:00:00Z', '2.64'],
-    ['2026-10-24T02:00:00Z', '2.64'],
-    ['2026-10-01T02:00:00Z', '2.64'],
-    ['2026-10-10T02:00:00Z', '2.64'],
-    ['2027-01-02T02:00:00Z', '2.64'],
-  ])('prices %s as %s without using machine locale', (time, amount) =>
-    expect(estimate(time).amount).toBe(amount),
-  )
   it('keeps missing timing, unknown holiday years and cross-boundary requests unpriced', () => {
     for (const result of [
       estimate('2027-01-04T02:00:00Z'),

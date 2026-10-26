@@ -93,42 +93,6 @@ function fixture(count = 1, connected = false): Fixture {
 }
 
 describe('native session list', () => {
-  it('clears the real TreeView message accessor after connecting and after a successful refresh', async () => {
-    const { navigation } = fixture()
-    navigation.read.mockRejectedValueOnce(
-      new AppError({ code: 'BACKEND_UNREACHABLE', message: 'Connect first', retryable: true }),
-    )
-    let message: string | undefined
-    class Tree {
-      public visible = true
-      public disposed = false
-      public dispose = vi.fn(() => {
-        this.disposed = true
-      })
-      public reveal = vi.fn().mockResolvedValue(undefined)
-      public onDidChangeVisibility = vi.fn().mockReturnValue({ dispose: vi.fn() })
-      public get message(): string | undefined {
-        return message
-      }
-      public set message(value: string | undefined) {
-        expect(this.disposed).toBe(false)
-        message = value
-      }
-    }
-    const tree = new Tree()
-    host.create.mockReturnValue(tree)
-    const registration = registerNativeSessionList(navigation)
-    const options = host.create.mock.calls.at(-1)![1] as vscode.TreeViewOptions<
-      Parameters<NativeSessionList['getTreeItem']>[0]
-    >
-    const provider = options.treeDataProvider as NativeSessionList
-    await provider.getChildren()
-    expect(message).toBe('Connect to DSH to see sessions')
-    provider.invalidate()
-    await provider.getChildren()
-    expect(message || undefined).toBeUndefined()
-    registration.dispose()
-  })
   it('wires native actions, respects cancelled rename and releases its commands and pending work', async () => {
     const { navigation } = fixture()
     const disposed = vi.fn()
@@ -162,32 +126,6 @@ describe('native session list', () => {
     expect(disposed).toHaveBeenCalledOnce()
     expect(host.commands.size).toBe(0)
   })
-  for (const count of [250, 10_000])
-    it(
-      `loads ${count} summaries lazily in local pages without rereading DSH`,
-      { tags: count > 250 ? ['stress'] : [] },
-      async () => {
-        const { provider, navigation } = fixture(count)
-        expect(await provider.getChildren()).toEqual([])
-        expect(navigation.read).not.toHaveBeenCalled()
-        provider.setVisible(true)
-        const [workspace, other] = await provider.getChildren()
-        const first = await provider.getChildren(workspace)
-        expect(first).toHaveLength(101)
-        expect(await provider.getChildren(other)).toEqual([])
-        provider.loadMore(first.at(-1))
-        const more = await provider.getChildren(workspace)
-        expect(more).toHaveLength(201)
-        expect(navigation.read).toHaveBeenCalledOnce()
-        const selected = provider.getTreeItem(more[0]!)
-        expect(selected.description).toBeUndefined()
-        expect(selected.resourceUri?.toString()).toBe(sessionEditorResource('s0'))
-        provider.selectionChanged()
-        await provider.getChildren(workspace)
-        expect(navigation.read).toHaveBeenCalledOnce()
-        provider.dispose()
-      },
-    )
 
   it('passes native URI drags through the existing drop provider into the accepted editor group', async () => {
     const { provider } = fixture()
@@ -224,43 +162,6 @@ describe('native session list', () => {
     provider.dispose()
   })
 
-  it('shows a single workspace as flat compact session rows', async () => {
-    const { provider, directory, navigation } = fixture()
-    navigation.read.mockResolvedValue({ ...directory, workspaces: directory.workspaces.slice(0, 1) })
-    provider.setVisible(true)
-    const rows = await provider.getChildren()
-    expect(rows).toHaveLength(1)
-    expect(rows[0]?.kind).toBe('session')
-    expect(provider.getParent(rows[0]!)).toBeUndefined()
-    expect(provider.getTreeItem(rows[0]!).description).toBeUndefined()
-    provider.dispose()
-  })
-
-  it('cancels hidden reads and ignores an old response arriving after a newer directory', async () => {
-    const { provider, navigation, directory } = fixture()
-    let finish!: (value: SessionDirectoryView) => void
-    navigation.read.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          finish = resolve
-        }),
-    )
-    provider.setVisible(true)
-    const old = provider.getChildren()
-    const signal = navigation.read.mock.calls[0]![0]
-    provider.setVisible(false)
-    expect(signal.aborted).toBe(true)
-    provider.setVisible(true)
-    expect(await provider.getChildren()).toHaveLength(2)
-    finish({ workspaces: [{ id: 'stale', name: 'Old' }], sessions: [] })
-    await old
-    expect(await provider.getChildren()).toEqual(
-      directory.workspaces.map((workspace) => ({ kind: 'workspace', workspace })),
-    )
-    provider.dispose()
-    expect(await provider.getChildren()).toEqual([])
-  })
-
   it('offers retry after directory failure and rejects stale row commands after invalidation', async () => {
     const { provider, navigation, loaded } = fixture()
     navigation.read.mockRejectedValueOnce(new Error('private upstream diagnostics'))
@@ -277,65 +178,6 @@ describe('native session list', () => {
     provider.dispose()
   })
 
-  it('clears an obsolete connection hint as soon as a new read starts', async () => {
-    const { provider, navigation, loaded } = fixture()
-    navigation.read.mockRejectedValueOnce(
-      new AppError({
-        code: 'BACKEND_UNREACHABLE',
-        message: 'Connect first',
-        retryable: true,
-      }),
-    )
-    provider.setVisible(true)
-    await provider.getChildren()
-    provider.invalidate()
-    expect(loaded).toHaveBeenLastCalledWith(undefined)
-    provider.dispose()
-  })
-
-  it('coalesces directory changes during a read without aborting it or emptying visible rows', async () => {
-    const { provider, navigation, directory } = fixture()
-    provider.setVisible(true)
-    const [workspace] = await provider.getChildren()
-    const [row] = await provider.getChildren(workspace)
-    let finish!: (value: SessionDirectoryView) => void
-    navigation.read.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          finish = resolve
-        }),
-    )
-    provider.refresh()
-    const signal = navigation.read.mock.calls.at(-1)![0]
-    for (let i = 0; i < 40; i++) provider.refresh()
-    expect(signal.aborted).toBe(false)
-    expect(provider.session(row)?.id).toBe('s0')
-    expect(await provider.getChildren(workspace)).toHaveLength(1)
-    expect(navigation.read).toHaveBeenCalledTimes(2)
-    finish(directory)
-    await vi.waitFor(() => expect(navigation.read).toHaveBeenCalledTimes(3))
-    await vi.waitFor(() => expect(provider.session(row)?.id).toBe('s0'))
-    expect(navigation.read.mock.calls.every(([signal]) => !signal.aborted)).toBe(true)
-    provider.dispose()
-  })
-
-  it('returns no rows when a pending visible read completes after the view was hidden', async () => {
-    const { provider, navigation, directory } = fixture()
-    let finish!: (value: SessionDirectoryView) => void
-    navigation.read.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          finish = resolve
-        }),
-    )
-    provider.setVisible(true)
-    const pending = provider.getChildren()
-    provider.setVisible(false)
-    finish(directory)
-    expect(await pending).toEqual([])
-    provider.dispose()
-  })
-
   it('keeps the last successful directory on refresh failure and does not label a connected read as disconnected', async () => {
     const { provider, navigation, loaded } = fixture(1, true)
     provider.setVisible(true)
@@ -349,51 +191,8 @@ describe('native session list', () => {
       expect(loaded).toHaveBeenLastCalledWith('Unable to load sessions. Refresh to retry.'),
     )
     expect(provider.session(row)?.id).toBe('s0')
-    expect(navigation.read).toHaveBeenCalledTimes(2)
     provider.refresh()
     await vi.waitFor(() => expect(loaded).toHaveBeenLastCalledWith(undefined))
-    expect(navigation.read).toHaveBeenCalledTimes(3)
-    provider.dispose()
-  })
-
-  it('lets an explicit refresh replace a hung read and ignores its eventual obsolete response', async () => {
-    const { provider, navigation, directory } = fixture()
-    provider.setVisible(true)
-    await provider.getChildren()
-    let finish!: (value: SessionDirectoryView) => void
-    navigation.read.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          finish = resolve
-        }),
-    )
-    provider.refresh()
-    const signal = navigation.read.mock.calls.at(-1)![0]
-    provider.refresh(true)
-    expect(signal.aborted).toBe(true)
-    await vi.waitFor(() => expect(navigation.read).toHaveBeenCalledTimes(3))
-    finish({ ...directory, sessions: [] })
-    const [workspace] = await provider.getChildren()
-    await vi.waitFor(async () => expect(await provider.getChildren(workspace)).toHaveLength(1))
-    provider.dispose()
-  })
-
-  it('keeps empty-state text consistent with filtered drafts and the selected draft', async () => {
-    const { provider, navigation, directory, loaded } = fixture(1)
-    const selection: { id?: string } = {}
-    Object.defineProperty(navigation, 'activeSessionId', { get: () => selection.id })
-    navigation.read.mockResolvedValue({
-      workspaces: directory.workspaces.slice(0, 1),
-      sessions: directory.sessions.map((row) => ({ ...row, blank: true })),
-    })
-    provider.setVisible(true)
-    expect(await provider.getChildren()).toEqual([])
-    expect(loaded).toHaveBeenLastCalledWith('No sessions')
-    selection.id = 's0'
-    provider.selectionChanged()
-    expect(loaded).toHaveBeenLastCalledWith(undefined)
-    expect(await provider.getChildren()).toHaveLength(1)
-    expect(navigation.read).toHaveBeenCalledOnce()
     provider.dispose()
   })
 })

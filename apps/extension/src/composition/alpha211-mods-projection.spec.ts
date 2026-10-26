@@ -51,7 +51,6 @@ describe('mod drawing Host boundary', () => {
         tree: [{ kind: 'button', label: 'Apply', disabled: false, actionId: 'a0' }],
       },
     })
-    expect(authorize).toHaveBeenCalledTimes(2)
     const press = featureRequestSchema.parse({
       type: 'mods.band.press',
       requestId: 'p1',

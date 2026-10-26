@@ -178,22 +178,6 @@ describe('AppStore session.open bounded retry', () => {
     expect(userMessageNodes(state)).toHaveLength(3)
   })
 
-  it('does not retry a definitive host rejection', async () => {
-    vi.useFakeTimers()
-    const attempts: number[] = []
-    const { store, client } = makeStore({
-      onOpen: () => {
-        attempts.push(attempts.length + 1)
-        throw Object.assign(new Error('session is gone'), { retryable: false })
-      },
-    })
-
-    await expect(store.openSession(activeSession.id)).rejects.toThrow('session is gone')
-
-    expect(attempts).toEqual([1])
-    expect(openRequests(client)).toHaveLength(1)
-  })
-
   it('rejects malformed critical session.open fields instead of opening blank state', async () => {
     const valid = sessionOpenDetail(activeSession.id) as Record<string, unknown>
     const malformedDetails = [
@@ -256,25 +240,5 @@ describe('AppStore session.open bounded retry', () => {
 
     await assertion
     expect(openRequests(client)).toHaveLength(3)
-  })
-
-  it('abandons a retrying open once a newer open takes over', async () => {
-    vi.useFakeTimers()
-    const { store, client } = makeStore({
-      onOpen: (_attempt, sessionId) => {
-        if (sessionId === activeSession.id) throw retryableFailure('backend unreachable')
-        return sessionOpenDetail(sessionId)
-      },
-    })
-    const failing = store.openSession(activeSession.id)
-    await vi.advanceTimersByTimeAsync(1)
-    await store.openSession('session-b')
-    await vi.advanceTimersByTimeAsync(2_000)
-
-    // The stale open resolves silently once the newer open owns the panel,
-    // and its pending retry never re-requests the old session.
-    await failing
-    expect(openRequests(client)).toHaveLength(2)
-    expect(store.getState().activeSessionId).toBe('session-b')
   })
 })

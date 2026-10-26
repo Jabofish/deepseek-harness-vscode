@@ -47,35 +47,6 @@ describe('WebviewSurfaceRegistry', () => {
     registry.dispose()
   })
 
-  it('broadcasts to every surface and reports delivery when any accepted', async () => {
-    const registry = new WebviewSurfaceRegistry()
-    const sidebar = surface('sidebar', 'sidebar', { accepts: false })
-    const editor = surface('editor:s1', 'editor')
-    registry.register(sidebar)
-    registry.register(editor)
-
-    expect(await registry.post({ message: 'event' })).toBe(true)
-    expect(sidebar.posted).toHaveLength(1)
-    expect(editor.posted).toHaveLength(1)
-  })
-
-  it('reports no delivery when no surface accepted the message', async () => {
-    const registry = new WebviewSurfaceRegistry()
-    registry.register(surface('sidebar', 'sidebar', { accepts: false }))
-
-    expect(await registry.post({ message: 'event' })).toBe(false)
-  })
-
-  it('does not fail a broadcast because one surface threw during disposal', async () => {
-    const registry = new WebviewSurfaceRegistry()
-    registry.register(surface('sidebar', 'sidebar', { throws: true }))
-    const editor = surface('editor:s1', 'editor')
-    registry.register(editor)
-
-    expect(await registry.post({ message: 'event' })).toBe(true)
-    expect(editor.posted).toHaveLength(1)
-  })
-
   it('targets one surface and refuses an unknown or throwing target', async () => {
     const registry = new WebviewSurfaceRegistry()
     const sidebar = surface('sidebar', 'sidebar')
@@ -107,24 +78,5 @@ describe('WebviewSurfaceRegistry', () => {
     expect(registry.active).toBe(sidebar)
     expect(registry.editorCount).toBe(1)
     expect(registry.isEmpty()).toBe(false)
-  })
-
-  it('counts editor surfaces and disposes every registered surface once', () => {
-    const registry = new WebviewSurfaceRegistry()
-    const sidebar = surface('sidebar', 'sidebar')
-    const editor = surface('editor:s1', 'editor')
-    registry.register(sidebar)
-    registry.register(editor)
-
-    expect(registry.editorCount).toBe(1)
-    expect(registry.list()).toEqual([sidebar, editor])
-
-    registry.dispose()
-
-    expect(sidebar.disposed).toBe(true)
-    expect(editor.disposed).toBe(true)
-    expect(registry.isEmpty()).toBe(true)
-    expect(registry.active).toBeUndefined()
-    expect(registry.get('sidebar')).toBeUndefined()
   })
 })

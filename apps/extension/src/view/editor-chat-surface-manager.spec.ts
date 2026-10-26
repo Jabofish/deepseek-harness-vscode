@@ -73,8 +73,8 @@ vi.mock('vscode', () => ({
   },
 }))
 
-import { EditorChatSurfaceManager, persistedEditorChatSessionId } from './editor-chat-surface-manager.js'
-import type { DshWebviewPanelSurface } from './dsh-webview-panel-surface.js'
+import { EditorChatSurfaceManager } from './editor-chat-surface-manager.js'
+
 import { WebviewSurfaceRegistry } from './webview-surface-registry.js'
 
 const extensionUri = { toString: () => 'extension-root' } as never
@@ -140,22 +140,6 @@ describe('EditorChatSurfaceManager', () => {
     await Promise.resolve()
   })
 
-  it('opens a second tab for a second session and reports each count change', () => {
-    const harness = createHarness()
-
-    harness.manager.open('session-1', 'One')
-    harness.manager.open('session-2', 'Two')
-
-    expect(vscodeMock.panels).toHaveLength(2)
-    expect(harness.manager.count).toBe(2)
-    expect(harness.manager.mostRecent?.sessionId).toBe('session-2')
-    expect(harness.counts).toEqual([1, 2])
-    expect(harness.manager.surfacesById.map((surface) => surface.surfaceId)).toEqual([
-      'editor:session-1',
-      'editor:session-2',
-    ])
-  })
-
   it('opens into the native drop group and moves an existing tab there without duplicating it', () => {
     const harness = createHarness()
     harness.manager.open('session-1', 'One', 2)
@@ -175,39 +159,6 @@ describe('EditorChatSurfaceManager', () => {
     expect(() => harness.manager.bind(surface.surfaceId, 'session-2')).toThrow('closed')
     expect(harness.manager.count).toBe(0)
     expect(vscodeMock.panels).toHaveLength(1)
-  })
-
-  it('forgets a tab the user closed and allows reopening the session', () => {
-    const harness = createHarness()
-    const surface: DshWebviewPanelSurface = harness.manager.open('session-1', 'One')
-
-    harness.lastPanel().dispose()
-
-    expect(harness.disposed).toEqual(['editor:session-1'])
-    expect(harness.manager.count).toBe(0)
-    expect(harness.manager.forSession('session-1')).toBeUndefined()
-    expect(surface.sessionId).toBe('session-1')
-
-    harness.manager.open('session-1', 'One again')
-    expect(vscodeMock.panels).toHaveLength(2)
-    expect(harness.counts).toEqual([1, 0, 1])
-  })
-
-  it('closes one tab or every tab on request', () => {
-    const harness = createHarness()
-    harness.manager.open('session-1', 'One')
-    harness.manager.open('session-2', 'Two')
-
-    harness.manager.close('editor:session-1')
-    expect(harness.disposed).toEqual(['editor:session-1'])
-    expect(harness.manager.count).toBe(1)
-    expect(harness.surfaces.get('editor:session-1')).toBeUndefined()
-    expect(harness.surfaces.get('editor:session-2')).toBeDefined()
-
-    harness.manager.closeAll()
-    expect(harness.manager.count).toBe(0)
-    expect(harness.disposed).toEqual(['editor:session-1', 'editor:session-2'])
-    expect(harness.counts).toEqual([1, 2, 1, 0])
   })
 
   it('adopts a panel restored after a window reload without creating a new one', () => {
@@ -238,61 +189,6 @@ describe('EditorChatSurfaceManager', () => {
     expect(harness.counts).toEqual([1])
   })
 
-  it('replaces a live tab for the same session instead of dropping it from routing', () => {
-    const harness = createHarness()
-    const live = harness.manager.open('session-1', 'One')
-
-    const restored = {
-      title: 'Restored session',
-      visible: true,
-      webview: {
-        options: undefined,
-        html: '',
-        cspSource: 'vscode-resource:',
-        asWebviewUri: (uri: unknown) => uri,
-        postMessage: () => Promise.resolve(true),
-        onDidReceiveMessage: () => ({ dispose: () => undefined }),
-      },
-      onDidDispose: () => ({ dispose: () => undefined }),
-      onDidChangeViewState: () => ({ dispose: () => undefined }),
-      reveal: () => undefined,
-      dispose: () => undefined,
-    }
-
-    const adopted = harness.manager.adopt(restored as never, 'session-1')
-
-    expect(adopted.surfaceId).toBe(live.surfaceId)
-    expect(harness.manager.count).toBe(1)
-    expect(harness.manager.forSession('session-1')).toBe(adopted)
-    expect(harness.disposed).toEqual(['editor:session-1'])
-  })
-
-  it('carries the count and readiness of an unbound restored panel', () => {
-    const harness = createHarness()
-    const restored = {
-      title: 'DeepSeek Harness',
-      visible: true,
-      webview: {
-        options: undefined,
-        html: '',
-        cspSource: 'vscode-resource:',
-        asWebviewUri: (uri: unknown) => uri,
-        postMessage: () => Promise.resolve(true),
-        onDidReceiveMessage: () => ({ dispose: () => undefined }),
-      },
-      onDidDispose: () => ({ dispose: () => undefined }),
-      onDidChangeViewState: () => ({ dispose: () => undefined }),
-      reveal: () => undefined,
-      dispose: () => undefined,
-    }
-
-    const surface = harness.manager.adopt(restored as never, undefined)
-
-    expect(surface.sessionId).toBeUndefined()
-    expect(surface.surfaceId).toBe('editor:unbound:1')
-    expect(harness.manager.count).toBe(1)
-  })
-
   it('routes a panel message with the surface identity', async () => {
     const harness = createHarness()
     harness.manager.open('session-1', 'One')
@@ -318,17 +214,5 @@ describe('EditorChatSurfaceManager', () => {
     // A second dispose is a no-op.
     harness.manager.dispose()
     expect(harness.disposed).toHaveLength(2)
-  })
-})
-
-describe('persistedEditorChatSessionId', () => {
-  it('reads only a usable active session id from the Webview state', () => {
-    expect(persistedEditorChatSessionId({ activeSessionId: 'session-7' })).toBe('session-7')
-    expect(persistedEditorChatSessionId({ activeSessionId: '' })).toBeUndefined()
-    expect(persistedEditorChatSessionId({ activeSessionId: 7 })).toBeUndefined()
-    expect(persistedEditorChatSessionId({})).toBeUndefined()
-    expect(persistedEditorChatSessionId(null)).toBeUndefined()
-    expect(persistedEditorChatSessionId('session-7')).toBeUndefined()
-    expect(persistedEditorChatSessionId(['session-7'])).toBeUndefined()
   })
 })

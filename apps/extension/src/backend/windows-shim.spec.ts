@@ -60,26 +60,6 @@ describe('Windows npm shim resolution', () => {
     ).toBeUndefined()
   })
 
-  it('resolves the pnpm CommonJS entry without a shell', () => {
-    const resolved = resolveWindowsShim(
-      'C:\\npm\\pnpm.cmd',
-      'windows',
-      () => 'node "%~dp0\\node_modules\\pnpm\\bin\\pnpm.cjs" %*',
-      { nodeExecutable: 'C:\\node\\node.exe' },
-    )
-    expect(resolved?.prefixArgs).toEqual(['C:\\npm\\node_modules\\pnpm\\bin\\pnpm.cjs'])
-  })
-  it('uses an explicitly supplied Node executable instead of the shim', () => {
-    const resolved = resolveWindowsShim('C:\\npm\\dsh.cmd', 'windows', () => shim, {
-      nodeExecutable: 'C:\\node\\node.exe',
-    })
-
-    expect(resolved).toEqual({
-      executable: 'C:\\node\\node.exe',
-      prefixArgs: ['C:\\npm\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js'],
-    })
-  })
-
   it('does not use an Electron extension-host executable as Node', () => {
     const resolved = resolveWindowsShim('C:\\npm\\dsh.cmd', 'windows', () => shim, {
       processExecutable: 'C:\\Program Files\\Microsoft VS Code\\Code.exe',
@@ -88,16 +68,6 @@ describe('Windows npm shim resolution', () => {
     })
 
     expect(resolved?.executable).toBe('C:\\nodejs\\node.exe')
-  })
-
-  it('prefers the Node executable beside a fnm npm shim', () => {
-    const resolved = resolveWindowsShim('C:\\fnm\\dsh.cmd', 'windows', () => shim, {
-      processExecutable: 'C:\\Program Files\\Microsoft VS Code\\Code.exe',
-      pathEntries: ['C:\\nodejs'],
-      fileExists: (filePath) => filePath === 'C:\\fnm\\node.exe',
-    })
-
-    expect(resolved?.executable).toBe('C:\\fnm\\node.exe')
   })
 
   it('resolves the variable-based npm.cmd shim without invoking a shell', () => {

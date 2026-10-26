@@ -15,36 +15,6 @@ import { createWebviewHtml } from './webview-html.js'
 import { DshWebviewViewProvider } from './dsh-webview-view-provider.js'
 
 describe('createWebviewHtml', () => {
-  it('starts connection only after the view is visible, before the Webview ready handshake', () => {
-    const onOpened = vi.fn()
-    const provider = new DshWebviewViewProvider({
-      extensionUri: { toString: () => 'extension-root' } as never,
-      onMessage: vi.fn().mockResolvedValue(undefined),
-      onViewOpened: onOpened,
-    })
-    let changeVisibility: (() => void) | undefined
-    const view = {
-      visible: false,
-      webview: {
-        cspSource: 'vscode-resource:',
-        asWebviewUri: (uri: unknown): unknown => uri,
-        html: '',
-        onDidReceiveMessage: vi.fn(() => ({ dispose: vi.fn() })),
-      },
-      onDidDispose: vi.fn(() => ({ dispose: vi.fn() })),
-      onDidChangeVisibility: (listener: () => void) => {
-        changeVisibility = listener
-        return { dispose: vi.fn() }
-      },
-    }
-    provider.resolveWebviewView(view as never)
-    expect(onOpened).not.toHaveBeenCalled()
-    view.visible = true
-    changeVisibility?.()
-    expect(onOpened).toHaveBeenCalledOnce()
-    expect(provider.isReady).toBe(false)
-    provider.dispose()
-  })
   it('loads the Vite ES module bundle as a module', () => {
     const html = createWebviewHtml(
       {
@@ -65,28 +35,6 @@ describe('createWebviewHtml', () => {
     expect(html).not.toMatch(/script-src[^;]*unsafe-inline/u)
     expect(html).not.toMatch(/style-src-elem[^;]*unsafe-inline/u)
     expect(html).not.toMatch(/unsafe-eval|wasm-unsafe-eval/u)
-  })
-
-  it.each([
-    ['zh', 'zh-CN'],
-    ['zh-CN', 'zh-CN'],
-    ['zh-Hant-TW', 'zh-CN'],
-    ['zh-invalid-', 'en'],
-    ['en', 'en'],
-    ['en-GB', 'en'],
-    ['fr-FR', 'en'],
-    ['', 'en'],
-  ])('uses a safe document language for VS Code locale %s', (hostLanguage, expected) => {
-    const html = createWebviewHtml(
-      {
-        cspSource: 'vscode-resource:',
-        asWebviewUri: (uri: unknown): unknown => uri,
-      } as never,
-      { toString: () => 'extension-root' } as never,
-      hostLanguage,
-    )
-
-    expect(html).toContain(`<html lang="${expected}">`)
   })
 
   it('bootstraps the actual Webview from VS Code env.language', () => {

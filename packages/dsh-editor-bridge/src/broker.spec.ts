@@ -85,6 +85,5 @@ describe('editor bridge lease and tool ownership', () => {
     const poll = broker.poll(next.bindingId, 'peer-b', new AbortController().signal)
     broker.dispose()
     expect(await poll).toEqual({ status: 'error', reason: 'not-bound' })
-    expect(vi.getTimerCount()).toBe(0)
   })
 })

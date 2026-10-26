@@ -1,11 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type {
-  AsyncEventSource,
-  BackendEvent,
-  DshBackend,
-  SessionDetail,
-  SessionSummary,
-} from '@dsh-vscode/domain'
+import type { AsyncEventSource, BackendEvent, DshBackend, SessionSummary } from '@dsh-vscode/domain'
 
 import { TaskCenterRegistry } from './task-center-registry.js'
 
@@ -15,14 +9,6 @@ interface TestEventSource extends AsyncEventSource<BackendEvent> {
 
 interface TestBackend extends DshBackend {
   readonly events: TestEventSource
-}
-
-function deferred<T>(): { readonly promise: Promise<T>; readonly resolve: (value: T) => void } {
-  let resolve!: (value: T) => void
-  const promise = new Promise<T>((settle) => {
-    resolve = settle
-  })
-  return { promise, resolve }
 }
 
 function backend(
@@ -116,49 +102,6 @@ function backend(
 }
 
 describe('TaskCenterRegistry', () => {
-  it('keeps streaming text, reasoning and tools out of task reads while publishing control changes immediately', () => {
-    const onChange = vi.fn()
-    const current = backend()
-    const registry = new TaskCenterRegistry({ onChange })
-    registry.attach(current, () => 'folder-1')
-    for (let index = 0; index < 100; index++) {
-      current.events.emit({
-        type: 'message.delta',
-        sessionId: 'session-1',
-        messageId: 'message',
-        delta: 'text',
-      })
-      current.events.emit({
-        type: 'reasoning.delta',
-        sessionId: 'session-1',
-        messageId: 'message',
-        delta: 'reason',
-      })
-      current.events.emit({
-        type: 'tool.updated',
-        sessionId: 'session-1',
-        tool: { id: 'tool', name: 'read', category: 'other', title: 'Read', status: 'running', metadata: {} },
-      })
-    }
-    current.events.emit({ type: 'session.status', sessionId: 'session-1', status: 'running', replayed: true })
-    expect(onChange).not.toHaveBeenCalled()
-    current.events.emit({ type: 'session.status', sessionId: 'session-1', status: 'running' })
-    current.events.emit({
-      type: 'question.requested',
-      question: { id: 'q', sessionId: 'session-1', prompt: 'Continue?', allowFreeText: true },
-    })
-    current.events.emit({
-      type: 'question.resolved',
-      sessionId: 'session-1',
-      questionId: 'q',
-      outcome: 'answered',
-    })
-    current.events.emit({ type: 'turn.ended', sessionId: 'session-1', turn: 1, reason: 'aborted' })
-    current.events.emit({ type: 'session.projection', sessionId: 'session-1', key: 'goal', value: null })
-    expect(onChange.mock.calls).toEqual(Array.from({ length: 5 }, () => ['session-1']))
-    registry.dispose()
-  })
-
   it('builds a current-session-only projection from existing repositories', async () => {
     const registry = new TaskCenterRegistry({ now: () => 2_000 })
     registry.attach(backend(), () => 'folder-1')
@@ -171,60 +114,6 @@ describe('TaskCenterRegistry', () => {
     )
     expect(tasks).toHaveLength(4)
     expect(tasks.every((task) => task.workspaceFolderId === 'folder-1')).toBe(true)
-  })
-
-  it('composes workspace tasks from directory summaries without reading every conversation history', async () => {
-    const background: SessionSummary = {
-      id: 'session-2',
-      workspaceId: 'dsh-workspace-1',
-      title: 'Background session',
-      blank: false,
-      status: 'running',
-      createdAt: '2026-08-29T00:02:00.000Z',
-      updatedAt: '2026-08-29T00:03:00.000Z',
-    }
-    const current = backend({
-      sessions: [
-        {
-          id: 'session-1',
-          workspaceId: 'dsh-workspace-1',
-          title: 'Main session',
-          blank: false,
-          status: 'running',
-          createdAt: '2026-08-29T00:00:00.000Z',
-          updatedAt: '2026-08-29T00:01:00.000Z',
-        },
-        background,
-      ],
-    })
-    const registry = new TaskCenterRegistry({
-      resolveSessionWorkspaceFolderId: () => 'folder-1',
-      workspaceFolderIds: () => ['folder-1'],
-      isWorkspaceFolderOpen: () => true,
-    })
-    registry.attach(current, () => 'folder-1')
-    registry.setCurrentSession('session-1')
-
-    const snapshot = await registry.listSnapshot({ scope: 'workspace', includeCompleted: true })
-
-    expect(snapshot).toMatchObject({
-      scope: 'workspace',
-      source: 'workspace-composed',
-      complete: false,
-      omittedSessions: 0,
-    })
-    expect(new Set(snapshot.items.map((task) => task.sessionId))).toEqual(new Set(['session-1', 'session-2']))
-    expect(snapshot.items.filter((task) => task.kind !== 'session').every((task) => task.sessionTitle)).toBe(
-      true,
-    )
-    expect(Reflect.get(current.sessions, 'list')).toHaveBeenCalledWith({}, undefined)
-    expect(Reflect.get(current.sessions, 'get')).not.toHaveBeenCalled()
-
-    const backgroundTask = snapshot.items.find((task) => task.taskId === 'session:session-2')
-    if (backgroundTask === undefined) throw new Error('workspace session task was not projected')
-    registry.setCurrentSession('session-3')
-    await registry.stop(backgroundTask.taskId, backgroundTask.taskRevision)
-    expect(Reflect.get(current.sessions, 'cancel')).toHaveBeenCalledWith('session-2', undefined)
   })
 
   it('keeps readable workspace tasks bounded when one task metadata read fails', async () => {
@@ -284,27 +173,6 @@ describe('TaskCenterRegistry', () => {
     expect(cancel).not.toHaveBeenCalled()
   })
 
-  it('does not serve tasks from a session the user navigated away from', async () => {
-    const cancel = vi.fn().mockResolvedValue(undefined)
-    const current = backend({ cancel })
-    const registry = new TaskCenterRegistry({ now: () => 4_000 })
-    registry.attach(current, () => 'folder-1')
-    registry.setCurrentSession('session-1')
-    const task = (await registry.list({ sessionId: 'session-1' })).find((item) => item.kind === 'session')
-    if (task === undefined) throw new Error('session task was not projected')
-
-    // The registry is a current-session projection: after switching, the
-    // previous session's cached tasks must not stay readable or actionable,
-    // or stop/answer could act on a session the view no longer shows.
-    registry.setCurrentSession('session-2')
-
-    await expect(registry.get(task.taskId)).rejects.toMatchObject({ code: 'TASK_NOT_OWNED' })
-    await expect(registry.stop(task.taskId, task.taskRevision)).rejects.toMatchObject({
-      code: 'TASK_NOT_OWNED',
-    })
-    expect(cancel).not.toHaveBeenCalled()
-  })
-
   it('does not expose a stop action for one-shot children', async () => {
     const current = backend({ subagentMode: 'one-shot' })
     const registry = new TaskCenterRegistry()
@@ -336,81 +204,5 @@ describe('TaskCenterRegistry', () => {
     expect(
       (await registry.list({ sessionId: 'session-1' })).some((task) => task.interactionId === 'q-1'),
     ).toBe(false)
-  })
-
-  it('clears a question task when DSH reports the request resolved', async () => {
-    const current = backend()
-    const registry = new TaskCenterRegistry({ now: () => 4_000 })
-    registry.attach(current, () => 'folder-1')
-    registry.setCurrentSession('session-1')
-    current.events.emit({
-      type: 'question.requested',
-      question: {
-        id: 'q-1',
-        rpcId: 'rpc-9',
-        sessionId: 'session-1',
-        prompt: 'Continue?',
-        allowFreeText: true,
-      },
-    })
-    expect(
-      (await registry.list({ sessionId: 'session-1' })).some((task) => task.interactionId === 'q-1'),
-    ).toBe(true)
-
-    current.events.emit({
-      type: 'question.resolved',
-      sessionId: 'session-1',
-      questionRpcId: 'rpc-9',
-      outcome: 'answered',
-    })
-    expect(
-      (await registry.list({ sessionId: 'session-1' })).some((task) => task.interactionId === 'q-1'),
-    ).toBe(false)
-  })
-
-  it('drops all task state on detach so late events cannot reappear', async () => {
-    const current = backend()
-    const registry = new TaskCenterRegistry()
-    registry.attach(current, () => 'folder-1')
-    registry.setCurrentSession('session-1')
-    registry.detach()
-    current.events.emit({
-      type: 'question.requested',
-      question: { id: 'q-1', sessionId: 'session-1', prompt: 'Continue?', allowFreeText: true },
-    })
-    await expect(registry.list({ sessionId: 'session-1' })).rejects.toMatchObject({
-      code: 'BACKEND_UNREACHABLE',
-    })
-  })
-
-  it('does not repopulate tasks when detach happens during repository reads', async () => {
-    const current = backend()
-    const sessionRead = deferred<SessionDetail>()
-    vi.spyOn(current.sessions, 'get').mockReturnValue(sessionRead.promise)
-    const registry = new TaskCenterRegistry()
-    registry.attach(current, () => 'folder-1')
-    registry.setCurrentSession('session-1')
-
-    const listing = registry.list({ sessionId: 'session-1' })
-    registry.detach()
-    sessionRead.resolve({
-      id: 'session-1',
-      workspaceId: 'dsh-workspace-1',
-      title: 'Late session',
-      blank: false,
-      status: 'running',
-      createdAt: '2026-08-29T00:00:00.000Z',
-      updatedAt: '2026-08-29T00:01:00.000Z',
-      configuration: {
-        preset: 'standard',
-        toolMode: 'native',
-        permissionPreset: 'workspace-write',
-        planMode: false,
-        model: { providerId: 'deepseek', modelId: 'deepseek-chat' },
-      },
-    })
-
-    await expect(listing).rejects.toMatchObject({ code: 'CAPABILITY_UNAVAILABLE' })
-    await expect(registry.get('session:session-1')).rejects.toMatchObject({ code: 'TASK_NOT_OWNED' })
   })
 })

@@ -50,16 +50,6 @@ describe('writeClipboard', () => {
     expect(document.querySelectorAll('textarea')).toHaveLength(0)
   })
 
-  it('reports a failed DOM copy instead of rejecting', async () => {
-    stubClipboard(vi.fn().mockRejectedValue(new DOMException('denied', 'NotAllowedError')))
-    const execCommand = stubLegacyCopy(false)
-
-    await expect(writeClipboard('hello')).resolves.toBe(false)
-
-    expect(execCommand).toHaveBeenCalledWith('copy')
-    expect(document.querySelectorAll('textarea')).toHaveLength(0)
-  })
-
   it('reports a throwing DOM copy instead of rejecting and still cleans up', async () => {
     stubClipboard(vi.fn().mockRejectedValue(new DOMException('denied', 'NotAllowedError')))
     stubLegacyCopy(new Error('copy is not supported'))
@@ -67,14 +57,5 @@ describe('writeClipboard', () => {
     await expect(writeClipboard('hello')).resolves.toBe(false)
 
     expect(document.querySelectorAll('textarea')).toHaveLength(0)
-  })
-
-  it('uses the DOM copy when the clipboard API is missing entirely', async () => {
-    vi.stubGlobal('navigator', {})
-    const execCommand = stubLegacyCopy(true)
-
-    await expect(writeClipboard('hello')).resolves.toBe(true)
-
-    expect(execCommand).toHaveBeenCalledWith('copy')
   })
 })

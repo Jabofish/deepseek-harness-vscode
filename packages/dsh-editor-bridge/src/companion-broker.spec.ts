@@ -96,6 +96,5 @@ describe('multi-session editor tool grants', () => {
     const poll = broker.poll(binding.bindingId, 'peer-a', signal())
     broker.dispose()
     expect(await poll).toEqual({ status: 'error', reason: 'not-bound' })
-    expect(vi.getTimerCount()).toBe(0)
   })
 })

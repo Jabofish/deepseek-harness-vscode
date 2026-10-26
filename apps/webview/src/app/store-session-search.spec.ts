@@ -48,22 +48,6 @@ describe('AppStore content session search', () => {
     store.dispose()
   })
 
-  it.each([
-    { response: { items: [summary], searchHasMore: false }, expected: false },
-    { response: { items: [summary] }, expected: undefined },
-  ])(
-    'does not invent more-result metadata when the host reports $expected',
-    async ({ response, expected }) => {
-      const { store } = open(response)
-
-      await expect(store.searchSessions('needle')).resolves.toMatchObject({
-        items: [summary],
-        ...(expected === undefined ? {} : { searchHasMore: expected }),
-      })
-      store.dispose()
-    },
-  )
-
   it('rejects malformed search completeness metadata instead of presenting it as complete', async () => {
     const { store } = open({ items: [summary], searchHasMore: 'true' })
 

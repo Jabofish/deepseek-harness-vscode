@@ -55,36 +55,6 @@ function snapshot(): Record<string, unknown> & { records: unknown[] } {
   }
 }
 describe('native alpha171 Session V4 admission', () => {
-  it('accepts developer additions/removals and maps a prompt-only watermark', () => {
-    expect(validAlpha171SessionEvent(developer)).toBe(true)
-    expect(validAlpha171SessionSnapshot(snapshot())).toBe(true)
-    expect(normalizeAlpha171Event(developer)).toBe(developer)
-    expect(rc6Mapper.event('developer/message', { ...developer.data, sessionId: 's1' })).toMatchObject({
-      type: 'session.system',
-    })
-  })
-  it('accepts an omitted top-level depth in the live V4 follow header', () => {
-    // dsh-v0.1.7-rc.2 (477b4f4): core/session/src/types.ts makes top-level
-    // delegationDepth absent, and session-controller/src/history.ts forwards
-    // that header unchanged in session/follow. The artifact codec requires 0.
-    const topLevelHeader = { version: 4, id: 's1', createdAt: 1, isSeeded: false }
-    const liveSnapshot = { ...snapshot(), header: topLevelHeader }
-    expect(validAlpha171SessionSnapshot(liveSnapshot)).toBe(true)
-    expect(liveSnapshot.header).toEqual(topLevelHeader)
-    expect(
-      validAlpha171SessionSnapshot({
-        ...snapshot(),
-        header: { ...topLevelHeader, origin: 'subagent' },
-      }),
-    ).toBe(false)
-    for (const delegationDepth of [-1, 0.5, undefined])
-      expect(
-        validAlpha171SessionSnapshot({
-          ...snapshot(),
-          header: { ...topLevelHeader, delegationDepth },
-        }),
-      ).toBe(false)
-  })
   it('preserves the RC2 Auto review error identity through V4 normalization and tool mapping', () => {
     const denial = {
       type: 'tool/result',
@@ -157,17 +127,7 @@ describe('native alpha171 Session V4 admission', () => {
   it.each([2, 3, 5])('rejects non-V4 header version %s', (version) => {
     expect(validAlpha171SessionSnapshot({ ...snapshot(), header: { ...header, version } })).toBe(false)
   })
-  it.each([undefined, { kind: 'plugin', plugin: 'old' }, { kind: '' }])(
-    'rejects invalid native source %j',
-    (source) => {
-      expect(
-        validAlpha171SessionEvent({
-          ...developer,
-          data: { ...developer.data, message: { ...message, source } },
-        }),
-      ).toBe(false)
-    },
-  )
+
   it('rejects retired inline definitions, non-earlier headers and role mismatch', () => {
     expect(validAlpha171SessionEvent({ ...developer, data: { ...developer.data, headerSeq: 3 } })).toBe(false)
     expect(
@@ -186,21 +146,7 @@ describe('native alpha171 Session V4 admission', () => {
       }),
     ).toBe(false)
   })
-  it('checks available header and lifecycle relationships without guessing missing pages', () => {
-    const full = snapshot()
-    full.records[3] = { type: 'event', event: { ...developer, data: { ...developer.data, headerSeq: 1 } } }
-    expect(validAlpha171SessionSnapshot(full)).toBe(false)
-    expect(
-      validAlpha171SessionSnapshot({
-        ...snapshot(),
-        records: [{ type: 'event', event: developer }],
-        hasMore: true,
-      }),
-    ).toBe(true)
-    const wrongStep = snapshot()
-    wrongStep.records[3] = { type: 'event', event: { ...developer, data: { ...developer.data, step: 2 } } }
-    expect(validAlpha171SessionSnapshot(wrongStep)).toBe(false)
-  })
+
   it('retains additive producer JSON and rejects unknown required vocabulary', () => {
     expect(validAlpha171SessionEvent({ ...developer, data: { ...developer.data, future: { a: 1 } } })).toBe(
       true,

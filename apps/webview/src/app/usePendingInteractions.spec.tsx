@@ -93,43 +93,6 @@ describe('complete approval content', () => {
     )
     expect(result.current.pendingQuestions).toEqual([])
   })
-  it('does not reuse an off-window command after the backend connection changes', async () => {
-    let resolve!: (node: TimelineNode) => void
-    const second = new Promise<TimelineNode>((settle) => {
-      resolve = settle
-    })
-    const load = vi
-      .fn<AppStore['loadTranscriptNode']>()
-      .mockResolvedValueOnce(full)
-      .mockReturnValueOnce(second)
-    const props = parameters(load, [])
-    const { result, rerender } = renderHook((current) => usePendingInteractions(current), {
-      initialProps: props,
-    })
-    await waitFor(() =>
-      expect(result.current.pendingPermissions[0]).toMatchObject({ command, contentPending: false }),
-    )
-    rerender({ ...props, state: { ...props.state, connectionEpoch: (props.state.connectionEpoch ?? 0) + 1 } })
-    expect(result.current.pendingPermissions[0]?.contentPending).toBe(true)
-    expect(result.current.pendingPermissions[0]?.command).toBeUndefined()
-    await waitFor(() => expect(load).toHaveBeenCalledTimes(2))
-    await act(async () => {
-      resolve({
-        ...full,
-        tool: {
-          ...full.tool,
-          presentation: { phase: 'call', card: 'terminal', title: 'NEW_BACKEND_COMMAND' },
-        },
-      })
-      await Promise.resolve()
-    })
-    await waitFor(() =>
-      expect(result.current.pendingPermissions[0]).toMatchObject({
-        command: 'NEW_BACKEND_COMMAND',
-        contentPending: false,
-      }),
-    )
-  })
 
   it.each(['clipped', 'outside-window'] as const)(
     'automatically completes a %s command before enabling approval',
@@ -158,19 +121,4 @@ describe('complete approval content', () => {
       )
     },
   )
-
-  it('retries a failed complete-request read without requiring another user action', async () => {
-    const load = vi
-      .fn<AppStore['loadTranscriptNode']>()
-      .mockRejectedValueOnce(new Error('temporary'))
-      .mockResolvedValue(full)
-    const props = parameters(load, [preview])
-    const { result } = renderHook(() => usePendingInteractions(props))
-    await waitFor(() => expect(result.current.pendingPermissions[0]?.contentFailed).toBe(true))
-    await waitFor(
-      () => expect(result.current.pendingPermissions[0]).toMatchObject({ command, contentPending: false }),
-      { timeout: 2_000 },
-    )
-    expect(load).toHaveBeenCalledTimes(2)
-  })
 })

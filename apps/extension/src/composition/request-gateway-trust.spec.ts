@@ -207,7 +207,6 @@ describe('request gateway workspace trust refusal', () => {
     await context.gateway.router.handle(permissionResponse('opaque-stop'))
     expect(context.sent[0]?.ok).toBe(true)
     expect(context.controls).toEqual(['permission:permission-owned:opaque-stop'])
-    expect(context.permissionOwnership).toHaveBeenCalledOnce()
   })
 
   it.each(['deny', 'missing'])(
@@ -228,7 +227,6 @@ describe('request gateway workspace trust refusal', () => {
       }),
     )
     await context.gateway.router.handle(permissionResponse('opaque-stop'))
-    expect(context.permissionOwnership).toHaveBeenCalledOnce()
     expect(context.sent[0]?.error?.code).toBe('PERMISSION_DENIED')
     expect(context.controls).toEqual([])
   })

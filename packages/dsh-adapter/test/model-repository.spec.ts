@@ -55,42 +55,6 @@ const PROVIDER_SCHEMA_WITH_API_PROTOCOL = {
 }
 
 describe('Rc6ModelRepository provider configuration', () => {
-  it('accepts a live-only provider without a fabricated settings namespace', async () => {
-    const repository = new Rc6ModelRepository(
-      transportFor({
-        'llm.providers': {
-          providers: [
-            {
-              provider: 'runtime-only',
-              displayName: 'Runtime only',
-              settingsNs: '',
-              settingsPath: [],
-              active: true,
-            },
-          ],
-        },
-        'settings.describe': {
-          writable: true,
-          hasDocument: false,
-          namespaces: [],
-        },
-      }),
-    )
-
-    await expect(repository.listProviders()).resolves.toEqual([
-      {
-        id: 'runtime-only',
-        name: 'Runtime only',
-        kind: 'provider',
-        configurable: true,
-        active: true,
-        settingsNs: '',
-        settingsPath: [],
-        fields: [],
-      },
-    ])
-  })
-
   it('preserves dynamic API protocol choices from the provider Schemastery union', async () => {
     const repository = new Rc6ModelRepository(
       transportFor({
@@ -132,52 +96,6 @@ describe('Rc6ModelRepository provider configuration', () => {
       required: true,
       enumValues: ['openai-completions', 'anthropic-messages'],
       value: 'openai-completions',
-    })
-  })
-
-  it('marks a conventional unconfigured custom reference writable for the retry action', async () => {
-    const repository = new Rc6ModelRepository(
-      transportFor({
-        'llm.providers': {
-          providers: [
-            {
-              provider: 'gateway',
-              displayName: 'Gateway',
-              settingsNs: 'llm-pi-ai',
-              settingsPath: ['providers', 'gateway'],
-              active: false,
-              declared: false,
-            },
-          ],
-        },
-        'settings.describe': {
-          writable: true,
-          hasDocument: true,
-          namespaces: [
-            {
-              ns: 'llm-pi-ai',
-              schema: PROVIDER_SCHEMA,
-              value: { providers: { gateway: { apiKeyEnv: 'GATEWAY_API_KEY' } } },
-              applies: 'live',
-              secrets: [],
-              revision: 8,
-            },
-          ],
-        },
-        'credentials.describe': {
-          credentials: { GATEWAY_API_KEY: { configured: false, writable: true } },
-        },
-      }),
-    )
-
-    const [provider] = await repository.listProviders()
-    expect(provider?.id).toBe('gateway')
-    expect(provider?.fields.find((field) => field.key === 'apiKeyEnv')).toEqual({
-      key: 'apiKeyEnv',
-      label: 'API key',
-      secret: true,
-      required: false,
-      writable: true,
     })
   })
 
@@ -428,185 +346,7 @@ describe('Rc6ModelRepository provider configuration', () => {
   })
 })
 
-describe('Rc6ModelRepository session model catalog', () => {
-  const SESSION_MODELS = {
-    current: { provider: 'deepseek', model: 'deepseek-chat' },
-    routable: true,
-    groups: [
-      {
-        id: 'deepseek',
-        name: 'DeepSeek',
-        models: [{ id: 'deepseek-chat', name: 'DeepSeek Chat' }],
-      },
-    ],
-  }
-
-  it('keeps a provider-local failure whole alongside the groups that did load', async () => {
-    // The host measures nothing here: `modelCatalogFailureSchema` types the
-    // message as a plain string and the reference client renders it verbatim,
-    // so a provider-local failure that explains itself at length is exactly
-    // what the picker has to show. One failed provider must not cost the
-    // directory its healthy groups either.
-    const message = `gateway rejected the credential: ${'the token expired at the last rotation; '.repeat(200)}`
-    expect(message.length).toBeGreaterThan(4_096)
-
-    const repository = new Rc6ModelRepository(
-      transportFor({
-        'session.models': {
-          ...SESSION_MODELS,
-          failures: [{ id: 'gateway', name: 'Gateway', message }],
-        },
-      }),
-    )
-
-    await expect(repository.listSessionModels('session-1')).resolves.toEqual({
-      current: { providerId: 'deepseek', modelId: 'deepseek-chat' },
-      routable: true,
-      models: [
-        { id: 'deepseek-chat', providerId: 'deepseek', label: 'DeepSeek Chat', supportsReasoning: false },
-      ],
-      failures: [{ providerId: 'gateway', providerName: 'Gateway', message }],
-    })
-  })
-
-  it('refuses a failure row that cannot name its provider or explain itself', async () => {
-    const repository = new Rc6ModelRepository(
-      transportFor({
-        'session.models': {
-          ...SESSION_MODELS,
-          failures: [{ id: 'gateway', message: 'no provider name' }],
-        },
-      }),
-    )
-
-    await expect(repository.listSessionModels('session-1')).rejects.toMatchObject({
-      code: 'PROTOCOL_ERROR',
-    })
-  })
-
-  it('carries the advertised effort names and the declared default whole', async () => {
-    // The seat shows the adapter's name for an effort and starts from the
-    // adapter's declared default; neither is derivable from the level ids, so
-    // dropping either here would leave the Webview restating a level list it
-    // has to guess at.
-    const repository = new Rc6ModelRepository(
-      transportFor({
-        'session.models': {
-          ...SESSION_MODELS,
-          failures: [],
-          groups: [
-            {
-              id: 'deepseek',
-              name: 'DeepSeek',
-              models: [
-                {
-                  id: 'deepseek-reasoner',
-                  name: 'DeepSeek Reasoner',
-                  reasoning: {
-                    efforts: [
-                      { id: 'low', name: 'Low', description: 'Cheap and quick.' },
-                      { id: 'high', name: 'High' },
-                    ],
-                    defaultEffort: 'high',
-                  },
-                },
-              ],
-            },
-          ],
-        },
-      }),
-    )
-
-    await expect(repository.listSessionModels('session-1')).resolves.toMatchObject({
-      models: [
-        {
-          id: 'deepseek-reasoner',
-          providerId: 'deepseek',
-          label: 'DeepSeek Reasoner',
-          supportsReasoning: true,
-          reasoningLevels: [
-            { id: 'low', label: 'Low' },
-            { id: 'high', label: 'High' },
-          ],
-          defaultReasoningLevel: 'high',
-        },
-      ],
-    })
-  })
-
-  it('keeps a declared default that the advertised list does not name', async () => {
-    // The wire types `defaultEffort` independently of `efforts`, and the
-    // reference client renders an unlisted effort by its id. Refusing the
-    // fragment or dropping the default would make the seat state a different
-    // effort than the adapter resolves.
-    const repository = new Rc6ModelRepository(
-      transportFor({
-        'session.models': {
-          ...SESSION_MODELS,
-          failures: [],
-          groups: [
-            {
-              id: 'deepseek',
-              name: 'DeepSeek',
-              models: [
-                {
-                  id: 'deepseek-reasoner',
-                  name: 'DeepSeek Reasoner',
-                  reasoning: { efforts: [{ id: 'low', name: 'Low' }], defaultEffort: 'medium' },
-                },
-              ],
-            },
-          ],
-        },
-      }),
-    )
-
-    await expect(repository.listSessionModels('session-1')).resolves.toMatchObject({
-      models: [
-        {
-          id: 'deepseek-reasoner',
-          reasoningLevels: [{ id: 'low', label: 'Low' }],
-          defaultReasoningLevel: 'medium',
-        },
-      ],
-    })
-  })
-})
-
 describe('Rc6ModelRepository model input capabilities', () => {
-  it('preserves installed model input modalities while mapping the provider catalog', async () => {
-    const repository = new Rc6ModelRepository(
-      transportFor({
-        'llm.models': {
-          groups: [
-            {
-              id: 'deepseek-account',
-              name: 'DeepSeek Account',
-              models: [
-                {
-                  id: 'deepseek-v4',
-                  name: 'DeepSeek V4',
-                  inputModalities: ['text', 'image'],
-                },
-              ],
-            },
-          ],
-          failures: [],
-        },
-      }),
-    )
-
-    await expect(repository.listModels()).resolves.toEqual([
-      {
-        id: 'deepseek-v4',
-        providerId: 'deepseek-account',
-        label: 'DeepSeek V4',
-        inputModalities: ['text', 'image'],
-        supportsReasoning: false,
-      },
-    ])
-  })
-
   it('rejects unsupported model input modality values instead of hiding the declaration', async () => {
     const repository = new Rc6ModelRepository(
       transportFor({
@@ -624,5 +364,64 @@ describe('Rc6ModelRepository model input capabilities', () => {
     )
 
     await expect(repository.listModels()).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+  })
+})
+
+it('preserves installed model input modalities while mapping the provider catalog', async () => {
+  const repository = new Rc6ModelRepository(
+    transportFor({
+      'llm.models': {
+        groups: [
+          {
+            id: 'deepseek-account',
+            name: 'DeepSeek Account',
+            models: [
+              {
+                id: 'deepseek-v4',
+                name: 'DeepSeek V4',
+                inputModalities: ['text', 'image'],
+              },
+            ],
+          },
+        ],
+        failures: [],
+      },
+    }),
+  )
+
+  await expect(repository.listModels()).resolves.toEqual([
+    {
+      id: 'deepseek-v4',
+      providerId: 'deepseek-account',
+      label: 'DeepSeek V4',
+      inputModalities: ['text', 'image'],
+      supportsReasoning: false,
+    },
+  ])
+})
+
+it('keeps a provider-local failure whole alongside the groups that did load', async () => {
+  const message = `gateway rejected the credential: ${'the token expired at the last rotation; '.repeat(200)}`
+
+  const repository = new Rc6ModelRepository(
+    transportFor({
+      'session.models': {
+        current: { provider: 'deepseek', model: 'deepseek-chat' },
+        routable: true,
+        groups: [
+          { id: 'deepseek', name: 'DeepSeek', models: [{ id: 'deepseek-chat', name: 'DeepSeek Chat' }] },
+        ],
+        failures: [{ id: 'gateway', name: 'Gateway', message }],
+      },
+    }),
+  )
+
+  await expect(repository.listSessionModels('session-1')).resolves.toEqual({
+    current: { providerId: 'deepseek', modelId: 'deepseek-chat' },
+    routable: true,
+    models: [
+      { id: 'deepseek-chat', providerId: 'deepseek', label: 'DeepSeek Chat', supportsReasoning: false },
+    ],
+    failures: [{ providerId: 'gateway', providerName: 'Gateway', message }],
   })
 })

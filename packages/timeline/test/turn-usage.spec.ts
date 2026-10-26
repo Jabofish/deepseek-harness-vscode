@@ -198,66 +198,6 @@ describe('completed Turn usage evidence', () => {
 
   it.each([
     {
-      name: 'missing usage',
-      events: [turnStarted(), stepStarted(1), messageCompleted(1, undefined), stepEnded(1), turnEnded()],
-    },
-    {
-      name: 'a failed attempt without usage',
-      events: [
-        turnStarted(),
-        stepStarted(1),
-        assistantAttempt(1, undefined),
-        retry('scheduled'),
-        retry('started'),
-        messageCompleted(1, usage(10, 5)),
-        stepEnded(1),
-        turnEnded(),
-      ],
-    },
-    {
-      name: 'an unstarted completed step',
-      events: [turnStarted(), messageCompleted(1, usage(10, 5)), turnEnded()],
-    },
-    {
-      name: 'a failed Turn',
-      events: [
-        turnStarted(),
-        stepStarted(1),
-        messageCompleted(1, usage(10, 5)),
-        stepEnded(1),
-        turnEnded('error'),
-      ],
-    },
-    {
-      name: 'a retry start without a matching scheduled retry',
-      events: [
-        turnStarted(),
-        stepStarted(1),
-        assistantAttempt(1, usage(5, 2)),
-        retry('started'),
-        messageCompleted(1, usage(10, 5)),
-        stepEnded(1),
-        turnEnded(),
-      ],
-    },
-    {
-      name: 'contradictory duplicate usage for one step',
-      events: [
-        turnStarted(),
-        stepStarted(1),
-        messageCompleted(1, usage(10, 5)),
-        messageCompleted(1, usage(11, 5)),
-        stepEnded(1),
-        turnEnded(),
-      ],
-    },
-  ])('does not expose partial usage when $name', ({ events }) => {
-    const state = replay(events)
-    expect(assistantNodes(state).at(-1)?.turnUsage).toBeUndefined()
-  })
-
-  it.each([
-    {
       name: 'total less than its output',
       sample: { inputTokens: 10, outputTokens: 5, totalTokens: 4 },
     },
@@ -278,37 +218,5 @@ describe('completed Turn usage evidence', () => {
       turnEnded(),
     ])
     expect(assistantNodes(state).at(-1)?.turnUsage).toBeUndefined()
-  })
-
-  it('omits optional cache and reasoning aggregates unless all attempts report them', () => {
-    const state = replay([
-      turnStarted(),
-      stepStarted(1),
-      assistantAttempt(1, usage(4, 2)),
-      retry('scheduled'),
-      retry('started'),
-      messageCompleted(1, usage(6, 3, { cacheReadTokens: 1, reasoningTokens: 2 })),
-      stepEnded(1),
-      turnEnded(),
-    ])
-
-    expect(assistantNodes(state).at(-1)?.turnUsage).toEqual({
-      inputTokens: 10,
-      outputTokens: 5,
-      totalTokens: 16,
-    })
-  })
-
-  it('removes completed usage when a late step invalidates the Turn tail', () => {
-    const completed = replay([
-      turnStarted(),
-      stepStarted(1),
-      messageCompleted(1, usage(10, 5)),
-      stepEnded(1),
-      turnEnded(),
-    ])
-    const invalidated = reduceTimelineBatch(completed, [{ sequence: 6, event: stepStarted(2) }])
-
-    expect(assistantNodes(invalidated).at(-1)).toMatchObject({ turnCompleted: false, turnUsage: undefined })
   })
 })

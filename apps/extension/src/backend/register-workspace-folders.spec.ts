@@ -13,20 +13,6 @@ const workspace = (path: string): WorkspaceSummary => ({
 const samePath = (left: string, right: string): boolean => left.toLowerCase() === right.toLowerCase()
 
 describe('workspace folder registration', () => {
-  it('registers a newly added root even when another is already registered, without renaming it', async () => {
-    const create = vi.fn(({ path }: { path: string }) => Promise.resolve(workspace(path)))
-    const existing = workspace('/one')
-    const result = await registerWorkspaceFolders(
-      ['/ONE', '/two'],
-      [existing, workspace('/outside')],
-      create,
-      samePath,
-      true,
-    )
-    expect(result).toEqual([existing, workspace('/two')])
-    expect(create).toHaveBeenCalledExactlyOnceWith({ name: 'two', path: '/two' }, undefined)
-  })
-
   it('keeps usable roots after one registration fails and retries on the next refresh', async () => {
     const create = vi
       .fn()

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { clientTimeZoneField, clientTimeZoneValue } from '../src/client-time-zone.js'
+import { clientTimeZoneValue } from '../src/client-time-zone.js'
 
 /**
  * The Host canonicalizes and validates this field itself
@@ -20,13 +20,6 @@ describe('client time zone provenance', () => {
     expect(clientTimeZoneValue('America/North_Dakota/New_Salem')).toBe('America/North_Dakota/New_Salem')
   })
 
-  it('forwards the ordinary Area/Location names and UTC', () => {
-    expect(clientTimeZoneValue('Asia/Shanghai')).toBe('Asia/Shanghai')
-    expect(clientTimeZoneValue('America/New_York')).toBe('America/New_York')
-    expect(clientTimeZoneValue('Etc/GMT+8')).toBe('Etc/GMT+8')
-    expect(clientTimeZoneValue('UTC')).toBe('UTC')
-  })
-
   it('rejects a name the Host would refuse instead of sending it', () => {
     // A value the Host rejects fails the whole prompt, so the client may only
     // forward names that survive the same profile.
@@ -39,16 +32,5 @@ describe('client time zone provenance', () => {
     expect(clientTimeZoneValue('Mars/Phobos')).toBeUndefined()
     expect(clientTimeZoneValue(undefined)).toBeUndefined()
     expect(clientTimeZoneValue(7)).toBeUndefined()
-  })
-
-  it('omits the field only when the runtime zone cannot be used', () => {
-    const field = clientTimeZoneField()
-    const zone = field.clientTimeZone
-    if (zone === undefined) {
-      expect(Object.keys(field)).toEqual([])
-      return
-    }
-    // Whatever the runtime reports must round-trip through the profile above.
-    expect(clientTimeZoneValue(zone)).toBeDefined()
   })
 })

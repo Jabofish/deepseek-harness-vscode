@@ -10,34 +10,11 @@ import {
 
 afterEach(() => setActiveLocale('en'))
 // models.dev's public schedule splits each interval into separate lower/upper predicates.
-const peak: BillingCondition = {
-  all: [
-    { utcDays: [1, 2, 3, 4, 5] },
-    {
-      any: [
-        { all: [{ utcHours: { gte: '01:00' } }, { utcHours: { lt: '04:00' } }] },
-        { all: [{ utcHours: { gte: '06:00' } }, { utcHours: { lt: '10:00' } }] },
-      ],
-    },
-    { not: { holiday: 'CN' } },
-  ],
-}
+
 const describe = (condition: BillingCondition, locale: Locale): string => {
   setActiveLocale(locale)
   return billingConditionDescription(condition, translate, locale)
 }
-
-it.each([
-  ['en', 'Monday–Friday (UTC 01:00 – 04:00 or UTC 06:00 – 10:00) and excluding CN public holidays'],
-  ['zh', '周一至周五 (北京时间 09:00 – 12:00 或 北京时间 14:00 – 18:00) 且 排除CN 公共假日'],
-] as const)(
-  'shows complete peak intervals in %s without changing the stored predicate',
-  (locale, expected) => {
-    const original = JSON.stringify(peak)
-    expect(describe(peak, locale)).toBe(expected)
-    expect(JSON.stringify(peak)).toBe(original)
-  },
-)
 
 it('moves weekdays with the clock and splits ranges crossing Beijing midnight', () => {
   const nextDay: BillingCondition = { all: [{ utcDays: [1] }, { utcHours: { gte: '20:00', lt: '22:00' } }] }

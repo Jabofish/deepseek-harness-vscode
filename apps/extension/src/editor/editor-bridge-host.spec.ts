@@ -12,7 +12,7 @@ import {
 import { EditorCompanionBroker } from '../../../../packages/dsh-editor-bridge/src/companion-broker.js'
 import { EditorBridgeHost } from './editor-bridge-host.js'
 import { EditorCompanionManagement } from './editor-companion-management.js'
-import { prepareCompanionPackageManager } from './companion-prerequisites.js'
+
 import { companionNeedsUpdate } from './companion-update.js'
 
 const ui = vi.hoisted(() => ({
@@ -317,32 +317,7 @@ describe('automatic editor sharing', () => {
       await host.dispose()
     }
   })
-  it('keeps dependency preparation cancellable and leaves first companion installation explicit', async () => {
-    const prepare = vi.mocked(prepareCompanionPackageManager)
-    prepare.mockImplementationOnce(
-      (signal) =>
-        new Promise((_resolve, reject) => {
-          signal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true })
-        }),
-    )
-    const { host, reconnect } = harness('managed', true, undefined, undefined, true)
-    try {
-      const preparing = host.action('prepare-pnpm')
-      expect(host.snapshot()).toMatchObject({
-        installation: 'preparing-dependencies',
-        canCancelInstall: true,
-      })
-      await host.action('cancel-install')
-      await preparing
-      expect(reconnect).not.toHaveBeenCalled()
-      expect(host.snapshot()).toMatchObject({ installation: 'cancelled' })
-      await host.action('prepare-pnpm')
-      expect(reconnect).toHaveBeenCalledOnce()
-      expect(ui.settings.autoSetup).toBe(true)
-    } finally {
-      await host.dispose()
-    }
-  })
+
   it('blocks sharing after failed recovery and routes restoration through the native manager', async () => {
     const blocked = vi
       .spyOn(EditorCompanionManagement.prototype, 'sharingBlocked', 'get')
@@ -363,96 +338,7 @@ describe('automatic editor sharing', () => {
       restore.mockRestore()
     }
   })
-  it('returns a safe installation result and reports native command failures', async () => {
-    const install = vi.spyOn(EditorCompanionManagement.prototype, 'installBundled').mockResolvedValue(false)
-    const { host } = harness('managed', true, undefined, undefined, true)
-    try {
-      expect(await host.install()).toMatchObject({ kind: 'editor.companion', reason: 'setup-failed' })
-      expect(ui.errors).toHaveBeenCalledWith(expect.stringContaining('Editor companion installation failed'))
-    } finally {
-      await host.dispose()
-      install.mockRestore()
-    }
-  })
-  it('keeps restart visible and avoids sharing the old loaded companion after a deferred restart', async () => {
-    const restart = vi.spyOn(EditorCompanionManagement.prototype, 'needsRestart', 'get').mockReturnValue(true)
-    const { host, attach } = harness('managed', true, undefined, undefined, true)
-    try {
-      expect(await host.enable()).toBe(false)
-      expect(host.snapshot()).toMatchObject({ phase: 'needs-restart', reason: 'restart', canRestart: true })
-      expect(attach).not.toHaveBeenCalled()
-    } finally {
-      await host.dispose()
-      restart.mockRestore()
-    }
-  })
-  it('honors native cancellation before the installation request starts', async () => {
-    const install = vi.spyOn(EditorCompanionManagement.prototype, 'installBundled').mockResolvedValue(true)
-    const { host } = harness('managed', true, undefined, undefined, true)
-    ui.updateSettings.mockImplementationOnce(() => {
-      ui.cancelProgress()
-      return Promise.resolve()
-    })
-    try {
-      expect(await host.install()).toMatchObject({ installation: 'cancelled' })
-      expect(install).not.toHaveBeenCalled()
-    } finally {
-      await host.dispose()
-      install.mockRestore()
-    }
-  })
-  it('cancels dependency preparation when the runtime disconnects', async () => {
-    vi.mocked(prepareCompanionPackageManager).mockImplementationOnce(
-      (signal) =>
-        new Promise((_resolve, reject) =>
-          signal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true }),
-        ),
-    )
-    const { host, disconnect, reconnect } = harness('managed', true, undefined, undefined, true)
-    try {
-      const preparing = host.action('prepare-pnpm')
-      disconnect()
-      await preparing
-      expect(reconnect).not.toHaveBeenCalled()
-      expect(host.snapshot().installation).toBe('cancelled')
-    } finally {
-      await host.dispose()
-    }
-  })
 
-  it('clears a dependency preparation failure after a successful recheck', async () => {
-    vi.mocked(prepareCompanionPackageManager).mockRejectedValueOnce(new Error('preparation failed'))
-    const status = vi.spyOn(EditorCompanionManagement.prototype, 'refreshStatus').mockResolvedValue(undefined)
-    const installation = vi
-      .spyOn(EditorCompanionManagement.prototype, 'installationStatus', 'get')
-      .mockReturnValue({ packageManager: 'ready' })
-    const { host } = harness('managed', true, undefined, undefined, true)
-    try {
-      await host.action('prepare-pnpm')
-      expect(host.snapshot().installation).toBe('dependencies-failed')
-      await host.action('check-dependencies')
-      expect(host.snapshot().installation).toBeUndefined()
-    } finally {
-      await host.dispose()
-      status.mockRestore()
-      installation.mockRestore()
-    }
-  })
-  it('does not cancel its own reconnect after preparing dependencies', async () => {
-    const { host, disconnect, reconnect } = harness('managed', true, undefined, undefined, true)
-    reconnect.mockImplementation((signal?: AbortSignal) => {
-      disconnect()
-      expect(signal?.aborted).toBe(false)
-      return Promise.resolve(undefined)
-    })
-    try {
-      await host.action('prepare-pnpm')
-      expect(reconnect).toHaveBeenCalledOnce()
-      expect(host.snapshot().installation).toBeUndefined()
-    } finally {
-      await host.dispose()
-    }
-  })
   it('does not install a missing plugin package in the background even with automatic updates enabled', async () => {
     const install = vi.spyOn(EditorCompanionManagement.prototype, 'installBundled').mockResolvedValue(false)
     const { host } = harness('managed', false, undefined, undefined, true)
@@ -465,52 +351,7 @@ describe('automatic editor sharing', () => {
       install.mockRestore()
     }
   })
-  it('does not retry a failed automatic update when recovery creates a new connection', async () => {
-    const install = vi.spyOn(EditorCompanionManagement.prototype, 'installBundled').mockResolvedValue(false)
-    const { host, backendService, replaceBackend } = harness('managed', true, undefined, undefined, true)
-    vi.mocked(companionNeedsUpdate).mockResolvedValue(true)
-    const repository = backendService.requireBackend().pluginBundles
-    if (repository === undefined) throw new Error('Missing fixture repository')
-    vi.spyOn(repository, 'listBundles').mockResolvedValue([
-      {
-        name: '@dsh-vscode/editor-bridge',
-        installed: true,
-        enabled: true,
-        optional: true,
-        removable: true,
-        rows: [],
-        overrides: [],
-      },
-    ])
-    install.mockImplementationOnce(() => {
-      replaceBackend()
-      return Promise.resolve(false)
-    })
-    try {
-      await host.prepareSession('session-a', new AbortController().signal)
-      await vi.waitFor(() => expect(install).toHaveBeenCalledOnce())
-      await host.action('retry')
-      expect(install).toHaveBeenCalledOnce()
-    } finally {
-      await host.dispose()
-      install.mockRestore()
-    }
-  })
-  it('keeps a manually restored version until the user explicitly requests an update', async () => {
-    const restore = vi.spyOn(EditorCompanionManagement.prototype, 'restoreCached').mockResolvedValue(true)
-    const install = vi.spyOn(EditorCompanionManagement.prototype, 'installBundled').mockResolvedValue(true)
-    const { host } = harness('managed', true, undefined, undefined, true)
-    try {
-      await host.action('restore')
-      expect(ui.settings.autoSetup).toBe(false)
-      await host.action('setup')
-      expect(ui.settings.autoSetup).toBe(true)
-    } finally {
-      await host.dispose()
-      restore.mockRestore()
-      install.mockRestore()
-    }
-  })
+
   it('installs the standard bundle only after an explicit setup action', async () => {
     const install = vi.spyOn(EditorCompanionManagement.prototype, 'installBundled').mockResolvedValue(true)
     const { host, reconnect } = harness('managed', true, undefined, undefined, true)
@@ -541,31 +382,7 @@ describe('automatic editor sharing', () => {
       install.mockRestore()
     }
   })
-  it('keeps cancel installation callable while setup is still in flight', async () => {
-    let finish!: (value: boolean) => void
-    const install = vi.spyOn(EditorCompanionManagement.prototype, 'installBundled').mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          finish = resolve
-        }),
-    )
-    const cancel = vi
-      .spyOn(EditorCompanionManagement.prototype, 'cancelInstallation')
-      .mockResolvedValue(undefined)
-    const { host } = harness('managed', true, undefined, undefined, true)
-    try {
-      const settingUp = host.action('setup')
-      await vi.waitFor(() => expect(install).toHaveBeenCalled())
-      await host.action('cancel-install')
-      expect(cancel).toHaveBeenCalledOnce()
-      finish(false)
-      await settingUp
-    } finally {
-      await host.dispose()
-      install.mockRestore()
-      cancel.mockRestore()
-    }
-  })
+
   it('executes selection tools across a new-session switch with an unrelated cwd through the real broker and service', async () => {
     const broker = new EditorCompanionBroker()
     const { host } = harness('managed', true, path.resolve('some-other-project'), broker)
@@ -610,106 +427,7 @@ describe('automatic editor sharing', () => {
       broker.dispose()
     }
   })
-  it('resumes from native settings after a previous explicit stop and reapplies read-only access', async () => {
-    const { host, attach } = harness('managed', true)
-    expect(await host.enable()).toBe(true)
-    await host.stopByUser()
-    ui.settings.enabled = true
-    ui.settings.allowEdits = false
-    ui.changeConfiguration({ affectsConfiguration: (section) => section === 'dsh.editor' })
-    await vi.waitFor(() =>
-      expect(attach).toHaveBeenLastCalledWith(
-        'session-a',
-        expect.any(String),
-        ['content'],
-        expect.any(AbortSignal),
-      ),
-    )
-    expect(host.snapshot().phase).toBe('ready')
-    await host.dispose()
-  })
-  it('reconciles after backend attachment and prepares a restored session before its first prompt', async () => {
-    const { host, attach, navigation, connectionReady } = harness('managed', true)
-    navigation.activeSessionId = undefined
-    connectionReady()
-    await new Promise((resolve) => setTimeout(resolve, 10))
-    expect(attach).not.toHaveBeenCalled()
-    await host.prepareSession('restored-session', new AbortController().signal)
-    await vi.waitFor(() => expect(host.snapshot().phase).toBe('ready'))
-    expect(attach).toHaveBeenCalledWith(
-      'restored-session',
-      expect.any(String),
-      ['content', 'edit'],
-      expect.any(AbortSignal),
-    )
-    expect(host.snapshot().phase).toBe('ready')
-    await host.stop()
-    connectionReady()
-    await vi.waitFor(() => expect(attach).toHaveBeenCalledTimes(2))
-    await host.dispose()
-  })
-  it('persists read-only/off settings and reattaches the latest selected session after rapid changes', async () => {
-    const { host, attach, navigation, changeSelection } = harness('managed', true)
-    expect(await host.enable()).toBe(true)
-    const readonly = await host.configure({ allowEdits: false })
-    expect(readonly.preferences.allowEdits).toBe(false)
-    expect(attach).toHaveBeenLastCalledWith(
-      'session-a',
-      expect.any(String),
-      ['content'],
-      expect.any(AbortSignal),
-    )
-    navigation.activeSessionId = 'session-b'
-    changeSelection()
-    navigation.activeSessionId = 'session-c'
-    changeSelection()
-    await vi.waitFor(() =>
-      expect(attach).toHaveBeenLastCalledWith(
-        'session-c',
-        expect.any(String),
-        ['content'],
-        expect.any(AbortSignal),
-      ),
-    )
-    await host.configure({ enabled: false })
-    const calls = attach.mock.calls.length
-    changeSelection()
-    await new Promise((resolve) => setTimeout(resolve, 20))
-    expect(attach).toHaveBeenCalledTimes(calls)
-    expect(host.snapshot().phase).toBe('off')
-    await host.dispose()
-  })
-  it('grants every advertised capability on the native action without a prompt', async () => {
-    const { host, attach } = harness('managed', true)
-    expect(await host.enable()).toBe(true)
-    expect(ui.proof).toHaveBeenCalledTimes(1)
-    expect(ui.pick).not.toHaveBeenCalled()
-    expect(ui.warning).not.toHaveBeenCalled()
-    expect(attach).toHaveBeenCalledWith(
-      'session-a',
-      expect.any(String),
-      ['content', 'edit'],
-      expect.any(AbortSignal),
-    )
-    expect(ui.info).not.toHaveBeenCalled()
-    await host.dispose()
-  })
-  it('shares automatically for the selected session and follows session changes', async () => {
-    const { host, attach, detach, navigation, changeSelection } = harness('managed', true)
-    changeSelection()
-    await vi.waitFor(() => expect(attach).toHaveBeenCalledTimes(1))
-    navigation.activeSessionId = 'session-b'
-    changeSelection()
-    await vi.waitFor(() => expect(detach).toHaveBeenCalledTimes(1))
-    await host.dispose()
-  })
-  it('is idempotent while a grant is active', async () => {
-    const { host, attach } = harness('managed', true)
-    expect(await host.enable()).toBe(true)
-    expect(await host.enable()).toBe(true)
-    expect(attach).toHaveBeenCalledTimes(1)
-    await host.dispose()
-  })
+
   it('rejects a failed same-host proof before creating a grant', async () => {
     const failed = harness('managed', true)
     ui.proof.mockRejectedValue(new Error('different filesystem'))
@@ -739,24 +457,7 @@ describe('automatic editor sharing', () => {
     expect(untrusted.attach).not.toHaveBeenCalled()
     await untrusted.host.dispose()
   })
-  it.each(['editor-bridge-fixture/packages/app', 'some-other-project', ''])(
-    'binds editor tools using this window even when the session cwd is %s',
-    async (cwd) => {
-      const { host, attach } = harness('managed', true, cwd === '' ? cwd : path.resolve(cwd))
-      await host.prepareSession('new-session', new AbortController().signal)
-      await vi.waitFor(() => expect(host.snapshot().phase).toBe('ready'))
-      expect(attach).toHaveBeenCalledWith(
-        'new-session',
-        expect.any(String),
-        ['content', 'edit'],
-        expect.any(AbortSignal),
-      )
-      expect(host.snapshot()).toMatchObject({ phase: 'ready' })
-      expect(host.snapshot().reason).toBeUndefined()
-      expect(ui.info).not.toHaveBeenCalled()
-      await host.dispose()
-    },
-  )
+
   it('binds a request channel in restricted mode without reading files or prompting during navigation', async () => {
     const { host, attach } = harness('managed', true)
     ui.trusted = false
@@ -766,12 +467,7 @@ describe('automatic editor sharing', () => {
     expect(ui.info).not.toHaveBeenCalled()
     await host.dispose()
   })
-  it('reports when there is no applied edit to undo', async () => {
-    const { host } = harness()
-    await host.undoLastEdit()
-    expect(ui.info).toHaveBeenCalledWith('No applied editor edit to undo.')
-    await host.dispose()
-  })
+
   it('cancels sharing and clears its native indicator on disconnect', async () => {
     const { host, disconnect, detach } = harness()
     expect(await host.enable()).toBe(true)

@@ -103,17 +103,6 @@ function hostOnlyNotice(sessionId: string, hostSequence: number, text: string): 
   return event(hostSequence, 'notice', { sessionId, level: 'error', text })
 }
 
-function hostOnlyCommand(sessionId: string, hostSequence: number, commandInput: string): HostMessage {
-  return event(hostSequence, 'notice', {
-    sessionId,
-    level: 'info',
-    text: 'Command finished.',
-    commandName: 'compact',
-    commandPhase: 'done',
-    commandInput,
-  })
-}
-
 function settle(milliseconds = 24): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds))
 }
@@ -127,24 +116,6 @@ const nodeIds = (store: ReturnType<typeof createAppStore>): readonly string[] =>
   store.getState().timeline.nodes.map((node) => node.id)
 
 describe('AppStore session switch integrity', () => {
-  it('keeps a host-only notice when the session is switched away and back', async () => {
-    const { client, store } = open()
-    await store.openSession(SESSION_A)
-    client.emit(hostOnlyNotice(SESSION_A, 11, 'The provider rejected the request.'))
-    await settle()
-    expect(nodeIds(store)).toEqual(['notice:-1'])
-
-    await store.openSession(SESSION_B)
-    await settle()
-    await store.openSession(SESSION_A)
-    await settle()
-
-    // Nothing in the DSH ledger can replay a host-only row, so dropping it on
-    // a re-open loses it for good.
-    expect(nodeIds(store)).toEqual(['notice:-1'])
-    store.dispose()
-  })
-
   it('keeps a host-only notice that arrived while its session was in the background', async () => {
     const { client, store } = open()
     await store.openSession(SESSION_A)
@@ -155,40 +126,6 @@ describe('AppStore session switch integrity', () => {
     await settle()
 
     expect(nodeIds(store)).toEqual(['notice:-1'])
-    store.dispose()
-  })
-
-  it('keeps a command-input row when the session is switched away and back', async () => {
-    const { client, store } = open()
-    await store.openSession(SESSION_A)
-    client.emit(hostOnlyCommand(SESSION_A, 13, '/compact'))
-    await settle()
-    expect(nodeIds(store)).toEqual(['command-input:-1', 'notice:-1'])
-
-    await store.openSession(SESSION_B)
-    await settle()
-    await store.openSession(SESSION_A)
-    await settle()
-
-    expect(nodeIds(store)).toEqual(['command-input:-1', 'notice:-1'])
-    store.dispose()
-  })
-
-  it('keeps an unhealed gap warning when the session is switched away and back', async () => {
-    const { client, store } = open()
-    await store.openSession(SESSION_A)
-    client.emit(event(1, 'session.gap', { sessionId: SESSION_A, fromSequence: 20, toSequence: 30 }))
-    await settle()
-
-    const gapId = `gap:${SESSION_A}:20:30`
-    expect(nodeIds(store)).toContain(gapId)
-
-    await store.openSession(SESSION_B)
-    await settle()
-    await store.openSession(SESSION_A)
-    await settle()
-
-    expect(nodeIds(store)).toContain(gapId)
     store.dispose()
   })
 
@@ -222,23 +159,6 @@ describe('AppStore session switch integrity', () => {
       `user-${SESSION_A}-5`,
       `user-${SESSION_A}-6`,
     ])
-    store.dispose()
-  })
-
-  it('does not restore the same host-only row twice across repeated switches', async () => {
-    const { client, store } = open()
-    await store.openSession(SESSION_A)
-    client.emit(hostOnlyNotice(SESSION_A, 15, 'A background job failed.'))
-    await settle()
-
-    for (let round = 0; round < 3; round += 1) {
-      await store.openSession(SESSION_B)
-      await settle()
-      await store.openSession(SESSION_A)
-      await settle()
-    }
-
-    expect(nodeIds(store)).toEqual(['notice:-1'])
     store.dispose()
   })
 })

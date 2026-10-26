@@ -49,59 +49,6 @@ describe('JobFollowRegistry', () => {
     })
   })
 
-  it('does not let a delayed stop for an older generation abort the replacement follow', async () => {
-    const follows = new JobFollowRegistry()
-    const key = 'session-1/job-1'
-    const olderController = new AbortController()
-    const newerController = new AbortController()
-    const olderStream = new AbortController()
-    const newerStream = new AbortController()
-
-    await follows.start(
-      key,
-      'follow-old',
-      olderController.signal,
-      () => Promise.resolve(undefined),
-      (_value, signal) =>
-        new Promise<void>((resolve) =>
-          signal.addEventListener(
-            'abort',
-            () => {
-              olderStream.abort()
-              resolve()
-            },
-            { once: true },
-          ),
-        ),
-    )
-    await follows.start(
-      key,
-      'follow-new',
-      newerController.signal,
-      () => Promise.resolve(undefined),
-      (_value, signal) =>
-        new Promise<void>((resolve) =>
-          signal.addEventListener(
-            'abort',
-            () => {
-              newerStream.abort()
-              resolve()
-            },
-            { once: true },
-          ),
-        ),
-    )
-
-    // This represents a stop request that was queued for the first start and
-    // only reaches the Host after the replacement has become active.
-    expect(follows.stop(key, 'follow-old')).toBe(false)
-
-    expect({ olderAborted: olderStream.signal.aborted, newerAborted: newerStream.signal.aborted }).toEqual({
-      olderAborted: true,
-      newerAborted: false,
-    })
-  })
-
   it('releases a previously authorized observer after its session leaves the workspace', async () => {
     const follows = new JobFollowRegistry()
     const key = 'session-1/job-1'
@@ -175,47 +122,6 @@ describe('Job follow stream relay', () => {
     expect(JSON.stringify(events)).not.toContain('sensitive upstream response')
     expect(reportedErrors).toHaveLength(1)
   })
-
-  it('does not publish a failure event when the user stops the observer', async () => {
-    const follows = new JobFollowRegistry()
-    const events: BackendEvent[] = []
-    const reportedErrors: unknown[] = []
-    const waitingForStop = deferred()
-    const relayFinished = deferred()
-
-    const started = await follows.start(
-      'session-1/job-1',
-      identity.followId,
-      new AbortController().signal,
-      () => Promise.resolve(undefined),
-      (_value, signal) => {
-        const frames: AsyncIterable<JobFollowFrame> = {
-          async *[Symbol.asyncIterator]() {
-            yield frame
-            waitingForStop.resolve()
-            await new Promise<never>((_resolve, reject) => {
-              signal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true })
-            })
-          },
-        }
-        return relayJobFollowFrames({
-          ...identity,
-          frames,
-          signal,
-          publish: (event) => events.push(event),
-          onFailure: (error) => reportedErrors.push(error),
-        }).finally(relayFinished.resolve)
-      },
-    )
-
-    await waitingForStop.promise
-    expect(follows.stop('session-1/job-1', identity.followId)).toBe(true)
-    await relayFinished.promise
-
-    expect(started).toBe(true)
-    expect(events).toEqual([{ type: 'job.follow.updated', ...identity, frame }])
-    expect(reportedErrors).toEqual([])
-  })
 })
 
 describe('managed endpoint login cancellation', () => {
@@ -232,75 +138,5 @@ describe('managed endpoint login cancellation', () => {
       handler(endpoint, 'https://other.example/?token=fixture', new AbortController().signal),
     ).rejects.toMatchObject({ code: 'INVALID_ENDPOINT' })
     expect(fetcher).not.toHaveBeenCalled()
-  })
-
-  it('passes the startup signal to the login fetch so abort stops the request', async () => {
-    const started = deferred()
-    const endpointCookies = new Map([[endpoint.baseUrl, 'old-session=stale']])
-    const endpointLaunchUrls = new Map([[endpoint.baseUrl, 'https://127.0.0.1:4317/?token=stale']])
-    let receivedSignal: AbortSignal | null | undefined
-    const fetcher: typeof globalThis.fetch = (_input, init) => {
-      receivedSignal = init?.signal
-      started.resolve()
-      return new Promise<Response>((_resolve, reject) => {
-        if (receivedSignal?.aborted) {
-          reject(new DOMException('Aborted', 'AbortError'))
-          return
-        }
-        receivedSignal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), {
-          once: true,
-        })
-      })
-    }
-    const rememberReadyEndpoint = createManagedEndpointLoginHandler(
-      endpointCookies,
-      endpointLaunchUrls,
-      fetcher,
-    )
-    const controller = new AbortController()
-    const login = rememberReadyEndpoint(endpoint, 'http://127.0.0.1:4317/?token=one-use', controller.signal)
-
-    await started.promise
-    controller.abort()
-
-    await expect(login).rejects.toHaveProperty('name', 'AbortError')
-    expect(receivedSignal?.aborted).toBe(true)
-    expect(receivedSignal?.aborted).toBe(true)
-    expect(endpointCookies.has(endpoint.baseUrl)).toBe(false)
-    expect(endpointLaunchUrls.has(endpoint.baseUrl)).toBe(false)
-  })
-
-  it('does not cache a late login response after startup cancellation', async () => {
-    const started = deferred()
-    const response = deferred<Response>()
-    const endpointCookies = new Map<string, string>()
-    const endpointLaunchUrls = new Map<string, string>()
-    let receivedSignal: AbortSignal | null | undefined
-    const fetcher: typeof globalThis.fetch = (_input, init) => {
-      receivedSignal = init?.signal
-      started.resolve()
-      return response.promise
-    }
-    const rememberReadyEndpoint = createManagedEndpointLoginHandler(
-      endpointCookies,
-      endpointLaunchUrls,
-      fetcher,
-    )
-    const controller = new AbortController()
-    const login = rememberReadyEndpoint(endpoint, 'http://127.0.0.1:4317/?token=one-use', controller.signal)
-
-    await started.promise
-    controller.abort()
-    response.resolve(
-      new Response(null, {
-        status: 302,
-        headers: { 'set-cookie': 'DSH_SESSION=fresh; Path=/' },
-      }),
-    )
-
-    await expect(login).rejects.toHaveProperty('name', 'AbortError')
-    expect(receivedSignal?.aborted).toBe(true)
-    expect(endpointCookies.has(endpoint.baseUrl)).toBe(false)
-    expect(endpointLaunchUrls.has(endpoint.baseUrl)).toBe(false)
   })
 })

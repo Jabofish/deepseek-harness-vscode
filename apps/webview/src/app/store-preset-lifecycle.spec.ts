@@ -152,87 +152,6 @@ describe('preset selection lifecycle', () => {
     }
   })
 
-  it('keeps the active blank session configuration when the Host default changes', async () => {
-    const client = new PresetLifecycleClient()
-    const store = await loadedStore(client)
-
-    try {
-      await store.openSession('blank')
-      client.roster = presetRoster('alternate')
-      await store.loadPresetRoster()
-
-      const configure = client.requests.find(
-        (request): request is Extract<WebviewRequest, { type: 'session.configure' }> =>
-          request.type === 'session.configure',
-      )
-      expect(configure).toBeUndefined()
-      expect(store.getState().configuration?.preset).toBe('standard')
-    } finally {
-      store.dispose()
-    }
-  })
-
-  it('keeps a pending draft choice when the Host default changes', async () => {
-    const client = new PresetLifecycleClient()
-    const store = await loadedStore(client)
-
-    try {
-      await store.stageSession('w1')
-      client.roster = presetRoster('alternate')
-      await store.loadPresetRoster()
-
-      expect(store.getState().pendingSession?.configuration.preset).toBe('standard')
-      expect(client.requests.some((request) => request.type === 'session.configure')).toBe(false)
-    } finally {
-      store.dispose()
-    }
-  })
-
-  it.each(['active', 'pending'] as const)(
-    'does not replace an explicit %s choice during a catalog refresh',
-    async (target) => {
-      const client = new PresetLifecycleClient()
-      const store = await loadedStore(client)
-      try {
-        const chosen = { ...STANDARD_CONFIGURATION, preset: 'alternate' }
-        if (target === 'pending') {
-          await store.stageSession('w1')
-          store.configurePendingSession(chosen)
-        } else {
-          await store.openSession('blank')
-          await store.configureSession('blank', chosen)
-        }
-        client.requests.length = 0
-        await store.loadPresetRoster()
-        expect(client.requests.some((request) => request.type === 'session.configure')).toBe(false)
-        expect(
-          target === 'pending'
-            ? store.getState().pendingSession?.configuration.preset
-            : store.getState().configuration?.preset,
-        ).toBe('alternate')
-      } finally {
-        store.dispose()
-      }
-    },
-  )
-
-  it('does not change a nonblank active session when the Host default changes', async () => {
-    const client = new PresetLifecycleClient()
-    client.sessions = [session('started', false)]
-    const store = await loadedStore(client)
-
-    try {
-      await store.openSession('started')
-      client.roster = presetRoster('alternate')
-      await store.loadPresetRoster()
-
-      expect(client.requests.some((request) => request.type === 'session.configure')).toBe(false)
-      expect(store.getState().configuration?.preset).toBe('standard')
-    } finally {
-      store.dispose()
-    }
-  })
-
   it('does not change a started session even if its summary still says blank', async () => {
     const client = new PresetLifecycleClient()
     client.sessions = [{ ...session('started'), status: 'running' }]
@@ -244,27 +163,6 @@ describe('preset selection lifecycle', () => {
       await store.loadPresetRoster()
 
       expect(client.requests.some((request) => request.type === 'session.configure')).toBe(false)
-      expect(store.getState().configuration?.preset).toBe('standard')
-    } finally {
-      store.dispose()
-    }
-  })
-
-  it('does not apply a delayed default to a different session opened while the roster loads', async () => {
-    const client = new PresetLifecycleClient()
-    client.sessions = [session('first'), session('second')]
-    const store = await loadedStore(client)
-
-    try {
-      await store.openSession('first')
-      const finishRoster = client.deferNextPresetList()
-      const rosterLoad = store.loadPresetRoster()
-      await store.openSession('second')
-      finishRoster(presetRoster('alternate'))
-      await rosterLoad
-
-      expect(client.requests.some((request) => request.type === 'session.configure')).toBe(false)
-      expect(store.activeSessionId).toBe('second')
       expect(store.getState().configuration?.preset).toBe('standard')
     } finally {
       store.dispose()

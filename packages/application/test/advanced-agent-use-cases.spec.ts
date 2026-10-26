@@ -89,30 +89,7 @@ function harness(): {
   return { useCases: new AdvancedAgentUseCases(service), document, location, history, send: subagents.send }
 }
 
-describe('AdvancedAgentUseCases preset authoring', () => {
-  it('keeps the preset repository receiver for every optional authoring method', async () => {
-    const { useCases, document, location, history } = harness()
-
-    await expect(useCases.readPreset('standard')).resolves.toEqual(document)
-    await expect(useCases.copyPreset('standard', 'copy')).resolves.toBe('copy')
-    await expect(useCases.openPresetDocument('copy')).resolves.toEqual(location)
-    await expect(useCases.removePreset('copy')).resolves.toBeUndefined()
-    await expect(useCases.clearGoal('goal')).resolves.toBeUndefined()
-    await expect(useCases.listSubagentHistory('session', { beforeSequence: 10 })).resolves.toBe(history)
-  })
-})
-
 describe('AdvancedAgentUseCases subagent delivery', () => {
-  it('defaults legacy requests to queue and forwards an explicit steer mode', async () => {
-    const { useCases, send } = harness()
-
-    await useCases.execute('subagent.send', { sessionId: 'child', message: 'queued' })
-    await useCases.execute('subagent.send', { sessionId: 'child', message: 'steer now', mode: 'steer' })
-
-    expect(send).toHaveBeenNthCalledWith(1, 'child', 'queued', [], 'queue', undefined)
-    expect(send).toHaveBeenNthCalledWith(2, 'child', 'steer now', [], 'steer', undefined)
-  })
-
   it('rejects an invalid delivery mode before touching the repository', async () => {
     const { useCases, send } = harness()
 

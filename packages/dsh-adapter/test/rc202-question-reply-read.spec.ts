@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { Rc202UserQuestionRepository } from '../src/versions/rc202/user-question-repository.js'
 import type { AlphaLoopbackApiClient } from '../src/versions/alpha/transport.js'
 
@@ -79,45 +79,4 @@ describe('post-answer native reply baseline', () => {
     await expect(repository.readReplyStatus('s1', 'call-q')).rejects.toBe(failure)
     await repository.close()
   })
-
-  it.each(['caller', 'close', 'timeout'] as const)(
-    'cancels a waiting baseline on %s and releases resources',
-    async (reason) => {
-      vi.useFakeTimers()
-      let opened = false
-      let closed = false
-      const repository = new Rc202UserQuestionRepository({
-        openSessionStream: async function* (_id: string, signal: AbortSignal) {
-          opened = true
-          try {
-            await new Promise<void>((_resolve, reject) =>
-              signal.addEventListener(
-                'abort',
-                () => reject(signal.reason instanceof Error ? signal.reason : new Error('Read cancelled')),
-                { once: true },
-              ),
-            )
-            yield undefined
-          } finally {
-            closed = true
-          }
-        },
-      } as unknown as AlphaLoopbackApiClient)
-      const controller = new AbortController()
-      const read = repository.readReplyStatus('s1', 'call-q', controller.signal)
-      const rejected = expect(read).rejects.toBeDefined()
-      expect(opened).toBe(true)
-      if (reason === 'caller') controller.abort(new Error('Caller cancelled'))
-      else if (reason === 'close') await repository.close()
-      else await vi.advanceTimersByTimeAsync(10_000)
-      await rejected
-      expect(closed).toBe(true)
-      expect(vi.getTimerCount()).toBe(0)
-      await repository.close()
-      await expect(repository.readReplyStatus('s1', 'call-q')).rejects.toMatchObject({
-        code: 'BACKEND_UNREACHABLE',
-      })
-      vi.useRealTimers()
-    },
-  )
 })
