@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { AppError } from '@dsh-vscode/domain'
-import { configuration, configurationFixture } from './support/session-configuration-fixture.js'
+import { configuration, configurationFixture, deferred } from './support/session-configuration-fixture.js'
+import { normalizeTransportError } from '../src/transport-errors.js'
 
 describe('session configuration transactions', () => {
   it('honors an explicit Plan choice even while applying a model choice', async () => {
@@ -124,4 +125,162 @@ describe('session configuration transactions', () => {
     ).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
     expect(h.calls).toEqual([])
   })
+
+  it.each(['/permission danger-full-access', '/plan'])(
+    'restores a committed %s command even when cancellation loses its receipt',
+    async (line) => {
+      const controller = new AbortController()
+      const h = configurationFixture({
+        afterCommand: (call) => {
+          if (call.line === line) controller.abort()
+          return Promise.resolve()
+        },
+      })
+      const desired =
+        line === '/plan' ? configuration('read-only', 'old', true) : configuration('danger-full-access')
+      await expect(h.repository.setConfiguration('s1', desired, controller.signal)).rejects.toMatchObject({
+        code: 'REQUEST_CANCELLED',
+      })
+      expect(h.state.get('s1')).toMatchObject({ permission: 'read-only', plan: false, provider: 'old' })
+    },
+  )
+
+  it('cancels a queued request immediately without reading, writing, or releasing A lock', async () => {
+    const entered = deferred()
+    const release = deferred()
+    const h = configurationFixture({
+      afterCommand: async (call) => {
+        if (call.line === '/permission danger-full-access') {
+          entered.resolve()
+          await release.promise
+        }
+      },
+    })
+    const A = h.repository.setConfiguration('s1', configuration('danger-full-access'))
+    await entered.promise
+    const controller = new AbortController()
+    const cleanup = vi.spyOn(controller.signal, 'removeEventListener')
+    const B = h.repository.setConfiguration(
+      's1',
+      configuration('workspace-write', 'cancelled'),
+      controller.signal,
+    )
+    const outcomeB = B.catch((error: unknown) => error)
+    controller.abort()
+    try {
+      expect(await outcomeB).toMatchObject({ code: 'REQUEST_CANCELLED' })
+      const C = h.repository.setConfiguration('s1', configuration('read-only', 'C'))
+      await flushContinuations()
+      expect(h.calls.filter((call) => call.method === 'session.history')).toHaveLength(1)
+      expect(cleanup).toHaveBeenCalledWith('abort', expect.any(Function))
+      release.resolve()
+      await Promise.all([A, C])
+      expect(h.state.get('s1')).toMatchObject({ permission: 'read-only', provider: 'C' })
+      expect(h.calls.some((call) => call.provider === 'cancelled')).toBe(false)
+    } finally {
+      release.resolve()
+      await Promise.allSettled([A, B])
+      cleanup.mockRestore()
+    }
+  })
+
+  it.each(['success', 'error'] as const)(
+    'waits for active cancellation compensation and reports its %s outcome',
+    async (undoOutcome) => {
+      const modelEntered = deferred()
+      const modelRelease = deferred()
+      const undoEntered = deferred()
+      const undoRelease = deferred()
+      const h = configurationFixture({
+        beforeModel: async (call) => {
+          if (call.provider === 'cancelled') {
+            modelEntered.resolve()
+            await modelRelease.promise
+          }
+        },
+        commandOutcome: (call) => (call.line === '/permission read-only' ? undoOutcome : 'success'),
+        afterCommand: async (call) => {
+          if (call.line === '/permission read-only') {
+            undoEntered.resolve()
+            await undoRelease.promise
+          }
+        },
+      })
+      const controller = new AbortController()
+      const A = h.repository.setConfiguration(
+        's1',
+        configuration('danger-full-access', 'cancelled'),
+        controller.signal,
+      )
+      const outcomeA = A.catch((error: unknown) => error)
+      let settledA = false
+      void outcomeA.then(() => {
+        settledA = true
+      })
+      await modelEntered.promise
+      const B = h.repository.setConfiguration('s1', configuration('workspace-write', 'B'))
+      try {
+        controller.abort()
+        await flushContinuations()
+        expect(settledA).toBe(false)
+        modelRelease.resolve()
+        if (undoOutcome === 'success') {
+          await undoEntered.promise
+          await flushContinuations()
+          // A's receipt reconciliation adds a read; B still cannot read its baseline.
+          expect(h.calls.filter((call) => call.method === 'session.history')).toHaveLength(2)
+          expect(h.calls.some((call) => call.provider === 'B')).toBe(false)
+          expect(settledA).toBe(false)
+        }
+        undoRelease.resolve()
+        expect(await outcomeA).toMatchObject({
+          code: undoOutcome === 'success' ? 'REQUEST_CANCELLED' : 'INTERNAL_ERROR',
+        })
+        await B
+        expect(h.state.get('s1')).toMatchObject({ permission: 'workspace-write', provider: 'B' })
+      } finally {
+        modelRelease.resolve()
+        undoRelease.resolve()
+        await Promise.allSettled([A, B])
+      }
+    },
+  )
+
+  it('does not mutate from a baseline that arrives after cancellation', async () => {
+    const h = configurationFixture()
+    const baseline = await h.repository.get('s1')
+    h.calls.length = 0
+    const entered = deferred()
+    const release = deferred()
+    const read = vi.spyOn(h.repository, 'get').mockImplementationOnce(async () => {
+      entered.resolve()
+      // A late read can settle successfully even after its caller has cancelled.
+      await release.promise
+      return baseline
+    })
+    const controller = new AbortController()
+    const A = h.repository.setConfiguration('s1', configuration('danger-full-access'), controller.signal)
+    const outcomeA = A.catch((error: unknown) => error)
+    await entered.promise
+    controller.abort()
+    const B = h.repository.setConfiguration('s1', configuration('workspace-write', 'B'))
+    try {
+      await flushContinuations()
+      expect(read).toHaveBeenCalledTimes(1)
+      expect(h.calls).toEqual([])
+      release.resolve()
+      const [errorA] = await Promise.all([outcomeA, B])
+      expect(errorA).toMatchObject({ code: 'REQUEST_CANCELLED' })
+      expect(h.calls.some((call) => call.line === '/permission danger-full-access')).toBe(false)
+      expect(h.state.get('s1')).toMatchObject({ permission: 'workspace-write', provider: 'B' })
+    } finally {
+      release.resolve()
+      await Promise.allSettled([A, B])
+      read.mockRestore()
+    }
+  })
 })
+
+async function flushContinuations(): Promise<void> {
+  for (let index = 0; index < 20; index += 1) await Promise.resolve()
+}

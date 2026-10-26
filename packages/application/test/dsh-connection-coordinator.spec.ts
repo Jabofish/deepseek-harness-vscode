@@ -331,6 +331,130 @@ describe('DshConnectionCoordinator', () => {
     expect(stop).toHaveBeenCalledTimes(2)
     expect(coordinator.getState()).toEqual({ kind: 'idle' })
   })
+
+  it('replaces a cached connection when its credential revision changes', async () => {
+    const probe = vi.fn(async () => fakeConnectedBackend())
+    const coordinator = new DshConnectionCoordinator(dependencies({ probe: { probe } }))
+    const request = { mode: 'custom' as const, endpoint: endpoint(), autoStart: false, credentialRevision: 1 }
+    const first = await coordinator.connect(request)
+    const cached = await coordinator.connect(request)
+    expect(cached.backend).toBe(first.backend)
+    const second = await coordinator.connect({ ...request, credentialRevision: 2 })
+    expect(second.backend).not.toBe(first.backend)
+    expect(probe).toHaveBeenCalledTimes(2)
+    await coordinator.disconnect()
+  })
+
+  it('does not disconnect the current backend for an already-cancelled replacement', async () => {
+    const close = vi.fn(async () => undefined)
+    const deps = dependencies({
+      discovery: { discover: vi.fn(async () => [fakeCandidate(4112)]) },
+      probe: { probe: vi.fn(async () => fakeConnectedBackend(4112)) },
+      backendFactory: { connect: vi.fn(async (connection) => ({ ...backend(connection), close })) },
+    })
+    const coordinator = new DshConnectionCoordinator(deps)
+    const current = await coordinator.connect({ mode: 'auto', autoStart: false })
+    const controller = new AbortController()
+    controller.abort()
+
+    await expect(
+      coordinator.connect({ mode: 'new-isolated', autoStart: true }, controller.signal),
+    ).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
+
+    expect(coordinator.getState()).toMatchObject({ kind: 'connected', backend: current.state.backend })
+    expect(close).not.toHaveBeenCalled()
+    expect(deps.processSupervisor.start).not.toHaveBeenCalled()
+  })
+
+  it('cancels discovery and does not start a process', async () => {
+    const controller = new AbortController()
+    const deps = dependencies({
+      discovery: {
+        discover: vi.fn(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 10))
+          return []
+        }),
+      },
+    })
+    const coordinator = new DshConnectionCoordinator(deps)
+    const operation = coordinator.connect({ mode: 'auto', autoStart: true }, controller.signal)
+    controller.abort()
+    await expect(operation).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
+    expect(deps.processSupervisor.start).not.toHaveBeenCalled()
+  })
+
+  it('does not start a replacement after a concurrent disconnect supersedes it', async () => {
+    let releaseClose: (() => void) | undefined
+    let closeStarted: (() => void) | undefined
+    const started = new Promise<void>((resolve) => {
+      closeStarted = resolve
+    })
+    const close = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseClose = resolve
+          closeStarted?.()
+        }),
+    )
+    const deps = dependencies({
+      discovery: { discover: vi.fn(async () => [fakeCandidate(4331)]) },
+      probe: { probe: vi.fn(async () => fakeConnectedBackend(4331)) },
+      backendFactory: { connect: vi.fn(async (connection) => ({ ...backend(connection), close })) },
+    })
+    const coordinator = new DshConnectionCoordinator(deps)
+    await coordinator.connect({ mode: 'auto', autoStart: false })
+
+    const replacement = coordinator.connect({ mode: 'new-isolated', autoStart: true })
+    await started
+    const disconnect = coordinator.disconnect()
+    releaseClose?.()
+
+    await disconnect
+    await expect(replacement).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
+    expect(deps.processSupervisor.start).not.toHaveBeenCalled()
+    expect(coordinator.getState()).toEqual({ kind: 'idle' })
+  })
+
+  it('coalesces replacement requests waiting on the same teardown', async () => {
+    let releaseClose: (() => void) | undefined
+    let closeStarted: (() => void) | undefined
+    const started = new Promise<void>((resolve) => {
+      closeStarted = resolve
+    })
+    const close = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseClose = resolve
+          closeStarted?.()
+        }),
+    )
+    const process = managedProcess(4332)
+    const deps = dependencies({
+      discovery: { discover: vi.fn(async () => [fakeCandidate(4331)]) },
+      probe: {
+        probe: vi.fn(async (candidate: BackendCandidate) => fakeConnectedBackend(candidate.endpoint.port)),
+      },
+      backendFactory: {
+        connect: vi.fn(async (connection: ConnectedBackend) =>
+          connection.endpoint.port === 4331 ? { ...backend(connection), close } : backend(connection),
+        ),
+      },
+      processSupervisor: { start: vi.fn(async () => process) },
+    })
+    const coordinator = new DshConnectionCoordinator(deps)
+    await coordinator.connect({ mode: 'auto', autoStart: false })
+
+    const request = { mode: 'new-isolated' as const, autoStart: true }
+    const first = coordinator.connect(request)
+    await started
+    const second = coordinator.connect(request)
+    releaseClose?.()
+
+    const [firstResult, secondResult] = await Promise.all([first, second])
+
+    expect(firstResult.backend).toBe(secondResult.backend)
+    expect(deps.processSupervisor.start).toHaveBeenCalledTimes(1)
+  })
 })
 
 it('keeps explicit targets strict, releases failure, and allows changing the target', async () => {

@@ -111,6 +111,53 @@ describe('VersionedBackendProbe version classification', () => {
     expect(adapter.probe.mock.calls).toHaveLength(1)
     expect(adapter.probeCompatibility.mock.calls).toHaveLength(0)
   })
+
+  it('stops before the next adapter when cancellation arrives between probes', async () => {
+    const controller = new AbortController()
+    const first = {
+      id: 'first',
+      supportedVersion: 'first',
+      compatibilityPriority: 20,
+      fallback: true,
+      probe: vi.fn(() => Promise.resolve(undefined)),
+      probeCompatibility: vi.fn(() => {
+        controller.abort()
+        return Promise.resolve(undefined)
+      }),
+      createTransport: vi.fn(() => ({}) as DshTransport),
+    }
+    const second = compatibilityAdapter('second', {
+      protocolVersion: 'second-contract',
+      dshVersion: 'second',
+      features: new Set(),
+    })
+
+    await expect(
+      new VersionedBackendProbe([first, second]).probe(
+        { ...candidate(3958), runtimeVersion: '0.1.2-alpha.6' },
+        controller.signal,
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect(second.probeCompatibility.mock.calls).toHaveLength(0)
+  })
+
+  it('does not let an already-cancelled caller reach an adapter when no pre-flight fetch is configured', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    const adapter = compatibilityAdapter('adapter', {
+      protocolVersion: 'contract',
+      dshVersion: 'version',
+      features: new Set(),
+    })
+
+    await expect(
+      new VersionedBackendProbe([adapter]).probe(
+        { ...candidate(3959), runtimeVersion: '0.1.2-alpha.6' },
+        controller.signal,
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect(adapter.probeCompatibility.mock.calls).toHaveLength(0)
+  })
 })
 
 function compatibilityAdapter(
@@ -181,5 +228,25 @@ describe('VersionedBackendProbe reachability pre-flight', () => {
     })
 
     await expect(probe.probe(candidate(3948))).rejects.toMatchObject({ code: 'DSH_INCOMPATIBLE' })
+  })
+
+  it('propagates the caller cancellation raised during the pre-flight', async () => {
+    const adapter = fixtureAdapter('fixture')
+    const controller = new AbortController()
+    const probe = new VersionedBackendProbe([adapter], {
+      fetch: vi.fn(
+        (_input: unknown, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), {
+              once: true,
+            })
+          }),
+      ),
+    })
+
+    const pending = probe.probe(candidate(3947), controller.signal)
+    controller.abort()
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    expect(adapter.probe).not.toHaveBeenCalled()
   })
 })

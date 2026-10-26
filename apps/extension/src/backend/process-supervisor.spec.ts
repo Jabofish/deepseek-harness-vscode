@@ -287,4 +287,167 @@ describe('DshProcessSupervisor', () => {
       retryable: true,
     })
   })
+
+  it('does not spawn a waiting replacement after disposal begins', async () => {
+    const firstExited = deferred<{ readonly code: number | null; readonly signal: string | null }>()
+    const stopStarted = deferred<void>()
+    let spawnCount = 0
+    const supervisor = new DshProcessSupervisor({
+      managedPort: () => 4317,
+      spawn: () => {
+        spawnCount += 1
+        return spawnCount === 1
+          ? {
+              pid: 42,
+              stdout: output('dsh web: http://127.0.0.1:4317\n'),
+              stderr: output(''),
+              kill: () => stopStarted.resolve(undefined),
+              exited: firstExited.promise,
+            }
+          : { ...child(vi.fn()), pid: 43 }
+      },
+    })
+
+    const handle = await supervisor.start(runtime())
+    const stopping = handle.stop()
+    await stopStarted.promise
+    const replacement = supervisor.start(runtime())
+    const disposing = supervisor.dispose()
+
+    await expect(supervisor.start(runtime())).rejects.toMatchObject({
+      code: 'PROCESS_FAILED',
+      retryable: false,
+    })
+    firstExited.resolve({ code: null, signal: 'SIGTERM' })
+
+    await expect(stopping).resolves.toBeUndefined()
+    await expect(replacement).rejects.toMatchObject({ code: 'PROCESS_FAILED', retryable: false })
+    await expect(disposing).resolves.toBeUndefined()
+
+    expect(spawnCount).toBe(1)
+    await expect(supervisor.start(runtime())).rejects.toMatchObject({
+      code: 'PROCESS_FAILED',
+      retryable: false,
+    })
+  })
+
+  it('aborts a pending endpoint callback and stops its child when disposed', async () => {
+    const readyCallbackStarted = deferred<void>()
+    const kill = vi.fn<(signal: NodeJS.Signals | undefined) => void>()
+    let callbackSignal: AbortSignal | undefined
+    const supervisor = new DshProcessSupervisor({
+      managedPort: () => 4317,
+      spawn: () => child(kill),
+      onReadyEndpoint: (_endpoint, _launchUrl, signal) => {
+        callbackSignal = signal
+        readyCallbackStarted.resolve(undefined)
+        return new Promise<void>(() => undefined)
+      },
+    })
+
+    const starting = supervisor.start(runtime())
+    await readyCallbackStarted.promise
+    await expect(supervisor.dispose()).resolves.toBeUndefined()
+
+    await expect(starting).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
+    expect(callbackSignal?.aborted).toBe(true)
+    expect(kill).toHaveBeenCalledOnce()
+    await expect(supervisor.start(runtime())).rejects.toMatchObject({
+      code: 'PROCESS_FAILED',
+      retryable: false,
+    })
+  })
+
+  it('stops the managed child when startup is cancelled during endpoint initialization', async () => {
+    const readyCallbackStarted = deferred<void>()
+    const kill = vi.fn<(signal: NodeJS.Signals | undefined) => void>()
+    const controller = new AbortController()
+    let callbackSignal: AbortSignal | undefined
+    const supervisor = new DshProcessSupervisor({
+      managedPort: () => 4317,
+      spawn: () => child(kill),
+      onReadyEndpoint: (_endpoint, _launchUrl, signal) => {
+        callbackSignal = signal
+        readyCallbackStarted.resolve(undefined)
+        return new Promise<void>(() => undefined)
+      },
+    })
+
+    const starting = supervisor.start(runtime(), controller.signal)
+    await readyCallbackStarted.promise
+    controller.abort()
+
+    await expect(starting).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
+    await expect(supervisor.dispose()).resolves.toBeUndefined()
+    expect(callbackSignal?.aborted).toBe(true)
+    expect(kill).toHaveBeenCalledOnce()
+  })
+
+  it('times out an endpoint callback that never resolves and aborts it before stopping the child', async () => {
+    vi.useFakeTimers()
+    try {
+      const readyCallbackStarted = deferred<void>()
+      const kill = vi.fn<(signal: NodeJS.Signals | undefined) => void>()
+      let callbackSignal: AbortSignal | undefined
+      const supervisor = new DshProcessSupervisor({
+        managedPort: () => 4317,
+        spawn: () => child(kill),
+        onReadyEndpoint: (_endpoint, _launchUrl, signal) => {
+          callbackSignal = signal
+          readyCallbackStarted.resolve(undefined)
+          return new Promise<void>(() => undefined)
+        },
+      })
+      const starting = supervisor.start(runtime())
+
+      await readyCallbackStarted.promise
+      await vi.advanceTimersByTimeAsync(15_000)
+
+      await expect(starting).rejects.toMatchObject({
+        code: 'BACKEND_UNREACHABLE',
+        message: 'Timed out completing managed DSH endpoint initialization.',
+        retryable: true,
+      })
+      expect(callbackSignal?.aborted).toBe(true)
+      expect(kill).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not publish a handle when the endpoint callback resolves after disposal', async () => {
+    const readyCallbackStarted = deferred<void>()
+    const releaseCallback = deferred<void>()
+    const callbackFinished = deferred<void>()
+    const kill = vi.fn<(signal: NodeJS.Signals | undefined) => void>()
+    let callbackSignal: AbortSignal | undefined
+    const supervisor = new DshProcessSupervisor({
+      managedPort: () => 4317,
+      spawn: () => child(kill),
+      onReadyEndpoint: async (_endpoint, _launchUrl, signal) => {
+        callbackSignal = signal
+        readyCallbackStarted.resolve(undefined)
+        await releaseCallback.promise
+        callbackFinished.resolve(undefined)
+      },
+    })
+
+    const starting = supervisor.start(runtime())
+    await readyCallbackStarted.promise
+    const disposing = supervisor.dispose()
+    await expect(starting).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
+    await expect(disposing).resolves.toBeUndefined()
+    expect(callbackSignal?.aborted).toBe(true)
+    expect(kill).toHaveBeenCalledOnce()
+
+    releaseCallback.resolve(undefined)
+    await callbackFinished.promise
+    await supervisor.dispose()
+
+    expect(kill).toHaveBeenCalledOnce()
+    await expect(supervisor.start(runtime())).rejects.toMatchObject({
+      code: 'PROCESS_FAILED',
+      retryable: false,
+    })
+  })
 })

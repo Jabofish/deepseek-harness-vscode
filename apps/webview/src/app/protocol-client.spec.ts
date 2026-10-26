@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { PROTOCOL_VERSION, type ProtocolEnvelope } from '@dsh-vscode/webview-protocol'
+import {
+  PROTOCOL_VERSION,
+  type FeatureRequest,
+  type ProtocolEnvelope,
+  type WebviewRequest,
+} from '@dsh-vscode/webview-protocol'
 import { ProtocolClient, publicProtocolErrorMessage } from './protocol-client.js'
 
 const listeners = new Set<(event: MessageEvent<unknown>) => void>()
@@ -23,6 +28,72 @@ beforeEach(() => {
 afterEach(() => listeners.clear())
 
 describe('ProtocolClient', () => {
+  it.each([
+    { request: { type: 'app.ready', requestId: 'startup' }, elapsed: 60_001 },
+    { request: { type: 'connection.retry', requestId: 'retry' }, elapsed: 60_001 },
+    {
+      request: { type: 'runtime.update.check', requestId: 'check', payload: { force: true } },
+      elapsed: 60_001,
+    },
+    {
+      request: {
+        type: 'runtime.update.install',
+        requestId: 'install',
+        payload: { version: '0.2.1-rc.3' },
+      },
+      elapsed: 600_001,
+    },
+    {
+      request: {
+        type: 'session.export',
+        requestId: 'export',
+        payload: { sessionId: 's1', format: 'zip', includeAttachments: true, includeReasoning: true },
+      },
+      elapsed: 120_001,
+    },
+    { request: { type: 'workspace.addFolder', requestId: 'picker' }, elapsed: 120_001 },
+  ] satisfies readonly { request: WebviewRequest; elapsed: number }[])(
+    'accepts the Host result after slow $request.type work exceeds an ordinary RPC',
+    async ({ request, elapsed }) => {
+      await completeSlowRequest({ request }, elapsed)
+    },
+  )
+
+  it.each([
+    {
+      type: 'editor.companion.action',
+      requestId: 'companion',
+      payload: { action: 'setup' },
+    },
+    {
+      type: 'plugin.bundle.install',
+      requestId: 'plugin',
+      payload: { spec: '@dsh-community/review', installRequestId: 'install-id' },
+    },
+    {
+      type: 'plugin.bundle.waitForInstall',
+      requestId: 'recovery',
+      payload: { installRequestId: 'install-id' },
+    },
+    {
+      type: 'checkpoint.restore',
+      requestId: 'restore',
+      payload: {
+        checkpointId: 'checkpoint-1',
+        sessionId: 's1',
+        workspaceFolderId: 'folder-1',
+        expectedCurrentRevision: 1,
+        previewId: 'preview-1',
+        conflictPolicy: 'overwrite',
+      },
+    },
+  ] satisfies readonly FeatureRequest[])(
+    'accepts the Host result after slow $type work exceeds an ordinary RPC',
+    async (request) => {
+      await completeSlowRequest({ request, feature: true }, 120_001)
+    },
+  )
+
   it('cancels only the requested Host operation and ignores its late response', async () => {
     const posted: ProtocolEnvelope[] = []
     const client = new ProtocolClient({
@@ -292,3 +363,57 @@ describe('ProtocolClient', () => {
     client.dispose()
   })
 })
+
+async function completeSlowRequest(
+  operation:
+    | { readonly request: WebviewRequest; readonly feature?: false }
+    | { readonly request: FeatureRequest; readonly feature: true },
+  elapsed: number,
+): Promise<void> {
+  vi.useFakeTimers()
+  const timer = vi
+    .spyOn(window, 'setTimeout')
+    .mockImplementation(
+      (handler, delay) =>
+        setTimeout(handler as () => void, delay) as unknown as ReturnType<typeof window.setTimeout>,
+    )
+  const clear = vi.spyOn(window, 'clearTimeout').mockImplementation((id) => clearTimeout(id))
+  const client = new ProtocolClient({
+    postMessage: () => undefined,
+    getState: () => undefined,
+    setState: () => undefined,
+  })
+  try {
+    const pending = operation.feature
+      ? client.featureRequest(operation.request)
+      : client.request(operation.request)
+    let settled = false
+    void pending.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      },
+    )
+    await vi.advanceTimersByTimeAsync(elapsed)
+    expect(settled).toBe(false)
+    const payload = operation.feature ? { kind: 'empty' } : { completed: true }
+    client.handle({
+      protocolVersion: PROTOCOL_VERSION,
+      message: {
+        type: operation.feature ? 'feature.response' : 'response',
+        requestId: operation.request.requestId,
+        ok: true,
+        payload,
+      },
+    })
+    await expect(pending).resolves.toEqual(payload)
+    expect(vi.getTimerCount()).toBe(0)
+  } finally {
+    client.dispose()
+    timer.mockRestore()
+    clear.mockRestore()
+    vi.useRealTimers()
+  }
+}

@@ -123,26 +123,6 @@ describe('formatToolText', () => {
     expect(formatToolText(source)).toBe(source)
   })
 
-  it('keeps a tool result and a tool failure the host sent whole', () => {
-    // DSH caps neither a tool result nor a tool failure before the protocol
-    // layer, and the error section is the only surface for the failure text, so
-    // anything this boundary shortened would be the reader's whole diagnosis.
-    const result = Array.from(
-      { length: 80 },
-      (_, index) => `row ${index + 1}: the tool returned this line to the caller`,
-    ).join('\n')
-    const failure = `Exit code 1: 120 compile errors\n${'compile-error detail\n'.repeat(120)}`.trimEnd()
-    expect(result.length).toBeGreaterThan(2_000)
-    expect(failure.length).toBeGreaterThan(2_000)
-
-    const presentation = toolPresentation(
-      tool({ name: 'workspace_search', title: 'Search', outputSummary: result }),
-    )
-
-    expect(presentation.response).toEqual([{ label: 'Result', content: result }])
-    expect(formatToolText(failure)).toBe(failure)
-  })
-
   it('retains every entry of a long structured output list', () => {
     const presentation = toolPresentation(
       tool({

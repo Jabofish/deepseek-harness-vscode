@@ -525,6 +525,127 @@ describe('CheckpointStore', () => {
       store.create({ sessionId: 'session-1', workspaceFolderId: 'workspace-1', files }),
     ).rejects.toMatchObject({ code: 'CHECKPOINT_QUOTA' })
   })
+
+  it('rejects a concurrent restore for the same checkpoint during its read preflight', async () => {
+    const storage = new MemoryStorage()
+    const workspace = new MemoryWorkspace()
+    workspace.files.set('src/main.ts', Buffer.from('new'))
+    const store = createStore(storage, workspace, true)
+    const summary = await store.create(changeInput())
+    const firstPreview = await store.preview(summary.checkpointId)
+    const secondPreview = await store.preview(summary.checkpointId)
+    const readStarted = deferred()
+    const readRelease = deferred()
+    workspace.readGate = {
+      relativePath: 'src/main.ts',
+      wait: readRelease.promise,
+      onWait: readStarted.resolve,
+    }
+
+    const firstRestore = store.restore(summary.checkpointId, 1, firstPreview.previewId, 'overwrite')
+    await readStarted.promise
+    await expect(
+      store.restore(summary.checkpointId, 1, secondPreview.previewId, 'overwrite'),
+    ).rejects.toMatchObject({ code: 'CHECKPOINT_CONFLICT' })
+    readRelease.resolve()
+    await expect(firstRestore).resolves.toMatchObject({ state: 'completed' })
+  })
+
+  it('does not let checkpoint deletion remove backups during an active restore', async () => {
+    const storage = new MemoryStorage()
+    const workspace = new MemoryWorkspace()
+    workspace.files.set('src/one.ts', Buffer.from('new-one'))
+    workspace.files.set('src/two.ts', Buffer.from('new-two'))
+    const store = createStore(storage, workspace, true)
+    const summary = await store.create(changeInput('src/one.ts', 'src/two.ts'))
+    const preview = await store.preview(summary.checkpointId)
+    const renameStarted = deferred()
+    const renameRelease = deferred()
+    const renameFile = workspace.renameFile.bind(workspace)
+    let pauseNextRename = true
+    workspace.renameFile = async (workspaceFolderId, sourcePath, destinationPath, overwrite) => {
+      if (pauseNextRename && destinationPath === 'src/two.ts') {
+        pauseNextRename = false
+        renameStarted.resolve()
+        await renameRelease.promise
+      }
+      await renameFile(workspaceFolderId, sourcePath, destinationPath, overwrite)
+    }
+
+    const restore = store.restore(summary.checkpointId, 1, preview.previewId, 'overwrite')
+    await renameStarted.promise
+    workspace.failRenames = 1
+    const deletion = await store.delete(summary.checkpointId).then(
+      () => ({ succeeded: true as const }),
+      (error: unknown) => ({ succeeded: false as const, error }),
+    )
+    renameRelease.resolve()
+    await expect(restore).rejects.toBeDefined()
+
+    expect(deletion).toMatchObject({
+      succeeded: false,
+      error: { code: 'CHECKPOINT_CONFLICT' },
+    })
+    expect(Buffer.from(workspace.files.get('src/one.ts') ?? []).toString()).toBe('new-one')
+    expect(Buffer.from(workspace.files.get('src/two.ts') ?? []).toString()).toBe('new-two')
+    await expect(store.get(summary.checkpointId)).resolves.toMatchObject({ state: 'content-ready' })
+    await expect(
+      store.restore(summary.checkpointId, 1, preview.previewId, 'overwrite'),
+    ).resolves.toMatchObject({ state: 'completed' })
+    await expect(store.delete(summary.checkpointId)).resolves.toBeUndefined()
+    await expect(store.get(summary.checkpointId)).rejects.toMatchObject({ code: 'CAPABILITY_UNAVAILABLE' })
+  })
+
+  it('does not let a restore start while checkpoint deletion is in progress', async () => {
+    const storage = new MemoryStorage()
+    const workspace = new MemoryWorkspace()
+    workspace.files.set('src/main.ts', Buffer.from('at-checkpoint'))
+    const store = createStore(storage, workspace, true)
+    const summary = await store.create(changeInput())
+    await workspace.writeFile('workspace-1', 'src/main.ts', Buffer.from('external edit'))
+    const preview = await store.preview(summary.checkpointId)
+    const deletionStarted = deferred()
+    const deletionRelease = deferred()
+    const deletePath = storage.delete.bind(storage)
+    storage.delete = async (filePath, recursive) => {
+      if (recursive) {
+        deletionStarted.resolve()
+        await deletionRelease.promise
+      }
+      await deletePath(filePath, recursive)
+    }
+
+    const deletion = store.delete(summary.checkpointId)
+    await deletionStarted.promise
+    const restoration = await store.restore(summary.checkpointId, 1, preview.previewId, 'overwrite').then(
+      () => ({ succeeded: true as const }),
+      (error: unknown) => ({ succeeded: false as const, error }),
+    )
+    deletionRelease.resolve()
+    await deletion
+
+    expect(restoration).toMatchObject({
+      succeeded: false,
+      error: { code: 'CHECKPOINT_CONFLICT' },
+    })
+    expect(Buffer.from(workspace.files.get('src/main.ts') ?? []).toString()).toBe('external edit')
+  })
+
+  it('releases the checkpoint operation lock when deletion fails so deletion can be retried', async () => {
+    const storage = new MemoryStorage()
+    const workspace = new MemoryWorkspace()
+    workspace.files.set('src/main.ts', Buffer.from('current'))
+    const store = createStore(storage, workspace, true)
+    const summary = await store.create(changeInput())
+    const directory = checkpointDirectory('checkpoint-root', summary.checkpointId)
+    storage.failDeletePath = directory
+
+    await expect(store.delete(summary.checkpointId)).rejects.toThrow('injected storage delete failure')
+
+    storage.failDeletePath = undefined
+    await expect(store.delete(summary.checkpointId)).resolves.toBeUndefined()
+    await expect(store.get(summary.checkpointId)).rejects.toMatchObject({ code: 'CAPABILITY_UNAVAILABLE' })
+  })
 })
 
 it('keeps a checkpoint unavailable when an applying journal fails its checksum', async () => {
@@ -680,3 +801,11 @@ it('cleans a crashed preparing journal without touching any workspace path', asy
   })
   expect(Buffer.from(workspace.files.get('src/main.ts') ?? []).toString()).toBe('before')
 })
+
+function deferred(): { readonly promise: Promise<void>; readonly resolve: () => void } {
+  let resolve!: () => void
+  const promise = new Promise<void>((complete) => {
+    resolve = complete
+  })
+  return { promise, resolve }
+}
