@@ -1,6 +1,7 @@
 import type * as vscode from 'vscode'
 import type { ExtensionSettings } from '@dsh-vscode/domain'
 import { AppError, parseServerOrigin, type AgentConfiguration } from '@dsh-vscode/domain'
+import { isLocalRuntimePath } from '../backend/runtime-paths.js'
 
 export class VsCodeConfigurationSource {
   public constructor(private readonly workspace: typeof vscode.workspace) {}
@@ -142,7 +143,7 @@ function readEnum<const T extends readonly string[]>(value: unknown, allowed: T,
 function readOptionalPath(value: unknown): string | undefined {
   if (typeof value !== 'string') invalid('runtime.executablePath', 'a string')
   if (value === '') return undefined
-  if (!isAbsolutePath(value)) invalid('runtime.executablePath', 'an absolute path')
+  if (!isLocalRuntimePath(value)) invalid('runtime.executablePath', 'an absolute local path')
   return value
 }
 
@@ -152,10 +153,6 @@ export function normalizeServerUrl(value: unknown): string | undefined {
   const origin = parseServerOrigin(value)
   if (origin === undefined) invalid('connection.serverUrl', 'an http or https URL')
   return origin.baseUrl
-}
-
-function isAbsolutePath(value: string): boolean {
-  return /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('\\\\') || value.startsWith('/')
 }
 
 function invalid(key: string, expected: string): never {

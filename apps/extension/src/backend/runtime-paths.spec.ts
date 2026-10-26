@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   isAbsoluteFilePath,
+  isLocalRuntimePath,
   isWindowsFilePath,
   resolveNpmExecutable,
   runtimePathEntries,
@@ -84,6 +85,44 @@ describe('runtime path resolution', () => {
         Path: 'C:\\Users\\alice\\AppData\\Roaming\\npm',
       }),
     ).toContain('C:\\Users\\alice\\AppData\\Roaming\\npm')
+  })
+})
+
+describe('local runtime paths', () => {
+  it.each([
+    ['windows', 'C:\\tools\\dsh.cmd'],
+    ['windows', 'D:/Program Files/dsh.cmd'],
+    ['linux', '/usr/local/bin/dsh'],
+    ['macos', '/Users/alice/tools/dsh'],
+  ] as const)('accepts a local absolute path on %s: %s', (os, candidate) => {
+    expect(isLocalRuntimePath(candidate, os)).toBe(true)
+  })
+
+  it.each([
+    '\\\\server\\share\\dsh.cmd',
+    '//server/share/dsh.cmd',
+    '/\\server/share/dsh.cmd',
+    '\\/server/share/dsh.cmd',
+    '\\\\?\\C:\\tools\\dsh.cmd',
+    '//?/UNC/server/share/dsh.cmd',
+    '\\\\.\\pipe\\dsh',
+    'C:tools\\dsh.cmd',
+    '/tools/dsh.cmd',
+    '\\tools\\dsh.cmd',
+    'C:\\tools\\dsh.cmd\0',
+  ])('rejects network, device and non-local Windows paths: %s', (candidate) => {
+    expect(isLocalRuntimePath(candidate, 'windows')).toBe(false)
+  })
+
+  it.each(['linux', 'macos'] as const)('rejects foreign and network spellings on %s', (os) => {
+    for (const candidate of [
+      '//server/share/dsh',
+      '\\\\server\\share\\dsh',
+      'C:\\tools\\dsh.cmd',
+      'bin/dsh',
+      '/bin/dsh\0',
+    ])
+      expect(isLocalRuntimePath(candidate, os), candidate).toBe(false)
   })
 })
 

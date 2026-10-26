@@ -4,7 +4,7 @@ import { AppError } from '@dsh-vscode/domain'
 import { isKnownDshVersion } from '@dsh-vscode/dsh-adapter'
 import path from 'node:path'
 
-import { isAbsoluteFilePath } from './runtime-paths.js'
+import { isAbsoluteFilePath, isLocalRuntimePath } from './runtime-paths.js'
 
 export interface RuntimeLocatorDependencies {
   readonly os: OperatingSystem
@@ -21,6 +21,13 @@ export interface RuntimeLocatorDependencies {
    */
   readonly lastKnownRuntimePath?: () => RuntimePathHint | undefined
   readonly rememberRuntimePath?: (hint: RuntimePathHint) => void
+  /**
+   * Native confirmation for a configured executable path the host has not been
+   * told to run before. Returning `false` drops the configured candidate so the
+   * ordinary scan never executes an unconfirmed path. Absent for tests and for
+   * embedders that do not expose a UI.
+   */
+  readonly confirmRuntimePath?: (path: string) => Promise<boolean>
   /**
    * Reports a candidate that exists but cannot report a version, so a broken
    * install stays diagnosable once its failure is classified instead of thrown.
@@ -81,20 +88,32 @@ export class DshRuntimeLocator implements RuntimeLocator {
     // an incompatible version, surface that fact instead of silently falling
     // back to a different PATH binary.
     if (configured !== undefined && (await this.dependencies.fileExists(configured.path))) {
-      this.rememberLocation(locations, configured.path)
-      const result = {
-        runtime: await this.inspect(configured, signal),
-        searchedLocations: [...locations],
+      const approved =
+        this.dependencies.confirmRuntimePath === undefined
+          ? true
+          : await this.dependencies.confirmRuntimePath(configured.path)
+      if (approved) {
+        this.rememberLocation(locations, configured.path)
+        const result = {
+          runtime: await this.inspect(configured, signal),
+          searchedLocations: [...locations],
+        }
+        if (result.runtime.supported) this.memoize(result, configured.path, 'configured')
+        return result
       }
-      if (result.runtime.supported) this.memoize(result, configured.path, 'configured')
-      return result
     }
 
     // The persisted hint turns the repeated cold-start scan into one
     // fileExists plus one version probe. An unsupported or vanished hint
     // falls through to the ordinary scan below.
     const hint = this.dependencies.lastKnownRuntimePath?.()
-    if (hint !== undefined && hint.path !== configured?.path) {
+    if (
+      hint !== undefined &&
+      isLocalRuntimePath(hint.path, this.dependencies.os) &&
+      (configured === undefined ||
+        runtimePathKey(hint.path, this.dependencies.os) !==
+          runtimePathKey(configured.path, this.dependencies.os))
+    ) {
       const hintPath = pathApi(this.dependencies.os).normalize(hint.path)
       if (await this.dependencies.fileExists(hintPath)) {
         this.rememberLocation(locations, hintPath)
@@ -139,7 +158,12 @@ export class DshRuntimeLocator implements RuntimeLocator {
     }
     if (signal?.aborted) throw runtimeDetectionCancelled(signal)
     const npmCandidates = this.candidates(prefix).filter(
-      (candidate) => !candidates.some((known) => known.path.toLowerCase() === candidate.path.toLowerCase()),
+      (candidate) =>
+        !candidates.some(
+          (known) =>
+            runtimePathKey(known.path, this.dependencies.os) ===
+            runtimePathKey(candidate.path, this.dependencies.os),
+        ),
     )
     const npmRuntime = await this.findSupported(npmCandidates, locations, signal)
     const runtime =
@@ -166,6 +190,12 @@ export class DshRuntimeLocator implements RuntimeLocator {
   }
 
   public async inspectExecutable(executable: string, signal?: AbortSignal): Promise<DshRuntime> {
+    if (!isLocalRuntimePath(executable, this.dependencies.os))
+      throw new AppError({
+        code: 'INVALID_CONFIGURATION',
+        message: 'Select an absolute local path to the DSH executable.',
+        retryable: false,
+      })
     if (!(await this.dependencies.fileExists(executable)))
       throw new AppError({
         code: 'DSH_NOT_FOUND',
@@ -266,9 +296,9 @@ export class DshRuntimeLocator implements RuntimeLocator {
     const seen = new Set<string>()
     const pathModule = pathApi(this.dependencies.os)
     const add = (value: string | undefined, source: DshRuntime['source']): void => {
-      if (value === undefined || value.trim() === '') return
+      if (value === undefined || !isLocalRuntimePath(value, this.dependencies.os)) return
       const normalized = pathModule.normalize(value)
-      const key = this.dependencies.os === 'windows' ? normalized.toLowerCase() : normalized
+      const key = runtimePathKey(normalized, this.dependencies.os)
       if (seen.has(key)) return
       seen.add(key)
       result.push({ path: normalized, source })
@@ -304,6 +334,11 @@ interface Candidate {
 
 function pathApi(os: OperatingSystem): typeof path.posix {
   return os === 'windows' ? path.win32 : path.posix
+}
+
+function runtimePathKey(value: string, os: OperatingSystem): string {
+  const normalized = pathApi(os).normalize(value)
+  return os === 'windows' ? normalized.toLowerCase() : normalized
 }
 
 function normalizeVersion(output: string): string {

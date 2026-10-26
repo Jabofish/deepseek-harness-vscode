@@ -11,6 +11,8 @@ import {
   closedConnectionError as closedError,
   combineSignals,
   isAlphaIdempotentMethod,
+  MAX_RPC_RESPONSE_BYTES,
+  readBoundedJson,
   releaseUnreadBody,
   signalIsAborted,
   withTransportRetry,
@@ -602,7 +604,7 @@ export class AlphaLoopbackApiClient implements DshTransport {
     }
     let decoded: unknown
     try {
-      decoded = await response.json()
+      decoded = await readBoundedJson(response, MAX_RPC_RESPONSE_BYTES, endpoint)
     } catch (cause) {
       throw malformedResponse(endpoint, cause)
     }

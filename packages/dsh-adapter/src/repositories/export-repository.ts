@@ -28,6 +28,9 @@ const unavailableFileSystem: ExportFileSystem = {
 
 /** Export streams the entire history; larger pages halve the roundtrips. */
 const EXPORT_HISTORY_PAGE_MESSAGES = 200
+
+/** Bound retained history as well as the generated or downloaded export. */
+const MAX_EXPORT_BYTES = 64 * 1024 * 1024
 export class Rc6ExportRepository implements ExportRepository {
   public constructor(
     private readonly transport: DshTransport,
@@ -86,9 +89,13 @@ export class Rc6ExportRepository implements ExportRepository {
         ? jsonChunks(events, options.includeReasoning, options.includeAttachments)
         : markdownChunks(events, options.includeReasoning, options.includeAttachments, options.sessionId)
     const chunks: string[] = []
+    let bytes = 0
+    const encoder = new TextEncoder()
     for (const chunk of source) {
       throwIfAborted(signal)
       chunks.push(chunk)
+      bytes += encoder.encode(chunk).byteLength
+      if (bytes > MAX_EXPORT_BYTES) throw exportTooLarge()
     }
     await this.fileSystem.writeFile(destination, new TextEncoder().encode(chunks.join('')))
   }
@@ -100,11 +107,14 @@ export class Rc6ExportRepository implements ExportRepository {
   ): Promise<void> {
     const reader = body.getReader()
     const chunks: Uint8Array[] = []
+    let bytes = 0
     try {
       while (true) {
         throwIfAborted(signal)
         const next = await reader.read()
         if (next.done) break
+        bytes += next.value.byteLength
+        if (bytes > MAX_EXPORT_BYTES) throw exportTooLarge()
         chunks.push(next.value)
       }
     } finally {
@@ -127,8 +137,11 @@ async function readExportHistory(
   signal?: AbortSignal,
 ): Promise<readonly unknown[]> {
   const pages: unknown[][] = []
+  const encoder = new TextEncoder()
+  let historyBytes = 0
   let beforeSeq: number | undefined
   for (let page = 0; page < 100; page += 1) {
+    throwIfAborted(signal)
     const value = await callRpc<{ events: unknown[]; hasMore: boolean }>(
       transport,
       'session.history',
@@ -139,6 +152,7 @@ async function readExportHistory(
       },
       signal,
     )
+    throwIfAborted(signal)
     if (
       typeof value !== 'object' ||
       value === null ||
@@ -150,6 +164,10 @@ async function readExportHistory(
         message: 'DSH returned an invalid session history for export.',
         retryable: false,
       })
+    // Check raw pages before retaining or filtering them: excluded reasoning
+    // and attachment payloads still occupy memory during history collection.
+    historyBytes += encoder.encode(JSON.stringify(value.events)).byteLength
+    if (historyBytes > MAX_EXPORT_BYTES) throw exportTooLarge()
     const page = value.events.map(normalizeExportHistoryEntry)
     pages.push(page)
     if (!value.hasMore) return pages.reverse().flat()
@@ -547,6 +565,14 @@ function indent(value: string, spaces: number): string {
 function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted === true)
     throw signal.reason ?? new DOMException('The export was cancelled.', 'AbortError')
+}
+
+function exportTooLarge(): AppError {
+  return new AppError({
+    code: 'EXPORT_FAILED',
+    message: 'The DSH session export exceeded the maximum supported size.',
+    retryable: false,
+  })
 }
 
 function mapExportError(error: unknown, signal: AbortSignal | undefined): AppError {

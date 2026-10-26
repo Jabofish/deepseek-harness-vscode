@@ -30,7 +30,9 @@ import {
   assertValidEndpoint,
   closedConnectionError,
   IDEMPOTENT_METHODS,
+  MAX_RPC_RESPONSE_BYTES,
   mergeSignals,
+  readBoundedJson,
   releaseUnreadBody,
   withTransportRetry,
 } from './transport-internal.js'
@@ -388,7 +390,7 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
     }
     let full: RawServerResponse
     try {
-      full = parseRawServerResponse(await response.json())
+      full = parseRawServerResponse(await readBoundedJson(response, MAX_RPC_RESPONSE_BYTES, method))
     } catch (cause) {
       throw new AppError({
         code: 'PROTOCOL_ERROR',

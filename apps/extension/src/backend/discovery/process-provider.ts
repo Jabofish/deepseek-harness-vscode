@@ -37,9 +37,41 @@ export async function runDiscoveryCommand(
     timeout: PROCESS_TIMEOUT_MS,
     maxBuffer: OUTPUT_LIMIT,
     windowsHide: true,
+    env: discoveryEnvironment(process.env),
     ...(signal === undefined ? {} : { signal }),
   })
   return result.stdout
+}
+
+/**
+ * OS listing tools (`ss`, `ps`, `lsof`, `netstat.exe`, `wmic.exe`,
+ * `powershell.exe`) run automatically before any user action and do not need
+ * the Extension Host's full secret-bearing environment. Hand them only the
+ * path/locale/temp entries they require so an ambient token or credential
+ * cannot leak into a pre-consent child process.
+ */
+function discoveryEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const allowed = new Set([
+    'PATH',
+    'PATHEXT',
+    'SYSTEMROOT',
+    'COMSPEC',
+    'WINDIR',
+    'HOME',
+    'USERPROFILE',
+    'LANG',
+    'LC_ALL',
+    'LC_CTYPE',
+    'LC_MESSAGES',
+    'TMPDIR',
+    'TEMP',
+    'TMP',
+  ])
+  const result: NodeJS.ProcessEnv = {}
+  for (const [key, value] of Object.entries(environment)) {
+    if (value !== undefined && allowed.has(key.toUpperCase())) result[key] = value
+  }
+  return result
 }
 
 export function parseDshProcessCandidates(

@@ -110,6 +110,19 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
     rememberRuntimePath: (hint) => {
       void context.globalState.update(RUNTIME_PATH_STATE_KEY, hint)
     },
+    confirmRuntimePath: async (candidate) => {
+      // A configured executable is run (`--version`) before any DSH identity
+      // check. Only the user can have placed a machine-scoped path, so ask
+      // once before executing it; declining leaves discovery to the normal scan.
+      const action = 'Run DSH executable'
+      return (
+        (await vscode.window.showWarningMessage(
+          `DeepSeek Harness will run ${candidate} to detect the DSH runtime. Only continue if you set this path yourself.`,
+          { modal: true },
+          action,
+        )) === action
+      )
+    },
     logProbeFailure: (failure) =>
       diagnostics.log('warn', 'runtime-probe-failed', {
         name: failure.name,
@@ -333,7 +346,7 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
         installOutput.clear()
         installOutput.show(true)
         installOutput.appendLine(
-          'Downloading and installing DSH. Build script output and timing details follow.',
+          'Downloading and installing DSH. Install scripts are disabled; timing details follow.',
         )
         const pending = { stdout: '', stderr: '' }
         const discarding = { stdout: false, stderr: false }
@@ -374,7 +387,7 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
             [
               ...(resolved?.prefixArgs ?? []),
               ...args,
-              ...['--no-audit', '--no-fund', '--loglevel=info', '--foreground-scripts', '--timing'].filter(
+              ...['--no-audit', '--no-fund', '--loglevel=info', '--ignore-scripts', '--timing'].filter(
                 (flag) => !args.includes(flag),
               ),
             ],
