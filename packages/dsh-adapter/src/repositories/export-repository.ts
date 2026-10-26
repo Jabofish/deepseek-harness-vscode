@@ -29,7 +29,7 @@ const unavailableFileSystem: ExportFileSystem = {
 /** Export streams the entire history; larger pages halve the roundtrips. */
 const EXPORT_HISTORY_PAGE_MESSAGES = 200
 
-/** Bound the whole export so a malicious DSH cannot exhaust the Extension Host. */
+/** Bound retained history as well as the generated or downloaded export. */
 const MAX_EXPORT_BYTES = 64 * 1024 * 1024
 export class Rc6ExportRepository implements ExportRepository {
   public constructor(
@@ -137,8 +137,11 @@ async function readExportHistory(
   signal?: AbortSignal,
 ): Promise<readonly unknown[]> {
   const pages: unknown[][] = []
+  const encoder = new TextEncoder()
+  let historyBytes = 0
   let beforeSeq: number | undefined
   for (let page = 0; page < 100; page += 1) {
+    throwIfAborted(signal)
     const value = await callRpc<{ events: unknown[]; hasMore: boolean }>(
       transport,
       'session.history',
@@ -149,6 +152,7 @@ async function readExportHistory(
       },
       signal,
     )
+    throwIfAborted(signal)
     if (
       typeof value !== 'object' ||
       value === null ||
@@ -160,6 +164,10 @@ async function readExportHistory(
         message: 'DSH returned an invalid session history for export.',
         retryable: false,
       })
+    // Check raw pages before retaining or filtering them: excluded reasoning
+    // and attachment payloads still occupy memory during history collection.
+    historyBytes += encoder.encode(JSON.stringify(value.events)).byteLength
+    if (historyBytes > MAX_EXPORT_BYTES) throw exportTooLarge()
     const page = value.events.map(normalizeExportHistoryEntry)
     pages.push(page)
     if (!value.hasMore) return pages.reverse().flat()
