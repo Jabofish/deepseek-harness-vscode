@@ -632,8 +632,8 @@
         "dsh.runtime.executablePath": {
           "type": "string",
           "default": "",
-          "scope": "machine-overridable",
-          "description": "Optional absolute path to the DSH executable. Leave empty for automatic discovery."
+          "scope": "machine",
+          "description": "Optional absolute path to the DSH executable. Leave empty for automatic discovery. Never overridable by workspace settings."
         },
         "dsh.runtime.autoStart": {
           "type": "boolean",

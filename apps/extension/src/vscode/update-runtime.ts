@@ -168,6 +168,7 @@ export class DshRuntimeUpdater {
           `${DSH_PACKAGE_NAME}@${requested}`,
           '--no-audit',
           '--no-fund',
+          '--ignore-scripts',
           '--loglevel=info',
         ],
         {

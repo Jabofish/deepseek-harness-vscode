@@ -2,6 +2,20 @@ import { describe, expect, it } from 'vitest'
 import { normalizeServerUrl, VsCodeConfigurationSource } from './configuration-source.js'
 
 describe('DSH connection configuration', () => {
+  it.each([
+    '//server/share/dsh.cmd',
+    '//?/UNC/server/share/dsh.cmd',
+    '\\\\server\\share\\dsh.cmd',
+    '\\\\?\\C:\\tools\\dsh.cmd',
+  ])('rejects a network or device runtime setting: %s', (candidate) => {
+    const source = new VsCodeConfigurationSource({
+      getConfiguration: () => ({
+        get: (key: string, fallback: unknown) => (key === 'runtime.executablePath' ? candidate : fallback),
+      }),
+    } as never)
+    expect(() => source.read()).toThrowError('Invalid DSH setting runtime.executablePath')
+  })
+
   it.each(['globalValue', 'workspaceValue', 'workspaceFolderValue'] as const)(
     'distinguishes explicit ports in %s from the built-in default',
     (scope) => {

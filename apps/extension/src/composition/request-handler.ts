@@ -1,9 +1,10 @@
 import { AppError } from '@dsh-vscode/domain'
 import type { WebviewRequest } from '@dsh-vscode/webview-protocol'
+import { DSH_PACKAGE_NAME } from '@dsh-vscode/dsh-adapter'
 import * as vscode from 'vscode'
 import { openSkillDocument, publicSkills } from '../backend/skill-documents.js'
 import { resolveLinkTarget } from '../navigation/link-target.js'
-import { SIDEBAR_SURFACE_ID, VIEW_ID } from '../constants.js'
+import { SIDEBAR_SURFACE_ID, VIEW_ID, DSH_PACKAGE } from '../constants.js'
 import { DshWebviewViewProvider } from '../view/dsh-webview-view-provider.js'
 import { EditorChatSurfaceManager } from '../view/editor-chat-surface-manager.js'
 import { WebviewMessageRouter } from '../view/message-router.js'
@@ -27,6 +28,22 @@ export type { RequestGatewayDependencies } from './request-gateway-dependencies.
 export interface OpenLinkResult {
   readonly opened: boolean
   readonly message?: string
+}
+
+/**
+ * Installing DSH is a global npm mutation; the Webview is not sufficient
+ * authority for it. Require a native, modal confirmation naming the exact
+ * package. Install scripts are disabled (`--ignore-scripts`).
+ */
+async function confirmRuntimeInstall(spec: string): Promise<boolean> {
+  const action = 'Install'
+  return (
+    (await vscode.window.showWarningMessage(
+      `Install ${spec} globally with npm? Package install scripts are disabled.`,
+      { modal: true },
+      action,
+    )) === action
+  )
 }
 
 export interface RequestGateway {
@@ -300,6 +317,8 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     if (request.type === 'view.openLink') return openMarkdownLink(request.payload.href)
     if (request.type === 'view.showInFolder') return openMarkdownLink(request.payload.href, true)
     if (request.type === 'runtime.action') {
+      if (request.payload.action === 'install' && !(await confirmRuntimeInstall(DSH_PACKAGE)))
+        return undefined
       await runtimeUseCases.execute(request.payload.action)
       if (request.payload.action === 'install' || request.payload.action === 'select') {
         // Install or select may move or replace the executable; the memoized
@@ -312,6 +331,8 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     if (request.type === 'runtime.update.check')
       return publicValue(await runtimeUseCases.checkForUpdates(request.payload.force === true, signal))
     if (request.type === 'runtime.update.install') {
+      if (!(await confirmRuntimeInstall(`${DSH_PACKAGE_NAME}@${request.payload.version}`)))
+        return publicValue(await runtimeUseCases.checkForUpdates(false, signal))
       const snapshot = await runtimeUseCases.installVersion(request.payload.version, signal)
       // The global install replaced the executable behind the same path; drop
       // the memoized version so the next connection reports the new one.

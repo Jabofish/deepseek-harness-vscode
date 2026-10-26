@@ -35,6 +35,115 @@ afterEach(async () => {
 })
 
 describe('Rc6ExportRepository', () => {
+  it('keeps chronological JSON output when bounded history spans multiple pages', async () => {
+    const destination = await destinationPath('paged.json')
+    let pages = 0
+    const request = vi.fn(() => {
+      const sequence = ++pages === 1 ? 2 : 1
+      return Promise.resolve({
+        result: {
+          ok: true,
+          value: {
+            events: [{ type: 'message.user', seq: sequence, text: sequence === 1 ? 'older' : 'newer' }],
+            hasMore: pages === 1,
+          },
+        },
+      })
+    })
+    const repository = new Rc6ExportRepository(
+      { ...createTransport(undefined), request } as DshTransport,
+      nodeFileSystem,
+    )
+    await repository.exportSession(exportOptions('json', true), destination)
+    expect(JSON.parse(await readFile(destination, 'utf8'))).toEqual([
+      { type: 'message.user', seq: 1, text: 'older' },
+      { type: 'message.user', seq: 2, text: 'newer' },
+    ])
+    expect(request).toHaveBeenCalledTimes(2)
+    await expect(temporaryFiles(destination)).resolves.toEqual([])
+  })
+
+  it('stops after a page read is cancelled and leaves the destination intact', async () => {
+    const destination = await destinationPath('cancelled-page.json')
+    await writeFile(destination, 'original bytes', 'utf8')
+    const controller = new AbortController()
+    const request = vi.fn(() => {
+      controller.abort()
+      return Promise.resolve({
+        result: { ok: true, value: { events: [{ type: 'message.user', seq: 2 }], hasMore: true } },
+      })
+    })
+    const repository = new Rc6ExportRepository(
+      { ...createTransport(undefined), request } as DshTransport,
+      nodeFileSystem,
+    )
+    await expect(
+      repository.exportSession(exportOptions('json', true), destination, controller.signal, true),
+    ).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
+    expect(request).toHaveBeenCalledTimes(1)
+    await expect(readFile(destination, 'utf8')).resolves.toBe('original bytes')
+    await expect(temporaryFiles(destination)).resolves.toEqual([])
+  })
+
+  it.each(['json', 'markdown'] as const)(
+    'stops reading oversized %s history before requesting another page or touching the destination',
+    async (format) => {
+      const destination = await destinationPath(`oversized.${format}`)
+      await writeFile(destination, 'original bytes', 'utf8')
+      const text = 'x'.repeat(34 * 1024 * 1024)
+      let pages = 0
+      const request = vi.fn(() =>
+        Promise.resolve({
+          result: {
+            ok: true,
+            value: {
+              events: [{ type: 'message.user', seq: 100 - ++pages, text }],
+              hasMore: true,
+            },
+          },
+        }),
+      )
+      const repository = new Rc6ExportRepository(
+        { ...createTransport(undefined), request } as DshTransport,
+        nodeFileSystem,
+      )
+      await expect(
+        repository.exportSession(exportOptions(format, true), destination, undefined, true),
+      ).rejects.toMatchObject({ code: 'EXPORT_FAILED', retryable: false })
+      expect(request).toHaveBeenCalledTimes(2)
+      await expect(readFile(destination, 'utf8')).resolves.toBe('original bytes')
+      await expect(temporaryFiles(destination)).resolves.toEqual([])
+    },
+  )
+
+  it('counts UTF-8 bytes even for reasoning that the export would omit', async () => {
+    const destination = await destinationPath('oversized-reasoning.json')
+    const text = '中'.repeat(12 * 1024 * 1024)
+    let pages = 0
+    const request = vi.fn(() =>
+      Promise.resolve({
+        result: {
+          ok: true,
+          value: {
+            events: [{ type: 'reasoning/delta', seq: 100 - ++pages, text }],
+            hasMore: true,
+          },
+        },
+      }),
+    )
+    const repository = new Rc6ExportRepository(
+      { ...createTransport(undefined), request } as DshTransport,
+      nodeFileSystem,
+    )
+    await expect(repository.exportSession(exportOptions('json', false), destination)).rejects.toMatchObject({
+      code: 'EXPORT_FAILED',
+      retryable: false,
+    })
+    expect(request).toHaveBeenCalledTimes(2)
+    await expect(readFile(destination)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(temporaryFiles(destination)).resolves.toEqual([])
+  })
+
   it('writes JSON through a same-directory temporary file and filters reasoning when requested', async () => {
     const destination = await destinationPath('session.json')
     const repository = new Rc6ExportRepository(

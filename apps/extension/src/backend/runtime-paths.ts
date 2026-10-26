@@ -4,6 +4,20 @@ import type { OperatingSystem } from '@dsh-vscode/domain'
 
 type RuntimeEnvironment = Readonly<Record<string, string | undefined>>
 
+/** Reject network/device paths before accessing or running a runtime candidate. */
+export function isLocalRuntimePath(
+  value: string,
+  os: OperatingSystem = process.platform === 'win32'
+    ? 'windows'
+    : process.platform === 'darwin'
+      ? 'macos'
+      : 'linux',
+): boolean {
+  if (value.includes('\0')) return false
+  if (os === 'windows') return /^[A-Za-z]:[\\/]/.test(value)
+  return value.startsWith('/') && !value.startsWith('//')
+}
+
 /**
  * Return the PATH entries that a GUI-launched Extension Host can safely use.
  *

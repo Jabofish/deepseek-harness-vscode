@@ -16,6 +16,57 @@ export async function releaseUnreadBody(response: Response): Promise<void> {
   }
 }
 
+/** Upper bound for a single JSON RPC response body read into memory. */
+export const MAX_RPC_RESPONSE_BYTES = 64 * 1024 * 1024
+
+/**
+ * Read and parse a JSON response body while refusing bodies beyond `maxBytes`.
+ * A malicious or misbehaving DSH must not be able to exhaust the Extension Host
+ * by streaming an unbounded `response.json()` payload.
+ */
+export async function readBoundedJson(
+  response: Response,
+  maxBytes: number,
+  method: string,
+): Promise<unknown> {
+  const reader = response.body?.getReader()
+  if (reader === undefined) throw oversizedBody(method)
+  let text = ''
+  let size = 0
+  const decoder = new TextDecoder('utf-8', { fatal: true })
+  try {
+    while (true) {
+      const chunk = await reader.read()
+      if (chunk.done) break
+      size += chunk.value.byteLength
+      if (size > maxBytes) throw oversizedBody(method)
+      text += decoder.decode(chunk.value, { stream: true })
+    }
+    text += decoder.decode()
+    try {
+      return JSON.parse(text) as unknown
+    } catch (error) {
+      throw new AppError({
+        code: 'PROTOCOL_ERROR',
+        message: `The DSH response for ${method} was not valid JSON.`,
+        retryable: false,
+        cause: error,
+      })
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined)
+    reader.releaseLock()
+  }
+}
+
+function oversizedBody(method: string): AppError {
+  return new AppError({
+    code: 'PROTOCOL_ERROR',
+    message: `The DSH response for ${method} exceeded the allowed size.`,
+    retryable: false,
+  })
+}
+
 export function assertValidEndpoint(endpoint: BackendEndpoint): void {
   if (!isCanonicalEndpoint(endpoint)) {
     throw new AppError({

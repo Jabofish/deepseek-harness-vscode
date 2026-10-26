@@ -2,7 +2,11 @@ import path from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { DshRuntimeLocator, readStoredRuntimePath } from './runtime-locator.js'
+import {
+  DshRuntimeLocator,
+  readStoredRuntimePath,
+  type RuntimeLocatorDependencies,
+} from './runtime-locator.js'
 
 const testPlatform =
   process.platform === 'win32'
@@ -475,6 +479,135 @@ describe('unusable runtime candidates', () => {
       context: { operation: 'runtime.version', reason: 'unusable' },
     })
   })
+})
+
+describe('configured runtime confirmation', () => {
+  it.each(['c:\\tools\\dsh.cmd', 'c:/TOOLS/./dsh.cmd', 'C:\\tools\\older\\..\\dsh.cmd'])(
+    'does not execute a declined path through a cached alias: %s',
+    async (hintPath) => {
+      const scanned = 'C:\\fallback\\dsh.cmd'
+      const executeVersion = vi.fn<RuntimeLocatorDependencies['executeVersion']>(() =>
+        Promise.resolve('0.2.1-rc.2'),
+      )
+      const runtime = new DshRuntimeLocator({
+        os: 'windows',
+        configuredPath: () => 'C:\\Tools\\dsh.cmd',
+        pathEntries: () => ['c:/tools/.', 'C:\\fallback'],
+        npmGlobalPrefix: () => Promise.resolve(undefined),
+        lastKnownRuntimePath: () => ({ path: hintPath, source: 'path' }),
+        fileExists: (candidate) =>
+          Promise.resolve(candidate.toLowerCase() === 'c:\\tools\\dsh.cmd' || candidate === scanned),
+        executeVersion,
+        confirmRuntimePath: () => Promise.resolve(false),
+      })
+      await expect(runtime.locate()).resolves.toMatchObject({
+        runtime: { executable: scanned, source: 'path' },
+      })
+      expect(executeVersion).toHaveBeenCalledTimes(1)
+      expect(executeVersion.mock.calls[0]?.[0]).toBe(scanned)
+    },
+  )
+
+  it('can discover a different npm runtime after declining a cached configured alias', async () => {
+    const executeVersion = vi.fn<RuntimeLocatorDependencies['executeVersion']>(() =>
+      Promise.resolve('0.2.1-rc.2'),
+    )
+    const runtime = new DshRuntimeLocator({
+      os: 'windows',
+      configuredPath: () => 'C:\\Tools\\dsh.cmd',
+      pathEntries: () => [],
+      npmGlobalPrefix: () => Promise.resolve('C:\\fallback'),
+      lastKnownRuntimePath: () => ({ path: 'c:/tools/dsh.cmd', source: 'npm-global' }),
+      fileExists: () => Promise.resolve(true),
+      executeVersion,
+      confirmRuntimePath: () => Promise.resolve(false),
+    })
+    await expect(runtime.locate()).resolves.toMatchObject({
+      runtime: { executable: 'C:\\fallback\\dsh.cmd', source: 'npm-global' },
+    })
+    expect(executeVersion.mock.calls.map((args) => args[0])).toEqual(['C:\\fallback\\dsh.cmd'])
+  })
+
+  it('keeps differently cased POSIX files distinct when selecting a fallback', async () => {
+    const runtime = new DshRuntimeLocator({
+      os: 'linux',
+      configuredPath: () => '/opt/DSH/dsh',
+      pathEntries: () => [],
+      npmGlobalPrefix: () => Promise.resolve(undefined),
+      lastKnownRuntimePath: () => ({ path: '/opt/dsh/dsh', source: 'path' }),
+      fileExists: () => Promise.resolve(true),
+      executeVersion: () => Promise.resolve('0.2.1-rc.2'),
+      confirmRuntimePath: () => Promise.resolve(false),
+    })
+    await expect(runtime.locate()).resolves.toMatchObject({ runtime: { executable: '/opt/dsh/dsh' } })
+  })
+
+  it('skips the configured executable when the host confirmation is declined', async () => {
+    const configured = testPlatform.pathApi.join(
+      testPlatform.configuredDirectory,
+      testPlatform.executableName,
+    )
+    const scanned = testPlatform.pathApi.join(testPlatform.existingDirectory, testPlatform.executableName)
+    const runtime = new DshRuntimeLocator({
+      os: testPlatform.os,
+      configuredPath: () => configured,
+      pathEntries: () => [testPlatform.existingDirectory],
+      npmGlobalPrefix: () => Promise.resolve(undefined),
+      fileExists: (candidate) => Promise.resolve(candidate === configured || candidate === scanned),
+      executeVersion: (executable) =>
+        Promise.resolve(executable === configured ? '0.1.1-rc.2' : '0.1.1-rc.1'),
+      confirmRuntimePath: () => Promise.resolve(false),
+    })
+
+    await expect(runtime.locate()).resolves.toMatchObject({
+      runtime: { executable: scanned, source: 'path' },
+    })
+  })
+
+  it('runs the configured executable when the host confirmation is accepted', async () => {
+    const configured = testPlatform.pathApi.join(
+      testPlatform.configuredDirectory,
+      testPlatform.executableName,
+    )
+    const runtime = new DshRuntimeLocator({
+      os: testPlatform.os,
+      configuredPath: () => configured,
+      pathEntries: () => [],
+      npmGlobalPrefix: () => Promise.resolve(undefined),
+      fileExists: () => Promise.resolve(true),
+      executeVersion: () => Promise.resolve('0.1.1-rc.2'),
+      confirmRuntimePath: () => Promise.resolve(true),
+    })
+
+    await expect(runtime.locate()).resolves.toMatchObject({
+      runtime: { executable: configured, source: 'configured', supported: true },
+    })
+  })
+})
+
+describe('local runtime candidates', () => {
+  it.each(['\\\\server\\share\\dsh.cmd', '//server/share/dsh.cmd', '//?/UNC/server/share/dsh.cmd'])(
+    'never accesses a network path from configuration, cache, PATH, npm or the file picker: %s',
+    async (candidate) => {
+      const fileExists = vi.fn(() => Promise.resolve(true))
+      const executeVersion = vi.fn(() => Promise.resolve('0.2.1-rc.2'))
+      const runtime = new DshRuntimeLocator({
+        os: 'windows',
+        configuredPath: () => candidate,
+        pathEntries: () => [path.win32.dirname(candidate)],
+        npmGlobalPrefix: () => Promise.resolve(path.win32.dirname(candidate)),
+        lastKnownRuntimePath: () => ({ path: candidate, source: 'path' }),
+        fileExists,
+        executeVersion,
+      })
+      await expect(runtime.locate()).resolves.toMatchObject({ searchedLocations: [] })
+      await expect(runtime.inspectExecutable(candidate)).rejects.toMatchObject({
+        code: 'INVALID_CONFIGURATION',
+      })
+      expect(fileExists).not.toHaveBeenCalled()
+      expect(executeVersion).not.toHaveBeenCalled()
+    },
+  )
 })
 
 describe('persisted runtime path hints', () => {
