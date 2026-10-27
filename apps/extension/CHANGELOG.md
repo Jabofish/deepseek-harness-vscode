@@ -6,6 +6,10 @@ Release entries describe behaviour at that release. `Unreleased` lists changes a
 
 ## Unreleased
 
+- 修复长会话滚动与布局跳动：流式内容、虚拟列表测量和加载更早历史时保持当前阅读位置，尾部状态留在最后一行下方；统计区域在内容波动时保持高度，切换宽度或会话时重置。
+- Stabilizes long-conversation scrolling and layout: streaming content, virtual-list measurements and older-history loading keep the visible row in place, with tail activity below the last row. The statistics area retains its height while contents fluctuate and resets for a different width or session.
+- Windows 上更新全局 DSH 前停止扩展持有的运行时，npm 结束后恢复连接，避免 `node-pty` 等原生模块锁定安装目录导致 npm 复制整棵树或失败；外部 DSH 不受影响。
+- On Windows, stops the extension-owned DSH before replacing the global package and reconnects after npm settles, avoiding native module locks such as `node-pty` that make npm copy the installation tree or fail. External instances are unaffected.
 - 全局安装 DSH 前增加原生确认，并以 `--ignore-scripts` 禁用安装脚本；`dsh.runtime.executablePath` 不再允许工作区设置覆盖，且拒绝 UNC 网络路径。
 - Global DSH installs now require a native confirmation and run with `--ignore-scripts`; `dsh.runtime.executablePath` is no longer overridable by workspace settings and UNC paths are rejected.
 - 拒绝运行配置的 DSH 后，缓存中的同一路径也不会执行；网络及设备路径在访问前拦截。导出历史读取与输出分别限制为 64 MiB，超限后停止读取。
