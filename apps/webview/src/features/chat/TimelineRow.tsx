@@ -63,7 +63,6 @@ function timelineRowContextEqual(
     previous.userTextFacts !== next.userTextFacts ||
     previous.onBranch !== next.onBranch ||
     previous.branching !== next.branching ||
-    previous.running !== next.running ||
     previous.onFeedback !== next.onFeedback ||
     previous.onFeedbackSubmit !== next.onFeedbackSubmit ||
     previous.onFeedbackPrepare !== next.onFeedbackPrepare ||

@@ -319,6 +319,26 @@
   animation: dsh-breathe var(--dsh-motion-duration-loop-breathe) var(--dsh-motion-ease-standard) infinite;
 }
 
+/* In a measured virtual row, the status follows its live contents rather than
+ * the canvas's provisional total height. Keep the normal-flow tail spacing. */
+.dsh-timeline__canvas--virtualized-ready > .dsh-timeline__row > .dsh-timeline__streaming-status {
+  position: absolute;
+  inset-block-start: calc(100% + var(--dsh-space-2));
+  inset-inline-start: 0;
+  width: calc(100% + var(--dsh-space-1) + var(--dsh-space-1));
+  margin-inline: calc(0px - var(--dsh-space-1));
+  animation: none;
+}
+
+.dsh-timeline[data-conversation-layout='focused']
+  .dsh-timeline__canvas--virtualized-ready
+  > .dsh-timeline__row
+  > .dsh-timeline__streaming-status {
+  inset-block-start: 100%;
+  width: 100%;
+  margin-inline: 0;
+}
+
 .dsh-timeline__content--session-enter {
   animation: dsh-overlay-fade-in var(--dsh-motion-duration-fast) var(--dsh-motion-ease-enter) both;
 }

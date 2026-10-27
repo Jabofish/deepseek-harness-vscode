@@ -6,6 +6,7 @@ import { useI18n } from '../../i18n.js'
 import type { PerformanceUsageMode } from '../../app/ui-preferences.js'
 import { StatsDetails, statisticsRows } from './StatsDetails.js'
 import { StatsPopover } from './StatsPopover.js'
+import { StableStatsHeight } from './StableStatsHeight.js'
 import { useConversationLayout } from '../../app/ConversationLayoutProvider.js'
 
 export interface StatsLineProps {
@@ -58,6 +59,14 @@ const nodeStatsCache = new WeakMap<object, NodeStats>()
  * paged or compacted.
  */
 export const StatsLine = memo(function StatsLine(props: StatsLineProps): ReactElement {
+  return (
+    <StableStatsHeight key={props.sessionId}>
+      <StatsLineContent {...props} />
+    </StableStatsHeight>
+  )
+})
+
+const StatsLineContent = memo(function StatsLineContent(props: StatsLineProps): ReactElement {
   const { t } = useI18n()
   const focused = useConversationLayout()?.layout === 'focused'
   const presentation = props.performanceUsage ?? 'detailed'

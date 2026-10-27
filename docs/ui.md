@@ -46,7 +46,7 @@ Persistent update, connection, error and welcome notices share a collapsed singl
 
 Short windows and large font sizes must retain readable message space. When necessary, the conversation scrolls vertically so header, messages and composer remain reachable instead of clipping/overlapping to fit one screen. Inspect boundaries and hit targets while notices appear, expand, collapse and close.
 
-Streamed text follows the installed Host view promptly; stable Markdown prefixes retain DOM identity while the tail changes. Virtual-list measurement and duplicate internal scroll events do not imply the user left the tail; this exception is limited to transient layout protection. Wheel, keyboard and scrollbar actions immediately regain control of the reading position.
+Streamed text follows the installed Host view promptly; stable Markdown prefixes retain DOM identity while the tail changes. Virtual-list measurement and duplicate internal scroll events do not imply the user left the tail; this exception is limited to transient layout protection. Late size changes above a free reader preserve the visible row's position, and tail activity remains below the last row while virtual measurements settle. Loading older history keeps the visible row anchored through the switch to a virtual list and its initial measurements. The statistics area retains its measured height while its contents fluctuate at the same width, and resets for a different width or session. Wheel, keyboard and scrollbar actions immediately regain control of the reading position. Explicit jumps to the latest message and Inspector navigation cancel pending history anchoring.
 
 ## Popovers and focus
 

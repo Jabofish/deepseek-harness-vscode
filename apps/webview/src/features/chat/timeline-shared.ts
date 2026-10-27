@@ -107,7 +107,6 @@ export interface TimelineNodeRenderContext {
   readonly onBranch: ((atSeq: number) => void) | undefined
   readonly branching: boolean
   readonly requestOpenLink: (href: string) => void
-  readonly running: boolean
   readonly feedback: Readonly<Record<string, MessageFeedbackItem>> | undefined
   readonly feedbackUnavailable: boolean | undefined
   readonly transcriptView: TranscriptViewMode

@@ -18,7 +18,7 @@ export const DEFAULT_VIRTUALIZATION_OVERSCAN = 4
  * when a long conversation is opened.
  */
 export const DEFAULT_UNMEASURED_ROW_WINDOW = 32
-const DEFAULT_ESTIMATED_ITEM_SIZE = 96
+export const DEFAULT_ESTIMATED_ITEM_SIZE = 96
 function defaultEstimateSize(): number {
   return DEFAULT_ESTIMATED_ITEM_SIZE
 }
