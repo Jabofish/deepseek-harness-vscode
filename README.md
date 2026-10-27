@@ -8,6 +8,8 @@
 
 **DeepSeek Harness Companion for VS Code** brings local or remote [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) sessions into the editor. Follow streaming replies, thinking, tools, approvals, and conversation history beside your code.
 
+This is an unofficial extension for DeepSeek Harness.
+
 ## What you can do
 
 - Create, switch, resume, and archive sessions in a workspace.

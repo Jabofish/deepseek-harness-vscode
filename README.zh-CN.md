@@ -8,6 +8,8 @@
 
 **DeepSeek Harness Companion for VS Code** 把本地或远程 [DeepSeek Harness（DSH）](https://github.com/deepseek-ai/deepseek-harness)会话带进编辑器。在代码旁查看流式回复、思考、工具、审批和会话历史。
 
+这是一个非官方的 DeepSeek Harness 扩展。
+
 ## 可以做什么
 
 - 在工作区中创建、切换、恢复和归档会话。
