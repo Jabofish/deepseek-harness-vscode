@@ -144,6 +144,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     diagnostics,
     currentWorkspaceFolder,
     onRuntimeUpdateProgress: (progress) => runtimeUpdateProgress.current(progress),
+    onRuntimeUpdateRestart: () => reconnect(),
   })
   const {
     workspaceUseCases,

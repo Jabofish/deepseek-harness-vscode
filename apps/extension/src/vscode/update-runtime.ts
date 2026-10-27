@@ -46,6 +46,11 @@ export interface DshRuntimeUpdaterDependencies {
   readonly now?: () => Date
   readonly activeVersion?: () => string | undefined
   readonly canRestart?: () => boolean
+  /**
+   * Stop only an extension-owned runtime before npm replaces shared files.
+   * The returned callback must restore the connection after npm exits.
+   */
+  readonly prepareManagedUpdate?: () => Promise<(() => Promise<void>) | undefined>
 }
 
 interface RegistryMetadata {
@@ -158,7 +163,19 @@ export class DshRuntimeUpdater {
     const startedAt = Date.now()
     let lastPublished = 0
     this.cached = undefined
+    let resumeManagedRuntime: (() => Promise<void>) | undefined
+    try {
+      resumeManagedRuntime = await this.dependencies.prepareManagedUpdate?.()
+    } catch (error) {
+      throw updateError(
+        'install-failed',
+        'The managed DSH could not be stopped before updating. Reconnect and retry.',
+        true,
+        error,
+      )
+    }
     this.emitProgress({ phase: 'downloading', version: requested, startedAt })
+    let installError: unknown
     try {
       await this.dependencies.execute(
         this.dependencies.npmExecutable(),
@@ -183,25 +200,44 @@ export class DshRuntimeUpdater {
         },
       )
     } catch (error) {
+      installError = error
+    }
+    let resumeError: unknown
+    if (resumeManagedRuntime !== undefined) {
+      try {
+        await resumeManagedRuntime()
+      } catch (error) {
+        resumeError = error
+      }
+    }
+    if (installError !== undefined) {
       this.cached = undefined
-      if (error instanceof AppError && error.code === 'BACKEND_BUSY') throw error
-      if (isCancellation(error, signal)) throw cancelledError(error)
-      if (isMissingExecutable(error))
+      if (installError instanceof AppError && installError.code === 'BACKEND_BUSY') throw installError
+      if (isCancellation(installError, signal)) throw cancelledError(installError)
+      if (isMissingExecutable(installError))
         throw updateError(
           'npm-not-found',
           'npm was not found in the Extension Host environment. Copy the install command or open a terminal.',
           true,
-          error,
+          installError,
         )
-      const failureMessage = runtimeInstallationFailureMessage(error)
+      const failureMessage = runtimeInstallationFailureMessage(installError)
       throw updateError(
         'install-failed',
         failureMessage ??
           'The selected DSH version could not be installed. Check the npm install log and try again.',
         true,
-        error,
+        installError,
+        resumeError === undefined ? undefined : 'The managed DSH could not be reconnected.',
       )
     }
+    if (resumeError !== undefined)
+      throw updateError(
+        'install-failed',
+        'npm finished, but the managed DSH could not be restarted. Check the connection and retry.',
+        true,
+        resumeError,
+      )
 
     this.emitProgress({ phase: 'verifying', version: requested, startedAt })
     const globalVersion = await this.readGlobalVersion()

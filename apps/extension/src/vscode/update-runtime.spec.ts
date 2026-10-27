@@ -22,12 +22,14 @@ function updater(
   execute: ExecuteRuntimeCommand,
   current = runtime(),
   onProgress?: (progress: DshRuntimeUpdateProgress) => void,
+  prepareManagedUpdate?: () => Promise<(() => Promise<void>) | undefined>,
 ): DshRuntimeUpdater {
   return new DshRuntimeUpdater({
     npmExecutable: () => 'npm.cmd',
     locateRuntime: () => Promise.resolve(current),
     execute,
     ...(onProgress === undefined ? {} : { onProgress }),
+    ...(prepareManagedUpdate === undefined ? {} : { prepareManagedUpdate }),
     environment: () => ({ PATH: 'test-path' }),
     now: () => new Date('2026-08-21T00:00:00.000Z'),
   })
@@ -139,5 +141,69 @@ describe('DshRuntimeUpdater', () => {
       context: { operation: 'runtime.update', reason: 'metadata-unavailable' },
     })
     expect(phases).toContain('failed')
+  })
+
+  it('stops the managed runtime before npm and resumes it before verification', async () => {
+    const events: string[] = []
+    let installed = '0.1.0-rc.6'
+    const execute: ExecuteRuntimeCommand = async (_executable, args) => {
+      await Promise.resolve()
+      if (args[0] === 'view') return { stdout: metadata, stderr: '' }
+      if (args[0] === 'list') {
+        events.push(`list:${installed}`)
+        return {
+          stdout: JSON.stringify({ dependencies: { '@deepseek-ai/dsh': { version: installed } } }),
+          stderr: '',
+        }
+      }
+      if (args[0] === 'install') {
+        events.push('install')
+        installed = args[2]?.split('@').at(-1) ?? installed
+        return { stdout: 'added packages', stderr: '' }
+      }
+      throw new Error(`unexpected command: ${args.join(' ')}`)
+    }
+    const prepareManagedUpdate = (): Promise<() => Promise<void>> => {
+      events.push('prepare')
+      return Promise.resolve(() => {
+        events.push('resume')
+        return Promise.resolve()
+      })
+    }
+
+    const snapshot = await updater(execute, runtime(), undefined, prepareManagedUpdate).installVersion(
+      '0.1.0-rc.8',
+    )
+
+    expect(events.indexOf('prepare')).toBeLessThan(events.indexOf('install'))
+    expect(events.indexOf('install')).toBeLessThan(events.indexOf('resume'))
+    expect(events.indexOf('resume')).toBeLessThan(events.lastIndexOf('list:0.1.0-rc.8'))
+    expect(snapshot.restartRequired).toBe(true)
+  })
+
+  it('resumes the managed runtime after npm fails', async () => {
+    let resumed = 0
+    const execute: ExecuteRuntimeCommand = async (_executable, args) => {
+      await Promise.resolve()
+      if (args[0] === 'view') return { stdout: metadata, stderr: '' }
+      if (args[0] === 'list')
+        return {
+          stdout: JSON.stringify({ dependencies: { '@deepseek-ai/dsh': { version: '0.1.0-rc.6' } } }),
+          stderr: '',
+        }
+      throw Object.assign(new Error('npm failed'), { stderr: 'npm error code EAI_AGAIN' })
+    }
+    const prepareManagedUpdate = (): Promise<() => Promise<void>> =>
+      Promise.resolve(() => {
+        resumed += 1
+        return Promise.resolve()
+      })
+
+    await expect(
+      updater(execute, runtime(), undefined, prepareManagedUpdate).installVersion('0.1.0-rc.8'),
+    ).rejects.toMatchObject({
+      context: { operation: 'runtime.update', reason: 'install-failed' },
+    })
+    expect(resumed).toBe(1)
   })
 })

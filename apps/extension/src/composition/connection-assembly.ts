@@ -85,6 +85,8 @@ export interface RuntimeAssemblyDependencies {
   readonly currentWorkspaceFolder: () => vscode.WorkspaceFolder | undefined
   /** Late-bound publisher; the Webview event pipeline replaces it once built. */
   readonly onRuntimeUpdateProgress: (progress: DshRuntimeUpdateProgress) => void
+  /** Late-bound reconnect used after stopping an owned runtime for an update. */
+  readonly onRuntimeUpdateRestart: () => Promise<unknown>
 }
 
 export interface RuntimeAssembly {
@@ -100,7 +102,14 @@ export interface RuntimeAssembly {
 
 /** Locate the runtime, discover endpoints, and own the connection machinery. */
 export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): RuntimeAssembly {
-  const { context, configuration, diagnostics, currentWorkspaceFolder, onRuntimeUpdateProgress } = deps
+  const {
+    context,
+    configuration,
+    diagnostics,
+    currentWorkspaceFolder,
+    onRuntimeUpdateProgress,
+    onRuntimeUpdateRestart,
+  } = deps
   const runtimeLocator = new DshRuntimeLocator({
     os: platform(),
     configuredPath: () => configuration.read().runtime.executablePath,
@@ -486,6 +495,18 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
     canRestart: () => {
       const state = coordinator.getState()
       return state.kind === 'connected' && state.backend.ownership === 'managed'
+    },
+    prepareManagedUpdate: async () => {
+      const state = coordinator.getState()
+      if (platform() !== 'windows' || state.kind !== 'connected' || state.backend.ownership !== 'managed')
+        return undefined
+      appendInstallStatus('Stopping the managed DSH before updating its global package…')
+      await coordinator.disconnect()
+      appendInstallStatus('Managed DSH stopped. Continuing the update…')
+      return async () => {
+        appendInstallStatus('Restarting the updated managed DSH…')
+        await onRuntimeUpdateRestart()
+      }
     },
     onProgress: (progress) => {
       // Final verification happens after the npm process and must also reach
