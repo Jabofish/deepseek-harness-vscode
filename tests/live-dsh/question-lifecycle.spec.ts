@@ -14,7 +14,9 @@ import { redactText } from '../../packages/dsh-adapter/src/redaction.js'
 import { canConnect, startManagedRuntime, spawnManagedChild } from './harness.js'
 
 const version = process.env.DSH_LIVE_RUNTIME_VERSION ?? ''
-const enabled = process.env.DSH_LIVE_SMOKE === '1' && ['0.2.1-alpha.2', '0.2.1-rc.3'].includes(version)
+const enabled =
+  process.env.DSH_LIVE_SMOKE === '1' &&
+  ['0.2.1-alpha.2', '0.2.1-rc.3', '0.2.1-rc.4', '0.2.2-alpha.2'].includes(version)
 
 // Test-only Remote invokes the real question owner. Native Session.append records
 // the caller's tool boundaries; the question service, Gateway, Inbox, driver and
@@ -42,6 +44,16 @@ export function apply(ctx) {
     async invoke(request) {
       const agent = ctx.agents.get(request.sessionId) ?? (await ctx.agents.resume({resumeSessionId:request.sessionId})).agent
       const session = agent.session
+      if (request.op === 'approval') {
+        const controller = new AbortController()
+        const state = {done:false,controller}
+        calls.set(request.callId,state)
+        void ctx.userQuestions.ask({agent,signal:controller.signal,questions:[{
+          id:'fixture-access',question:'Allow fixture access?',detail:'Read fixture data once',
+          options:[{label:'Allow once'},{label:'Reject'}],intent:{kind:'approval',approve:'Allow once',reject:'Reject'},
+        }]}).then(value=>{state.answer=value;state.done=true},error=>{state.failure=String(error);state.done=true})
+        return {started:true}
+      }
       if (request.op === 'start') {
         const questions = [{id:'first',question:'First?',options:[{label:'One'},{label:'Two'}]}, {id:'second',question:'Second?'}]
         const callId = request.callId
@@ -85,6 +97,7 @@ export function apply(ctx) {
         pending:agent.inbox.nextTurn.length + agent.inbox.nextStep.length,
         done:calls.get(request.callId)?.done ?? false,
         failure:calls.get(request.callId)?.failure ?? null,
+        answer:calls.get(request.callId)?.answer ?? null,
       }
       throw new Error('Unknown fixture operation')
     }
@@ -217,6 +230,41 @@ describe.skipIf(!enabled)('real DSH question lifecycle in an isolated profile', 
         { id: 'first', response: ['One'] },
         { id: 'second', response: 'fixture answer' },
       ]
+      if (version === '0.2.2-alpha.2') {
+        const approvalCall = randomUUID()
+        await invoke('approval', { callId: approvalCall })
+        await vi.waitFor(
+          () =>
+            expect(
+              events.some(
+                (event) => event.type === 'question.requested' && event.question.id === 'fixture-access',
+              ),
+            ).toBe(true),
+          { timeout: 10000 },
+        )
+        const approval = events.findLast(
+          (event): event is Extract<BackendEvent, { type: 'question.requested' }> =>
+            event.type === 'question.requested' && event.question.id === 'fixture-access',
+        )!.question
+        expect(approval.allowFreeText).toBe(false)
+        await expect(
+          backend.interactions.respondToQuestion('fixture-access', 'custom text', undefined, {
+            sessionId: session.id,
+            rpcId: approval.rpcId!,
+          }),
+        ).rejects.toThrow()
+        await backend.interactions.respondToQuestion('fixture-access', ['Allow once'], undefined, {
+          sessionId: session.id,
+          rpcId: approval.rpcId!,
+        })
+        await vi.waitFor(
+          async () =>
+            expect((await invoke('status', { callId: approvalCall })).answer).toMatchObject({
+              answers: [{ id: 'fixture-access', selected: ['Allow once'] }],
+            }),
+          { timeout: 10000 },
+        )
+      }
       const batchCall = randomUUID()
       await invoke('start', { callId: batchCall })
       const batch = await waitQuestion(batchCall)

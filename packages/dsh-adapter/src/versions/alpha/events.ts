@@ -33,12 +33,14 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
     private readonly mapEvent: (event: BackendEvent) => BackendEvent = (event) => event,
     private readonly createSessionNormalizer?: () =>
       ((frame: unknown) => BackendEvent | undefined) | undefined,
+    normalizeGlobalEvent?: (frame: unknown) => BackendEvent | undefined,
   ) {
     this.global = new DshStreamController(transport, (event) => this.handleObserved(event, true), recover, {
       // The global controller shares the alpha transport with the workspace
       // and per-session controllers. The backend owns the one transport
       // lifecycle; a logical stream must not tear down its siblings.
       closeTransport: false,
+      ...(normalizeGlobalEvent === undefined ? {} : { normalizeEvent: normalizeGlobalEvent }),
     })
     this.workspace = new DshStreamController(transport, (event) => this.handleObserved(event), undefined, {
       streamSource: (signal) => transport.openWorkspaceStream(signal),

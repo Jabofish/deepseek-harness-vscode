@@ -585,9 +585,7 @@ export class Rc6SessionRepository implements SessionRepository {
     attachmentId: string,
     signal?: AbortSignal,
   ): Promise<PromptAttachment> {
-    const value = recordOrUndefined(
-      await callRpc<unknown>(this.transport, 'session.attachment', { sessionId, attachmentId }, signal),
-    )
+    const value = recordOrUndefined(await this.requestAttachment(sessionId, attachmentId, signal))
     const reference = asRecord(value?.attachment)
     const rawData = typeof value?.data === 'string' ? value.data : ''
     const dataUri = parseBase64DataUri(rawData)
@@ -631,6 +629,14 @@ export class Rc6SessionRepository implements SessionRepository {
       name: safeAttachmentName(typeof reference.name === 'string' ? reference.name : attachmentId),
       mimeType: resolvedMediaType,
     }
+  }
+
+  protected requestAttachment(
+    sessionId: string,
+    attachmentId: string,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    return callRpc(this.transport, 'session.attachment', { sessionId, attachmentId }, signal)
   }
 
   public async setArchived(sessionId: string, archived: boolean, signal?: AbortSignal): Promise<void> {

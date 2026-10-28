@@ -16,6 +16,7 @@ export type PluginBundleFailureCode =
   | 'bundle-in-use'
   | 'stale-approval'
   | 'incompatible-version'
+  | 'unsupported-platform'
   | 'operation-error'
 
 export type PluginBundleApplication = 'applied' | 'restart-required' | 'overridden' | 'failed' | 'cancelled'

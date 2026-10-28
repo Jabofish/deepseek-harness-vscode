@@ -1930,5 +1930,6 @@
   "settings.dshUpdateRestartManaged": "安装完成，重启 DSH 后使用新版本。",
   "settings.dshUpdateRestartFailed": "DSH 重启失败，请检查连接状态后重试。",
   "sessions.actions": "会话操作：{title}",
-  "sessions.actionsTitle": "会话操作"
+  "sessions.actionsTitle": "会话操作",
+  "plugins.manager.failure.unsupportedPlatform": "此插件不支持 DSH 所在系统或架构。"
 }
