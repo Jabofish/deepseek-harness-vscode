@@ -68,6 +68,8 @@ public static class DshLockOwners {
 }
 '@
 $files = [string[]](ConvertFrom-Json ([Console]::In.ReadToEnd()))
+[Console]::Out.WriteLine('DSH_LOCK_QUERY_READY')
+[Console]::Out.Flush()
 $owners = @([DshLockOwners]::Query($files))
 ConvertTo-Json -InputObject $owners -Compress
 `
@@ -94,6 +96,7 @@ export async function findWindowsLockOwners(
       )
       let output = ''
       let settled = false
+      let queryStarted = false
       const finish = (owners: readonly WindowsLockOwner[]): void => {
         if (settled) return
         settled = true
@@ -102,14 +105,28 @@ export async function findWindowsLockOwners(
         child.stdout.destroy()
         resolve(owners)
       }
-      const timer = setTimeout(() => {
+      const timeout = (): void => {
         child.kill()
         finish([])
-      }, 5_000)
+      }
+      // PowerShell startup and Add-Type compilation can exceed the query budget
+      // under load. Allow 15s to initialise, then at most 5s for Restart Manager.
+      let timer = setTimeout(timeout, 15_000)
       child.once('error', () => finish([]))
       child.stdin.on('error', () => undefined)
-      child.stdout.on('data', (chunk: Buffer) => {
-        output = (output + chunk.toString('utf8')).slice(-32_768)
+      child.stdout.setEncoding('utf8')
+      child.stdout.on('data', (chunk: string) => {
+        if (settled) return
+        output = (output + chunk).slice(-32_768)
+        if (!queryStarted) {
+          const newline = output.indexOf('\n')
+          if (newline >= 0 && output.slice(0, newline).trim() === 'DSH_LOCK_QUERY_READY') {
+            queryStarted = true
+            output = output.slice(newline + 1)
+            clearTimeout(timer)
+            timer = setTimeout(timeout, 5_000)
+          }
+        }
       })
       child.once('close', () => {
         try {

@@ -6,6 +6,8 @@ Release entries describe behaviour at that release. `Unreleased` lists changes a
 
 ## Unreleased
 
+## 0.4.2
+
 - 逐版本适配 DSH `0.2.1-rc.4` 与 `0.2.2-alpha.2`，保留独立精确入口与安装默认。新 alpha 显式激活实时会话；读取历史图片前校验会话归属；支持固定选项的阻塞授权、模型目录刷新和明确的平台不支持错误。DSH 新 alpha 需要 Node >=24.9.0。
 - Adds separate exact adapters for DSH `0.2.1-rc.4` and `0.2.2-alpha.2`, preserving the installation default. The new alpha explicitly activates live sessions, checks session ownership before historical image reads, and supports fixed-choice blocking approvals, model catalogue invalidation and platform refusal messages. This DSH alpha requires Node >=24.9.0.
 - 修复 DSH `0.2.2-alpha.2` 中仅由工具结果引用的历史图片无法加载：会话归属查找包含已验证的工具结果，跨会话引用及无效工具/图片记录仍在读取字节前拒绝。
@@ -14,8 +16,8 @@ Release entries describe behaviour at that release. `Unreleased` lists changes a
 - Stabilizes long-conversation scrolling and layout: streaming content, virtual-list measurements and older-history loading keep the visible row in place, with tail activity below the last row. The statistics area retains its height while contents fluctuate and resets for a different width or session.
 - Windows 安装先在独立目录验证新版，再停止扩展持有的完整进程树并切换全局包及启动入口；绕过 npm 对旧目录的 `reify:retireShallow` 复制回退，文件锁只重试两秒。切换失败回滚，下次安装恢复中断事务；旧目录清理不阻塞完成。外部进程不会被终止，配置和会话保持原位置。
 - Windows installs verify the new CLI in a separate directory, then stop the owned process tree and switch the global package and launchers. This bypasses npm's old-tree `reify:retireShallow` copy fallback, with two seconds of file-lock retries. Failed switches roll back, interrupted transactions recover on the next install, and retired-tree cleanup does not delay completion. External processes are never terminated; configurations and sessions retain their locations.
-- Windows 仍有占用时，通过 Restart Manager 尝试在安装输出列出持锁进程名称及 PID；该诊断有时间和扫描上限，不把进程信息传给 Webview，也不会终止外部进程。
-- When Windows files remain in use, a bounded Restart Manager query reports identified process names and PIDs in installation output. Process details stay in the Host; diagnostics never terminate external processes.
+- Windows 仍有占用时，通过 Restart Manager 尝试在安装输出列出持锁进程名称及 PID；初始化最多 15 秒，查询最多 5 秒，并限制扫描范围。高负载下的初始化不再占用查询预算；进程信息仅保留在 Host，不终止外部进程。
+- When Windows files remain in use, Restart Manager reports identified process names and PIDs in installation output. Initialisation has a 15-second limit, followed by a five-second query with bounded file scanning, so startup under load retains the query budget. Process details stay in the Host; diagnostics never terminate external processes.
 - 全局安装 DSH 前增加原生确认，并以 `--ignore-scripts` 禁用安装脚本；`dsh.runtime.executablePath` 不再允许工作区设置覆盖，且拒绝 UNC 网络路径。
 - Global DSH installs now require a native confirmation and run with `--ignore-scripts`; `dsh.runtime.executablePath` is no longer overridable by workspace settings and UNC paths are rejected.
 - 拒绝运行配置的 DSH 后，缓存中的同一路径也不会执行；网络及设备路径在访问前拦截。导出历史读取与输出分别限制为 64 MiB，超限后停止读取。

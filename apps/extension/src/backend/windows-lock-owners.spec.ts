@@ -23,6 +23,6 @@ describe('Windows lock owner diagnostics', () => {
         await fs.rm(root, { recursive: true, force: true, maxRetries: 5 })
       }
     },
-    15_000,
+    35_000,
   )
 })

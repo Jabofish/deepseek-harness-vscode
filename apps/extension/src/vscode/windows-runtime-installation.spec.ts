@@ -129,7 +129,7 @@ describe('transactional Windows DSH installation', () => {
         await stopFixtureChild(locker)
       }
     },
-    20_000,
+    35_000,
   )
   it('preserves an unreadable recovery journal and its previous-package backup', async () => {
     const { root, dependencies } = await fixture()
@@ -184,7 +184,7 @@ describe('transactional Windows DSH installation', () => {
           context: { reason: 'files-in-use' },
         })
         const elapsed = Date.now() - started
-        expect(elapsed).toBeLessThan(12_000)
+        expect(elapsed).toBeLessThan(25_000)
         expect(await version()).toBe('0.2.1-rc.3')
         expect(await fs.readFile(path.join(root, 'dsh.cmd'), 'utf8')).toBe('launcher 0.2.1-rc.3')
         expect(locker.exitCode).toBeNull()
@@ -198,7 +198,7 @@ describe('transactional Windows DSH installation', () => {
       await installWindowsRuntime(args, options, dependencies)
       expect(await version()).toBe('0.2.2-alpha.2')
     },
-    20_000,
+    35_000,
   )
   it('verifies staging before stopping DSH, then switches the package and all global launchers', async () => {
     const { root, version, dependencies } = await fixture()
