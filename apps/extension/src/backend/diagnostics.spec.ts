@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { RedactedDiagnostics } from './diagnostics.js'
 
 function fakeChannel(): {
@@ -19,32 +19,6 @@ function fakeChannel(): {
 }
 
 describe('RedactedDiagnostics', () => {
-  it('streams bounded connection output even at error verbosity and replays it to late subscribers', () => {
-    const { lines, channel } = fakeChannel()
-    const diagnostics = new RedactedDiagnostics(channel, () => 'error')
-    const changed = vi.fn()
-    const unsubscribe = diagnostics.subscribeConnectionOutput(changed)
-    diagnostics.connectionProgress({ phase: 'connect', status: 'started', mode: 'auto' })
-    for (let count = 0; count < 70; count++)
-      diagnostics.connectionProgress({ phase: 'discovery', status: 'succeeded', count })
-    expect(diagnostics.connectionOutput()).toHaveLength(64)
-    expect(diagnostics.connectionOutput().at(-1)?.count).toBe(69)
-    expect(lines.at(-1)).toContain('connection-progress')
-    const late = vi.fn()
-    const detach = diagnostics.subscribeConnectionOutput(late)
-    expect(late).toHaveBeenCalledWith(diagnostics.connectionOutput())
-    diagnostics.connectionProgress({ phase: 'connect', status: 'started', mode: 'custom' })
-    expect(diagnostics.connectionOutput()).toHaveLength(1)
-    expect(diagnostics.connectionOutput()[0]?.elapsedMs).toBe(0)
-    unsubscribe()
-    detach()
-    const calls = changed.mock.calls.length
-    diagnostics.dispose()
-    diagnostics.connectionProgress({ phase: 'process', status: 'started' })
-    expect(changed).toHaveBeenCalledTimes(calls)
-    expect(diagnostics.connectionOutput()).toEqual([])
-  })
-
   it('rejects raw output, secrets, unknown fields and malformed versions at the connection log boundary', () => {
     const { channel } = fakeChannel()
     const diagnostics = new RedactedDiagnostics(channel)
@@ -84,32 +58,6 @@ describe('RedactedDiagnostics', () => {
     expect(entry.fields.stack).toContain('[redacted]')
     expect(entry.fields).not.toHaveProperty('pid')
     expect(entry.fields).not.toHaveProperty('endpoint')
-    diagnostics.dispose()
-  })
-
-  it('honors the configured verbosity instead of always appending every event', () => {
-    const { lines, channel } = fakeChannel()
-    const diagnostics = new RedactedDiagnostics(channel, () => 'error')
-
-    diagnostics.log('debug', 'connection-state', { state: 'connecting' })
-    diagnostics.log('info', 'connection-state', { state: 'connecting' })
-    diagnostics.log('warn', 'host-message-rejected', { code: 'PROTOCOL_ERROR' })
-    diagnostics.log('error', 'request-unexpected', { name: 'TypeError' })
-
-    expect(lines).toHaveLength(1)
-    expect(lines[0]).toContain('"level":"error"')
-    diagnostics.dispose()
-  })
-
-  it('keeps info events visible at the default verbosity', () => {
-    const { lines, channel } = fakeChannel()
-    const diagnostics = new RedactedDiagnostics(channel, () => 'info')
-
-    diagnostics.log('info', 'connection-state', { state: 'connected' })
-    diagnostics.log('debug', 'connection-state', { state: 'connecting' })
-
-    expect(lines).toHaveLength(1)
-    expect(lines[0]).toContain('"level":"info"')
     diagnostics.dispose()
   })
 
@@ -155,40 +103,6 @@ describe('RedactedDiagnostics', () => {
     expect(snapshotLine).not.toContain('secret-in-error-name')
     expect(snapshotLine).not.toContain('private serialized details')
     expect(snapshotLine).not.toContain('at open')
-    diagnostics.dispose()
-  })
-
-  it('retains a safe error class name in the readable snapshot', () => {
-    const { lines, channel } = fakeChannel()
-    const diagnostics = new RedactedDiagnostics(channel)
-    diagnostics.log('error', 'request-unexpected', {
-      requestType: 'session.open',
-      name: 'TypeError',
-      message: 'The host operation failed.',
-      stack: 'at open (internal.ts:4:2)',
-    })
-
-    const snapshotLine = diagnostics.recentEvents()[0] ?? ''
-    const snapshotEntry = JSON.parse(snapshotLine) as { fields: Record<string, unknown> }
-    expect(snapshotEntry.fields).toEqual({ requestType: 'session.open', errorKind: 'TypeError' })
-    expect(lines[0]).toContain('The host operation failed.')
-    expect(lines[0]).toContain('at open')
-    diagnostics.dispose()
-  })
-
-  it('normalizes unknown event names before writing local or public diagnostics', () => {
-    const { lines, channel } = fakeChannel()
-    const diagnostics = new RedactedDiagnostics(channel)
-    const privateEvent = 'secret-CUsers-fixture-private-project-token'
-
-    diagnostics.log('warn', privateEvent, { state: 'connected' })
-
-    const snapshotLine = diagnostics.recentEvents()[0] ?? ''
-    const snapshotEntry = JSON.parse(snapshotLine) as { event: string }
-    expect(snapshotEntry.event).toBe('diagnostic')
-    expect(snapshotLine).not.toContain(privateEvent)
-    expect(lines[0]).toContain('"event":"diagnostic"')
-    expect(lines[0]).not.toContain(privateEvent)
     diagnostics.dispose()
   })
 

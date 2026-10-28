@@ -14,6 +14,7 @@
     "@deepseek-ai/dsh-session-format-v3-to-v4": "0.1.7-alpha.1",
     "@dsh-vscode/application": "workspace:*",
     "@dsh-vscode/domain": "workspace:*",
+    "@dsh-vscode/dsh-session-codec-alpha222": "workspace:*",
     "dsh-session-format-alpha211": "npm:@deepseek-ai/dsh-session-format-v3-to-v4@0.2.1-alpha.1",
     "dsh-session-format-alpha212": "npm:@deepseek-ai/dsh-session-format-v3-to-v4@0.2.1-alpha.2",
     "ws": "8.21.3",

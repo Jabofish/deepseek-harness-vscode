@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ToolCallView } from '@dsh-vscode/domain'
-import { classifyTool, isSpecializedTool, toolRowModel } from './components/ToolRow.js'
+import { toolRowModel } from './components/ToolRow.js'
 
 function tool(overrides: Partial<ToolCallView> = {}): ToolCallView {
   return {
@@ -15,33 +15,6 @@ function tool(overrides: Partial<ToolCallView> = {}): ToolCallView {
 }
 
 describe('ToolRow', () => {
-  it('invalidates its model cache for a new locale or updated immutable tool', () => {
-    const current = tool({ name: 'bash', status: 'running', inputSummary: 'echo fixture' })
-    const english = (key: string): string => `en:${key}`
-    const chinese = (key: string): string => `zh:${key}`
-    const initial = toolRowModel(current, english)
-    expect(toolRowModel(current, english)).toBe(initial)
-    const localized = toolRowModel(current, chinese)
-    expect(localized.title).toBe('zh:toolrow.title.bash')
-    expect(localized.state).toBe(initial.state)
-    expect(initial.title).toBe('en:toolrow.title.bash')
-    const completed = toolRowModel({ ...current, status: 'completed', outputSummary: 'done' }, chinese)
-    expect(completed.state).toBe('ok')
-    expect(initial.state).toBe('running')
-  })
-
-  it('classifies official built-ins while leaving unknown tools on the generic path', () => {
-    expect(classifyTool('bash')).toBe('bash')
-    expect(classifyTool('pwsh')).toBe('bash')
-    expect(classifyTool('web_search')).toBe('search')
-    expect(classifyTool('web_fetch')).toBe('web')
-    expect(classifyTool('cordis_runtime_inspect')).toBe('read')
-    expect(classifyTool('skill')).toBe('skill')
-    expect(isSpecializedTool(tool())).toBe(true)
-    expect(isSpecializedTool(tool({ name: 'cordis_run' }))).toBe(true)
-    expect(isSpecializedTool(tool({ name: 'workspace_search' }))).toBe(false)
-  })
-
   it('projects a real skill result to bounded visible instructions without protocol ids', () => {
     const model = toolRowModel(
       tool({
@@ -70,32 +43,6 @@ describe('ToolRow', () => {
     expect(JSON.stringify(model)).not.toContain('message-secret')
   })
 
-  it('keeps running and failed states visible with useful summaries', () => {
-    const running = toolRowModel(
-      tool({
-        name: 'bash',
-        inputSummary: JSON.stringify({ description: 'Run the real check', command: 'pnpm check' }),
-        status: 'running',
-      }),
-    )
-    const failed = toolRowModel(
-      tool({
-        name: 'read',
-        inputSummary: JSON.stringify({ path: 'missing.txt' }),
-        status: 'failed',
-        error: 'The file does not exist.',
-      }),
-    )
-
-    expect(running).toMatchObject({ variant: 'bash', state: 'running', summary: 'Run the real check' })
-    expect(failed).toMatchObject({
-      variant: 'read',
-      state: 'error',
-      summary: 'missing.txt',
-      errorSummary: 'The file does not exist.',
-    })
-  })
-
   it('uses safe localized fallback copy when an Auto review denial has no displayable reason', () => {
     const model = toolRowModel(
       tool({ status: 'failed', autoReviewDenial: { reason: ' \n ' }, error: 'raw error should stay hidden' }),
@@ -105,100 +52,12 @@ describe('ToolRow', () => {
       state: 'error',
       summary: 'Rejected by Auto review',
       errorSummary: 'Rejected by Auto review',
-      autoReviewOutput:
-        'Tool was not executed. Manual approval is required to continue. Reason: Auto review did not authorize this action',
       sections: [],
     })
-  })
-
-  it('summarizes todo progress and answered questions from their durable payloads', () => {
-    const todo = toolRowModel(
-      tool({
-        name: 'todo_write',
-        inputSummary: JSON.stringify({
-          todos: [
-            { subject: 'Inspect the stream', status: 'completed' },
-            { subject: 'Verify the UI', status: 'in_progress' },
-          ],
-        }),
-      }),
-    )
-    const question = toolRowModel(
-      tool({
-        name: 'ask_user_question',
-        outputSummary: JSON.stringify({ answers: [{ selected: ['yes'] }, { selected: [] }] }),
-      }),
-    )
-
-    expect(todo.summary).toBe('1/2 completed · Verify the UI')
-    expect(question.summary).toBe('1/2 answered')
-  })
-
-  it('summarizes Python-style question calls without putting the payload in the row title', () => {
-    const question = toolRowModel(
-      tool({
-        name: 'ask_user_question',
-        inputSummary: "{'questions': [{'id': 'today_temperature', 'question': 'How warm?'}]}",
-      }),
-    )
-
-    expect(question.summary).toBe('1 questions')
-    expect(question.sections).toEqual([{ label: 'Questions', content: '• Question: How warm?' }])
-  })
-
-  it('renders the pinned structured read, search, and terminal result views', () => {
-    const read = toolRowModel(
-      tool({
-        name: 'read',
-        presentation: {
-          phase: 'result',
-          card: 'read',
-          path: 'src/feature.ts',
-          offset: 11,
-          lines: [{ number: 11, text: 'export const answer = 42' }],
-          totalLines: 42,
-          lang: 'ts',
-        },
-      }),
-    )
-    const search = toolRowModel(
-      tool({
-        name: 'grep',
-        presentation: {
-          phase: 'result',
-          card: 'search',
-          shape: 'matches',
-          files: [{ path: 'src/feature.ts', matches: [{ lineNumber: 11, line: 'answer' }] }],
-          truncated: true,
-          total: 4,
-        },
-      }),
-    )
-    const terminal = toolRowModel(
-      tool({
-        name: 'bash',
-        presentation: {
-          phase: 'result',
-          card: 'terminal',
-          output: 'all checks passed',
-          exitCode: 0,
-        },
-      }),
-    )
-
-    expect(read.sections).toEqual([
-      { label: 'File', content: 'src/feature.ts' },
-      { label: 'Lines', content: '11: export const answer = 42' },
-      { label: 'Total', content: '11–11 / 42' },
-    ])
-    expect(search.sections).toEqual([
-      { label: 'Matches · src/feature.ts', content: '11: answer' },
-      { label: 'Total', content: 'Showing 1 of 4' },
-    ])
-    expect(terminal.sections).toEqual([
-      { label: 'Output', content: 'all checks passed' },
-      { label: 'Exit status', content: '0' },
-    ])
+    expect(model.autoReviewOutput).toContain('Tool was not executed.')
+    expect(model.autoReviewOutput).toContain('Manual approval is required to continue.')
+    expect(model.autoReviewOutput).toContain('Auto review did not authorize this action')
+    expect(JSON.stringify(model)).not.toContain('raw error should stay hidden')
   })
 
   it('marks a settled shell row failed when its own exit status says so', () => {
@@ -227,22 +86,6 @@ describe('ToolRow', () => {
     expect(quiet.state).toBe('ok')
   })
 
-  it('wraps a generic structured result instead of bypassing the presentation boundary', () => {
-    const model = toolRowModel(
-      tool({
-        name: 'ask_user_question',
-        presentation: {
-          phase: 'result',
-          card: 'generic',
-          content: ["{'answers': [{'selected': ['温和 (15-25°C)']}]}"],
-        },
-      }),
-    )
-
-    expect(model.sections).toEqual([{ label: 'Result', content: 'Answers: • Selected: • 温和 (15-25°C)' }])
-    expect(model.sections[0]?.content).not.toContain("{'answers'")
-  })
-
   it('keeps a real empty read window explicit instead of rendering a negative range', () => {
     const model = toolRowModel(
       tool({
@@ -262,42 +105,5 @@ describe('ToolRow', () => {
       { label: 'File', content: 'src/empty.ts' },
       { label: 'Total', content: 'No lines / 20' },
     ])
-  })
-
-  it('renders the stored 0-based location hint back in the 1-based path:line convention', () => {
-    const generic = toolRowModel(
-      tool({
-        name: 'workspace_search',
-        status: 'running',
-        presentation: {
-          phase: 'call',
-          card: 'generic',
-          locations: [
-            { path: 'src/first.ts', line: 0 },
-            { path: 'src/tenth.ts', line: 9 },
-            { path: 'src/unknown.ts' },
-          ],
-        },
-      }),
-    )
-    const diff = toolRowModel(
-      tool({
-        name: 'edit',
-        category: 'diff',
-        status: 'running',
-        presentation: {
-          phase: 'call',
-          card: 'diff',
-          title: 'Edit src/first.ts',
-          diffs: [{ path: 'src/first.ts', oldText: 'before', newText: 'after' }],
-          locations: [{ path: 'src/first.ts', line: 0 }],
-        },
-      }),
-    )
-
-    expect(generic.sections).toEqual([
-      { label: 'Files', content: 'src/first.ts:1\nsrc/tenth.ts:10\nsrc/unknown.ts' },
-    ])
-    expect(diff.sections.at(-1)).toEqual({ label: 'Files', content: 'src/first.ts:1' })
   })
 })

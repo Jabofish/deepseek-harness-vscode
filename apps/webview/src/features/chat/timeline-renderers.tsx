@@ -55,7 +55,6 @@ function renderNode(
   onOpenSession?: (sessionId: string) => void,
   onBranch?: (atSeq: number) => void,
   branchUnavailable = true,
-  running = false,
   feedback?: Readonly<Record<string, MessageFeedbackItem>>,
   onFeedback?: (messageId: string, rating: MessageFeedbackRating) => void,
   onFeedbackSubmit?: FeedbackSubmit,
@@ -106,7 +105,6 @@ function renderNode(
         t,
         onBranch,
         branchUnavailable,
-        running,
         feedback,
         onFeedback,
         onFeedbackSubmit,
@@ -377,7 +375,6 @@ function renderNode(
         t,
         onBranch,
         branchUnavailable,
-        running,
         feedback,
         onFeedback,
         onFeedbackSubmit,
@@ -416,7 +413,6 @@ function renderNode(
         t,
         undefined,
         true,
-        running,
         feedback,
         onFeedback,
         undefined,
@@ -447,7 +443,6 @@ export function renderTimelineNode(
     context.onOpenSession,
     context.onBranch,
     branchUnavailableForNode(node, context.branching),
-    context.running,
     context.feedback,
     context.onFeedback,
     context.onFeedbackSubmit,
@@ -547,7 +542,6 @@ function renderAssistantTurn(
   t: Translate = (key) => key,
   onBranch?: (atSeq: number) => void,
   branchUnavailable = true,
-  running = false,
   feedback?: Readonly<Record<string, MessageFeedbackItem>>,
   onFeedback?: (messageId: string, rating: MessageFeedbackRating) => void,
   onFeedbackSubmit?: FeedbackSubmit,
@@ -560,7 +554,7 @@ function renderAssistantTurn(
   loadFullContent?: (nodeId: string) => Promise<string>,
 ): ReactElement {
   const inProgress = assistantNodeInProgress(node)
-  const actionsUnavailable = running || inProgress || (node.turn !== undefined && node.turnCompleted !== true)
+  const actionsUnavailable = inProgress || (node.turn !== undefined && node.turnCompleted !== true)
   const producedFiles = producedFilePaths(node.tools)
   const contentBlocks = node.blocks.length === 0 ? assistantBlocksFromAggregates(node) : node.blocks
   const messageBlocks = contentBlocks.filter((block) => block.kind === 'message')
@@ -647,7 +641,6 @@ function renderAssistantMessage(
   t: Translate,
   onBranch: ((atSeq: number) => void) | undefined,
   branchUnavailable: boolean,
-  running = false,
   feedback?: Readonly<Record<string, MessageFeedbackItem>>,
   onFeedback?: (messageId: string, rating: MessageFeedbackRating) => void,
   onFeedbackSubmit?: FeedbackSubmit,
@@ -660,7 +653,7 @@ function renderAssistantMessage(
   loadFullContent?: (nodeId: string) => Promise<string>,
 ): ReactElement {
   const inProgress = assistantNodeInProgress(node)
-  const actionsUnavailable = running || inProgress || (node.turn !== undefined && node.turnCompleted !== true)
+  const actionsUnavailable = inProgress || (node.turn !== undefined && node.turnCompleted !== true)
   const truncated = truncatedNodeIds.has(node.id)
   const metricsLabel =
     performanceUsage === 'detailed' && (!focused || focusedPresentationPolicy(transcriptView).requestMetrics)

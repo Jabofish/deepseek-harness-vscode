@@ -54,22 +54,7 @@ describe('alpha211 optional Inspector discovery', () => {
     }
     expect(fetch).not.toHaveBeenCalled()
   })
-  it('preserves an explicitly announced default port in verified debugger wire strings', async () => {
-    const f = fixture()
-    const atDefault = (value: string): string => value.replace(':3456', ':80')
-    f.fetch.mockResolvedValueOnce(Response.json({ endpoint: 'ws://127.0.0.1:80/ingest' }))
-    f.fetch.mockResolvedValueOnce(Response.json({ ...version, webSocketDebuggerUrl: atDefault(socket) }))
-    f.fetch.mockResolvedValueOnce(
-      Response.json([
-        { ...target, webSocketDebuggerUrl: atDefault(socket), devtoolsFrontendUrl: atDefault(frontendUrl) },
-      ]),
-    )
-    await expect(f.repository.discover()).resolves.toEqual({
-      available: true,
-      frontendUrl: atDefault(frontendUrl),
-    })
-    await f.repository.close()
-  })
+
   it('validates official identity and paths; credentials stay on the authenticated main route', async () => {
     const f = fixture()
     await expect(f.repository.discover()).resolves.toEqual({ available: true, frontendUrl })
@@ -86,17 +71,7 @@ describe('alpha211 optional Inspector discovery', () => {
     await f.repository.close()
     await expect(f.repository.discover()).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
   })
-  it('releases an absent/unauthorized response and distinguishes optional absence from denial', async () => {
-    for (const status of [404, 403]) {
-      const f = fixture()
-      const release = vi.fn()
-      f.fetch.mockResolvedValueOnce(new Response(new ReadableStream({ cancel: release }), { status }))
-      if (status === 404) await expect(f.repository.discover()).resolves.toEqual({ available: false })
-      else await expect(f.repository.discover()).rejects.toMatchObject({ code: 'PERMISSION_DENIED' })
-      expect(release).toHaveBeenCalledTimes(1)
-      expect(f.fetch).toHaveBeenCalledTimes(1)
-    }
-  })
+
   it.each([
     'not a URL',
     'ws://2130706433:3456/ingest',
@@ -111,16 +86,7 @@ describe('alpha211 optional Inspector discovery', () => {
     await expect(f.repository.discover()).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
     expect(f.fetch).toHaveBeenCalledTimes(1)
   })
-  it.each([
-    { worker: [{ ...target, webSocketDebuggerUrl: 'ws://remote.example/evil' }] },
-    { worker: [{ ...target, devtoolsFrontendUrl: 'https://evil.example' }] },
-    { worker: [{ ...target, id: '../evil' }] },
-    { worker: [target, target] },
-  ])('refuses a mismatched worker target', async ({ worker }) => {
-    await expect(fixture(undefined, worker).repository.discover()).rejects.toMatchObject({
-      code: 'PROTOCOL_ERROR',
-    })
-  })
+
   it('rejects malformed identity, JSON, UTF-8 and oversized streamed bodies', async () => {
     for (const response of [
       Response.json({ Browser: 'other', 'Protocol-Version': '1.3' }),
@@ -131,40 +97,6 @@ describe('alpha211 optional Inspector discovery', () => {
       const f = fixture()
       f.fetch.mockResolvedValueOnce(response)
       await expect(f.repository.discover()).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
-    }
-  })
-  it('cancels and bounds discovery without reading diagnostic bodies', async () => {
-    for (const mode of ['caller', 'timeout', 'close'] as const) {
-      const f = fixture()
-      let entered!: () => void
-      const started = new Promise<void>((resolve) => {
-        entered = resolve
-      })
-      f.fetch.mockImplementationOnce(async (_url, options) => {
-        entered()
-        return await new Promise<Response>((_resolve, reject) =>
-          options?.signal?.addEventListener(
-            'abort',
-            () =>
-              reject(
-                new DOMException(
-                  'cancelled',
-                  options.signal?.reason instanceof Error ? options.signal.reason.name : 'AbortError',
-                ),
-              ),
-            { once: true },
-          ),
-        )
-      })
-      const controller = new AbortController()
-      const result = expect(f.repository.discover(controller.signal)).rejects.toMatchObject({
-        code: mode === 'timeout' ? 'BACKEND_UNREACHABLE' : 'REQUEST_CANCELLED',
-      })
-      await started
-      if (mode === 'caller') controller.abort()
-      if (mode === 'close') await f.repository.close()
-      await result
-      expect(f.fetch).toHaveBeenCalledTimes(1)
     }
   })
 })

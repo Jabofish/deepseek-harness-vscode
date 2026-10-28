@@ -10,6 +10,7 @@ import {
   type SpawnedChild,
 } from '../../apps/extension/src/backend/process-supervisor.js'
 import { resolveWindowsShim } from '../../apps/extension/src/backend/windows-shim.js'
+import { terminateOwnedWindowsTree } from '../../apps/extension/src/backend/owned-process-tree.js'
 import { VersionedBackendFactory } from '../../packages/dsh-adapter/src/backend-factory.js'
 import type { ExportFileSystem } from '../../packages/dsh-adapter/src/repositories/export-repository.js'
 import { managedWebArguments } from '../../packages/dsh-adapter/src/launch-contract.js'
@@ -34,6 +35,8 @@ import { Alpha215VersionAdapter } from '../../packages/dsh-adapter/src/versions/
 import { Rc211VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc211/adapter.js'
 import { Rc212VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc212/adapter.js'
 import { Rc213VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc213/adapter.js'
+import { Rc214VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc214/adapter.js'
+import { Alpha222VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha222/adapter.js'
 import { Alpha211VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha211/adapter.js'
 import { acquireManagedRuntimeScope, type ManagedRuntimeScope } from './runtime-scope.js'
 import { resolveLiveRuntime } from './runtime.js'
@@ -207,6 +210,8 @@ export async function startManagedRuntime(options?: {
     steps.push(`managed start pid=${started.pid} endpoint=${started.endpoint.baseUrl}`)
 
     const adapters = [
+      new Alpha222VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
+      new Rc214VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
       new Rc213VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
       new Rc212VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
       new Rc211VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
@@ -382,6 +387,7 @@ export function spawnManagedChild(
     kill: (signal?: NodeJS.Signals) => {
       child.kill(signal)
     },
+    ...(process.platform === 'win32' ? { terminateTree: () => terminateOwnedWindowsTree(child) } : {}),
     exited,
   }
 }

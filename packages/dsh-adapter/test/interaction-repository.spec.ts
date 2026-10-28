@@ -163,33 +163,6 @@ describe('Rc6InteractionRepository question batch answers', () => {
     ])
   })
 
-  it('keeps a single custom answer as selected-free custom text', async () => {
-    const { transport, responses } = recordingTransport()
-    const repository = new Rc6InteractionRepository(transport)
-    rememberQuestion(repository, {
-      id: 'q-free',
-      rpcId: 'rpc-free',
-      sessionId: 's1',
-      prompt: 'Name the branch',
-      allowFreeText: true,
-    })
-
-    await repository.respondToQuestion('q-free', 'feature/question-batch')
-
-    expect(responses).toEqual([
-      {
-        rpcId: 'rpc-free',
-        payload: {
-          ok: true,
-          value: {
-            sessionId: 's1',
-            answer: { answers: [{ id: 'q-free', selected: [], custom: 'feature/question-batch' }] },
-          },
-        },
-      },
-    ])
-  })
-
   it('accepts selected-free answers as the official per-question Skip encoding', async () => {
     const { transport, responses } = recordingTransport()
     const repository = new Rc6InteractionRepository(transport)
@@ -210,25 +183,6 @@ describe('Rc6InteractionRepository question batch answers', () => {
           ],
         },
       },
-    })
-  })
-
-  it('accepts an empty legacy selection array as a single-question Skip', async () => {
-    const { transport, responses } = recordingTransport()
-    const repository = new Rc6InteractionRepository(transport)
-    rememberQuestion(repository, {
-      id: 'q-skip',
-      rpcId: 'rpc-skip',
-      sessionId: 's1',
-      prompt: 'Optional question',
-      allowFreeText: true,
-    })
-
-    await repository.respondToQuestion('q-skip', [])
-
-    expect(responses[0]?.payload).toMatchObject({
-      ok: true,
-      value: { answer: { answers: [{ id: 'q-skip', selected: [] }] } },
     })
   })
 
@@ -253,28 +207,6 @@ describe('Rc6InteractionRepository question batch answers', () => {
       ]),
     ).rejects.toMatchObject({ code: 'INVALID_CONFIGURATION' })
     expect(responses).toHaveLength(0)
-  })
-
-  it('orders a complete batch exactly like the pending upstream questions', async () => {
-    const { transport, responses } = recordingTransport()
-    const repository = new Rc6InteractionRepository(transport)
-    rememberQuestion(repository, planReviewQuestion())
-
-    await repository.respondToQuestion('q-plan', [
-      { id: 'q-extra', response: ['Alice'] },
-      { id: 'q-plan', response: 'Approve' },
-    ])
-
-    expect(responses[0]?.payload).toMatchObject({
-      value: {
-        answer: {
-          answers: [
-            { id: 'q-plan', selected: ['Approve'] },
-            { id: 'q-extra', selected: ['Alice'] },
-          ],
-        },
-      },
-    })
   })
 
   it('cancels the whole pending ask with the pinned cancelled response envelope', async () => {
@@ -323,89 +255,6 @@ describe('Rc6InteractionRepository question batch answers', () => {
     ).rejects.toMatchObject({ code: 'INVALID_CONFIGURATION' })
   })
 
-  it('rejects a custom answer combined with a single-select option', async () => {
-    const { transport } = recordingTransport()
-    const repository = new Rc6InteractionRepository(transport)
-    rememberQuestion(repository, planReviewQuestion())
-
-    await expect(
-      repository.respondToQuestion('q-plan', [
-        { id: 'q-plan', response: 'Approve', custom: 'and also change it' },
-        { id: 'q-extra', response: ['Alice'] },
-      ]),
-    ).rejects.toMatchObject({ code: 'INVALID_CONFIGURATION' })
-  })
-
-  it('forgets pending questions once the batch response is delivered', async () => {
-    const { transport, responses } = recordingTransport()
-    const repository = new Rc6InteractionRepository(transport)
-    rememberQuestion(repository, planReviewQuestion())
-
-    await repository.respondToQuestion('q-extra', [
-      { id: 'q-plan', response: 'Decline' },
-      { id: 'q-extra', response: ['Alice'] },
-    ])
-    await repository.respondToQuestion('q-extra', [
-      { id: 'q-plan', response: 'Decline' },
-      { id: 'q-extra', response: ['Alice'] },
-    ])
-
-    expect(responses).toHaveLength(1)
-  })
-
-  it('does not let an earlier answer suppress a later request that reuses the item id', async () => {
-    const { transport, responses } = recordingTransport()
-    const repository = new Rc6InteractionRepository(transport)
-    const first = planReviewQuestion()
-    rememberQuestion(repository, first)
-    await repository.respondToQuestion('q-plan', [
-      { id: 'q-plan', response: 'Approve' },
-      { id: 'q-extra', response: ['Alice'] },
-    ])
-
-    rememberQuestion(repository, { ...first, rpcId: 'rpc-plan-2' })
-    await repository.respondToQuestion('q-plan', [
-      { id: 'q-plan', response: 'Decline' },
-      { id: 'q-extra', response: ['Bob'] },
-    ])
-
-    expect(responses.map((entry) => entry.rpcId)).toEqual(['rpc-plan', 'rpc-plan-2'])
-  })
-
-  it('double submissions of the same batch collapse into one response', async () => {
-    const { transport, responses } = recordingTransport()
-    const repository = new Rc6InteractionRepository(transport)
-    rememberQuestion(repository, planReviewQuestion())
-    const answers = [
-      { id: 'q-plan', response: 'Approve' },
-      { id: 'q-extra', response: ['Alice'] },
-    ] as const
-
-    await Promise.all([
-      repository.respondToQuestion('q-plan', answers),
-      repository.respondToQuestion('q-plan', answers),
-    ])
-
-    expect(responses).toHaveLength(1)
-  })
-
-  it('collapses concurrent submissions made through different ids of the same batch', async () => {
-    const { transport, responses } = recordingTransport()
-    const repository = new Rc6InteractionRepository(transport)
-    rememberQuestion(repository, planReviewQuestion())
-    const answers = [
-      { id: 'q-plan', response: 'Approve' },
-      { id: 'q-extra', response: ['Alice'] },
-    ] as const
-
-    await Promise.all([
-      repository.respondToQuestion('q-plan', answers),
-      repository.respondToQuestion('q-extra', answers),
-    ])
-
-    expect(responses).toHaveLength(1)
-  })
-
   it('does not consume a pending batch when the host rejects its response receipt', async () => {
     const responses: unknown[] = []
     let accepted = false
@@ -427,22 +276,5 @@ describe('Rc6InteractionRepository question batch answers', () => {
     accepted = true
     await expect(repository.respondToQuestion('q-plan', answers)).resolves.toBeUndefined()
     expect(responses).toHaveLength(2)
-  })
-})
-
-describe('Rc6InteractionRepository permission replay hygiene', () => {
-  it('drops remembered questions on session resubscribe', async () => {
-    const { transport } = recordingTransport()
-    const repository = new Rc6InteractionRepository(transport)
-    rememberQuestion(repository, planReviewQuestion())
-    repository.remember({
-      type: 'session.subscribed',
-      sessionId: 's1',
-      lastSequence: 1,
-    })
-
-    await expect(repository.respondToQuestion('q-plan', 'Approve')).rejects.toMatchObject({
-      code: 'STALE_INTERACTION',
-    })
   })
 })

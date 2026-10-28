@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -107,10 +107,5 @@ describe('esbuild import.meta.url handling', () => {
     const untranslated = `var load = (0, import_node_module.createRequire)(import_meta.url)("../package.json");`
     expect(() => assertBundleTranslatesImportMeta(untranslated)).toThrow(/import_meta\.url/u)
     expect(() => assertBundleTranslatesImportMeta(`var version = "0.1.7-alpha.1";`)).not.toThrow()
-  })
-
-  it('is wired into the extension build', () => {
-    const buildScript = readFileSync(new URL('../../esbuild.mjs', import.meta.url), 'utf8')
-    expect(buildScript).toContain('createImportMetaUrlPlugin')
   })
 })

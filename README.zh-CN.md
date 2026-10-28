@@ -8,6 +8,8 @@
 
 **DeepSeek Harness Companion for VS Code** 把本地或远程 [DeepSeek Harness（DSH）](https://github.com/deepseek-ai/deepseek-harness)会话带进编辑器。在代码旁查看流式回复、思考、工具、审批和会话历史。
 
+这是一个非官方的 DeepSeek Harness 扩展。
+
 ## 可以做什么
 
 - 在工作区中创建、切换、恢复和归档会话。
@@ -51,6 +53,8 @@ DeepSeek Harness 的 Chat 视图默认注册在辅助侧边栏（VS Code 默认�
 | `custom`       | 只探测用户给定且经过校验的单个 HTTP(S) 端点。              |
 
 常规设置页可以检查上游包版本并安装已验证的精确版本。更新全局包不会停止外部 DSH。
+
+Windows 安装时先在同一磁盘的独立目录安装并验证新版 CLI，再切换全局包和启动入口。切换前只停止扩展持有的 DSH 进程树，完成后恢复连接。文件锁重试最多两秒；无法切换时保留旧包并提示重试。安装输出会通过 Windows Restart Manager 尝试列出剩余占用程序的名称和 PID，关闭对应程序后可重试。切换失败会恢复原包及启动入口，中断的切换在下次安装时恢复。磁盘需临时容纳两个版本，配置和会话仍保留在原位置。
 
 ## 连接外部实例
 

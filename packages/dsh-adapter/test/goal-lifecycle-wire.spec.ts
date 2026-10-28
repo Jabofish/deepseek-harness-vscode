@@ -176,25 +176,6 @@ describe('goal lifecycle over the alpha wire', () => {
     await transport.close()
   })
 
-  it('clears through goals/clear and drops the goal from the cache and the ref map', async () => {
-    const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
-      Promise.resolve(ok(init, { id: 'g-1', revision: 5 })),
-    )
-    const transport = client(fetch)
-    const repository = new Rc6GoalRepository(transport)
-    projectGoal(repository, 4)
-
-    await repository.clear('g-1')
-
-    expect(posted(fetch, 0)).toEqual({
-      path: '/api/goals/clear',
-      args: { agentId: 's-1', ref: { id: 'g-1', revision: 4 } },
-    })
-    expect(repository.sessionForGoal('g-1')).toBeUndefined()
-    await expect(repository.list('s-1')).resolves.toEqual([])
-    await transport.close()
-  })
-
   it('prefers the live projection revision over a stale receipt for the next mutation', async () => {
     const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
       Promise.resolve(

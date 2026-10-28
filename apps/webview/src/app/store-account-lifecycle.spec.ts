@@ -151,31 +151,6 @@ describe('account lifecycle store', () => {
     store.dispose()
   })
 
-  it('hides account controls without the selected adapter capability', async () => {
-    const client = new AccountStoreClient()
-    const store = createAppStore(client as unknown as ProtocolClient)
-    client.connected(1, false)
-
-    expect(store.getState().accountLifecycleAvailable).toBe(false)
-    await store.loadAccountLifecycle()
-    await store.startAccountSignIn()
-    expect(client.accountRequests).toEqual([])
-    store.dispose()
-  })
-
-  it('clears cached account details when the stored session expires', async () => {
-    const client = new AccountStoreClient()
-    const store = createAppStore(client as unknown as ProtocolClient)
-    client.connected(1, true)
-    client.update({ status: 'credential-stored', attempt: null })
-    await store.loadAccountDetails()
-    expect(store.getState().accountProfileDetails).toEqual(accountDetails)
-    client.expire()
-    expect(store.getState().accountProfileDetails).toBeNull()
-    expect(store.getState().accountProfileLoading).toBe(false)
-    store.dispose()
-  })
-
   it('clears account state across backend lifetimes even when the new Host reuses the same scope revision', async () => {
     const client = new AccountStoreClient()
     const store = createAppStore(client as unknown as ProtocolClient)

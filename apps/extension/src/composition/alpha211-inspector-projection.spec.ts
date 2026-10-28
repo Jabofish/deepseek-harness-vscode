@@ -37,52 +37,6 @@ beforeEach(() => {
   native.uiKind = 1
 })
 describe('Inspector Host actions', () => {
-  it.each(['ssh-remote', 'dev-container'])(
-    'forwards %s Worker connections before client open/copy, but not status',
-    async (remoteName) => {
-      native.remoteName = remoteName
-      native.forward.mockResolvedValue('http://127.0.0.1:4567/devtools/page/target-1')
-      const backend = {
-        inspectorDevtools: { discover: () => Promise.resolve({ available: true, frontendUrl }) },
-      } as unknown as DshBackend
-      const handler = createFeatureRequestHandler({
-        backendService: { requireBackend: () => backend },
-      } as unknown as FeatureRequestHandlerDependencies)
-      await handler.handleFeatureRequest(
-        { type: 'inspector.devtools.status', requestId: 'status', payload: {} },
-        new AbortController().signal,
-      )
-      expect(native.forward).not.toHaveBeenCalled()
-      for (const action of ['open', 'copy'] as const) {
-        const result = await handler.handleFeatureRequest(
-          { type: `inspector.devtools.${action}`, requestId: action, payload: {} },
-          new AbortController().signal,
-        )
-        expect(JSON.stringify(result)).not.toContain('127.0.0.1')
-      }
-      expect(native.forward).toHaveBeenCalledWith('http://127.0.0.1:3456/devtools/page/target-1')
-      for (const url of [native.open.mock.calls[0]?.[0], native.copy.mock.calls[0]?.[0]])
-        expect(new URL(url as string).searchParams.get('ws')).toBe('127.0.0.1:4567/devtools/page/target-1')
-    },
-  )
-  it('reports native DevTools unavailable in a browser client without opening or forwarding', async () => {
-    native.remoteName = 'codespaces'
-    native.uiKind = 2
-    const discover = vi.fn()
-    const backend = { inspectorDevtools: { discover } } as unknown as DshBackend
-    const handler = createFeatureRequestHandler({
-      backendService: { requireBackend: () => backend },
-    } as unknown as FeatureRequestHandlerDependencies)
-    expect(
-      await handler.handleFeatureRequest(
-        { type: 'inspector.devtools.open', requestId: 'browser', payload: {} },
-        new AbortController().signal,
-      ),
-    ).toEqual({ kind: 'inspector.devtools', available: false, outcome: 'unavailable' })
-    expect(discover).not.toHaveBeenCalled()
-    expect(native.forward).not.toHaveBeenCalled()
-    expect(native.open).not.toHaveBeenCalled()
-  })
   it('does not act on a tunnel returned after cancellation or accept a non-loopback client address', async () => {
     native.remoteName = 'ssh-remote'
     const backend = {

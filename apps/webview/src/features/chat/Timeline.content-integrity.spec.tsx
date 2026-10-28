@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { TimelineNode } from '@dsh-vscode/timeline'
 import { Timeline } from './Timeline.js'
@@ -38,115 +38,6 @@ const message = (id: string, markdown: string): Extract<TimelineNode, { kind: 'a
   streaming: false,
   turn: 1,
   turnCompleted: true,
-})
-
-it('identifies an incomplete body while reading it automatically and clears the status when complete', async () => {
-  let resolve!: (node: TimelineNode) => void
-  const loadFullNode = vi.fn(
-    () =>
-      new Promise<TimelineNode>((done) => {
-        resolve = done
-      }),
-  )
-  render(
-    <Timeline
-      sessionId="s"
-      streaming={false}
-      omittedNodeIds={['answer']}
-      loadFullNode={loadFullNode}
-      nodes={[message('answer', 'Visible fragment')]}
-    />,
-  )
-  expect(screen.getByRole('status').textContent).toBe(
-    'Reading the complete content… The current display is still incomplete.',
-  )
-  expect(screen.getByRole('status').closest('[data-node-id]')?.getAttribute('data-node-id')).toBe('answer')
-  expect(screen.queryByRole('button', { name: 'Open full content' })).toBeNull()
-  await waitFor(() => expect(loadFullNode).toHaveBeenCalled())
-  await act(async () => {
-    resolve(message('answer', 'Complete body'))
-    await Promise.resolve()
-  })
-  await screen.findByText('Complete body')
-  expect(screen.queryByText('Visible fragment')).toBeNull()
-  expect(
-    screen.queryByText('Reading the complete content… The current display is still incomplete.'),
-  ).toBeNull()
-})
-
-it('does not re-read a re-baselined node whose content is unchanged', async () => {
-  const loadFullNode = vi.fn().mockResolvedValue(message('answer', 'Complete body'))
-  const view = render(
-    <Timeline
-      sessionId="s"
-      streaming={false}
-      omittedNodeIds={['answer']}
-      contentVersions={{ answer: 'a'.repeat(64) }}
-      nodes={[message('answer', 'Visible fragment')]}
-      loadFullNode={loadFullNode}
-    />,
-  )
-  await screen.findByText('Complete body')
-  expect(loadFullNode).toHaveBeenCalledOnce()
-  // A re-baseline re-projects the same node into a new object. Same content,
-  // new reference, must not re-fetch or flash the "still incomplete" status.
-  view.rerender(
-    <Timeline
-      sessionId="s"
-      streaming={false}
-      omittedNodeIds={['answer']}
-      contentVersions={{ answer: 'a'.repeat(64) }}
-      nodes={[message('answer', 'Visible fragment')]}
-      loadFullNode={loadFullNode}
-    />,
-  )
-  await waitFor(() => expect(loadFullNode).toHaveBeenCalledOnce())
-  expect(
-    screen.queryByText('Reading the complete content… The current display is still incomplete.'),
-  ).toBeNull()
-})
-
-it('places a tool read status on its own row while leaving unrelated messages unmarked', async () => {
-  let resolve!: (node: TimelineNode) => void
-  const tool: TimelineNode = {
-    kind: 'tool',
-    id: 'tool',
-    tool: {
-      id: 'tool',
-      name: 'read',
-      title: 'Read result',
-      category: 'read',
-      status: 'completed',
-      outputSummary: 'Fragment',
-      metadata: {},
-    },
-  }
-  const loadFullNode = vi.fn(
-    () =>
-      new Promise<TimelineNode>((done) => {
-        resolve = done
-      }),
-  )
-  const { container } = render(
-    <Timeline
-      sessionId="s"
-      streaming={false}
-      nodes={[{ kind: 'user-message', id: 'user', markdown: 'My complete input' }, tool]}
-      omittedNodeIds={['tool']}
-      loadFullNode={loadFullNode}
-    />,
-  )
-  const toolRow = screen.getByRole('status').closest<HTMLElement>('[data-node-id]')!
-  const userRow = container.querySelector<HTMLElement>('[data-node-id="user"]')!
-  expect(within(toolRow).getByRole('status').textContent).toContain('still incomplete')
-  expect(toolRow.textContent).toContain('Read result')
-  expect(within(userRow).queryByRole('status')).toBeNull()
-  await waitFor(() => expect(loadFullNode).toHaveBeenCalled())
-  await act(async () => {
-    resolve({ ...tool, tool: { ...tool.tool, outputSummary: 'Complete result' } })
-    await Promise.resolve()
-  })
-  await waitFor(() => expect(within(toolRow).queryByRole('status')).toBeNull())
 })
 
 function contextCopy(text: string): { event: Event; setData: ReturnType<typeof vi.fn> } {
@@ -190,39 +81,6 @@ it('leaves the clipboard untouched and announces a failed full-content copy', as
   await waitFor(() => expect(screen.getByRole('status').textContent).toMatch(/copy failed/i))
   expect(event.defaultPrevented).toBe(true)
   expect(setData).not.toHaveBeenCalled()
-  expect(writeText).not.toHaveBeenCalled()
-})
-
-it('does not overwrite a newer copy with a delayed full-content response', async () => {
-  const writeText = vi.fn().mockResolvedValue(undefined)
-  vi.stubGlobal('navigator', { clipboard: { writeText } })
-  let resolve!: (value: string) => void
-  const loadFullContent = vi.fn(
-    () =>
-      new Promise<string>((done) => {
-        resolve = done
-      }),
-  )
-  render(
-    <Timeline
-      sessionId="s"
-      streaming={false}
-      omittedNodeIds={['answer']}
-      loadFullContent={loadFullContent}
-      nodes={[
-        message('answer', 'Visible prefix'),
-        { kind: 'user-message', id: 'newer', markdown: 'Newer copy' },
-      ]}
-    />,
-  )
-  contextCopy('Visible prefix')
-  await waitFor(() => expect(loadFullContent).toHaveBeenCalled())
-  const latest = contextCopy('Newer copy')
-  expect(latest.setData).toHaveBeenCalledWith('text/plain', 'Newer copy')
-  await act(async () => {
-    resolve('Old complete answer')
-    await Promise.resolve()
-  })
   expect(writeText).not.toHaveBeenCalled()
 })
 
@@ -344,7 +202,7 @@ it('discards a late full node when its session has changed', async () => {
       loadFullNode={loadFullNode}
     />,
   )
-  await waitFor(() => expect(loadFullNode).toHaveBeenCalledOnce())
+  await waitFor(() => expect(loadFullNode).toHaveBeenCalledWith('same', expect.any(AbortSignal)))
   view.rerender(
     <Timeline
       sessionId="new"

@@ -62,4 +62,6 @@ When implementing an `unimplemented` path, cover its applicable TODO requirement
 
 Update rules in the relevant document. Keep exact DSH versions in the two language versions of the upstream contract and release changelogs. Do not append task logs to specifications. Do not commit credentials, private paths, `DSH_VSCODE_IMPLEMENTATION_PLAN.md`, `LOCAL_*.md`, generated media, build outputs or VSIX files.
 
+Validate releases with local builds before publication. After publication, check the tag's commit, terminal CI results and GitHub asset metadata as described in the testing guide. Do not download published release assets for routine verification or repeat installation checks after publication.
+
 Commit, push, open/merge a PR, tag or publish only when the user's task authorises that step. Opening a PR authorises its necessary commit/push, not a merge. Otherwise leave changes uncommitted and report what changed, why, checks and gaps. Continue routine, reversible work within the authorised scope without unnecessary confirmation.

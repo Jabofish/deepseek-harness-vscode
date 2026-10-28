@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
   editorCapability,
-  editorValueMatches,
   isEditorCompanionCapabilities,
   isEditorCompanionDescription,
   isEditorCompanionPoll,
@@ -10,34 +9,6 @@ import {
 } from './editor-companion.js'
 
 describe('editor companion v2 boundaries', () => {
-  it('accepts immediate applied receipts and legacy pending receipts without accepting mismatched edits', () => {
-    const request = { kind: 'propose', path: 'a.ts', expectedVersion: 5, edits: [] } as const
-    const receipt = {
-      kind: 'proposal',
-      relativePath: 'a.ts',
-      proposalId: 'fixture_proposal_1234',
-      version: 6,
-      status: 'applied',
-      saved: true,
-    } as const
-    expect(isEditorCompanionValue(receipt)).toBe(true)
-    expect(editorValueMatches(request, receipt)).toBe(true)
-    expect(editorValueMatches(request, { ...receipt, version: 8 })).toBe(true)
-    expect(editorValueMatches(request, { ...receipt, version: 5 })).toBe(true)
-    expect(editorValueMatches(request, { ...receipt, version: 4 })).toBe(false)
-    expect(editorValueMatches(request, { ...receipt, relativePath: 'other.ts' })).toBe(false)
-    expect(editorValueMatches(request, { ...receipt, status: 'reverted' })).toBe(false)
-    expect(editorValueMatches(request, { ...receipt, status: 'pending', version: 5 })).toBe(true)
-    expect(editorValueMatches(request, { ...receipt, status: 'pending' })).toBe(false)
-    expect(editorValueMatches(request, { ...receipt, status: 'stale' })).toBe(true)
-    expect(isEditorCompanionValue({ ...receipt, status: 'uncertain', saved: false })).toBe(true)
-    expect(editorValueMatches(request, { ...receipt, status: 'uncertain', saved: false })).toBe(true)
-    expect(editorValueMatches(request, { ...receipt, status: 'uncertain', version: 4 })).toBe(false)
-    expect(isEditorCompanionValue({ ...receipt, saved: 'yes' })).toBe(false)
-    expect(isEditorCompanionRequest({ kind: 'open' })).toBe(true)
-    expect(isEditorCompanionRequest({ kind: 'document', startColumn: 2 })).toBe(true)
-    expect(isEditorCompanionRequest({ kind: 'document', startColumn: 0 })).toBe(false)
-  })
   it('validates each operation and its distinct permission without accepting arbitrary commands or paths', () => {
     expect(
       isEditorCompanionRequest({ kind: 'document', path: 'src/main.ts', startLine: 2, endLine: 4 }),

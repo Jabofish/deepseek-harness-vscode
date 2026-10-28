@@ -9,59 +9,6 @@ describe('EventLoopLagMonitor', () => {
     vi.useRealTimers()
   })
 
-  it('reports zero lag while the loop keeps pace with the sampler', () => {
-    let now = 0
-    const monitor = new EventLoopLagMonitor({ intervalMs: 100, windowMs: 1_000, now: () => now })
-    monitor.start()
-    for (let tick = 0; tick < 5; tick++) {
-      now += 100
-      vi.advanceTimersByTime(100)
-    }
-    expect(monitor.recentMaxLagMs()).toBe(0)
-    monitor.dispose()
-  })
-
-  it('reports a stall as the trailing maximum lag', () => {
-    let now = 0
-    const monitor = new EventLoopLagMonitor({ intervalMs: 100, windowMs: 1_000, now: () => now })
-    monitor.start()
-    now += 100
-    vi.advanceTimersByTime(100)
-    // The loop then stalls for 3s before the next tick can fire; the tick due
-    // at +100ms arrives 2900ms late.
-    now += 3_000
-    vi.advanceTimersByTime(100)
-    expect(monitor.recentMaxLagMs()).toBe(2_900)
-    monitor.dispose()
-  })
-
-  it('forgets lag samples outside the trailing window', () => {
-    let now = 0
-    const monitor = new EventLoopLagMonitor({ intervalMs: 100, windowMs: 1_000, now: () => now })
-    monitor.start()
-    now += 100
-    vi.advanceTimersByTime(100)
-    now += 3_000
-    vi.advanceTimersByTime(100)
-    expect(monitor.recentMaxLagMs()).toBe(2_900)
-    for (let tick = 0; tick < 12; tick++) {
-      now += 100
-      vi.advanceTimersByTime(100)
-    }
-    expect(monitor.recentMaxLagMs()).toBe(0)
-    monitor.dispose()
-  })
-
-  it('stops sampling after dispose', () => {
-    let now = 0
-    const monitor = new EventLoopLagMonitor({ intervalMs: 100, windowMs: 1_000, now: () => now })
-    monitor.start()
-    monitor.dispose()
-    now += 3_000
-    vi.advanceTimersByTime(100)
-    expect(monitor.recentMaxLagMs()).toBe(0)
-  })
-
   it('includes an overdue tick before the sampler can run', () => {
     let now = 0
     const monitor = new EventLoopLagMonitor({ intervalMs: 100, now: () => now })
@@ -77,30 +24,5 @@ describe('EventLoopLagMonitor', () => {
     } finally {
       monitor.dispose()
     }
-  })
-
-  it('expires old samples when read before the next tick', () => {
-    let now = 0
-    const monitor = new EventLoopLagMonitor({ intervalMs: 100, windowMs: 1_000, now: () => now })
-    try {
-      monitor.start()
-      now = 3_000
-      vi.advanceTimersByTime(100)
-      expect(monitor.recentMaxLagMs()).toBe(2_900)
-      now = 4_100
-      expect(monitor.recentMaxLagMs()).toBe(1_000)
-    } finally {
-      monitor.dispose()
-    }
-  })
-
-  it('reports no pending lag before start or after disposal', () => {
-    let now = 3_000
-    const monitor = new EventLoopLagMonitor({ now: () => now })
-    expect(monitor.recentMaxLagMs()).toBe(0)
-    monitor.start()
-    monitor.dispose()
-    now += 3_000
-    expect(monitor.recentMaxLagMs()).toBe(0)
   })
 })

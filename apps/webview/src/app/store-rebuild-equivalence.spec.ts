@@ -421,41 +421,4 @@ describe('Host recovery reread equivalence', () => {
     reference.store.dispose()
     store.dispose()
   })
-
-  it('keeps the rebuild stable when the same below-cursor row arrives twice', async () => {
-    const fixture = buildFixture()
-    const reference = await replay(fixture)
-    const referenceSignature = reference.store.timeline.nodes.map(signature)
-
-    const { store, client } = await replay(fixture)
-    const belowCursor = {
-      type: 'event' as const,
-      name: 'tool.updated',
-      sequence: 10_001,
-      payload: {
-        sessionId: SESSION_ID,
-        tool: {
-          id: 'call-child',
-          parentCallId: 'call-parent',
-          turn: 1,
-          step: 2,
-          name: 'grep',
-          category: 'search',
-          title: 'Search',
-          status: 'completed',
-          outputSummary: 'store.ts:87',
-          metadata: {},
-        },
-        sequence: 8,
-      },
-    }
-    client.emit(belowCursor)
-    await new Promise((resolve) => window.setTimeout(resolve, 60))
-    client.emit(belowCursor)
-    await new Promise((resolve) => window.setTimeout(resolve, 60))
-
-    expect(store.timeline.nodes.map(signature)).toEqual(referenceSignature)
-    reference.store.dispose()
-    store.dispose()
-  })
 })

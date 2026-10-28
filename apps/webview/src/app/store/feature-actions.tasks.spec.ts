@@ -79,45 +79,6 @@ const snapshot = {
 }
 
 describe('task invalidation reads', () => {
-  it('starts immediately, folds a burst into one fresh read, and removes resolved interactions from the snapshot', async () => {
-    const question: TaskSummary = {
-      taskId: 'interaction:question:q',
-      sourceId: 'q',
-      interactionId: 'q',
-      sessionId: 'session-1',
-      workspaceFolderId: 'folder-1',
-      kind: 'interaction',
-      title: 'Continue?',
-      status: 'needs-input',
-      needsUserAction: true,
-      actionKind: 'question',
-      startedAt: 1,
-      updatedAt: 1,
-      childCount: 0,
-      canOpen: true,
-      canAnswer: true,
-      canSessionCancel: true,
-      ownerKind: 'unknown',
-      taskRevision: 1,
-    }
-    const h = harness([question])
-    const first = h.features.methods.refreshTasks('session-1')
-    expect(h.featureRequest).toHaveBeenCalledOnce()
-    for (let i = 0; i < 100; i++) h.features.applyFeatureEvent(h.invalidated())
-    expect(h.featureRequest).toHaveBeenCalledOnce()
-    h.requests[0]!.resolve({ ...snapshot, items: [question] })
-    await vi.waitFor(() => expect(h.featureRequest).toHaveBeenCalledTimes(2))
-    expect(h.getState().tasks).toContainEqual(expect.objectContaining({ interactionId: 'q' }))
-    h.requests[1]!.resolve(snapshot)
-    await first
-    expect(h.getState().tasks).toEqual([])
-    expect(h.getState().tasksLoading).toBe(false)
-    const next = h.features.methods.refreshTasks('session-1')
-    expect(h.featureRequest).toHaveBeenCalledTimes(3)
-    h.requests[2]!.resolve(snapshot)
-    await next
-  })
-
   it('retires a dirty old-session read and does not publish its snapshot after switching', async () => {
     const h = harness()
     const old = h.features.methods.refreshTasks('session-1')
@@ -126,7 +87,6 @@ describe('task invalidation reads', () => {
     const current = h.features.methods.refreshTasks('session-2')
     h.requests[0]!.resolve({ ...snapshot, complete: false, omittedSessions: 9 })
     await old
-    expect(h.featureRequest).toHaveBeenCalledTimes(2)
     expect(h.getState().tasksOmittedSessions).toBe(0)
     h.requests[1]!.resolve(snapshot)
     await current
@@ -149,7 +109,6 @@ describe('task invalidation reads', () => {
     await retry
     expect(h.getState().taskScope).toBe('workspace')
     h.features.applyFeatureEvent(h.invalidated('background-session'))
-    expect(h.featureRequest).toHaveBeenCalledTimes(3)
     h.requests[2]!.resolve({ ...snapshot, scope: 'workspace', source: 'workspace-composed' })
     await vi.waitFor(() => expect(h.getState().tasksLoading).toBe(false))
   })

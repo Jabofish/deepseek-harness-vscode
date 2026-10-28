@@ -1,3 +1,4 @@
+import type { RefObject } from 'react'
 import type {
   AgentPresetDocument,
   AgentPresetLocation,
@@ -28,6 +29,7 @@ import type { ConversationFontSize, ThemePreference } from '../../app/ui-prefere
 import type { Locale } from '../../i18n.js'
 export interface SettingsDrawerProps {
   readonly open: boolean
+  readonly returnFocusRef?: RefObject<HTMLElement | null>
   readonly onOpenChange: (open: boolean) => void
   readonly connected: boolean
   readonly connectedDshVersion: string | undefined

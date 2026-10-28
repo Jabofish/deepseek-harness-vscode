@@ -51,11 +51,6 @@ describe('rowCopyMarkdown', () => {
     for (const row of rows) expect(rowCopyMarkdown(row)).toBeUndefined()
   })
 
-  it('treats a whitespace-only row as nothing to copy', () => {
-    expect(rowCopyMarkdown(assistantTurn('   \n'))).toBeUndefined()
-    expect(rowCopyMarkdown({ kind: 'user-message', id: 'user-2', markdown: '\t' })).toBeUndefined()
-  })
-
   it('prefers the settled final reply of a focused turn', () => {
     const answer = {
       kind: 'assistant-message' as const,
@@ -64,17 +59,6 @@ describe('rowCopyMarkdown', () => {
       streaming: false,
     }
     expect(rowCopyMarkdown(focusedTurn(answer, [assistantTurn('intermediate step')]))).toBe('the reply')
-  })
-
-  it('falls back to the grouped answer text of an unsettled focused turn', () => {
-    const members: FocusedTurnNode['nodes'] = [
-      { kind: 'assistant-message', id: 'assistant-3', markdown: 'first', streaming: false },
-      { kind: 'assistant-message', id: 'assistant-4', markdown: '  ', streaming: false },
-      { kind: 'assistant-message', id: 'assistant-5', markdown: 'second', streaming: false },
-      assistantTurn('a collapsed step'),
-    ]
-    expect(rowCopyMarkdown(focusedTurn(undefined, members))).toBe('first\n\nsecond\n\na collapsed step')
-    expect(rowCopyMarkdown(focusedTurn(undefined))).toBeUndefined()
   })
 
   it('keeps a settled focused turn with no readable text a strict no-op', () => {

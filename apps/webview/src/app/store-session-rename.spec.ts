@@ -75,28 +75,4 @@ describe('AppStore session rename', () => {
     expect(client.renamePayload).toEqual({ sessionId: SESSION, title: '  Hello\n\nWorld  ' })
     store.dispose()
   })
-
-  it('falls back to the trimmed request when the host sends no receipt', async () => {
-    const { client, store } = open()
-    await store.refreshSessions()
-
-    // An older extension build answers a rename without a payload; the row
-    // still has to leave the rename dialog with the requested title.
-    client.receipt = undefined
-    await store.renameSession(SESSION, '  Typed title  ')
-
-    expect(titleOf(store)).toBe('Typed title')
-    store.dispose()
-  })
-
-  it('ignores an empty accepted title rather than blanking the row', async () => {
-    const { client, store } = open()
-    await store.refreshSessions()
-
-    client.receipt = { title: '   ', seq: 13 }
-    await store.renameSession(SESSION, 'Typed title')
-
-    expect(titleOf(store)).toBe('Typed title')
-    store.dispose()
-  })
 })

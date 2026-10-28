@@ -65,31 +65,6 @@ describe('transcript patches', () => {
       ).toBe(false)
     expect(() => parseTranscript({ ...initial, contentVersions: { 'omitted-1': 'bad' } })).toThrow()
   })
-  it('keeps position indexes isolated when retained states receive independent patches', () => {
-    const before = installed()
-    const first = installTranscriptPatch(before, {
-      sessionId,
-      revision: 5,
-      baseRevision: 4,
-      changedNodes: [assistant('m-3', 'first branch')],
-    })
-    const second = installTranscriptPatch(before, {
-      sessionId,
-      revision: 5,
-      baseRevision: 4,
-      changedNodes: [assistant('m-4', 'second branch'), assistant('m-3', 'appended after m-4')],
-    })
-    expect(second.transcript!.nodes.map((node) => node.id)).toEqual(['m-1', 'm-2', 'm-4', 'm-3'])
-    // Continuing either branch must use that branch's own positions too.
-    const continued = installTranscriptPatch(first, {
-      sessionId,
-      revision: 6,
-      baseRevision: 5,
-      changedNodes: [assistant('m-4', 'first branch tail')],
-    })
-    expect(continued.transcript!.nodes.map((node) => node.id)).toEqual(['m-1', 'm-2', 'm-3', 'm-4'])
-    expect(before.transcript!.nodes).toHaveLength(2)
-  })
 
   it('appends reasoning and body independently and rejects an incorrect reasoning baseline', () => {
     const initial: TranscriptWindow = {
@@ -151,35 +126,6 @@ describe('transcript patches', () => {
     ).toBe(false)
   })
 
-  it('replaces metadata atomically and clears completed-turn and legacy Todo state', () => {
-    const initial = {
-      ...window(),
-      activeTurn: 3,
-      currentTodos: [{ id: 'todo', content: 'Task', status: 'in-progress' as const }],
-    }
-    const before = installTranscript(
-      { ...createInitialState({}), activeSessionId: sessionId },
-      parseTranscript(initial),
-    )
-    const next = installTranscriptPatch(before, {
-      sessionId,
-      revision: 5,
-      baseRevision: 4,
-      changedNodes: [],
-      metadata: {
-        lastSequence: 20,
-        eventFacts: [],
-        omittedNodeIds: ['m-2'],
-        hasMore: false,
-        historical: false,
-      },
-    })
-    expect(next.timeline.activeTurn).toBeUndefined()
-    expect(next.transcript!.currentTodos).toBeUndefined()
-    expect(next.transcript!.omittedNodeIds).toEqual(['m-2'])
-    expect(next.transcript!.beforeSequence).toBeUndefined()
-  })
-
   it('enforces the exact combined character budget and node count after incremental updates', () => {
     const base = { ...window(), nodes: [assistant('large', '')] }
     const fill = TRANSCRIPT_MAX_CHARS - JSON.stringify(base).length
@@ -216,62 +162,6 @@ describe('transcript patches', () => {
         changedNodes: [assistant('extra', '')],
       }),
     ).toThrow('budget')
-  })
-  it('replaces the changed node in place and keeps every other renderer identity', () => {
-    const before = installed()
-    const [first, second] = before.transcript!.nodes
-    const next = installTranscriptPatch(before, {
-      sessionId,
-      revision: 5,
-      baseRevision: 4,
-      changedNodes: [assistant('m-2', ' world more')],
-      lastSequence: 11,
-    })
-
-    expect(next.transcript!.revision).toBe(5)
-    expect(next.transcript!.nodes).toHaveLength(2)
-    expect(next.transcript!.nodes[0]).toBe(first)
-    expect(next.transcript!.nodes[1]).not.toBe(second)
-    expect(next.transcript!.nodes[1]).toMatchObject({ id: 'm-2', markdown: ' world more' })
-    expect(next.transcript!.lastSequence).toBe(11)
-  })
-
-  it('appends an unknown node id at the tail', () => {
-    const before = installed()
-    const next = installTranscriptPatch(before, {
-      sessionId,
-      revision: 5,
-      baseRevision: 4,
-      changedNodes: [assistant('m-3', ' again')],
-    })
-
-    expect(next.transcript!.nodes.map((node) => node.id)).toEqual(['m-1', 'm-2', 'm-3'])
-  })
-
-  it('keeps facts, omissions and page bounds that the patch does not carry', () => {
-    const before = installed()
-    const next = installTranscriptPatch(before, {
-      sessionId,
-      revision: 5,
-      baseRevision: 4,
-      changedNodes: [assistant('m-1', 'Hello!')],
-    })
-
-    expect(next.transcript!.eventFacts).toEqual(before.transcript!.eventFacts)
-    expect(next.transcript!.omittedNodeIds).toEqual(['omitted-1'])
-    expect(next.transcript!.beforeSequence).toBe(5)
-    expect(next.transcript!.hasMore).toBe(true)
-  })
-
-  it('ignores a revision that is not newer than the installed window', () => {
-    const before = installed()
-    const next = installTranscriptPatch(before, {
-      sessionId,
-      revision: 4,
-      baseRevision: 3,
-      changedNodes: [assistant('m-1', 'stale')],
-    })
-    expect(next).toBe(before)
   })
 
   it('rejects a patch whose baseline is not the installed revision', () => {

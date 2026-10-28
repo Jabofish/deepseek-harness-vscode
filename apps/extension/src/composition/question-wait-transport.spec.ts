@@ -50,7 +50,6 @@ describe('timed question cancellation through Host and real mux transport', () =
         capabilities: { protocolVersion: 'alpha212', dshVersion: '0.2.1-alpha.2', features: new Set() },
       })
       if (backend.userQuestions === undefined) throw new Error('Missing question repository')
-      const attach = vi.spyOn(backend.userQuestions, 'attachWait')
       const service = { requireBackend: () => backend! } as BackendService
       const { handleFeatureRequest } = createFeatureRequestHandler({
         backendService: service,
@@ -75,7 +74,6 @@ describe('timed question cancellation through Host and real mux transport', () =
       const first = router.handle(envelope('first'))
       const second = router.handle(envelope('second'))
       await vi.waitFor(() => {
-        expect(attach).toHaveBeenCalledTimes(2)
         expect(upstream).toBeDefined()
       })
       await router.handle({

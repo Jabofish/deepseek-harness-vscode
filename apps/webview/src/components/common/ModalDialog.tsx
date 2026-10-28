@@ -1,4 +1,12 @@
-import { useEffect, useId, useRef, type ReactElement, type ReactNode } from 'react'
+import {
+  useEffect,
+  useLayoutEffect,
+  useId,
+  useRef,
+  type ReactElement,
+  type ReactNode,
+  type RefObject,
+} from 'react'
 import { createPortal } from 'react-dom'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
@@ -11,15 +19,25 @@ export function ModalDialog(props: {
   readonly closeLabel?: string
   readonly onClose: () => void
   readonly children: ReactNode
+  /** Keep the opener across a loading dialog's replacement by its real content. */
+  readonly returnFocusRef?: RefObject<HTMLElement | null>
+  readonly onCaptureReturnFocus?: (element: HTMLElement | null) => void
 }): ReactElement {
   const { t } = useI18n()
   const titleId = useId()
   const dialogRef = useRef<HTMLElement>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
+  const previousRef = useRef<HTMLElement | null>(null)
+  const { returnFocusRef, onCaptureReturnFocus } = props
+  useLayoutEffect(() => {
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    previousRef.current = returnFocusRef?.current ?? previous
+    onCaptureReturnFocus?.(previous)
+    closeRef.current?.focus()
+  }, [returnFocusRef, onCaptureReturnFocus])
   useDismissibleLayer({ open: true, refs: [dialogRef], trapFocus: true, onDismiss: props.onClose })
   useEffect(() => {
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    closeRef.current?.focus()
+    const previous = previousRef.current
     return () => {
       if (previous?.isConnected) previous.focus()
     }

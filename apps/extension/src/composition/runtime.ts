@@ -6,6 +6,7 @@ import path from 'node:path'
 import { AppError, parseServerOrigin, type BackendEndpoint } from '@dsh-vscode/domain'
 import { runtimePathEntries } from '../backend/runtime-paths.js'
 import type { SpawnedChild } from '../backend/process-supervisor.js'
+import { terminateOwnedWindowsTree } from '../backend/owned-process-tree.js'
 import { resolveWindowsShim } from '../backend/windows-shim.js'
 
 export function platform(): 'windows' | 'linux' | 'macos' {
@@ -104,6 +105,7 @@ export function spawnManagedChild(
     kill: (signal?: NodeJS.Signals) => {
       child.kill(signal)
     },
+    ...(platform() === 'windows' ? { terminateTree: () => terminateOwnedWindowsTree(child) } : {}),
     exited,
   }
 }

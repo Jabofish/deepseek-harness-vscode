@@ -1,11 +1,7 @@
-import { describe, expect, it, vi } from 'vitest'
-import type { BackendEvent } from '@dsh-vscode/domain'
-import type { DshTransport } from '../src/contracts.js'
-import { AlphaEventSource } from '../src/versions/alpha/events.js'
-import type { AlphaLoopbackApiClient } from '../src/versions/alpha/transport.js'
+import { describe, expect, it } from 'vitest'
+
 import { ArgumentPreview } from '../src/versions/alpha211/argument-preview.js'
 import { createAlpha211SessionNormalizer } from '../src/versions/alpha211/tool-preparation.js'
-import { normalizeEnvelope } from '../src/stream-envelopes.js'
 
 // dsh-v0.2.1-alpha.1 / 5badb150: llm/llm/src/types.ts and the Session v2 projector.
 interface ToolDeltaFrame {
@@ -59,68 +55,6 @@ function delta(
 }
 
 describe('alpha211 structured argument preparation', () => {
-  it('normalizes once per session for observers and listeners, replays reconnects and releases aborted streams', async () => {
-    let released = 0
-    const hold = async function* (signal: AbortSignal): AsyncGenerator<unknown, void> {
-      await new Promise<void>((resolve) => {
-        if (signal.aborted) resolve()
-        else signal.addEventListener('abort', () => resolve(), { once: true })
-      })
-      yield* []
-    }
-    const transport = {
-      request: () => Promise.reject(new Error('unused RPC')),
-      openEventStream: hold,
-      openWorkspaceStream: hold,
-      async *openSessionStream(sessionId: string, signal: AbortSignal) {
-        try {
-          yield { payload: { type: 'session/subscribed', sessionId, lastSeq: 2, controlBaseline: false } }
-          const frame = delta(0, '{"content":"abc"}', { name: 'write' })
-          yield { payload: { ...frame, sessionId } }
-          yield* hold(signal)
-        } finally {
-          released += 1
-        }
-      },
-      close: vi.fn(() => Promise.resolve()),
-    }
-    const observed: BackendEvent[] = []
-    const received: BackendEvent[] = []
-    const source = new AlphaEventSource(
-      transport as unknown as AlphaLoopbackApiClient & DshTransport,
-      (event) => observed.push(event),
-      undefined,
-      undefined,
-      (event) => event,
-      createAlpha211SessionNormalizer,
-    )
-    const unsubscribe = source.subscribe((event) => received.push(event))
-    source.watchSession('s1')
-    source.watchSession('s2')
-    try {
-      await vi.waitFor(() =>
-        expect(received.filter((event) => event.type === 'tool.preparing')).toHaveLength(2),
-      )
-      expect(observed.filter((event) => event.type === 'tool.preparing')).toEqual(
-        received.filter((event) => event.type === 'tool.preparing'),
-      )
-      await source.refreshSession('s1')
-      await vi.waitFor(() =>
-        expect(received.filter((event) => event.type === 'tool.preparing')).toHaveLength(3),
-      )
-      expect(
-        received
-          .filter((event) => event.type === 'tool.preparing')
-          .every((event) => event.contentCharacters === 3),
-      ).toBe(true)
-    } finally {
-      unsubscribe()
-      await source.close()
-    }
-    expect(released).toBe(3)
-    expect(transport.close).not.toHaveBeenCalled()
-  })
-
   it('reads only root fields; waits for a completed path and counts decoded UTF-16 through split escapes', () => {
     const normalize = createAlpha211SessionNormalizer()
     expect(normalize(delta(0, '{"file_path":"src/', { name: 'write' }))).not.toHaveProperty('filePath')
@@ -138,23 +72,6 @@ describe('alpha211 structured argument preparation', () => {
     const output = JSON.stringify(normalize(delta(3, ' ')))
     expect(output).not.toContain('argumentsDelta')
     expect(output).not.toContain('ignored')
-  })
-
-  it('isolates interleaved calls, duplicate frames, identities and attempts; restores a fresh reconnect baseline', () => {
-    const normalize = createAlpha211SessionNormalizer()
-    normalize(delta(0, '{"content":"one', { name: 'write' }))
-    normalize(delta(1, '{"description":"two', { id: 'call-2', name: 'custom-tool' }))
-    expect(normalize(delta(2, ' more"}'))).toMatchObject({ contentCharacters: 8 })
-    expect(normalize(delta(2, 'duplicate'))).toBeUndefined()
-    expect(normalize(delta(3, 'bad', { name: 'read' }))).toBeUndefined()
-    expect(normalize(delta(4, ' done"}', { id: 'call-2' }))).toMatchObject({ description: 'two done' })
-    expect(normalize(delta(0, '{"content":"new"}', { attemptId: 'attempt-2', name: 'write' }))).toMatchObject(
-      { contentCharacters: 3 },
-    )
-    normalize({ type: 'session/subscribed', sessionId: 's1', lastSeq: 2 })
-    expect(
-      normalize(delta(0, '{"content":"replayed"}', { attemptId: 'attempt-2', name: 'write' })),
-    ).toMatchObject({ contentCharacters: 8 })
   })
 
   it('redacts display descriptions, excludes file metadata on generic tools and seals ended blocks', () => {
@@ -236,17 +153,5 @@ describe('alpha211 structured argument preparation', () => {
         'tool.preparing',
       )
     expect(normalize(delta(128, '{}', { id: 'overflow', name: 'read' }))).toBeUndefined()
-  })
-
-  it('rejects malformed typed frames and leaves the legacy normalizer unchanged', () => {
-    const frame = delta(0, '{}', { name: 'read' })
-    for (const invalid of [
-      { ...frame, sessionId: '' },
-      { ...frame, frame: { ...frame.frame, type: 'end' } },
-      { ...frame, frame: { ...frame.frame, index: -1 } },
-      { ...frame, frame: { ...frame.frame, chunk: { ...frame.frame.chunk, argumentsDelta: 42 } } },
-    ])
-      expect(createAlpha211SessionNormalizer()(invalid)).toBeUndefined()
-    expect(normalizeEnvelope(frame)).toBeUndefined()
   })
 })

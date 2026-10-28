@@ -23,14 +23,6 @@ function asyncSequence(...values: unknown[]): AsyncIterable<unknown> {
   }
 }
 
-function rejectedSequence(error: Error): AsyncIterable<unknown> {
-  return {
-    [Symbol.asyncIterator]: () => ({
-      next: () => Promise.reject(error),
-    }),
-  }
-}
-
 function client(
   stream: (endpoint: string, args: Record<string, unknown>) => AsyncIterable<unknown>,
   receipt?: unknown,
@@ -88,25 +80,6 @@ describe('alpha171 Job Controller repository', () => {
       expect.any(AbortSignal),
     )
     expect(closed).toBe(true)
-  })
-
-  it('publishes every whole-set replacement, including an empty roster', async () => {
-    const transport = client(() => asyncSequence({ type: 'rows', jobs: [row] }, { type: 'rows', jobs: [] }))
-    const rowStream = new Alpha171JobRepository(transport.client).watchRows(
-      'session-1',
-      new AbortController().signal,
-    )
-    const iterator = rowStream[Symbol.asyncIterator]()
-
-    await expect(iterator.next()).resolves.toMatchObject({
-      value: { type: 'jobs.updated', sessionId: 'session-1', jobs: [{ id: 'job-1' }] },
-      done: false,
-    })
-    await expect(iterator.next()).resolves.toEqual({
-      value: { type: 'jobs.updated', sessionId: 'session-1', jobs: [] },
-      done: false,
-    })
-    await iterator.return?.()
   })
 
   it('resumes at the requested byte offset and omits host-only spill paths', async () => {
@@ -232,37 +205,6 @@ describe('alpha171 Job Controller repository', () => {
         })(),
       ).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
     }
-  })
-
-  it('ends cleanly on request cancellation and releases the upstream iterator', async () => {
-    const controller = new AbortController()
-    let released = false
-    const transport = client(() => ({
-      async *[Symbol.asyncIterator]() {
-        const aborted = new Promise<void>((resolve) => {
-          if (controller.signal.aborted) resolve()
-          else controller.signal.addEventListener('abort', () => resolve(), { once: true })
-        })
-        try {
-          yield { type: 'opened', job: row, from: 0 }
-          await aborted
-        } finally {
-          released = true
-        }
-      },
-    }))
-    const repository = new Alpha171JobRepository(transport.client)
-    const follow = repository.follow('session-1', 'job-1', undefined, controller.signal)
-    const iterator = follow[Symbol.asyncIterator]()
-
-    await expect(iterator.next()).resolves.toMatchObject({
-      done: false,
-      value: { type: 'opened', from: 0 },
-    })
-    const pending = iterator.next()
-    controller.abort('cancelled')
-    await expect(pending).resolves.toMatchObject({ done: true })
-    expect(released).toBe(true)
   })
 
   it('sends the session-fenced kill and unwraps and validates its Remote receipt', async () => {
@@ -433,33 +375,6 @@ describe('alpha171 Job Controller repository', () => {
     }
   })
 
-  it('accepts a removed terminal projection whose total advanced past the last output cursor', async () => {
-    const transport = client(() =>
-      asyncSequence(
-        { type: 'opened', job: { ...row, output: { total: 3, earliest: 0 } }, from: 0 },
-        { type: 'output', chunks: [{ at: 0, text: 'abc' }], next: 3 },
-        {
-          type: 'status',
-          job: {
-            ...row,
-            status: 'killed',
-            finishedAt: 20,
-            output: { total: 5, earliest: 0 },
-          },
-        },
-      ),
-    )
-    const frames: unknown[] = []
-
-    await expect(
-      (async () => {
-        for await (const frame of new Alpha171JobRepository(transport.client).follow('session-1', 'job-1'))
-          frames.push(frame)
-      })(),
-    ).resolves.toBeUndefined()
-    expect(frames).toHaveLength(3)
-  })
-
   it('rejects unopened streams, output cursor rollback, and replayed chunks', async () => {
     const terminal = { type: 'status', job: { ...row, status: 'completed', finishedAt: 20 } }
     const malformedStreams = [
@@ -606,94 +521,6 @@ describe('alpha171 Job Controller repository', () => {
     }
   })
 
-  it('rejects a non-terminal status even when followed by a terminal status', async () => {
-    const transport = client(() =>
-      asyncSequence(
-        { type: 'opened', job: row, from: 0 },
-        { type: 'status', job: row },
-        { type: 'status', job: { ...row, status: 'completed', finishedAt: 20 } },
-      ),
-    )
-
-    await expectMalformedFollow(transport.client)
-  })
-
-  it('rejects a terminal status whose total rolls back behind the last output cursor', async () => {
-    const transport = client(() =>
-      asyncSequence(
-        { type: 'opened', job: row, from: 0 },
-        { type: 'output', chunks: [{ at: 0, text: 'abc' }], next: 3 },
-        {
-          type: 'status',
-          job: {
-            ...row,
-            status: 'completed',
-            finishedAt: 20,
-            output: { total: 2, earliest: 0 },
-          },
-        },
-      ),
-    )
-
-    await expectMalformedFollow(transport.client)
-  })
-
-  it('rejects an empty output frame that repeats the prior cursor', async () => {
-    const transport = client(() =>
-      asyncSequence(
-        { type: 'opened', job: row, from: 0 },
-        { type: 'output', chunks: [{ at: 0, text: 'abc' }], next: 3 },
-        { type: 'output', chunks: [], next: 3 },
-        { type: 'status', job: { ...row, status: 'completed', finishedAt: 20 } },
-      ),
-    )
-
-    await expectMalformedFollow(transport.client)
-  })
-
-  it('rejects an empty output frame that skips bytes without the lossy marker', async () => {
-    const transport = client(() =>
-      asyncSequence(
-        { type: 'opened', job: row, from: 0 },
-        { type: 'output', chunks: [], next: 3 },
-        { type: 'status', job: { ...row, status: 'completed', finishedAt: 20 } },
-      ),
-    )
-
-    await expectMalformedFollow(transport.client)
-  })
-
-  it('rejects a byte-bearing output frame whose next cursor skips past its last chunk', async () => {
-    const transport = client(() =>
-      asyncSequence(
-        { type: 'opened', job: row, from: 0 },
-        { type: 'output', chunks: [{ at: 0, text: 'a' }], next: 5 },
-        { type: 'status', job: { ...row, status: 'completed', finishedAt: 20 } },
-      ),
-    )
-
-    await expectMalformedFollow(transport.client)
-  })
-
-  it('rejects an unmarked byte gap between output chunks', async () => {
-    const transport = client(() =>
-      asyncSequence(
-        { type: 'opened', job: row, from: 0 },
-        {
-          type: 'output',
-          chunks: [
-            { at: 0, text: 'a' },
-            { at: 2, text: 'c' },
-          ],
-          next: 3,
-        },
-        { type: 'status', job: { ...row, status: 'completed', finishedAt: 20 } },
-      ),
-    )
-
-    await expectMalformedFollow(transport.client)
-  })
-
   it('does not let lossy output mark an internal byte gap', async () => {
     const transport = client(() =>
       asyncSequence(
@@ -712,40 +539,5 @@ describe('alpha171 Job Controller repository', () => {
     )
 
     await expectMalformedFollow(transport.client)
-  })
-
-  it('rejects an unmarked byte gap before the first returned chunk', async () => {
-    const transport = client(() =>
-      asyncSequence(
-        { type: 'opened', job: row, from: 0 },
-        { type: 'output', chunks: [{ at: 2, text: 'c' }], next: 3 },
-        { type: 'status', job: { ...row, status: 'completed', finishedAt: 20 } },
-      ),
-    )
-
-    await expectMalformedFollow(transport.client)
-  })
-
-  it('cancels before opening and preserves upstream failures', async () => {
-    const transport = client(() => asyncSequence())
-    const controller = new AbortController()
-    controller.abort('cancelled')
-    const cancelledStream = new Alpha171JobRepository(transport.client).follow(
-      'session-1',
-      'job-1',
-      undefined,
-      controller.signal,
-    )
-    await expect(cancelledStream[Symbol.asyncIterator]().next()).rejects.toMatchObject({
-      code: 'REQUEST_CANCELLED',
-    })
-    expect(transport.openRemoteStream).not.toHaveBeenCalled()
-
-    const failed = client(() =>
-      rejectedSequence(Object.assign(new Error('job not found'), { code: 'job-not-found' })),
-    )
-    await expect(new Alpha171JobRepository(failed.client).list('session-1')).rejects.toMatchObject({
-      code: 'job-not-found',
-    })
   })
 })

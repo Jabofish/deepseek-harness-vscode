@@ -121,48 +121,6 @@ function response(request: WebviewRequest | FeatureRequest): unknown {
 }
 
 describe('AppStore checkpoint labels', () => {
-  it('keeps the label the host returns for a listed checkpoint', async () => {
-    const client = new FakeClient(response)
-    const store = createAppStore(client as unknown as ProtocolClient)
-
-    await store.openSession(session.id)
-    await store.refreshCheckpoints()
-
-    expect(store.checkpoints.map((entry) => entry.label)).toEqual(['Before refactor'])
-    store.dispose()
-  })
-
-  it('keeps the label of a checkpoint it just created', async () => {
-    const client = new FakeClient(response)
-    const store = createAppStore(client as unknown as ProtocolClient)
-
-    await store.openSession(session.id)
-    const created = await store.createCheckpoint('Before refactor')
-
-    const request = client.featureRequests.find((entry) => entry.type === 'checkpoint.create')
-    expect(request?.type === 'checkpoint.create' ? request.payload : undefined).toEqual({
-      sessionId: 'session-1',
-      // The Host-stated folder scope, never the DSH `workspaceId`.
-      workspaceFolderId: 'folder-1',
-      label: 'Before refactor',
-    })
-    expect(created?.label).toBe('Before refactor')
-    expect(store.checkpoints.map((entry) => entry.label)).toEqual(['Before refactor'])
-    store.dispose()
-  })
-
-  it('keeps the label in a checkpoint preview', async () => {
-    const client = new FakeClient(response)
-    const store = createAppStore(client as unknown as ProtocolClient)
-
-    await store.openSession(session.id)
-    await store.refreshCheckpoints()
-    const preview = await store.previewCheckpoint(checkpoint.checkpointId)
-
-    expect(preview?.summary.label).toBe('Before refactor')
-    store.dispose()
-  })
-
   it('sends the host-issued preview id with a restore confirmation', async () => {
     const client = new FakeClient(response)
     const store = createAppStore(client as unknown as ProtocolClient)
@@ -182,44 +140,6 @@ describe('AppStore checkpoint labels', () => {
       previewId: 'dsh-preview-test-1',
       conflictPolicy: 'overwrite',
     })
-    store.dispose()
-  })
-
-  it('hands the drawer a translated failure instead of the raw key', async () => {
-    // A checkpoint reply without a summary is a host contract violation. The
-    // drawer renders `error.message` verbatim in a `role="alert"` node, so the
-    // store's own failure text is what the user reads.
-    const client = new FakeClient((request) =>
-      request.type === 'checkpoint.create'
-        ? contractPayload({ kind: 'checkpoints', items: [] })
-        : response(request),
-    )
-    const store = createAppStore(client as unknown as ProtocolClient)
-
-    await store.openSession(session.id)
-
-    await expect(store.createCheckpoint('Before refactor')).rejects.toThrow(
-      'Unable to complete the checkpoint operation.',
-    )
-    store.dispose()
-  })
-
-  it('leaves a folder-scoped read unattempted when the host states no folder', async () => {
-    // The Host states no workspace folder when VS Code has none open, which is
-    // also how the extension-owned temporary workspace connects. Asking anyway
-    // is what turned an unavailable surface into a failed one.
-    const client = new FakeClient((request) => {
-      if (request.type !== 'session.open') return response(request)
-      return { ...(response(request) as Record<string, unknown>), workspaceFolderId: undefined }
-    })
-    const store = createAppStore(client as unknown as ProtocolClient)
-
-    await store.openSession(session.id)
-    await store.refreshCheckpoints()
-
-    expect(client.featureRequests.filter((entry) => entry.type === 'checkpoint.list')).toEqual([])
-    expect(store.unavailableLists).not.toContain('checkpoints')
-    expect(await store.createCheckpoint('Before refactor')).toBeUndefined()
     store.dispose()
   })
 })

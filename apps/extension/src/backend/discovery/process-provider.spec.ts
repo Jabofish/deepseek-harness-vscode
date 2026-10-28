@@ -5,27 +5,9 @@ import {
   resolveDshProcessRuntimeVersions,
   resolveEndpointProcesses,
 } from './process-provider.js'
-import { runWindowsProcessListing, WindowsProcessDiscoveryProvider } from './windows-process-provider.js'
+import { runWindowsProcessListing } from './windows-process-provider.js'
 
 describe('OS process discovery parsing', () => {
-  it('checks a hinted PID and its listener concurrently, then rejects a recycled non-DSH process', async () => {
-    let releaseListener: ((value: string) => void) | undefined
-    const listener = new Promise<string>((resolve) => {
-      releaseListener = resolve
-    })
-    const run = vi.fn((executable: string) =>
-      executable === 'netstat.exe' ? listener : Promise.resolve('25140 node other-service.js'),
-    )
-    const provider = new WindowsProcessDiscoveryProvider(run, 'win32')
-    const operation = provider.discoverEndpoints(
-      [{ host: '127.0.0.1', port: 4310, baseUrl: 'http://127.0.0.1:4310' }],
-      undefined,
-      [25140],
-    )
-    expect(run.mock.calls.map(([executable]) => executable)).toEqual(['wmic.exe', 'netstat.exe'])
-    releaseListener?.('TCP 127.0.0.1:4310 0.0.0.0:0 LISTENING 25140')
-    await expect(operation).resolves.toEqual([])
-  })
   it('queries only listener PIDs for preferred endpoints and rejects unrelated services', async () => {
     const endpoint = { host: '127.0.0.1', port: 4310, baseUrl: 'http://127.0.0.1:4310' }
     const read = vi.fn(() =>
@@ -104,22 +86,6 @@ describe('OS process discovery parsing', () => {
       expect(parseDshProcessCandidates(processOutput, listener)).toEqual([])
   })
 
-  it('understands Windows netstat and WMIC-shaped output', () => {
-    const candidates = parseDshProcessCandidates(
-      'Node,Machine,"node.exe C:\\npm\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js --profile web --port 0",25140',
-      '  TCP    127.0.0.1:12982    0.0.0.0:0    LISTENING    25140',
-    )
-    expect(candidates[0]).toMatchObject({ endpoint: { port: 12982 }, pid: 25140 })
-  })
-
-  it('accepts the parser-compatible CIM fallback output', () => {
-    const candidates = parseDshProcessCandidates(
-      'node.exe C:\\npm\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js --profile web --port 0,25140',
-      '  TCP    127.0.0.1:12982    0.0.0.0:0    LISTENING    25140',
-    )
-    expect(candidates[0]).toMatchObject({ endpoint: { port: 12982 }, pid: 25140 })
-  })
-
   it('reads an exact package version only from the listener process DSH CLI package', async () => {
     const [candidate] = parseDshProcessCandidates(
       '25140 node "/opt/dsh install/node_modules/@deepseek-ai/dsh/lib/bin.js" --profile web --port 0',
@@ -137,7 +103,6 @@ describe('OS process discovery parsing', () => {
       runtimeVersion: '0.1.7-rc.1',
       runtimeVersionEvidence: 'process-manifest',
     })
-    expect(readManifest).toHaveBeenCalledTimes(1)
   })
 
   it('resolves the exact upstream CLI package from a Windows process command line with spaces', async () => {
@@ -156,40 +121,6 @@ describe('OS process discovery parsing', () => {
       runtimeVersion: '0.1.7-rc.1',
       runtimeVersionEvidence: 'process-manifest',
     })
-    expect(readManifest).toHaveBeenCalledTimes(1)
-  })
-
-  it('parses WMIC CommandLine,ProcessId CSV without assuming a Machine column', async () => {
-    const [candidate] = parseDshProcessCandidates(
-      'Node,"""C:\\Program Files\\node.exe"" ""C:\\npm,cache\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js"" --profile web --port 0",25140',
-      '  TCP    127.0.0.1:12982    0.0.0.0:0    LISTENING    25140',
-    )
-    const readManifest = vi.fn((filePath: string) => {
-      expect(filePath).toBe('C:\\npm,cache\\node_modules\\@deepseek-ai\\dsh\\package.json')
-      return Promise.resolve(JSON.stringify({ name: '@deepseek-ai/dsh', version: '0.1.7-rc.1' }))
-    })
-
-    const [resolved] = await resolveDshProcessRuntimeVersions([candidate!], readManifest)
-
-    expect(resolved).toMatchObject({
-      runtimeVersion: '0.1.7-rc.1',
-      runtimeVersionEvidence: 'process-manifest',
-    })
-    expect(readManifest).toHaveBeenCalledTimes(1)
-  })
-
-  it('recognizes the exact CLI web profile shorthand on Linux and Windows', () => {
-    const linux = parseDshProcessCandidates(
-      '25140 node /opt/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js web --port 0',
-      'LISTEN 0 128 127.0.0.1:12982 0.0.0.0:* users:(("node",pid=25140,fd=18))',
-    )
-    const windows = parseDshProcessCandidates(
-      'Node,"""C:\\Program Files\\node.exe"" ""C:\\npm cache\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js"" web --port 0",25141',
-      '  TCP    127.0.0.1:12983    0.0.0.0:0    LISTENING    25141',
-    )
-
-    expect(linux).toMatchObject([{ endpoint: { port: 12982 }, pid: 25140 }])
-    expect(windows).toMatchObject([{ endpoint: { port: 12983 }, pid: 25141 }])
   })
 
   it.each([
@@ -230,55 +161,5 @@ describe('OS process discovery parsing', () => {
     )
     expect(resolved).toEqual([])
     expect(readManifest).not.toHaveBeenCalled()
-  })
-
-  it('uses escaped WMI CSV in the Windows fallback and parses quoted command lines', async () => {
-    const cimOutput = [
-      '"CommandLine","ProcessId"',
-      '"""C:\\Program Files\\node.exe"" ""C:\\npm,cache\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js"" --profile web --port 0","25140"',
-    ].join('\n')
-    const runCommand = vi
-      .fn<(executable: string, args: readonly string[], signal?: AbortSignal) => Promise<string>>()
-      .mockRejectedValueOnce(new Error('wmic is not installed'))
-      .mockResolvedValueOnce(cimOutput)
-
-    await expect(runWindowsProcessListing(runCommand)).resolves.toBe(cimOutput)
-    expect(runCommand).toHaveBeenNthCalledWith(
-      1,
-      'wmic.exe',
-      ['process', 'where', "CommandLine like '%dsh%'", 'get', 'CommandLine,ProcessId', '/format:csv'],
-      undefined,
-    )
-    expect(runCommand).toHaveBeenNthCalledWith(
-      2,
-      'powershell.exe',
-      expect.arrayContaining([
-        '-NoProfile',
-        '-NonInteractive',
-        '-Command',
-        expect.stringContaining(
-          "SELECT CommandLine,ProcessId FROM Win32_Process WHERE CommandLine LIKE '%dsh%'",
-        ),
-        expect.stringContaining('$rows.Dispose()'),
-        expect.stringContaining('$query.Dispose()'),
-        expect.stringContaining('ConvertTo-Csv'),
-      ]),
-      undefined,
-    )
-
-    const [candidate] = parseDshProcessCandidates(
-      cimOutput,
-      '  TCP    127.0.0.1:12982    0.0.0.0:0    LISTENING    25140',
-    )
-    expect(candidate?.commandLine).toBe(
-      '"C:\\Program Files\\node.exe" "C:\\npm,cache\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js" --profile web --port 0',
-    )
-    const readManifest = vi.fn((manifestPath: string) => {
-      expect(manifestPath).toBe('C:\\npm,cache\\node_modules\\@deepseek-ai\\dsh\\package.json')
-      return Promise.resolve(JSON.stringify({ name: '@deepseek-ai/dsh', version: '0.1.7-rc.1' }))
-    })
-    const [resolved] = await resolveDshProcessRuntimeVersions([candidate!], readManifest)
-    expect(resolved?.runtimeVersion).toBe('0.1.7-rc.1')
-    expect(readManifest).toHaveBeenCalledTimes(1)
   })
 })

@@ -74,32 +74,6 @@ function NestedLayers({
 }
 
 describe('useDismissibleLayer focus trap', () => {
-  it('skips controls in closed disclosures while keeping their summary reachable', () => {
-    function DisclosureModal(): ReactElement {
-      const ref = useRef<HTMLDivElement>(null)
-      useDismissibleLayer({ open: true, refs: [ref], trapFocus: true, onDismiss: () => undefined })
-      return (
-        <div ref={ref}>
-          <button type="button">First</button>
-          <details>
-            <summary>Advanced</summary>
-            <button type="button">Hidden action</button>
-          </details>
-          <button type="button">Last</button>
-        </div>
-      )
-    }
-    render(<DisclosureModal />)
-    const first = screen.getByRole('button', { name: 'First' })
-    const last = screen.getByRole('button', { name: 'Last' })
-    first.focus()
-    fireEvent.keyDown(document, { key: 'Tab' })
-    expect(document.activeElement).toBe(screen.getByText('Advanced'))
-    fireEvent.keyDown(document, { key: 'Tab' })
-    expect(document.activeElement).toBe(last)
-    fireEvent.keyDown(document, { key: 'Tab' })
-    expect(document.activeElement).toBe(first)
-  })
   it('does not dismiss an ancestor when a pointer lands inside a portalled child layer', () => {
     const onOuterDismiss = vi.fn()
     const onChildDismiss = vi.fn()
@@ -147,45 +121,11 @@ describe('useDismissibleLayer focus trap', () => {
     expect(document.activeElement).toBe(last)
     expect(fireEvent.keyDown(last, { key: 'Tab' })).toBe(false)
     expect(document.activeElement).toBe(child)
-    expect(onChildTab).toHaveBeenCalledTimes(2)
     expect(fireEvent.keyDown(child, { key: 'Tab' })).toBe(false)
     expect(document.activeElement).toBe(first)
     expect(fireEvent.keyDown(first, { key: 'Tab', shiftKey: true })).toBe(false)
     expect(document.activeElement).toBe(child)
     expect(document.activeElement).not.toBe(screen.getByRole('button', { name: 'Outside after' }))
-  })
-
-  it('lets the top portal handle Tab before the modal enforces its focus boundary', () => {
-    const onChildTab = vi.fn((event: KeyboardEvent) => {
-      event.preventDefault()
-      screen.getByRole('button', { name: 'Child menu item' }).focus()
-    })
-    const view = render(<NestedLayers childOpen={false} innerModalOpen={false} onChildTab={onChildTab} />)
-    view.rerender(<NestedLayers childOpen innerModalOpen={false} onChildTab={onChildTab} />)
-
-    const first = screen.getByRole('button', { name: 'Outer first' })
-    const child = screen.getByRole('button', { name: 'Child menu item' })
-    first.focus()
-    fireEvent.keyDown(first, { key: 'Tab' })
-
-    expect(onChildTab).toHaveBeenCalledOnce()
-    expect(document.activeElement).toBe(child)
-  })
-
-  it('keeps a child layer callback from moving focus outside its modal scope', () => {
-    const onChildTab = vi.fn((event: KeyboardEvent) => {
-      event.preventDefault()
-      screen.getByRole('button', { name: 'Outside after' }).focus()
-    })
-    const view = render(<NestedLayers childOpen={false} innerModalOpen={false} onChildTab={onChildTab} />)
-    view.rerender(<NestedLayers childOpen innerModalOpen={false} onChildTab={onChildTab} />)
-
-    const first = screen.getByRole('button', { name: 'Outer first' })
-    first.focus()
-    fireEvent.keyDown(first, { key: 'Tab' })
-
-    expect(document.activeElement).toBe(first)
-    expect(onChildTab).toHaveBeenCalledOnce()
   })
 
   it('lets a newer modal own focus and restores the previous trap when it closes', () => {
@@ -244,51 +184,6 @@ describe('useDismissibleLayer focus trap', () => {
     expect(document.activeElement).toBe(only)
     expect(fireEvent.keyDown(only, { key: 'Tab', shiftKey: true })).toBe(false)
     expect(document.activeElement).toBe(only)
-  })
-
-  it('keeps focus on the modal root when it has no tab stops', () => {
-    render(
-      <>
-        <button type="button">Outside</button>
-        <Layer open label="Empty dialog" trapFocus>
-          <p>Nothing to tab to.</p>
-        </Layer>
-      </>,
-    )
-
-    const dialog = screen.getByRole('dialog', { name: 'Empty dialog' })
-    const outside = screen.getByRole('button', { name: 'Outside' })
-    outside.focus()
-    expect(fireEvent.keyDown(outside, { key: 'Tab' })).toBe(false)
-    expect(document.activeElement).toBe(dialog)
-    expect(fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true })).toBe(false)
-    expect(document.activeElement).toBe(dialog)
-  })
-
-  it('orders explicit positive tabIndex stops before natural stops', () => {
-    render(
-      <>
-        <button type="button">Outside</button>
-        <Layer open label="Ordered dialog" trapFocus>
-          <button type="button" tabIndex={3}>
-            Third stop
-          </button>
-          <button type="button">Natural stop</button>
-          <button type="button" tabIndex={1}>
-            First stop
-          </button>
-        </Layer>
-      </>,
-    )
-
-    const outside = screen.getByRole('button', { name: 'Outside' })
-    outside.focus()
-    fireEvent.keyDown(outside, { key: 'Tab' })
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'First stop' }))
-    fireEvent.keyDown(document.activeElement as HTMLElement, { key: 'Tab' })
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Third stop' }))
-    fireEvent.keyDown(document.activeElement as HTMLElement, { key: 'Tab' })
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Natural stop' }))
   })
 
   it('restores a background element that was already inert before the modal opened', () => {

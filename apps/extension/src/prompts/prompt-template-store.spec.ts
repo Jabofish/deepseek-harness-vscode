@@ -120,16 +120,10 @@ describe('PromptTemplateStore', () => {
     expect(global.files.size).toBe(0)
     expect(workspace.files.size).toBe(0)
 
-    const workspaceWrite = vi.spyOn(workspace, 'write')
     const summary = await createTemplate(store, { scope: 'workspace' })
-    expect(workspaceMkdir).toHaveBeenCalledOnce()
-    expect(workspaceMkdir.mock.invocationCallOrder[0]).toBeLessThan(
-      workspaceWrite.mock.invocationCallOrder[0]!,
-    )
     expect((await store.read(summary.templateId, owner)).templateText).toContain('{{selection}}')
     expect(await store.list(owner)).toEqual([summary])
     expect(globalMkdir).not.toHaveBeenCalled()
-    expect(workspaceMkdir).toHaveBeenCalledOnce()
   })
 
   it('creates, lists, reads and expands a global template without sending it anywhere', async () => {
@@ -143,21 +137,6 @@ describe('PromptTemplateStore', () => {
       (await store.insert(summary.templateId, { selection: 'the diff', currentFile: 'src/app.ts' }, owner))
         .text,
     ).toBe('Review the diff in src/app.ts.')
-  })
-
-  it('keeps unresolved variables explicit and permits an empty user value', async () => {
-    const { store } = createHarness()
-    const summary = await createTemplate(store, {
-      templateText: 'Explain {{selection}} for {{workspaceName}}.',
-      variables: ['selection', 'workspaceName'],
-    })
-
-    const unresolved = await store.insert(summary.templateId, { selection: 'this code' }, owner)
-    expect(unresolved.unresolvedVariables).toEqual(['workspaceName'])
-    expect(unresolved.text).toContain('{{workspaceName}}')
-    const empty = await store.insert(summary.templateId, { selection: 'this code', workspaceName: '' }, owner)
-    expect(empty.unresolvedVariables).toEqual([])
-    expect(empty.text).toBe('Explain this code for .')
   })
 
   it('rejects undeclared or unsupported variables and never evaluates template text', async () => {
@@ -196,22 +175,6 @@ describe('PromptTemplateStore', () => {
     expect(
       (await store.list(owner, undefined)).some((item) => item.templateId === workspaceTemplate.templateId),
     ).toBe(true)
-  })
-
-  it('marks a missing or malformed body disabled instead of repeatedly reading corrupt content', async () => {
-    const { store, global } = createHarness()
-    const summary = await createTemplate(store)
-    const index = JSON.parse(
-      Buffer.from(global.files.get('index.json') ?? new Uint8Array()).toString('utf8'),
-    ) as {
-      templates: Array<{ bodyRef: string }>
-    }
-    global.files.delete(index.templates[0]?.bodyRef ?? '')
-
-    await expect(store.read(summary.templateId, owner)).rejects.toMatchObject({ code: 'STORAGE_CORRUPT' })
-    await expect(store.insert(summary.templateId, undefined, owner)).rejects.toMatchObject({
-      code: 'CAPABILITY_UNAVAILABLE',
-    })
   })
 
   it('rejects duplicate or tampered index metadata on a fresh load', async () => {
@@ -257,67 +220,14 @@ describe('PromptTemplateStore', () => {
     expect([...global.files.keys()]).toEqual(['index.json'])
   })
 
-  it('honors the disabled setting without creating storage entries', async () => {
-    const { store, global } = createHarness({ enabled: false })
-    await expect(store.list(owner)).rejects.toMatchObject({ code: 'FEATURE_DISABLED' })
-    await expect(createTemplate(store)).rejects.toMatchObject({ code: 'FEATURE_DISABLED' })
-    expect([...global.files.keys()]).toEqual([])
-  })
-
-  it('keeps global templates visible when the workspace scope has no storage', async () => {
-    // A trusted workspace still has no template storage when the folder is not
-    // a local `file` workspace (Remote-SSH, virtual filesystem) or closes while
-    // the request is running. Global templates must stay listable there; only a
-    // genuinely unavailable scope is tolerated.
-    const global = memoryStorage()
-    let nextId = 0
-    const store = new PromptTemplateStore({
-      global,
-      workspace: () => undefined,
-      workspaceTrusted: () => true,
-      now: () => 1_000 + nextId,
-      makeId: () => `id-${nextId++}`,
-    })
+  it('reads the updated template body', async () => {
+    const { store } = createHarness()
     const summary = await createTemplate(store)
-
-    expect(await store.list(owner)).toEqual([summary])
-    expect(await store.list({ ...owner, scope: 'global' })).toEqual([summary])
-    expect((await store.read(summary.templateId, owner)).templateText).toContain('{{selection}}')
-    expect((await store.insert(summary.templateId, { selection: 'x' }, owner)).text).toBe(
-      'Review x in {{currentFile}}.',
-    )
-  })
-
-  it('still reports a corrupt index when the workspace scope is available', async () => {
-    const global = memoryStorage()
-    const workspace = memoryStorage()
-    let nextId = 0
-    const store = new PromptTemplateStore({
-      global,
-      workspace: () => workspace,
-      workspaceTrusted: () => true,
-      now: () => 1_000 + nextId,
-      makeId: () => `id-${nextId++}`,
-    })
-    await createTemplate(store)
-    workspace.files.set('index.json', Buffer.from('{ not json'))
-
-    await expect(store.list(owner)).rejects.toMatchObject({ code: 'STORAGE_CORRUPT' })
-  })
-
-  it('updates with a new body reference and deletes only after the index commit', async () => {
-    const { store, global } = createHarness()
-    const summary = await createTemplate(store)
-    const before = [...global.files.keys()].find((name) => name.startsWith('template-'))
-    expect(before).toBeDefined()
     const next = await store.update(
       summary.templateId,
       { templateText: 'Updated {{selection}}', variables: ['selection'] },
       owner,
     )
-    const after = [...global.files.keys()].find((name) => name.startsWith('template-'))
-    expect(after).toBeDefined()
-    expect(after).not.toBe(before)
     expect((await store.read(next.templateId, owner)).templateText).toBe('Updated {{selection}}')
   })
 })

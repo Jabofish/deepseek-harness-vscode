@@ -1,4 +1,11 @@
-import type { ComponentProps, ComponentType, ReactElement } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  type ComponentProps,
+  type ComponentType,
+  type ReactElement,
+} from 'react'
 import type { SettingsDrawer } from './SettingsDrawer.js'
 import { useDeferredComponent } from '../../app/useDeferredComponent.js'
 import { ModalDialog } from '../../components/common/ModalDialog.js'
@@ -82,6 +89,13 @@ export function AppSettingsDrawer({
   acknowledgeAccountBonusFromSettings,
   openAccountPageFromSettings,
 }: AppSettingsDrawerProps): ReactElement | null {
+  const returnFocusRef = useRef<HTMLElement | null>(null)
+  const captureReturnFocus = useCallback((element: HTMLElement | null): void => {
+    returnFocusRef.current ??= element
+  }, [])
+  useEffect(() => {
+    if (state.drawer !== 'settings') returnFocusRef.current = null
+  }, [state.drawer])
   const {
     Component: LoadedSettingsDrawer,
     failed,
@@ -91,6 +105,8 @@ export function AppSettingsDrawer({
     if (state.drawer !== 'settings') return null
     return (
       <ModalDialog
+        returnFocusRef={returnFocusRef}
+        onCaptureReturnFocus={captureReturnFocus}
         title={t('settings.title')}
         closeLabel={t('settings.close')}
         onClose={() => store.setDrawer(undefined)}
@@ -108,6 +124,7 @@ export function AppSettingsDrawer({
   }
   return (
     <LoadedSettingsDrawer
+      returnFocusRef={returnFocusRef}
       open={state.drawer === 'settings'}
       onOpenChange={(open) => store.setDrawer(open ? 'settings' : undefined)}
       connected={state.backend.kind === 'connected'}

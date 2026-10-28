@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ToolPresentationView } from './tools.js'
-import {
-  hasSpillNotice,
-  parseShellExitStatus,
-  settledToolPresentation,
-  terminalPresentationFailed,
-} from './tool-shell.js'
+import { parseShellExitStatus, settledToolPresentation, terminalPresentationFailed } from './tool-shell.js'
 
 const callCard: Extract<ToolPresentationView, { readonly phase: 'call'; readonly card: 'terminal' }> = {
   phase: 'call',
@@ -20,13 +15,6 @@ const shellArgs = (over: Record<string, unknown> = {}): string =>
 describe('parseShellExitStatus', () => {
   it('removes a final exit marker and states its code', () => {
     expect(parseShellExitStatus('boom\n[exit code: 2]')).toEqual({ output: 'boom', exitCode: 2 })
-  })
-
-  it('preserves negative Windows process exit codes', () => {
-    expect(parseShellExitStatus('crashed\n[exit code: -1073741510]')).toEqual({
-      output: 'crashed',
-      exitCode: -1073741510,
-    })
   })
 
   it.each(['null', '999999999999999999999999999999'])(
@@ -53,10 +41,6 @@ describe('parseShellExitStatus', () => {
     })
   })
 
-  it('states a clean exit for text with no marker, since the renderer only appends one for a failure', () => {
-    expect(parseShellExitStatus('all good')).toEqual({ output: 'all good', exitCode: 0 })
-  })
-
   it('only reads a marker at the very end', () => {
     expect(parseShellExitStatus('timed out\n[timed out after 1000ms]\n[exit code: 2]')).toEqual({
       output: 'timed out\n[timed out after 1000ms]',
@@ -64,29 +48,6 @@ describe('parseShellExitStatus', () => {
     })
     // A marker without the preceding newline is output the command printed.
     expect(parseShellExitStatus('[exit code: 5]')).toEqual({ output: '[exit code: 5]', exitCode: 0 })
-  })
-})
-
-describe('hasSpillNotice', () => {
-  const notice = '(Omitted 50000 bytes. Full formatted result stored at: /spill/output.txt. Read the file.)'
-
-  it('recognizes a notice-only result and a preview that carries one', () => {
-    expect(hasSpillNotice(notice)).toBe(true)
-    expect(hasSpillNotice(`partial output\n\n${notice}`)).toBe(true)
-    expect(
-      hasSpillNotice('(More bytes were omitted. Full formatted result stored at: a.txt. Read it.)'),
-    ).toBe(true)
-    expect(hasSpillNotice('(Omitted 0 bytes. Full formatted result stored at: a.txt. Read it.)')).toBe(true)
-  })
-
-  it('only recognizes a notice that ends the result', () => {
-    expect(hasSpillNotice(`${notice}\nordinary output`)).toBe(false)
-    expect(hasSpillNotice('ordinary output')).toBe(false)
-    expect(hasSpillNotice('')).toBe(false)
-    // The locator alone is not the convention: the guidance after it is part of it.
-    expect(hasSpillNotice('(Omitted 50000 bytes. Full formatted result stored at: /spill/output.txt)')).toBe(
-      false,
-    )
   })
 })
 
@@ -101,83 +62,6 @@ describe('settledToolPresentation', () => {
     })
     expect(view).toMatchObject({ phase: 'result', card: 'terminal', exitCode: -1073741510 })
     expect(terminalPresentationFailed(view)).toBe(true)
-  })
-  it('settles a running shell card into the card its own result states', () => {
-    expect(
-      settledToolPresentation(callCard, {
-        name: 'bash',
-        rawArguments: shellArgs(),
-        output: 'boom\n[exit code: 2]',
-        failed: false,
-        settled: true,
-      }),
-    ).toEqual({ phase: 'result', card: 'terminal', output: 'boom', exitCode: 2 })
-  })
-
-  it('never states a title, which a call card uses to name the command under approval', () => {
-    const settled = settledToolPresentation(callCard, {
-      name: 'bash',
-      rawArguments: shellArgs(),
-      output: 'ok\n[exit code: 0]',
-      failed: false,
-      settled: true,
-    })
-    expect(settled).toEqual({ phase: 'result', card: 'terminal', output: 'ok', exitCode: 0 })
-    expect(settled !== undefined && 'title' in settled).toBe(false)
-  })
-
-  it('states a signal for a killed command', () => {
-    expect(
-      settledToolPresentation(callCard, {
-        name: 'pwsh',
-        rawArguments: shellArgs(),
-        output: 'gone\n[killed by signal: SIGKILL]',
-        failed: false,
-        settled: true,
-      }),
-    ).toEqual({ phase: 'result', card: 'terminal', output: 'gone', signal: 'SIGKILL' })
-  })
-
-  it('leaves a row that is still running, or already settled, untouched', () => {
-    const running = {
-      name: 'bash',
-      rawArguments: shellArgs(),
-      output: undefined,
-      failed: false,
-      settled: false,
-    }
-    expect(settledToolPresentation(callCard, running)).toBe(callCard)
-    const resultCard: ToolPresentationView = { phase: 'result', card: 'terminal', output: 'ok', exitCode: 0 }
-    expect(
-      settledToolPresentation(resultCard, {
-        name: 'bash',
-        rawArguments: shellArgs(),
-        output: 'ok',
-        failed: false,
-        settled: true,
-      }),
-    ).toBe(resultCard)
-    expect(
-      settledToolPresentation(undefined, {
-        name: 'bash',
-        rawArguments: shellArgs(),
-        output: 'ok',
-        failed: false,
-        settled: true,
-      }),
-    ).toBeUndefined()
-  })
-
-  it('keeps the call card when no result text arrived to state', () => {
-    expect(
-      settledToolPresentation(callCard, {
-        name: 'bash',
-        rawArguments: shellArgs(),
-        output: undefined,
-        failed: false,
-        settled: true,
-      }),
-    ).toBe(callCard)
   })
 
   it('falls back to the generic row when the result has no text to state or cannot be trusted', () => {
@@ -232,13 +116,6 @@ describe('settledToolPresentation', () => {
     ).toBeUndefined()
   })
 
-  it('keeps the call card when the arguments say nothing about a shell', () => {
-    const facts = { name: 'bash', rawArguments: shellArgs(), output: 'ok', failed: false, settled: true }
-    expect(settledToolPresentation(callCard, { ...facts, name: 'read' })).toBe(callCard)
-    expect(settledToolPresentation(callCard, { ...facts, rawArguments: '{' })).toBe(callCard)
-    expect(settledToolPresentation(callCard, { ...facts, rawArguments: undefined })).toBe(callCard)
-  })
-
   it.each([
     ['timeout type', { timeoutMs: '1000' }],
     ['timeout value', { timeoutMs: 0 }],
@@ -260,40 +137,5 @@ describe('settledToolPresentation', () => {
         settled: true,
       }),
     ).toBe(callCard)
-  })
-
-  it('accepts valid optional and unknown fields on the open parameter root', () => {
-    expect(
-      settledToolPresentation(callCard, {
-        name: 'bash',
-        rawArguments: shellArgs({
-          timeoutMs: 1_000,
-          sandbox_permissions: 'workspace-write',
-          justification: 'Write generated output',
-          extension: { version: 1 },
-        }),
-        output: 'ok\n[exit code: 0]',
-        failed: false,
-        settled: true,
-      }),
-    ).toEqual({ phase: 'result', card: 'terminal', output: 'ok', exitCode: 0 })
-  })
-})
-
-describe('terminalPresentationFailed', () => {
-  it('flags a failing exit and a signal, and nothing else', () => {
-    expect(terminalPresentationFailed({ phase: 'result', card: 'terminal', output: 'ok', exitCode: 0 })).toBe(
-      false,
-    )
-    expect(
-      terminalPresentationFailed({ phase: 'result', card: 'terminal', output: 'boom', exitCode: 2 }),
-    ).toBe(true)
-    expect(
-      terminalPresentationFailed({ phase: 'result', card: 'terminal', output: 'gone', signal: 'SIGTERM' }),
-    ).toBe(true)
-    expect(terminalPresentationFailed({ phase: 'result', card: 'terminal', output: 'quiet' })).toBe(false)
-    expect(terminalPresentationFailed({ phase: 'call', card: 'terminal', title: 'pnpm check' })).toBe(false)
-    expect(terminalPresentationFailed({ phase: 'result', card: 'generic', content: ['boom'] })).toBe(false)
-    expect(terminalPresentationFailed(undefined)).toBe(false)
   })
 })

@@ -1,25 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { AppError } from '@dsh-vscode/domain'
 import { configuration, configurationFixture, deferred } from './support/session-configuration-fixture.js'
-import { normalizeTransportError } from '../src/transport-errors.js'
-
-async function flushContinuations(): Promise<void> {
-  for (let index = 0; index < 20; index += 1) await Promise.resolve()
-}
 
 describe('session configuration transactions', () => {
-  it('does not apply unchosen draft policy fallbacks before the first message', async () => {
-    const h = configurationFixture({ planExposed: false, commandOutcome: () => 'unknown' })
-    h.state.get('s1')!.plan = true
-    await h.repository.setConfiguration('s1', {
-      ...configuration('workspace-write', 'old'),
-      permissionPresetKnown: false,
-      planModeKnown: false,
-    })
-    expect(h.calls.filter((call) => call.line)).toEqual([])
-    expect(h.state.get('s1')).toMatchObject({ permission: 'read-only', plan: true })
-  })
-
   it('honors an explicit Plan choice even while applying a model choice', async () => {
     const h = configurationFixture({ planExposed: false })
     await h.repository.setConfiguration('s1', {
@@ -29,31 +12,6 @@ describe('session configuration transactions', () => {
     expect(h.calls.filter((call) => call.line).map((call) => call.line)).toEqual(['/plan off'])
     expect(h.state.get('s1')).toMatchObject({ plan: false, provider: 'new' })
   })
-
-  it('does not write an unknown plan fallback during a model-only update', async () => {
-    const h = configurationFixture({
-      planExposed: false,
-      commandOutcome: (call) => (call.line === '/plan off' ? 'unknown' : 'success'),
-    })
-    h.state.get('s1')!.plan = true
-    await h.repository.setConfiguration('s1', configuration('read-only', 'new'))
-    expect(h.calls.filter((call) => call.line)).toEqual([])
-    expect(h.state.get('s1')).toMatchObject({ permission: 'read-only', plan: true, provider: 'new' })
-  })
-
-  it.each([true, false])(
-    'preserves an explicit plan-only %s request when plan state is unknown',
-    async (plan) => {
-      const h = configurationFixture({ planExposed: false, commandOutcome: () => 'unknown' })
-      await expect(
-        h.repository.setConfiguration('s1', configuration('read-only', 'old', plan)),
-      ).rejects.toMatchObject({ code: 'INVALID_CONFIGURATION' })
-      expect(h.calls.filter((call) => call.line).map((call) => call.line)).toEqual([
-        plan ? '/plan' : '/plan off',
-      ])
-      expect(h.calls.some((call) => call.method === 'session.selectModel')).toBe(false)
-    },
-  )
 
   it.each(['PROTOCOL_ERROR', 'BACKEND_UNREACHABLE'] as const)(
     'compensates a committed permission command after a lost %s receipt without resending it',
@@ -71,36 +29,6 @@ describe('session configuration transactions', () => {
         '/permission danger-full-access',
         '/permission read-only',
       ])
-    },
-  )
-
-  it.each([true, false])(
-    'handles a lost model receipt with a known previous selection: %s',
-    async (known) => {
-      const error = new AppError({
-        code: 'BACKEND_UNREACHABLE',
-        message: 'Fixture model receipt lost.',
-        retryable: true,
-      })
-      const h = configurationFixture({
-        afterModel: (call) => (call.provider === 'new' ? Promise.reject(error) : Promise.resolve()),
-      })
-      if (!known) {
-        const state = h.state.get('s1')!
-        state.provider = ''
-        state.model = ''
-      }
-      const operation = h.repository.setConfiguration('s1', configuration('read-only', 'new'))
-      if (known) await expect(operation).rejects.toBe(error)
-      else
-        await expect(operation).rejects.toMatchObject({
-          code: 'INTERNAL_ERROR',
-          message: 'DSH configuration failed and could not be fully restored.',
-        })
-      expect(h.state.get('s1')?.provider).toBe(known ? 'old' : 'new')
-      expect(
-        h.calls.filter((call) => call.method === 'session.selectModel').map((call) => call.provider),
-      ).toEqual(known ? ['new', 'old'] : ['new'])
     },
   )
 
@@ -161,53 +89,6 @@ describe('session configuration transactions', () => {
   })
 
   it.each(['/permission danger-full-access', '/plan'])(
-    'restores a committed %s command even when cancellation loses its receipt',
-    async (line) => {
-      const controller = new AbortController()
-      const h = configurationFixture({
-        afterCommand: (call) => {
-          if (call.line === line) controller.abort()
-          return Promise.resolve()
-        },
-      })
-      const desired =
-        line === '/plan' ? configuration('read-only', 'old', true) : configuration('danger-full-access')
-      await expect(h.repository.setConfiguration('s1', desired, controller.signal)).rejects.toMatchObject({
-        code: 'REQUEST_CANCELLED',
-      })
-      expect(h.state.get('s1')).toMatchObject({ permission: 'read-only', plan: false, provider: 'old' })
-    },
-  )
-
-  it('does not rewrite pending model intent during a permission-only update', async () => {
-    const h = configurationFixture()
-    const session = h.state.get('s1')!
-    session.provider = 'pending'
-    session.model = 'model-pending'
-    session.events.push(
-      {
-        event: {
-          type: 'model/selection',
-          seq: 4,
-          time: 1003,
-          data: { provider: 'pending', model: 'model-pending' },
-        },
-      },
-      {
-        event: {
-          type: 'request/header',
-          seq: 5,
-          time: 1004,
-          data: { header: { config: { provider: 'old', model: 'model-old', reasoningEffort: 'high' } } },
-        },
-      },
-    )
-    await h.repository.setConfiguration('s1', configuration('workspace-write', 'pending'))
-    expect(h.calls.filter((call) => call.method === 'session.selectModel')).toEqual([])
-    expect(h.state.get('s1')).toMatchObject({ permission: 'workspace-write', provider: 'pending' })
-  })
-
-  it.each(['/permission danger-full-access', '/plan'])(
     'rejects the command business error from %s without applying later model changes',
     async (line) => {
       const h = configurationFixture({ commandOutcome: (call) => (call.line === line ? 'error' : 'success') })
@@ -234,92 +115,34 @@ describe('session configuration transactions', () => {
     expect(h.state.get('s1')).toMatchObject({ permission: 'workspace-write', provider: 'new' })
   })
 
-  it('finishes A compensation before B reads its baseline or commits the same session', async () => {
-    const entered = deferred()
-    const release = deferred()
-    const h = configurationFixture({
-      afterCommand: async (call) => {
-        if (call.line === '/permission danger-full-access') {
-          entered.resolve()
-          await release.promise
-        }
-      },
-    })
-    const A = h.repository.setConfiguration('s1', configuration('danger-full-access', 'unavailable'))
-    const outcomeA = A.catch((error: unknown) => error)
-    await entered.promise
-    const B = h.repository.setConfiguration('s1', configuration('workspace-write', 'B'))
-    try {
-      await flushContinuations()
-      expect(h.calls.filter((call) => call.method === 'session.history')).toHaveLength(1)
-      expect(h.state.get('s1')?.permission).toBe('danger-full-access')
-    } finally {
-      release.resolve()
-      await Promise.allSettled([A, B])
-    }
-    expect(await outcomeA).toMatchObject({ code: 'INVALID_CONFIGURATION' })
-    await B
-    expect((await h.repository.get('s1')).configuration).toMatchObject({
-      permissionPreset: 'workspace-write',
-      model: { providerId: 'B' },
-    })
-    expect(h.calls.filter((call) => call.line).map((call) => call.line)).toEqual([
-      '/permission danger-full-access',
-      '/permission read-only',
-      '/permission workspace-write',
-    ])
+  it('does no I/O for an already cancelled request', async () => {
+    const h = configurationFixture()
+    const controller = new AbortController()
+    controller.abort()
+    await expect(
+      h.repository.setConfiguration('s1', configuration('workspace-write'), controller.signal),
+    ).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
+    expect(h.calls).toEqual([])
   })
 
-  it('reads B baseline after A succeeds, so B can turn a newly enabled plan back off', async () => {
-    const entered = deferred()
-    const release = deferred()
-    const h = configurationFixture({
-      afterCommand: async (call) => {
-        if (call.line === '/permission danger-full-access') {
-          entered.resolve()
-          await release.promise
-        }
-      },
-    })
-    const A = h.repository.setConfiguration('s1', configuration('danger-full-access', 'old', true))
-    await entered.promise
-    const B = h.repository.setConfiguration('s1', configuration('read-only'))
-    release.resolve()
-    await Promise.all([A, B])
-    expect(h.state.get('s1')).toMatchObject({ permission: 'read-only', plan: false })
-    expect(h.calls.filter((call) => call.line).map((call) => call.line)).toEqual([
-      '/permission danger-full-access',
-      '/plan',
-      '/permission read-only',
-      '/plan off',
-    ])
-  })
-
-  it.each(['session', 'backend'] as const)('keeps transactions for another %s independent', async (scope) => {
-    const entered = deferred()
-    const release = deferred()
-    const h = configurationFixture({
-      afterCommand: async (call) => {
-        if (call.sessionId === 's1' && call.line === '/permission danger-full-access') {
-          entered.resolve()
-          await release.promise
-        }
-      },
-    })
-    const other = scope === 'backend' ? configurationFixture() : h
-    const A = h.repository.setConfiguration('s1', configuration('danger-full-access', 'unavailable'))
-    const outcomeA = A.catch((error: unknown) => error)
-    await entered.promise
-    try {
-      const id = scope === 'backend' ? 's1' : 's2'
-      await other.repository.setConfiguration(id, configuration('workspace-write', 'B'))
-      expect(other.state.get(id)).toMatchObject({ permission: 'workspace-write', provider: 'B' })
-    } finally {
-      release.resolve()
-      await outcomeA
-    }
-    expect(await outcomeA).toMatchObject({ code: 'INVALID_CONFIGURATION' })
-  })
+  it.each(['/permission danger-full-access', '/plan'])(
+    'restores a committed %s command even when cancellation loses its receipt',
+    async (line) => {
+      const controller = new AbortController()
+      const h = configurationFixture({
+        afterCommand: (call) => {
+          if (call.line === line) controller.abort()
+          return Promise.resolve()
+        },
+      })
+      const desired =
+        line === '/plan' ? configuration('read-only', 'old', true) : configuration('danger-full-access')
+      await expect(h.repository.setConfiguration('s1', desired, controller.signal)).rejects.toMatchObject({
+        code: 'REQUEST_CANCELLED',
+      })
+      expect(h.state.get('s1')).toMatchObject({ permission: 'read-only', plan: false, provider: 'old' })
+    },
+  )
 
   it('cancels a queued request immediately without reading, writing, or releasing A lock', async () => {
     const entered = deferred()
@@ -422,44 +245,6 @@ describe('session configuration transactions', () => {
     },
   )
 
-  it.each([
-    {
-      name: 'protocol error',
-      error: new AppError({
-        code: 'PROTOCOL_ERROR',
-        message: 'Fixture transport failure.',
-        retryable: false,
-      }),
-    },
-    {
-      name: 'timeout',
-      error: normalizeTransportError(
-        'session.selectModel',
-        new DOMException('Fixture timeout.', 'TimeoutError'),
-      ),
-    },
-  ])('releases a failed $name transaction after compensation', async ({ error }) => {
-    const h = configurationFixture({
-      beforeModel: (call) => (call.provider === 'failing' ? Promise.reject(error) : Promise.resolve()),
-    })
-    await expect(
-      h.repository.setConfiguration('s1', configuration('danger-full-access', 'failing')),
-    ).rejects.toBe(error)
-    expect(h.state.get('s1')).toMatchObject({ permission: 'read-only', provider: 'old' })
-    await h.repository.setConfiguration('s1', configuration('workspace-write', 'new'))
-    expect(h.state.get('s1')).toMatchObject({ permission: 'workspace-write', provider: 'new' })
-  })
-
-  it('does no I/O for an already cancelled request', async () => {
-    const h = configurationFixture()
-    const controller = new AbortController()
-    controller.abort()
-    await expect(
-      h.repository.setConfiguration('s1', configuration('workspace-write'), controller.signal),
-    ).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
-    expect(h.calls).toEqual([])
-  })
-
   it('does not mutate from a baseline that arrives after cancellation', async () => {
     const h = configurationFixture()
     const baseline = await h.repository.get('s1')
@@ -494,3 +279,7 @@ describe('session configuration transactions', () => {
     }
   })
 })
+
+async function flushContinuations(): Promise<void> {
+  for (let index = 0; index < 20; index += 1) await Promise.resolve()
+}

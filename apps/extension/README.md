@@ -2,6 +2,8 @@
 
 Bring local or remote [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) sessions into VS Code. Follow streaming replies, thinking, tools, approvals, questions, and conversation history beside your code.
 
+This is an unofficial extension for DeepSeek Harness.
+
 ## Use the extension
 
 - Create, switch, resume, and archive sessions by workspace.

@@ -12,6 +12,7 @@ import {
 import type { TimelineNode } from '@dsh-vscode/timeline'
 import type { MessageFeedbackItem, MessageFeedbackRating, MessageImageReference } from '@dsh-vscode/domain'
 import {
+  DEFAULT_ESTIMATED_ITEM_SIZE,
   DEFAULT_UNMEASURED_ROW_WINDOW,
   ScrollToLatestButton,
   useVirtualizedCollection,
@@ -153,6 +154,12 @@ function handleTimelineScrollKeyDown(event: ReactKeyboardEvent<HTMLDivElement>):
 }
 
 export const Timeline = memo(function Timeline(props: TimelineProps): ReactElement {
+  // Measurements and temporary reading anchors belong to one conversation,
+  // including when different sessions contain the same source node IDs.
+  return <SessionTimeline key={props.sessionId} {...props} />
+})
+
+const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): ReactElement {
   const { t } = useI18n()
   const layoutPreference = useConversationLayout()
   const conversationLayout = layoutPreference?.layout ?? 'classic'
@@ -161,12 +168,22 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
     readonly sessionId: string
     readonly nodeId: string
     readonly offset: number
+    readonly interaction: ScrollAnchor
   }>()
   const focusedProjector = useMemo(() => createFocusedTimelineProjector(), [])
   const prependAnchorRef = useRef<ScrollAnchor | undefined>(undefined)
-  const olderHistoryRequestRef = useRef<{ readonly sessionId: string } | undefined>(undefined)
+  const restoredPrependAnchorRef = useRef<ScrollAnchor | undefined>(undefined)
+  const readerAnchorRef = useRef<ScrollAnchor | undefined>(undefined)
+  const deferredReaderLayoutRef = useRef<(() => void) | undefined>(undefined)
+  const measuredWidthRef = useRef(0)
+  const olderHistoryRequestRef = useRef<
+    { readonly sessionId: string; readonly firstNodeId: string | undefined } | undefined
+  >(undefined)
   useLayoutEffect(() => {
     prependAnchorRef.current = undefined
+    restoredPrependAnchorRef.current = undefined
+    readerAnchorRef.current = undefined
+    measuredWidthRef.current = 0
     olderHistoryRequestRef.current = undefined
   }, [props.sessionId])
   const [expandedDetails, setExpandedDetails] = useState<ReadonlySet<string>>(new Set())
@@ -334,6 +351,7 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
     userScrollToOffset,
     scheduleScrollToLatest,
     captureScrollAnchor,
+    isScrollAnchorCurrent,
     restoreScrollAnchor,
     applyScrollAdjustment,
     isUserScrollActive,
@@ -344,6 +362,11 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
     itemCount: displayNodes.length,
     sessionId: props.sessionId,
     layoutMeasurementsActive: virtualizeTimeline,
+    onScrollIdle: () => {
+      const reconcile = deferredReaderLayoutRef.current
+      deferredReaderLayoutRef.current = undefined
+      reconcile?.()
+    },
   })
   useLayoutEffect(() => {
     const saved = presentationFocus.current
@@ -411,25 +434,209 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
     layoutAnchor?.layout === conversationLayout && layoutAnchor.sessionId === props.sessionId
       ? displayNodes.findIndex((node) => presentedSourceNodeIds(node).includes(layoutAnchor.nodeId))
       : -1
-  const getPinnedTimelineIndex = useCallback(
-    (): number | undefined =>
-      anchorIndex >= 0
-        ? anchorIndex
-        : // Measure the actual tail while following it. An estimated final row
-          // can grow after an explicit jump and leave the latest answer offscreen.
-          (getFocusedTimelineIndex() ??
-          (revealIndex >= 0 ? revealIndex : isPinnedToBottom ? displayNodes.length - 1 : undefined)),
-    [anchorIndex, displayNodes.length, getFocusedTimelineIndex, isPinnedToBottom, revealIndex],
+  // A prepended page can enable virtualization while the reader's old row is
+  // outside the new initial range. Keep that row mounted until restoration has
+  // used its real position instead of estimating from the whole canvas.
+  const getPinnedTimelineIndex = useCallback((): number | undefined => {
+    if (anchorIndex >= 0 && layoutAnchor !== undefined && isScrollAnchorCurrent(layoutAnchor.interaction))
+      return anchorIndex
+    const prependAnchor = prependAnchorRef.current
+    const prependNodeId =
+      prependAnchor !== undefined && isScrollAnchorCurrent(prependAnchor) ? prependAnchor.nodeId : undefined
+    const prependIndex =
+      prependNodeId === undefined ? -1 : displayNodes.findIndex((node) => node.id === prependNodeId)
+    if (prependIndex >= 0) return prependIndex
+    const readerAnchor = readerAnchorRef.current
+    const readerIndex =
+      !isPinnedToBottom && readerAnchor !== undefined && isScrollAnchorCurrent(readerAnchor)
+        ? displayNodes.findIndex((node) => node.id === readerAnchor.nodeId)
+        : -1
+    // Measure the actual tail while following it. An estimated final row can
+    // grow after an explicit jump and leave the latest answer offscreen.
+    return (
+      getFocusedTimelineIndex() ??
+      (revealIndex >= 0
+        ? revealIndex
+        : readerIndex >= 0
+          ? readerIndex
+          : isPinnedToBottom
+            ? displayNodes.length - 1
+            : undefined)
+    )
+  }, [
+    anchorIndex,
+    displayNodes,
+    getFocusedTimelineIndex,
+    isPinnedToBottom,
+    isScrollAnchorCurrent,
+    layoutAnchor,
+    revealIndex,
+  ])
+  // Seed the virtualizer with the heights the rows actually had in the
+  // non-virtualized list. Without it the canvas starts at count × 96px, so the
+  // frame that crosses the virtualization threshold collapses the scroll range
+  // and the transcript jumps (measured at 1534px on a 30-node conversation).
+  // Per-row heights matter: a conversation mixes short user rows with tall
+  // answers, and an average alone still moved the viewport by 237px.
+  const measuredRowHeightsRef = useRef(new Map<string, number>())
+  const measuredSessionRef = useRef(props.sessionId)
+  useLayoutEffect(() => {
+    if (measuredSessionRef.current === props.sessionId) return
+    measuredSessionRef.current = props.sessionId
+    measuredRowHeightsRef.current.clear()
+  }, [props.sessionId])
+  useLayoutEffect(() => {
+    if (virtualizeTimeline) return
+    const timeline = scrollRef.current
+    if (timeline === null) return
+    const rows = timeline.querySelectorAll<HTMLElement>('.dsh-timeline__row')
+    if (rows.length === 0) return
+    const currentIds = new Set(displayNodes.map((node) => node.id))
+    for (const id of measuredRowHeightsRef.current.keys()) {
+      if (!currentIds.has(id)) measuredRowHeightsRef.current.delete(id)
+    }
+    const measureRows = (changedRows: readonly HTMLElement[]): void => {
+      let readerAdjustment = 0
+      let precedingAdjustment = 0
+      const viewportTop = timeline.getBoundingClientRect().top
+      // A resize above another changed row also changes the latter's current
+      // top. Process in transcript order and recover its pre-resize position.
+      const orderedRows = [...changedRows].sort(
+        (left, right) => Number(left.dataset.index) - Number(right.dataset.index),
+      )
+      for (const row of orderedRows) {
+        if (!row.isConnected) continue
+        const id = row.dataset.nodeId
+        const height = row.getBoundingClientRect().height || row.offsetHeight
+        if (id === undefined || height <= 0) continue
+        const previousHeight = measuredRowHeightsRef.current.get(id)
+        const delta = previousHeight === undefined ? 0 : height - previousHeight
+        if (
+          previousHeight !== undefined &&
+          Math.abs(delta) > 0.5 &&
+          !isPinnedToBottom &&
+          !isUserScrollActive() &&
+          row.getBoundingClientRect().top - precedingAdjustment + previousHeight <= viewportTop + 0.5
+        )
+          readerAdjustment += delta
+        precedingAdjustment += delta
+        measuredRowHeightsRef.current.set(id, height)
+      }
+      if (Math.abs(readerAdjustment) > 0.5) applyScrollAdjustment(readerAdjustment)
+    }
+    // A React commit can resize an earlier row before ResizeObserver runs.
+    // Measure during the layout effect so its anchor correction precedes paint.
+    measureRows([...rows])
+    // Images and other asynchronous content can resize a row without a React
+    // render. Release the observer when the session or virtual window changes.
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver((entries) => {
+      measureRows(
+        entries.map((entry) => entry.target).filter((row): row is HTMLElement => row instanceof HTMLElement),
+      )
+    })
+    for (const row of rows) observer.observe(row, { box: 'border-box' })
+    return () => observer.disconnect()
+  }, [
+    applyScrollAdjustment,
+    displayNodes,
+    isPinnedToBottom,
+    isUserScrollActive,
+    props.sessionId,
+    scrollRef,
+    virtualizeTimeline,
+  ])
+  const estimateRowHeight = useCallback(
+    (index: number): number => {
+      const node = displayNodes[index]
+      if (node !== undefined && measuredSessionRef.current === props.sessionId) {
+        const measured = measuredRowHeightsRef.current.get(node.id)
+        if (measured !== undefined) return measured
+      }
+      // A newly appended row begins short even when earlier answers are tall.
+      // Using their average temporarily grows the canvas by hundreds of pixels
+      // and then shrinks it as soon as the new row is measured.
+      return DEFAULT_ESTIMATED_ITEM_SIZE
+    },
+    [displayNodes, props.sessionId],
   )
   const virtualized = useVirtualizedCollection({
     items: displayNodes,
     scrollRef,
     enabled: virtualizeTimeline,
+    estimateSize: estimateRowHeight,
     getItemKey: timelineNodeKey,
     getPinnedItemIndex: getPinnedTimelineIndex,
     onScrollAdjustment: applyScrollAdjustment,
   })
   const virtualizedReady = virtualized.enabled && virtualized.ready
+  useLayoutEffect(() => {
+    const timeline = scrollRef.current
+    if (timeline === null || typeof ResizeObserver === 'undefined') return
+    const content = contentRef.current
+    const reconcile = (entries: readonly ResizeObserverEntry[], deferred = false): void => {
+      const viewportEntry = entries.find((entry) => entry.target === timeline)
+      const width = viewportEntry?.contentRect.width ?? timeline.clientWidth
+      if (width <= 0 || timeline.clientHeight <= 0) return
+      const previousWidth = measuredWidthRef.current
+      measuredWidthRef.current = width
+      const contentResized = entries.some((entry) => entry.target === content && entry.contentRect.height > 0)
+      const widthChanged = previousWidth > 0 && Math.abs(previousWidth - width) > 0.5
+      const anchor = readerAnchorRef.current
+      if (
+        (!widthChanged && !contentResized && !deferred) ||
+        isPinnedToBottom ||
+        prependAnchorRef.current !== undefined ||
+        anchor?.nodeId === undefined ||
+        anchor.nodeOffset === undefined ||
+        !isScrollAnchorCurrent(anchor)
+      )
+        return
+      if (isUserScrollActive()) {
+        deferredReaderLayoutRef.current = () => reconcile(entries, true)
+        return
+      }
+      const node = displayNodes.find((node) => node.id === anchor.nodeId)
+      if (node === undefined) return
+      const row = [...timeline.querySelectorAll<HTMLElement>('.dsh-timeline__row')].find(
+        (row) => row.dataset.nodeId === anchor.nodeId,
+      )
+      const delta =
+        row === undefined
+          ? 0
+          : row.getBoundingClientRect().top - timeline.getBoundingClientRect().top - anchor.nodeOffset
+      if (!widthChanged && Math.abs(delta) <= 0.5) return
+      applyScrollAdjustment(delta)
+      // Width changes, image decoding and a revealed virtual canvas can all
+      // move a reading row. Reuse the bounded layout measurement pass.
+      const nodeId = presentedSourceNodeIds(node)[0]
+      if (nodeId !== undefined)
+        setLayoutAnchor({
+          layout: conversationLayout,
+          sessionId: props.sessionId,
+          nodeId,
+          offset: anchor.nodeOffset,
+          interaction: anchor,
+        })
+    }
+    const observer = new ResizeObserver((entries) => reconcile(entries))
+    observer.observe(timeline)
+    if (content !== null) observer.observe(content)
+    return () => {
+      observer.disconnect()
+      deferredReaderLayoutRef.current = undefined
+    }
+  }, [
+    applyScrollAdjustment,
+    conversationLayout,
+    contentRef,
+    displayNodes,
+    isPinnedToBottom,
+    isScrollAnchorCurrent,
+    isUserScrollActive,
+    props.sessionId,
+    scrollRef,
+  ])
   const beforeLayoutChange = layoutPreference?.beforeChange
   useLayoutEffect(
     () =>
@@ -450,42 +657,58 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
             ? (node.answer?.id ?? node.sourceIds[0])
             : presentedSourceNodeIds(node)[0]
         if (nodeId === undefined) return
+        const interaction = captureScrollAnchor()
+        if (interaction === undefined) return
         setLayoutAnchor({
           layout: next,
           sessionId: props.sessionId,
           nodeId,
           offset: row.getBoundingClientRect().top - viewport.top,
+          interaction,
         })
       }),
-    [beforeLayoutChange, conversationLayout, displayNodes, isPinnedToBottom, props.sessionId, scrollRef],
+    [
+      beforeLayoutChange,
+      captureScrollAnchor,
+      conversationLayout,
+      displayNodes,
+      isPinnedToBottom,
+      props.sessionId,
+      scrollRef,
+    ],
   )
   useLayoutEffect(() => {
     if (layoutAnchor === undefined || anchorIndex < 0 || (virtualized.enabled && !virtualized.ready)) return
     const timeline = scrollRef.current
     if (timeline === null) return
-    const correct = (): void => {
+    let frame: number | undefined
+    let remaining = 8
+    const release = (): void => {
+      if (frame !== undefined) window.cancelAnimationFrame(frame)
+      readerAnchorRef.current = captureScrollAnchor()
+      setLayoutAnchor((current) => (current === layoutAnchor ? undefined : current))
+    }
+    const correct = (): boolean => {
+      // Explicit latest/Inspector navigation can arrive without a native
+      // gesture. An old layout pass must yield before writing another offset.
+      if (!isScrollAnchorCurrent(layoutAnchor.interaction)) {
+        release()
+        return false
+      }
       const row = Array.from(timeline.querySelectorAll<HTMLElement>('.dsh-timeline__row')).find(
         (element) => Number(element.dataset.index) === anchorIndex,
       )
       if (row !== undefined)
-        userScrollToOffset(
-          timeline.scrollTop +
-            row.getBoundingClientRect().top -
-            timeline.getBoundingClientRect().top -
-            layoutAnchor.offset,
+        applyScrollAdjustment(
+          row.getBoundingClientRect().top - timeline.getBoundingClientRect().top - layoutAnchor.offset,
         )
+      return true
     }
-    correct()
+    if (!correct()) return
     // The virtualizer refines row heights after commit. Pin the original source
     // until that measurement has settled, then release it without stealing focus.
-    let frame: number
-    let remaining = 8
-    const release = (): void => {
-      window.cancelAnimationFrame(frame)
-      setLayoutAnchor((current) => (current === layoutAnchor ? undefined : current))
-    }
     const settle = (): void => {
-      correct()
+      if (!correct()) return
       if (--remaining > 0) frame = window.requestAnimationFrame(settle)
       else release()
     }
@@ -495,12 +718,21 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
     timeline.addEventListener('pointerdown', release)
     timeline.addEventListener('keydown', release)
     return () => {
-      window.cancelAnimationFrame(frame)
+      if (frame !== undefined) window.cancelAnimationFrame(frame)
       timeline.removeEventListener('wheel', release)
       timeline.removeEventListener('pointerdown', release)
       timeline.removeEventListener('keydown', release)
     }
-  }, [anchorIndex, layoutAnchor, scrollRef, userScrollToOffset, virtualized.enabled, virtualized.ready])
+  }, [
+    anchorIndex,
+    applyScrollAdjustment,
+    captureScrollAnchor,
+    isScrollAnchorCurrent,
+    layoutAnchor,
+    scrollRef,
+    virtualized.enabled,
+    virtualized.ready,
+  ])
   const revealedRequest = useRef<string | undefined>(undefined)
   useLayoutEffect(() => {
     const requestId = props.revealTarget?.requestId
@@ -531,7 +763,7 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
     // (no `immediate`) so a streaming row's provisional heights collapse into
     // one write per microtask instead of a synchronous write per refinement.
     scheduleScrollToLatest({ preserveBottom: true })
-  }, [scheduleScrollToLatest, virtualizedReady, virtualized.totalSize])
+  }, [running, scheduleScrollToLatest, virtualizedReady, virtualized.totalSize])
   const loadOlderHistory = useCallback((): void => {
     if (
       hasMoreHistory !== true ||
@@ -541,7 +773,7 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
     )
       return
     prependAnchorRef.current = captureScrollAnchor()
-    const request = { sessionId: props.sessionId }
+    const request = { sessionId: props.sessionId, firstNodeId: displayNodes[0]?.id }
     olderHistoryRequestRef.current = request
     const result = onLoadOlderHistory()
     if (result === undefined) {
@@ -551,12 +783,43 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
     void result.finally(() => {
       if (olderHistoryRequestRef.current === request) olderHistoryRequestRef.current = undefined
     })
-  }, [captureScrollAnchor, hasMoreHistory, loadingOlderHistory, onLoadOlderHistory, props.sessionId])
+  }, [
+    captureScrollAnchor,
+    displayNodes,
+    hasMoreHistory,
+    loadingOlderHistory,
+    onLoadOlderHistory,
+    props.sessionId,
+  ])
   const handleScroll = useCallback((): void => {
     const element = scrollRef.current
+    if (element === null || element.clientHeight <= 0) return
+    if (!isPinnedToBottom && layoutAnchor === undefined && prependAnchorRef.current === undefined)
+      readerAnchorRef.current = captureScrollAnchor()
+    const request = olderHistoryRequestRef.current
+    if (
+      element !== null &&
+      loadingOlderHistory === true &&
+      request?.sessionId === props.sessionId &&
+      request.firstNodeId === displayNodes[0]?.id &&
+      prependAnchorRef.current !== undefined &&
+      isUserScrollActive()
+    )
+      prependAnchorRef.current = captureScrollAnchor()
     if (props.pagedHistory !== true && element !== null && element.scrollTop <= 24 && isUserScrollActive())
       loadOlderHistory()
-  }, [isUserScrollActive, loadOlderHistory, scrollRef, props.pagedHistory])
+  }, [
+    captureScrollAnchor,
+    displayNodes,
+    isPinnedToBottom,
+    isUserScrollActive,
+    layoutAnchor,
+    loadOlderHistory,
+    loadingOlderHistory,
+    props.sessionId,
+    scrollRef,
+    props.pagedHistory,
+  ])
 
   const hasLoadImage = props.onLoadImage !== undefined
   const hasShowInFolder = props.onShowInFolder !== undefined
@@ -578,7 +841,6 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
       userTextFacts,
       onBranch: hasBranch ? stableOnBranch : undefined,
       branching: props.branching === true,
-      running,
       feedback: props.feedback,
       feedbackUnavailable: props.feedbackUnavailable,
       transcriptView,
@@ -611,7 +873,6 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
       props.onFeedbackSubmit,
       props.onFeedbackPrepare,
       requestOpenLink,
-      running,
       stableLoadFullContent,
       stableOnBranch,
       stableOnFeedback,
@@ -630,15 +891,74 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
   useLayoutEffect(() => {
     const anchor = prependAnchorRef.current
     const element = scrollRef.current
-    if (anchor === undefined || element === null || props.loadingOlderHistory === true) return
-    const restore = (): void => {
-      const current = prependAnchorRef.current
-      if (current === undefined) return
-      restoreScrollAnchor(current)
-      prependAnchorRef.current = undefined
+    if (
+      anchor === undefined ||
+      element === null ||
+      props.loadingOlderHistory === true ||
+      (virtualized.enabled && !virtualized.ready)
+    )
+      return
+    let frame: number | undefined
+    const release = (): void => {
+      if (frame !== undefined) window.cancelAnimationFrame(frame)
+      element.removeEventListener('wheel', release)
+      element.removeEventListener('pointerdown', release)
+      element.removeEventListener('keydown', release)
+      if (prependAnchorRef.current === anchor) prependAnchorRef.current = undefined
+      if (restoredPrependAnchorRef.current === anchor) restoredPrependAnchorRef.current = undefined
     }
-    restore()
-  }, [props.loadingOlderHistory, props.nodes.length, restoreScrollAnchor, scrollRef])
+    if (restoredPrependAnchorRef.current !== anchor) {
+      if (!restoreScrollAnchor(anchor)) {
+        release()
+        return
+      }
+      restoredPrependAnchorRef.current = anchor
+    }
+    // The virtual canvas can replace its initial estimated heights immediately
+    // after the first restoration. Keep the same visible row in place while
+    // that bounded measurement pass settles; any new reader gesture wins.
+    const correct = (): boolean => {
+      if (prependAnchorRef.current !== anchor || !isScrollAnchorCurrent(anchor)) {
+        release()
+        return false
+      }
+      if (anchor.nodeId === undefined || anchor.nodeOffset === undefined) return true
+      const row = [...element.querySelectorAll<HTMLElement>('.dsh-timeline__row[data-node-id]')].find(
+        (item) => item.dataset.nodeId === anchor.nodeId,
+      )
+      if (row !== undefined)
+        applyScrollAdjustment(
+          row.getBoundingClientRect().top - element.getBoundingClientRect().top - anchor.nodeOffset,
+        )
+      return true
+    }
+    if (!correct()) return
+    let remaining = 8
+    const settle = (): void => {
+      if (!correct()) return
+      if (--remaining > 0) frame = window.requestAnimationFrame(settle)
+      else release()
+    }
+    frame = window.requestAnimationFrame(settle)
+    element.addEventListener('wheel', release, { passive: true })
+    element.addEventListener('pointerdown', release)
+    element.addEventListener('keydown', release)
+    return () => {
+      if (frame !== undefined) window.cancelAnimationFrame(frame)
+      element.removeEventListener('wheel', release)
+      element.removeEventListener('pointerdown', release)
+      element.removeEventListener('keydown', release)
+    }
+  }, [
+    applyScrollAdjustment,
+    isScrollAnchorCurrent,
+    props.loadingOlderHistory,
+    props.nodes.length,
+    restoreScrollAnchor,
+    scrollRef,
+    virtualized.enabled,
+    virtualized.ready,
+  ])
 
   return (
     <div
@@ -650,6 +970,7 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
       onClickCapture={rememberOpenLinkTrigger}
     >
       <div
+        key={props.sessionId}
         ref={scrollRef}
         className="dsh-timeline"
         data-scroll-follow={isPinnedToBottom ? 'pinned' : 'free'}
@@ -742,6 +1063,13 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
                             : undefined
                         }
                       />
+                      {running && item.index === displayNodes.length - 1 ? (
+                        <StreamingActivity
+                          id={`turn:${props.activeTurn ?? latestNode?.id ?? props.sessionId}`}
+                          usingTool={usingTool}
+                          translate={t}
+                        />
+                      ) : null}
                     </div>
                   )
                 })
@@ -766,7 +1094,9 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
                   </div>
                 ))}
           </div>
-          {running ? (
+          {running &&
+          (!virtualizedReady ||
+            !virtualized.virtualItems.some((item) => item.index === displayNodes.length - 1)) ? (
             <StreamingActivity
               id={`turn:${props.activeTurn ?? latestNode?.id ?? props.sessionId}`}
               usingTool={usingTool}

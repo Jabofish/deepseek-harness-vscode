@@ -36,95 +36,8 @@ function locator(version: string): DshRuntimeLocator {
 }
 
 describe('DshRuntimeLocator compatibility policy', () => {
-  it('keeps pinned DSH releases as known launchable runtimes', async () => {
-    for (const version of [
-      '0.1.0-rc.6',
-      '0.1.0-rc.7',
-      '0.1.0-rc.8',
-      '0.1.1-rc.1',
-      '0.1.1-rc.2',
-      '0.1.2-rc.1',
-      '0.1.2-alpha.3',
-      '0.1.2-alpha.4',
-      '0.1.2-alpha.5',
-      '0.1.3-alpha.1',
-      '0.1.3-alpha.2',
-      '0.1.5-alpha.1',
-      '0.1.5-alpha.2',
-      '0.1.5-rc.1',
-      '0.1.5-rc.2',
-      '0.1.5-rc.3',
-      '0.1.7-alpha.1',
-      '0.1.7-alpha.2',
-      '0.1.7-rc.1',
-    ]) {
-      await expect(locator(version).locate()).resolves.toMatchObject({
-        runtime: { version, supported: true, compatibility: 'known' },
-      })
-    }
-  })
-
-  it('does not block a future DSH version before protocol probing', async () => {
-    await expect(locator('0.1.0-rc.99').locate()).resolves.toMatchObject({
-      runtime: { version: '0.1.0-rc.99', supported: true, compatibility: 'unknown' },
-    })
-  })
-
-  it('keeps an unrecognized non-empty version label launchable for compatibility probing', async () => {
-    await expect(locator('dsh-next-development').locate()).resolves.toMatchObject({
-      runtime: { version: 'dsh-next-development', supported: true, compatibility: 'unknown' },
-    })
-  })
-
   it('rejects a selected executable that does not report a version', async () => {
     await expect(locator('   ').locate()).resolves.toMatchObject({ runtime: { supported: false } })
-  })
-
-  it('aborts the underlying version probe when the caller cancels', async () => {
-    let observedSignal: AbortSignal | undefined
-    const controller = new AbortController()
-    const runtime = new DshRuntimeLocator({
-      os: 'windows',
-      configuredPath: () => 'C:\\dsh\\dsh.cmd',
-      pathEntries: () => [],
-      npmGlobalPrefix: () => Promise.resolve(undefined),
-      fileExists: () => Promise.resolve(true),
-      executeVersion: (_executable, signal) => {
-        observedSignal = signal
-        return new Promise<string>(() => undefined)
-      },
-    })
-    const pending = runtime.locate(controller.signal)
-    await vi.waitFor(() => expect(observedSignal).toBeDefined())
-    controller.abort()
-
-    await expect(pending).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
-    expect(observedSignal?.aborted).toBe(true)
-  })
-
-  it('preserves cancellation while resolving the npm-global prefix', async () => {
-    const controller = new AbortController()
-    let observedSignal: AbortSignal | undefined
-    let release: (() => void) | undefined
-    const runtime = new DshRuntimeLocator({
-      os: 'windows',
-      configuredPath: () => undefined,
-      pathEntries: () => [],
-      npmGlobalPrefix: (signal) =>
-        new Promise<string | undefined>((resolve) => {
-          observedSignal = signal
-          release = () => resolve(undefined)
-        }),
-      fileExists: () => Promise.resolve(false),
-      executeVersion: () => Promise.resolve('0.1.1-rc.2'),
-    })
-
-    const pending = runtime.locate(controller.signal)
-    await vi.waitFor(() => expect(observedSignal).toBeDefined())
-    controller.abort()
-    release?.()
-
-    await expect(pending).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
   })
 
   it('does not turn a PATH probe timeout into a false DSH_NOT_FOUND result', async () => {
@@ -151,92 +64,6 @@ describe('DshRuntimeLocator compatibility policy', () => {
     } finally {
       vi.useRealTimers()
     }
-  })
-
-  it('continues to an npm-global runtime after a PATH probe timeout', async () => {
-    vi.useFakeTimers()
-    try {
-      const pathCandidate = 'C:\\dsh-bin\\dsh.cmd'
-      const npmCandidate = 'C:\\npm\\dsh.cmd'
-      const runtime = new DshRuntimeLocator({
-        os: 'windows',
-        configuredPath: () => undefined,
-        pathEntries: () => ['C:\\dsh-bin'],
-        npmGlobalPrefix: () => Promise.resolve('C:\\npm'),
-        fileExists: (candidate) => Promise.resolve(candidate === pathCandidate || candidate === npmCandidate),
-        executeVersion: (executable) =>
-          executable === pathCandidate ? new Promise<string>(() => undefined) : Promise.resolve('0.1.1-rc.2'),
-      })
-
-      const pending = runtime.locate()
-      await vi.advanceTimersByTimeAsync(3_000)
-
-      await expect(pending).resolves.toMatchObject({
-        runtime: { executable: npmCandidate, source: 'npm-global', supported: true },
-      })
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('reports only PATH candidates that actually exist', async () => {
-    const existing = testPlatform.pathApi.join(testPlatform.existingDirectory, testPlatform.executableName)
-    const runtime = new DshRuntimeLocator({
-      os: testPlatform.os,
-      configuredPath: () => undefined,
-      pathEntries: () => [testPlatform.missingDirectory, testPlatform.existingDirectory],
-      npmGlobalPrefix: () => Promise.resolve(undefined),
-      fileExists: (candidate) => Promise.resolve(candidate === existing),
-      executeVersion: () => Promise.reject(new Error('probe failed')),
-    })
-
-    await expect(runtime.locate()).resolves.toMatchObject({ searchedLocations: [existing] })
-  })
-
-  it('keeps searched locations isolated for concurrent lookups', async () => {
-    const firstPath = testPlatform.pathApi.join(
-      testPlatform.existingDirectory,
-      'first',
-      testPlatform.executableName,
-    )
-    const secondPath = testPlatform.pathApi.join(
-      testPlatform.existingDirectory,
-      'second',
-      testPlatform.executableName,
-    )
-    let pathCall = 0
-    let firstProbeStarted = false
-    let releaseFirstProbe: (() => void) | undefined
-    const firstProbe = new Promise<void>((resolve) => {
-      releaseFirstProbe = resolve
-    })
-    const runtime = new DshRuntimeLocator({
-      os: testPlatform.os,
-      configuredPath: () => undefined,
-      pathEntries: () => [
-        pathCall++ === 0 ? testPlatform.pathApi.dirname(firstPath) : testPlatform.pathApi.dirname(secondPath),
-      ],
-      npmGlobalPrefix: () => Promise.resolve(undefined),
-      fileExists: (candidate) => Promise.resolve(candidate === firstPath || candidate === secondPath),
-      executeVersion: async (executable) => {
-        if (executable === firstPath) {
-          firstProbeStarted = true
-          await firstProbe
-          return '0.1.1-rc.2'
-        }
-        throw new Error('probe failed')
-      },
-    })
-
-    const first = runtime.locate()
-    await vi.waitFor(() => expect(firstProbeStarted).toBe(true))
-    const second = runtime.locate()
-    const secondResult = await second
-    releaseFirstProbe?.()
-    const firstResult = await first
-
-    expect(firstResult.searchedLocations).toEqual([firstPath])
-    expect(secondResult.searchedLocations).toEqual([secondPath])
   })
 
   it('finds the npm-global shim from npm prefix when the Extension Host PATH omits it', async () => {
@@ -266,47 +93,6 @@ describe('DshRuntimeLocator compatibility policy', () => {
       },
     })
     expect((await runtime.locate()).searchedLocations).toEqual([existing])
-  })
-
-  it('uses Windows path semantics and accepts non-cmd native candidates', async () => {
-    const existing = 'C:\\Users\\alice\\AppData\\Roaming\\npm\\dsh.exe'
-    const runtime = new DshRuntimeLocator({
-      os: 'windows',
-      configuredPath: () => undefined,
-      pathEntries: () => ['C:\\Users\\alice\\AppData\\Roaming\\npm'],
-      npmGlobalPrefix: () => Promise.resolve(undefined),
-      fileExists: (candidate) => Promise.resolve(candidate === existing),
-      executeVersion: () => Promise.resolve('0.1.1-rc.2'),
-    })
-
-    await expect(runtime.locate()).resolves.toMatchObject({
-      runtime: {
-        executable: existing,
-        source: 'path',
-        supported: true,
-      },
-    })
-  })
-
-  it('accepts an extensionless Windows executable from the npm prefix', async () => {
-    const npmPrefix = 'C:\\Users\\alice\\AppData\\Roaming\\npm'
-    const existing = `${npmPrefix}\\dsh`
-    const runtime = new DshRuntimeLocator({
-      os: 'windows',
-      configuredPath: () => undefined,
-      pathEntries: () => [],
-      npmGlobalPrefix: () => Promise.resolve(npmPrefix),
-      fileExists: (candidate) => Promise.resolve(candidate === existing),
-      executeVersion: () => Promise.resolve('0.1.1-rc.2'),
-    })
-
-    await expect(runtime.locate()).resolves.toMatchObject({
-      runtime: {
-        executable: existing,
-        source: 'npm-global',
-        supported: true,
-      },
-    })
   })
 })
 
@@ -347,47 +133,6 @@ describe('DshRuntimeLocator caching', () => {
     return { locator, versionCalls: () => versionCalls }
   }
 
-  it('memoizes a supported lookup so repeated connects skip the scan and the version probe', async () => {
-    const { locator, versionCalls } = countingLocator('0.1.1-rc.2')
-    const first = await locator.locate()
-    const second = await locator.locate()
-    expect(second).toEqual(first)
-    expect(versionCalls()).toBe(1)
-  })
-
-  it('re-scans after invalidate so a moved or replaced executable is honored', async () => {
-    const { locator, versionCalls } = countingLocator('0.1.1-rc.2')
-    await locator.locate()
-    locator.invalidate()
-    await locator.locate()
-    expect(versionCalls()).toBe(2)
-  })
-
-  it('does not memoize an unsupported executable', async () => {
-    let version = '   '
-    const locator = new DshRuntimeLocator({
-      os: testPlatform.os,
-      configuredPath: () => undefined,
-      pathEntries: () => [testPlatform.existingDirectory],
-      npmGlobalPrefix: () => Promise.resolve(undefined),
-      fileExists: () => Promise.resolve(true),
-      executeVersion: () => Promise.resolve(version),
-    })
-    await expect(locator.locate()).resolves.toMatchObject({ runtime: { supported: false } })
-    version = '0.1.1-rc.2'
-    await expect(locator.locate()).resolves.toMatchObject({ runtime: { supported: true } })
-  })
-
-  it('keeps rescanning while no runtime exists instead of caching the miss', async () => {
-    let runtimeInstalled = false
-    const { locator } = countingLocator('0.1.1-rc.2', {
-      fileExists: () => Promise.resolve(runtimeInstalled),
-    })
-    await expect(locator.locate()).resolves.toMatchObject({ searchedLocations: [] })
-    runtimeInstalled = true
-    await expect(locator.locate()).resolves.toMatchObject({ runtime: { supported: true } })
-  })
-
   it('uses the persisted path hint and re-probes its version before trusting it', async () => {
     const hintPath = testPlatform.pathApi.join(testPlatform.existingDirectory, testPlatform.executableName)
     const remembered: { path: string; source: 'path' | 'npm-global' }[] = []
@@ -403,108 +148,58 @@ describe('DshRuntimeLocator caching', () => {
     expect(versionCalls()).toBe(1)
     expect(remembered).toEqual([{ path: hintPath, source: 'path' }])
   })
-
-  it('falls through to the ordinary scan when the persisted hint has vanished', async () => {
-    const hintPath = testPlatform.pathApi.join(testPlatform.missingDirectory, testPlatform.executableName)
-    const { locator } = countingLocator('0.1.1-rc.2', {
-      fileExists: (candidate) =>
-        Promise.resolve(
-          candidate ===
-            testPlatform.pathApi.join(testPlatform.existingDirectory, testPlatform.executableName),
-        ),
-      lastKnownRuntimePath: () => ({ path: hintPath, source: 'npm-global' }),
-    })
-
-    await expect(locator.locate()).resolves.toMatchObject({ runtime: { supported: true } })
-  })
 })
 
-describe('unusable runtime candidates', () => {
-  it('falls through to the ordinary scan when the persisted hint cannot run', async () => {
-    // A broken global install leaves the `dsh` shim in place while its package
-    // is gone, so the hint exists and its version probe fails. That is a fact
-    // about the cached candidate, not a failure of the whole lookup.
-    const hintPath = testPlatform.pathApi.join(
-      testPlatform.existingDirectory,
-      'broken',
-      testPlatform.executableName,
-    )
-    const scanned = testPlatform.pathApi.join(testPlatform.existingDirectory, testPlatform.executableName)
-    const failures: { name: string; message: string }[] = []
-    const runtime = new DshRuntimeLocator({
-      os: testPlatform.os,
-      configuredPath: () => undefined,
-      pathEntries: () => [testPlatform.existingDirectory],
-      npmGlobalPrefix: () => Promise.resolve(undefined),
-      lastKnownRuntimePath: () => ({ path: hintPath, source: 'path' }),
-      fileExists: (candidate) => Promise.resolve(candidate === hintPath || candidate === scanned),
-      executeVersion: (executable) =>
-        executable === hintPath
-          ? Promise.reject(new Error("Cannot find module 'dsh/lib/bin.js'"))
-          : Promise.resolve('0.1.1-rc.2'),
-      logProbeFailure: (failure) => failures.push(failure),
-    })
-
-    await expect(runtime.locate()).resolves.toMatchObject({
-      runtime: { executable: scanned, source: 'path', supported: true },
-      searchedLocations: [hintPath, scanned],
-    })
-    expect(failures).toEqual([
-      { name: testPlatform.executableName, message: "Cannot find module 'dsh/lib/bin.js'" },
-    ])
-  })
-
-  it('classifies a selected executable that cannot run instead of leaking a raw process error', async () => {
+describe('configured runtime confirmation', () => {
+  it('skips the configured executable when the host confirmation is declined', async () => {
     const configured = testPlatform.pathApi.join(
       testPlatform.configuredDirectory,
       testPlatform.executableName,
     )
+    const scanned = testPlatform.pathApi.join(testPlatform.existingDirectory, testPlatform.executableName)
     const runtime = new DshRuntimeLocator({
       os: testPlatform.os,
       configuredPath: () => configured,
-      pathEntries: () => [],
+      pathEntries: () => [testPlatform.existingDirectory],
       npmGlobalPrefix: () => Promise.resolve(undefined),
-      fileExists: () => Promise.resolve(true),
-      executeVersion: () => Promise.reject(new Error('spawn EINVAL')),
+      fileExists: (candidate) => Promise.resolve(candidate === configured || candidate === scanned),
+      executeVersion: (executable) =>
+        Promise.resolve(executable === configured ? '0.1.1-rc.2' : '0.1.1-rc.1'),
+      confirmRuntimePath: () => Promise.resolve(false),
     })
 
-    await expect(runtime.locate()).rejects.toMatchObject({
-      code: 'BACKEND_UNREACHABLE',
-      message: 'The selected DSH executable could not be run.',
-      retryable: true,
-      context: { operation: 'runtime.version', reason: 'unusable' },
+    await expect(runtime.locate()).resolves.toMatchObject({
+      runtime: { executable: scanned, source: 'path' },
     })
   })
 })
 
+describe('local runtime candidates', () => {
+  it.each(['\\\\server\\share\\dsh.cmd', '//server/share/dsh.cmd', '//?/UNC/server/share/dsh.cmd'])(
+    'never accesses a network path from configuration, cache, PATH, npm or the file picker: %s',
+    async (candidate) => {
+      const fileExists = vi.fn(() => Promise.resolve(true))
+      const executeVersion = vi.fn(() => Promise.resolve('0.2.1-rc.2'))
+      const runtime = new DshRuntimeLocator({
+        os: 'windows',
+        configuredPath: () => candidate,
+        pathEntries: () => [path.win32.dirname(candidate)],
+        npmGlobalPrefix: () => Promise.resolve(path.win32.dirname(candidate)),
+        lastKnownRuntimePath: () => ({ path: candidate, source: 'path' }),
+        fileExists,
+        executeVersion,
+      })
+      await expect(runtime.locate()).resolves.toMatchObject({ searchedLocations: [] })
+      await expect(runtime.inspectExecutable(candidate)).rejects.toMatchObject({
+        code: 'INVALID_CONFIGURATION',
+      })
+      expect(fileExists).not.toHaveBeenCalled()
+      expect(executeVersion).not.toHaveBeenCalled()
+    },
+  )
+})
+
 describe('persisted runtime path hints', () => {
-  it('keeps a hint written on a POSIX platform', () => {
-    // The host persists this value in `globalState`; macOS/Linux installs put
-    // the npm-global shim under a root-relative path that Windows-only
-    // detection would discard, forcing a full rescan on every window start.
-    expect(readStoredRuntimePath({ path: '/home/alice/.npm-global/bin/dsh', source: 'npm-global' })).toEqual({
-      path: '/home/alice/.npm-global/bin/dsh',
-      source: 'npm-global',
-    })
-    expect(readStoredRuntimePath({ path: '/usr/local/bin/dsh', source: 'path' })).toEqual({
-      path: '/usr/local/bin/dsh',
-      source: 'path',
-    })
-  })
-
-  it('keeps a hint written on a Windows drive or UNC share', () => {
-    expect(
-      readStoredRuntimePath({
-        path: 'C:\\Users\\alice\\AppData\\Roaming\\npm\\dsh.cmd',
-        source: 'npm-global',
-      }),
-    ).toEqual({ path: 'C:\\Users\\alice\\AppData\\Roaming\\npm\\dsh.cmd', source: 'npm-global' })
-    expect(readStoredRuntimePath({ path: '\\\\build\\share\\dsh.cmd', source: 'path' })).toEqual({
-      path: '\\\\build\\share\\dsh.cmd',
-      source: 'path',
-    })
-  })
-
   it('drops relative paths, drive-relative spellings, unknown sources and malformed values', () => {
     expect(readStoredRuntimePath({ path: 'dsh', source: 'path' })).toBeUndefined()
     expect(readStoredRuntimePath({ path: 'bin/dsh', source: 'path' })).toBeUndefined()

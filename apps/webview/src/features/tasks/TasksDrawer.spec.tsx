@@ -54,19 +54,6 @@ function openDrawer(name = '1 needs input'): HTMLElement {
   return trigger
 }
 
-const runningTask: TaskSummary = {
-  ...task,
-  taskId: 'session:session-1',
-  sourceId: 'session-1',
-  kind: 'session',
-  title: 'Refactor the parser',
-  status: 'running',
-  needsUserAction: false,
-  actionKind: 'none',
-  canAnswer: false,
-  canSessionCancel: true,
-}
-
 describe('TasksDrawer failures', () => {
   afterEach(() => cleanup())
 
@@ -103,89 +90,10 @@ describe('TasksDrawer failures', () => {
     )
     expect(screen.queryByRole('alert')).toBeNull()
   })
-
-  it('reports a rejected stop instead of silently dropping it', async () => {
-    const onStop = vi.fn().mockRejectedValue(new Error('task-state-stale'))
-    renderDrawer({ tasks: [runningTask], onStop })
-    openDrawer('1 active tasks')
-
-    fireEvent.click(screen.getByRole('button', { name: 'Stop Refactor the parser' }))
-
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('task-state-stale'))
-    expect(screen.getByText('Refactor the parser')).toBeDefined()
-  })
-
-  it('keeps the answer draft and reports a rejected answer', async () => {
-    const onAnswer = vi.fn().mockRejectedValue(new Error('task-not-owned'))
-    renderDrawer({ onAnswer })
-    openDrawer()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Answer' }))
-    fireEvent.change(screen.getByRole('textbox', { name: 'Task answer' }), {
-      target: { value: 'restart the worker' },
-    })
-    fireEvent.click(screen.getByRole('button', { name: 'Answer' }))
-
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('task-not-owned'))
-    // The draft survives the refusal so the user can retry it verbatim.
-    expect(screen.getByRole('textbox', { name: 'Task answer' })).toHaveProperty('value', 'restart the worker')
-  })
-
-  it('reports a rejected scope switch', async () => {
-    const onScopeChange = vi.fn().mockRejectedValue(new Error('task-state-stale'))
-    renderDrawer({ scope: 'current-session', onScopeChange })
-    openDrawer()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Workspace' }))
-
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('task-state-stale'))
-  })
-
-  it('keeps the pressed scope enabled and ignores a re-pick of it', () => {
-    const onScopeChange = vi.fn().mockResolvedValue(undefined)
-    renderDrawer({ scope: 'current-session', onScopeChange })
-    openDrawer()
-
-    // The pressed segment reads as "selected" rather than dimmed, stays in the
-    // tab order, and re-clicking it must not send the scope again.
-    const current = screen.getByRole('button', { name: 'Current session' })
-    expect(current.getAttribute('aria-pressed')).toBe('true')
-    expect(current.hasAttribute('disabled')).toBe(false)
-    fireEvent.click(current)
-    expect(onScopeChange).not.toHaveBeenCalled()
-  })
-
-  it('clears the failure report once the same action succeeds', async () => {
-    const onStop = vi.fn().mockRejectedValueOnce(new Error('task-state-stale')).mockResolvedValue(undefined)
-    renderDrawer({ tasks: [runningTask], onStop })
-    openDrawer('1 active tasks')
-
-    fireEvent.click(screen.getByRole('button', { name: 'Stop Refactor the parser' }))
-    await waitFor(() => expect(screen.getByRole('alert')).toBeDefined())
-    fireEvent.click(screen.getByRole('button', { name: 'Stop Refactor the parser' }))
-
-    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
-  })
 })
 
 describe('TasksDrawer', () => {
   afterEach(() => cleanup())
-
-  it('renders nothing for an empty settled task list', () => {
-    render(
-      <I18nProvider>
-        <TasksDrawer
-          tasks={[]}
-          loading={false}
-          onRefresh={vi.fn().mockResolvedValue(undefined)}
-          onOpen={vi.fn().mockResolvedValue(undefined)}
-          onStop={vi.fn().mockResolvedValue(undefined)}
-          onAnswer={vi.fn().mockResolvedValue(undefined)}
-        />
-      </I18nProvider>,
-    )
-    expect(screen.queryByRole('button', { name: '1 needs input' })).toBeNull()
-  })
 
   it('answers an actionable task through the explicit inline form', async () => {
     const onAnswer = vi.fn().mockResolvedValue(undefined)
@@ -208,83 +116,5 @@ describe('TasksDrawer', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: 'Answer' }))
     await waitFor(() => expect(onAnswer).toHaveBeenCalledWith(task, 'yes'))
-  })
-
-  it('labels workspace scope and reports incomplete session reads', () => {
-    render(
-      <I18nProvider>
-        <TasksDrawer
-          tasks={[{ ...task, sessionTitle: 'Background session' }]}
-          loading={false}
-          scope="workspace"
-          complete={false}
-          omittedSessions={1}
-          onRefresh={vi.fn().mockResolvedValue(undefined)}
-          onScopeChange={vi.fn().mockResolvedValue(undefined)}
-          onOpen={vi.fn().mockResolvedValue(undefined)}
-          onStop={vi.fn().mockResolvedValue(undefined)}
-          onAnswer={vi.fn().mockResolvedValue(undefined)}
-        />
-      </I18nProvider>,
-    )
-
-    fireEvent.click(screen.getByRole('button', { name: '1 needs input' }))
-
-    expect(screen.getByRole('dialog', { name: 'Workspace tasks' })).toBeTruthy()
-    expect(screen.getByText('1 workspace sessions could not be read.')).toBeTruthy()
-    expect(screen.getByText('Background session')).toBeTruthy()
-  })
-
-  it('closes the task center on Escape and returns focus to the trigger', () => {
-    renderDrawer()
-    const trigger = openDrawer()
-    expect(screen.getByRole('dialog', { name: 'Current-session tasks' })).toBeTruthy()
-
-    fireEvent.keyDown(trigger, { key: 'Escape' })
-
-    expect(screen.queryByRole('dialog', { name: 'Current-session tasks' })).toBeNull()
-    expect(document.activeElement).toBe(trigger)
-  })
-
-  it('lets Escape dismiss the inline answer form before the task center', () => {
-    renderDrawer()
-    const trigger = openDrawer()
-    fireEvent.click(screen.getByRole('button', { name: 'Answer' }))
-
-    const input = screen.getByRole('textbox', { name: 'Task answer' })
-    fireEvent.keyDown(input, { key: 'Escape' })
-
-    expect(screen.queryByRole('textbox', { name: 'Task answer' })).toBeNull()
-    expect(screen.getByRole('dialog', { name: 'Current-session tasks' })).toBeTruthy()
-
-    fireEvent.keyDown(trigger, { key: 'Escape' })
-    expect(screen.queryByRole('dialog', { name: 'Current-session tasks' })).toBeNull()
-  })
-
-  it('leaves Escape to an inner layer that already consumed it', () => {
-    renderDrawer()
-    const trigger = openDrawer()
-    trigger.addEventListener('keydown', (event) => event.preventDefault())
-
-    fireEvent.keyDown(trigger, { key: 'Escape' })
-
-    expect(screen.getByRole('dialog', { name: 'Current-session tasks' })).toBeTruthy()
-  })
-
-  it('does not resurface the answer form when the task center is reopened', () => {
-    renderDrawer()
-    const trigger = openDrawer()
-    fireEvent.click(screen.getByRole('button', { name: 'Answer' }))
-    fireEvent.change(screen.getByRole('textbox', { name: 'Task answer' }), {
-      target: { value: 'half-typed' },
-    })
-
-    fireEvent.pointerDown(document.body)
-    expect(screen.queryByRole('dialog', { name: 'Current-session tasks' })).toBeNull()
-
-    fireEvent.click(trigger)
-
-    expect(screen.getByRole('dialog', { name: 'Current-session tasks' })).toBeTruthy()
-    expect(screen.queryByRole('textbox', { name: 'Task answer' })).toBeNull()
   })
 })

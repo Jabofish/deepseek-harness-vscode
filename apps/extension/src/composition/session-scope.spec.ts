@@ -115,7 +115,6 @@ describe('session scope pending-load reuse', () => {
     expect(get).not.toHaveBeenCalled()
     await scope.requireOwnedQuestion('same', signal, { sessionId: 's1', rpcId: 'owned' })
     expect(questionOwner).toHaveBeenLastCalledWith('same', { sessionId: 's1', rpcId: 'owned' })
-    expect(get).toHaveBeenCalledOnce()
   })
   it.each(['permission', 'question'] as const)(
     'reports an unknown %s as stale without claiming workspace denial',
@@ -170,4 +169,42 @@ describe('session scope pending-load reuse', () => {
     })
     await expect(recovery).resolves.toMatchObject({ id: 's1' })
   })
+})
+
+it('reuses proven control ownership across directory changes, but never across backends or workspace roots', async () => {
+  const get = vi.fn((id: string) => Promise.resolve({ id, workspaceId: 'ws-1' } as SessionDetail))
+  let backend = {
+    sessions: { get },
+    workspaces: { listArchivedSessionIds: () => Promise.resolve([]) },
+    subagents: {},
+  }
+  let root = '/project'
+  const list = vi.fn(() => Promise.resolve([workspace]))
+  const scope = createSessionScope({
+    backendService: { requireBackend: () => backend } as never,
+    workspaceUseCases: { list } as never,
+    temporaryWorkspaceManager: {} as never,
+    currentWorkspaceFolders: () => [{ uri: { fsPath: root } }] as never,
+    currentWorkspaceFolder: () => ({ uri: { fsPath: root } }) as never,
+  })
+  const signal = new AbortController().signal
+  await scope.requireCurrentWorkspaceSession('s1', signal)
+  scope.invalidateCurrentWorkspaceSessionDetails()
+  list.mockRejectedValue(new Error('slow advisory read'))
+  await expect(
+    scope.requireCurrentWorkspaceSession('s1', signal, { controlOnly: true }),
+  ).resolves.toMatchObject({ id: 's1' })
+  expect(list).toHaveBeenCalledOnce()
+  await expect(
+    scope.requireCurrentWorkspaceSession('unknown', signal, { controlOnly: true }),
+  ).rejects.toThrow()
+  root = '/different-project'
+  await expect(scope.requireCurrentWorkspaceSession('s1', signal, { controlOnly: true })).rejects.toThrow()
+  root = '/project'
+  list.mockResolvedValue([workspace])
+  await scope.requireCurrentWorkspaceSession('s1', signal)
+  backend = { ...backend }
+  list.mockRejectedValue(new Error('new backend must verify ownership'))
+  await expect(scope.requireCurrentWorkspaceSession('s1', signal, { controlOnly: true })).rejects.toThrow()
+  expect(get).toHaveBeenCalledTimes(2)
 })

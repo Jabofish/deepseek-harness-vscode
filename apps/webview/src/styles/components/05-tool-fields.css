@@ -152,8 +152,20 @@
   margin-block-start: 0;
 }
 
-.dsh-markdown--streaming [data-dsh-markdown-frozen='true'] {
-  contain: content;
+/* The frozen and live regions retain separate DOM identities, while their
+ * boxes participate in the same block flow as completed Markdown. */
+.dsh-markdown--streaming > [data-dsh-markdown-frozen='true'],
+.dsh-markdown--streaming > [data-dsh-markdown-tail='true'] {
+  display: contents;
+}
+
+.dsh-markdown--streaming > [data-dsh-markdown-frozen='true'] > :first-child {
+  margin-block-start: 0;
+}
+
+.dsh-markdown--streaming > [data-dsh-markdown-frozen='true']:last-child > :last-child,
+.dsh-markdown--streaming > [data-dsh-markdown-tail='true'] > :last-child {
+  margin-block-end: 0;
 }
 
 /* Completed tables keep a scrollport from their first paint. The scrollbar itself

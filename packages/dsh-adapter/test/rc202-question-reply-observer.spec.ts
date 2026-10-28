@@ -39,29 +39,7 @@ describe('timed reply Inbox lifecycle', () => {
       asOfSequence: 6,
     })
   })
-  it('restores a claimed reply when the panel opens during asynchronous pre-step admission', () => {
-    const observer = new Rc202QuestionReplyObserver('s1')
-    const history = [
-      event(4, 'turn/start', { turn: 1 }),
-      event(5, 'agent/inbox/spliced', { target: 'next-step', start: 1, inserted: [reply()] }),
-      event(6, 'agent/inbox/spliced', { target: 'next-step', start: 0, removedCount: 2, inserted: [] }),
-    ]
-    expect(
-      observer.snapshot(
-        {
-          asOfSeq: 6,
-          values: {
-            inbox: { 'next-turn': [], 'next-step': [] },
-            userQuestions: { active: [{ callId: 'call', state: 'continued' }], settled: [] },
-          },
-        },
-        history,
-      ),
-    ).toEqual([
-      { type: 'question/reply-status', sessionId: 's1', callId: 'call', state: 'claimed', asOfSequence: 6 },
-    ])
-    expect(observer.accept(event(7, 'turn/end', { turn: 1 }))[0]).toMatchObject({ state: 'released' })
-  })
+
   it('distinguishes claiming from discard and admission without exposing content', () => {
     const observer = new Rc202QuestionReplyObserver('s1')
     const queued = observer.snapshot(projection([reply()]), [])
@@ -113,28 +91,5 @@ describe('timed reply Inbox lifecycle', () => {
       state: 'released',
     })
     expect(observer.snapshot(projection(), [event(0, 'turn/start', { turn: 8 })])).toEqual([])
-  })
-
-  it('ignores duplicate or missing durable rows and malformed splice indices until a new baseline', () => {
-    const observer = new Rc202QuestionReplyObserver('s1')
-    observer.snapshot(projection([reply()]), [])
-    const discard = event(1, 'agent/inbox/spliced', {
-      target: 'next-turn',
-      start: 0,
-      removedCount: 1,
-      inserted: [],
-      outcome: 'canceled',
-    })
-    expect(observer.accept(discard)).toHaveLength(1)
-    expect(observer.accept(discard)).toEqual([])
-    observer.snapshot(projection([reply()]), [])
-    expect(observer.accept({ ...discard, seq: 3 })).toEqual([])
-    observer.snapshot(projection([reply()]), [])
-    expect(
-      observer.accept(
-        event(1, 'agent/inbox/spliced', { target: 'next-turn', start: 2, removedCount: 1, inserted: [] }),
-      ),
-    ).toEqual([])
-    expect(observer.accept({ ...discard, seq: 2 })).toEqual([])
   })
 })

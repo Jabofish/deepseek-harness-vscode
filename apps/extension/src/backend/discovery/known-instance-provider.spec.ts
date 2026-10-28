@@ -29,14 +29,6 @@ describe('known instance discovery', () => {
     ])
   })
 
-  it('accepts the legacy endpoint shape for one-way migration', async () => {
-    await expect(
-      new KnownInstanceDiscoveryProvider(
-        state({ endpoint: { host: 'localhost', port: 3922, baseUrl: 'http://localhost:3922' } }),
-      ).discover(),
-    ).resolves.toMatchObject([{ endpoint: { host: 'localhost', port: 3922 } }])
-  })
-
   it('ignores malformed or non-loopback state', async () => {
     await expect(
       new KnownInstanceDiscoveryProvider(state({ host: 'remote.example', port: 4310 })).discover(),

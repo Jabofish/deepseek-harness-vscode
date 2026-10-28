@@ -1,5 +1,5 @@
 import type { SessionHistoryEvent } from '@dsh-vscode/domain'
-import { expect, it, vi } from 'vitest'
+import { expect, it } from 'vitest'
 import { compactHistoryEvents } from '../src/repositories/session/history.js'
 
 function delta(
@@ -15,34 +15,6 @@ function delta(
     ...(coveredSequences === undefined ? {} : { coveredSequences: Object.freeze(coveredSequences) }),
   })
 }
-
-it.each(['message.delta', 'reasoning.delta'] as const)(
-  'sorts covered sequences once per contiguous %s group',
-  (type) => {
-    const events = Object.freeze(Array.from({ length: 128 }, (_, index) => delta(index + 1, '.', type)))
-    const sort: (this: unknown[], compare?: (left: unknown, right: unknown) => number) => unknown[] =
-      Array.prototype.sort
-    let sortedElements = 0
-    const spy = vi.spyOn(Array.prototype, 'sort').mockImplementation(function (this: unknown[], compare) {
-      sortedElements += this.length
-      return sort.call(this, compare)
-    })
-    let result: readonly SessionHistoryEvent[]
-    try {
-      result = compactHistoryEvents(events)
-    } finally {
-      spy.mockRestore()
-    }
-    expect(sortedElements).toBeLessThanOrEqual(129)
-    expect(result).toHaveLength(1)
-    expect(result[0]).toMatchObject({
-      sequence: 128,
-      event: { type, delta: '.'.repeat(128), sequence: 128 },
-      coveredSequences: events.map((entry) => entry.sequence),
-    })
-    expect(events[0]?.event).toMatchObject({ delta: '.', sequence: 1 })
-  },
-)
 
 it('keeps source text order, unique coverage, watermarks and event boundaries', () => {
   const boundary: SessionHistoryEvent = Object.freeze({

@@ -271,6 +271,7 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
       jobs.watchRows === undefined ? undefined : (sessionId, signal) => jobs.watchRows!(sessionId, signal),
       (event) => this.mapBackendEvent(event),
       () => this.createSessionEventNormalizer(),
+      this.createGlobalEventNormalizer(),
     )
     eventsHolder.value = events
     let closed = false
@@ -364,6 +365,11 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
   /** Version profiles normalize structured events before repositories and clients observe them. */
   protected mapBackendEvent(event: BackendEvent): BackendEvent {
     return event
+  }
+
+  /** Exact profiles may normalise newly declared host-wide interaction shapes. */
+  protected createGlobalEventNormalizer(): ((frame: unknown) => BackendEvent | undefined) | undefined {
+    return undefined
   }
 
   /** Each watched Session owns its version-specific transient projection state. */

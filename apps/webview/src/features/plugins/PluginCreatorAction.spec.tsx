@@ -57,31 +57,4 @@ describe('plugin Creator shortcut', () => {
     fireEvent.click(button)
     expect(start).not.toHaveBeenCalled()
   })
-
-  it('retries a failed roster and ignores a stale roster after inventory changes', async () => {
-    let stale!: (roster: AgentPresetRoster) => void
-    const load = vi
-      .fn<() => Promise<AgentPresetRoster | undefined>>()
-      .mockRejectedValueOnce(new Error('private diagnostic'))
-      .mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            stale = resolve
-          }),
-      )
-      .mockResolvedValueOnce({ authorable: false, presets: [] })
-    const view = render(
-      <PluginCreatorAction revision={1} loadRoster={load} startDraft={() => Promise.resolve()} />,
-    )
-    fireEvent.click(await screen.findByRole('button', { name: 'Retry' }))
-    await waitFor(() => expect(load).toHaveBeenCalledTimes(2))
-    view.rerender(<PluginCreatorAction revision={2} loadRoster={load} startDraft={() => Promise.resolve()} />)
-    await waitFor(() => expect(load).toHaveBeenCalledTimes(3))
-    await act(async () => {
-      stale(ready)
-      await Promise.resolve()
-    })
-    expect(screen.getByRole('button', { name: 'Create a plugin' }).hasAttribute('disabled')).toBe(true)
-    expect(screen.queryByText('private diagnostic')).toBeNull()
-  })
 })

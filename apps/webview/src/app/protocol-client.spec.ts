@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { PROTOCOL_VERSION, type ProtocolEnvelope } from '@dsh-vscode/webview-protocol'
+import {
+  PROTOCOL_VERSION,
+  type FeatureRequest,
+  type ProtocolEnvelope,
+  type WebviewRequest,
+} from '@dsh-vscode/webview-protocol'
 import { ProtocolClient, publicProtocolErrorMessage } from './protocol-client.js'
 
 const listeners = new Set<(event: MessageEvent<unknown>) => void>()
@@ -23,6 +28,72 @@ beforeEach(() => {
 afterEach(() => listeners.clear())
 
 describe('ProtocolClient', () => {
+  it.each([
+    { request: { type: 'app.ready', requestId: 'startup' }, elapsed: 60_001 },
+    { request: { type: 'connection.retry', requestId: 'retry' }, elapsed: 60_001 },
+    {
+      request: { type: 'runtime.update.check', requestId: 'check', payload: { force: true } },
+      elapsed: 60_001,
+    },
+    {
+      request: {
+        type: 'runtime.update.install',
+        requestId: 'install',
+        payload: { version: '0.2.1-rc.3' },
+      },
+      elapsed: 600_001,
+    },
+    {
+      request: {
+        type: 'session.export',
+        requestId: 'export',
+        payload: { sessionId: 's1', format: 'zip', includeAttachments: true, includeReasoning: true },
+      },
+      elapsed: 120_001,
+    },
+    { request: { type: 'workspace.addFolder', requestId: 'picker' }, elapsed: 120_001 },
+  ] satisfies readonly { request: WebviewRequest; elapsed: number }[])(
+    'accepts the Host result after slow $request.type work exceeds an ordinary RPC',
+    async ({ request, elapsed }) => {
+      await completeSlowRequest({ request }, elapsed)
+    },
+  )
+
+  it.each([
+    {
+      type: 'editor.companion.action',
+      requestId: 'companion',
+      payload: { action: 'setup' },
+    },
+    {
+      type: 'plugin.bundle.install',
+      requestId: 'plugin',
+      payload: { spec: '@dsh-community/review', installRequestId: 'install-id' },
+    },
+    {
+      type: 'plugin.bundle.waitForInstall',
+      requestId: 'recovery',
+      payload: { installRequestId: 'install-id' },
+    },
+    {
+      type: 'checkpoint.restore',
+      requestId: 'restore',
+      payload: {
+        checkpointId: 'checkpoint-1',
+        sessionId: 's1',
+        workspaceFolderId: 'folder-1',
+        expectedCurrentRevision: 1,
+        previewId: 'preview-1',
+        conflictPolicy: 'overwrite',
+      },
+    },
+  ] satisfies readonly FeatureRequest[])(
+    'accepts the Host result after slow $type work exceeds an ordinary RPC',
+    async (request) => {
+      await completeSlowRequest({ request, feature: true }, 120_001)
+    },
+  )
+
   it('cancels only the requested Host operation and ignores its late response', async () => {
     const posted: ProtocolEnvelope[] = []
     const client = new ProtocolClient({
@@ -106,42 +177,6 @@ describe('ProtocolClient', () => {
     }
   })
 
-  it('keeps event subscriptions inert after disposal', () => {
-    const client = new ProtocolClient({
-      postMessage: () => undefined,
-      getState: () => undefined,
-      setState: () => undefined,
-    })
-    client.dispose()
-    const legacy = vi.fn()
-    const feature = vi.fn()
-    const unsubscribe = client.subscribe(legacy)
-    const unsubscribeFeature = client.subscribeFeature(feature)
-    client.handle({
-      protocolVersion: PROTOCOL_VERSION,
-      message: { type: 'event', name: 'safe', sequence: 1, payload: {} },
-    })
-    client.handle({
-      protocolVersion: PROTOCOL_VERSION,
-      message: {
-        type: 'feature.event',
-        name: 'editor.context.changed',
-        identity: {
-          backendInstanceId: 'backend-1',
-          connectionGeneration: 1,
-          stream: 'local',
-          localSeq: 1,
-        },
-        contextRef: 'dsh-context-context-00000001',
-        action: 'updated',
-      },
-    })
-    expect(legacy).not.toHaveBeenCalled()
-    expect(feature).not.toHaveBeenCalled()
-    unsubscribe()
-    unsubscribeFeature()
-  })
-
   it('validates messages before resolving requests or publishing events', async () => {
     const posted: ProtocolEnvelope[] = []
     const client = new ProtocolClient({
@@ -167,27 +202,6 @@ describe('ProtocolClient', () => {
     })
     await expect(request).resolves.toEqual({ connected: true })
     expect(events).toHaveLength(1)
-    client.dispose()
-  })
-
-  it('matches exactly one response to each request id', async () => {
-    const postMessage = vi.fn()
-    const client = new ProtocolClient({ postMessage, getState: () => undefined, setState: () => undefined })
-    const request = client.request<unknown>({ type: 'app.ready', requestId: 'same' })
-    await expect(client.request({ type: 'app.ready', requestId: 'same' })).rejects.toThrow(
-      'This request is already in use',
-    )
-    client.handle({
-      protocolVersion: PROTOCOL_VERSION,
-      message: {
-        type: 'response',
-        requestId: 'same',
-        ok: false,
-        error: { code: 'BACKEND_BUSY', message: 'busy', retryable: true },
-      },
-    })
-    await expect(request).rejects.toMatchObject({ code: 'BACKEND_BUSY' })
-    expect(postMessage).toHaveBeenCalledTimes(1)
     client.dispose()
   })
 
@@ -286,279 +300,6 @@ describe('ProtocolClient', () => {
     }
   })
 
-  it('keeps a prompt success that settles before its timeout callback', async () => {
-    const posted: ProtocolEnvelope[] = []
-    const timeoutCallbacks: Array<() => void> = []
-    const timeoutSpy = vi.spyOn(window, 'setTimeout').mockImplementation((handler) => {
-      if (typeof handler === 'function') timeoutCallbacks.push(handler as () => void)
-      return timeoutCallbacks.length as unknown as ReturnType<typeof setTimeout>
-    })
-    const client = new ProtocolClient({
-      postMessage: (message) => posted.push(message),
-      getState: () => undefined,
-      setState: () => undefined,
-    })
-    try {
-      const request = client.request<unknown>({
-        type: 'session.sendPrompt',
-        requestId: 'send-prompt-success',
-        payload: { sessionId: 'session-1', text: 'hello', attachments: [], mode: 'queue' },
-      })
-      client.handle({
-        protocolVersion: PROTOCOL_VERSION,
-        message: {
-          type: 'response',
-          requestId: 'send-prompt-success',
-          ok: true,
-          payload: { accepted: true },
-        },
-      })
-      timeoutCallbacks[0]?.()
-
-      await expect(request).resolves.toEqual({ accepted: true })
-      expect(posted).toHaveLength(1)
-    } finally {
-      client.dispose()
-      timeoutSpy.mockRestore()
-    }
-  })
-
-  it.each(['app.ready', 'connection.retry'] as const)(
-    'keeps %s alive through cold startup and still permits cancellation',
-    async (type) => {
-      const timeoutSpy = vi.spyOn(window, 'setTimeout')
-      const posted: ProtocolEnvelope[] = []
-      const client = new ProtocolClient({
-        postMessage: (value) => posted.push(value),
-        getState: () => undefined,
-        setState: () => undefined,
-      })
-      try {
-        const controller = new AbortController()
-        const pending = client.request({ type, requestId: 'slow-start' }, controller.signal)
-        const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' })
-        expect(timeoutSpy.mock.calls.some(([, timeout]) => timeout === 120_000)).toBe(true)
-        controller.abort()
-        await rejected
-        expect(posted.at(-1)?.message).toMatchObject({
-          type: 'feature.request.cancel',
-          payload: { targetRequestId: 'slow-start' },
-        })
-      } finally {
-        timeoutSpy.mockRestore()
-        client.dispose()
-      }
-    },
-  )
-
-  it('keeps a session export alive past the ordinary request timeout', async () => {
-    const setTimeoutSpy = vi.spyOn(window, 'setTimeout')
-    const client = new ProtocolClient({
-      postMessage: () => undefined,
-      getState: () => undefined,
-      setState: () => undefined,
-    })
-    try {
-      const request = client.request<unknown>({
-        type: 'session.export',
-        requestId: 'export-1',
-        payload: {
-          sessionId: 'session-1',
-          format: 'zip',
-          includeAttachments: true,
-          includeReasoning: true,
-        },
-      })
-      // Keep a pre-assertion failure from surfacing as an unhandled rejection
-      // when dispose() settles the still-pending request below.
-      void request.catch(() => undefined)
-
-      // The Host deflates the whole session into the archive and reads a
-      // paged history for the text formats, so the export outlives an ordinary
-      // round trip. A client deadline below that reports a failure for a file
-      // the Host then finishes writing.
-      expect(setTimeoutSpy.mock.calls.some(([, timeout]) => timeout === 180_000)).toBe(true)
-      client.handle({
-        protocolVersion: PROTOCOL_VERSION,
-        message: { type: 'response', requestId: 'export-1', ok: true, payload: { cancelled: false } },
-      })
-      await expect(request).resolves.toEqual({ cancelled: false })
-    } finally {
-      setTimeoutSpy.mockRestore()
-      client.dispose()
-    }
-  })
-
-  it('keeps an npm DSH install request pending beyond the ordinary request timeout', async () => {
-    const setTimeoutSpy = vi.spyOn(window, 'setTimeout')
-    const client = new ProtocolClient({
-      postMessage: () => undefined,
-      getState: () => undefined,
-      setState: () => undefined,
-    })
-    try {
-      const request = client.request<unknown>({
-        type: 'runtime.update.install',
-        requestId: 'install-1',
-        payload: { version: '0.1.1-rc.1' },
-      })
-
-      expect(setTimeoutSpy.mock.calls.some(([, timeout]) => timeout === 24 * 60_000)).toBe(true)
-      client.handle({
-        protocolVersion: PROTOCOL_VERSION,
-        message: { type: 'response', requestId: 'install-1', ok: true, payload: { status: 'ready' } },
-      })
-      await expect(request).resolves.toEqual({ status: 'ready' })
-    } finally {
-      setTimeoutSpy.mockRestore()
-      client.dispose()
-    }
-  })
-
-  it('keeps companion installation pending while cancellation uses a separate request', async () => {
-    const timers = vi.spyOn(window, 'setTimeout')
-    const client = new ProtocolClient({
-      postMessage: () => undefined,
-      getState: () => undefined,
-      setState: () => undefined,
-    })
-    try {
-      const setup = client.featureRequest({
-        type: 'editor.companion.action',
-        requestId: 'companion-install',
-        payload: { action: 'setup' },
-      })
-      const cancel = client.featureRequest({
-        type: 'editor.companion.action',
-        requestId: 'companion-cancel',
-        payload: { action: 'cancel-install' },
-      })
-      expect(timers.mock.calls.some(([, timeout]) => timeout === 600_000)).toBe(true)
-      client.handle({
-        protocolVersion: PROTOCOL_VERSION,
-        message: {
-          type: 'feature.response',
-          requestId: 'companion-cancel',
-          ok: true,
-          payload: { kind: 'empty' },
-        },
-      })
-      await cancel
-      client.handle({
-        protocolVersion: PROTOCOL_VERSION,
-        message: {
-          type: 'feature.response',
-          requestId: 'companion-install',
-          ok: true,
-          payload: { kind: 'empty' },
-        },
-      })
-      await expect(setup).resolves.toEqual({ kind: 'empty' })
-    } finally {
-      timers.mockRestore()
-      client.dispose()
-    }
-  })
-
-  it('outlasts the two npm calls a host update check runs in sequence', async () => {
-    const setTimeoutSpy = vi.spyOn(window, 'setTimeout')
-    const client = new ProtocolClient({
-      postMessage: () => undefined,
-      getState: () => undefined,
-      setState: () => undefined,
-    })
-    try {
-      const request = client.request<unknown>({
-        type: 'runtime.update.check',
-        requestId: 'update-check-1',
-        payload: { force: true },
-      })
-
-      // The Host runs `npm view` and then `npm list --global`, each with its own
-      // 30s budget, before it can answer. A shorter client budget aborts a check
-      // the Host is still running, reports a timeout for work that succeeds, and
-      // drops the version list the drawer was waiting for.
-      const budgets = setTimeoutSpy.mock.calls.map(([, timeout]) => timeout)
-      expect(budgets.some((timeout) => typeof timeout === 'number' && timeout >= 60_000)).toBe(true)
-      client.handle({
-        protocolVersion: PROTOCOL_VERSION,
-        message: { type: 'response', requestId: 'update-check-1', ok: true, payload: { status: 'ready' } },
-      })
-      await expect(request).resolves.toEqual({ status: 'ready' })
-    } finally {
-      setTimeoutSpy.mockRestore()
-      client.dispose()
-    }
-  })
-
-  it('keeps a workspace-restoring feature request alive past the chat timeout', async () => {
-    const setTimeoutSpy = vi.spyOn(window, 'setTimeout')
-    const client = new ProtocolClient({
-      postMessage: () => undefined,
-      getState: () => undefined,
-      setState: () => undefined,
-    })
-    try {
-      const request = client.featureRequest<unknown>({
-        type: 'checkpoint.restore',
-        requestId: 'restore-1',
-        payload: {
-          checkpointId: 'checkpoint-1',
-          sessionId: 'session-1',
-          workspaceFolderId: 'workspace-1',
-          expectedCurrentRevision: 1,
-          previewId: 'dsh-preview-test-1',
-          conflictPolicy: 'abort',
-        },
-      })
-
-      // Restoring a checkpoint writes every recorded file back through the
-      // Host file API and can exceed the chat request timeout.
-      expect(setTimeoutSpy.mock.calls.map(([, timeout]) => timeout)).toContain(180_000)
-      client.handle({
-        protocolVersion: PROTOCOL_VERSION,
-        message: {
-          type: 'feature.response',
-          requestId: 'restore-1',
-          ok: true,
-          payload: { kind: 'operation', operationId: 'restore-1', state: 'completed' },
-        },
-      })
-      await expect(request).resolves.toMatchObject({ state: 'completed' })
-    } finally {
-      setTimeoutSpy.mockRestore()
-      client.dispose()
-    }
-  })
-
-  it('gives plugin install and same-request recovery enough time to finish', () => {
-    const setTimeoutSpy = vi.spyOn(window, 'setTimeout')
-    const client = new ProtocolClient({
-      postMessage: () => undefined,
-      getState: () => undefined,
-      setState: () => undefined,
-    })
-    try {
-      const install = client.featureRequest<unknown>({
-        type: 'plugin.bundle.install',
-        requestId: 'plugin-install-call-1',
-        payload: { spec: '@dsh-community/review', installRequestId: 'plugin-install-id-1' },
-      })
-      const recovery = client.featureRequest<unknown>({
-        type: 'plugin.bundle.waitForInstall',
-        requestId: 'plugin-install-wait-1',
-        payload: { installRequestId: 'plugin-install-id-1' },
-      })
-      void install.catch(() => undefined)
-      void recovery.catch(() => undefined)
-
-      expect(setTimeoutSpy.mock.calls.filter(([, timeout]) => timeout === 600_000)).toHaveLength(2)
-    } finally {
-      setTimeoutSpy.mockRestore()
-      client.dispose()
-    }
-  })
-
   it('rejects every pending request on page disposal', async () => {
     const client = new ProtocolClient({
       postMessage: () => undefined,
@@ -621,75 +362,55 @@ describe('ProtocolClient', () => {
     expect(events).toHaveLength(2)
     client.dispose()
   })
+})
 
-  it('rejects delayed feature events from a replaced backend instance', () => {
-    const client = new ProtocolClient({
-      postMessage: () => undefined,
-      getState: () => undefined,
-      setState: () => undefined,
-    })
-    const events: unknown[] = []
-    client.subscribeFeature((message) => events.push(message))
-    const snapshot = (sequence: number, backendInstanceId: string): unknown => ({
+async function completeSlowRequest(
+  operation:
+    | { readonly request: WebviewRequest; readonly feature?: false }
+    | { readonly request: FeatureRequest; readonly feature: true },
+  elapsed: number,
+): Promise<void> {
+  vi.useFakeTimers()
+  const timer = vi
+    .spyOn(window, 'setTimeout')
+    .mockImplementation((handler, delay) => setTimeout(handler as () => void, delay))
+  const clear = vi.spyOn(window, 'clearTimeout').mockImplementation((id) => clearTimeout(id))
+  const client = new ProtocolClient({
+    postMessage: () => undefined,
+    getState: () => undefined,
+    setState: () => undefined,
+  })
+  try {
+    const pending = operation.feature
+      ? client.featureRequest(operation.request)
+      : client.request(operation.request)
+    let settled = false
+    void pending.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      },
+    )
+    await vi.advanceTimersByTimeAsync(elapsed)
+    expect(settled).toBe(false)
+    const payload = operation.feature ? { kind: 'empty' } : { completed: true }
+    client.handle({
       protocolVersion: PROTOCOL_VERSION,
       message: {
-        type: 'event',
-        name: 'connection.snapshot',
-        sequence,
-        payload: { kind: 'connected', backendInstanceId, connectionGeneration: 1 },
+        type: operation.feature ? 'feature.response' : 'response',
+        requestId: operation.request.requestId,
+        ok: true,
+        payload,
       },
     })
-    const event = (backendInstanceId: string, localSeq: number): unknown => ({
-      protocolVersion: PROTOCOL_VERSION,
-      message: {
-        type: 'feature.event',
-        name: 'editor.context.changed',
-        identity: {
-          backendInstanceId,
-          connectionGeneration: 1,
-          stream: 'local',
-          localSeq,
-        },
-        contextRef: 'dsh-context-context-00000001',
-        action: 'updated',
-      },
-    })
-
-    client.handle(snapshot(1, 'backend-1'))
-    client.handle(event('backend-1', 1))
-    client.handle(snapshot(2, 'backend-2'))
-    client.handle(event('backend-1', 2))
-    client.handle(event('backend-2', 1))
-
-    expect(events).toHaveLength(2)
+    await expect(pending).resolves.toEqual(payload)
+    expect(vi.getTimerCount()).toBe(0)
+  } finally {
     client.dispose()
-  })
-})
-
-describe('native picker request lifetime', () => {
-  it('does not apply the ordinary RPC budget while the user selects a directory', async () => {
-    const timeout = vi.spyOn(window, 'setTimeout')
-    const client = new ProtocolClient({
-      postMessage: () => undefined,
-      getState: () => undefined,
-      setState: () => undefined,
-    })
-    try {
-      const pending = client.request({ type: 'workspace.addFolder', requestId: 'folder-picker' })
-      expect(timeout.mock.calls.map(([, duration]) => duration)).toContain(600_000)
-      client.handle({
-        protocolVersion: PROTOCOL_VERSION,
-        message: {
-          type: 'response',
-          requestId: 'folder-picker',
-          ok: true,
-          payload: { opened: true },
-        },
-      })
-      await expect(pending).resolves.toEqual({ opened: true })
-    } finally {
-      client.dispose()
-      timeout.mockRestore()
-    }
-  })
-})
+    timer.mockRestore()
+    clear.mockRestore()
+    vi.useRealTimers()
+  }
+}

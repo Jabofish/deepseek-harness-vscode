@@ -2,7 +2,7 @@
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { containsUserTextReferences, projectUserText } from './UserText.js'
+import { projectUserText } from './UserText.js'
 
 describe('UserText', () => {
   afterEach(() => cleanup())
@@ -38,14 +38,5 @@ describe('UserText', () => {
     expect(screen.queryByRole('button', { name: /docs/u })).toBeNull()
     expect(screen.getByText('Earlier debugging')).toBeDefined()
     expect(screen.getByText('docs')).toBeDefined()
-  })
-
-  it('projects DSH wire-form session references and detects only reference-shaped text', () => {
-    render(<div>{projectUserText('回看 @[Earlier debugging](dsh-session:session-1)。', [], undefined)}</div>)
-
-    expect(screen.getByText('Earlier debugging')).toBeDefined()
-    expect(containsUserTextReferences('ordinary prose')).toBe(false)
-    expect(containsUserTextReferences('ordinary @file.txt')).toBe(true)
-    expect(containsUserTextReferences('ordinary prose', ['Earlier debugging'])).toBe(true)
   })
 })

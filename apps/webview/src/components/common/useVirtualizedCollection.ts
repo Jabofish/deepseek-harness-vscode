@@ -18,7 +18,7 @@ export const DEFAULT_VIRTUALIZATION_OVERSCAN = 4
  * when a long conversation is opened.
  */
 export const DEFAULT_UNMEASURED_ROW_WINDOW = 32
-const DEFAULT_ESTIMATED_ITEM_SIZE = 96
+export const DEFAULT_ESTIMATED_ITEM_SIZE = 96
 function defaultEstimateSize(): number {
   return DEFAULT_ESTIMATED_ITEM_SIZE
 }
@@ -118,6 +118,20 @@ export function useVirtualizedCollection<T>(
     enabled,
     getScrollElement,
     estimateSize,
+    // Whole-pixel rounding accumulates across rows and moves the reader when
+    // normal-flow history becomes virtualized. Keep the browser's precision.
+    measureElement: (element, entry, instance) => {
+      const index = instance.indexFromElement(element)
+      const cached = instance.itemSizeCache.get(instance.options.getItemKey(index))
+      // A hidden panel reports zero for every mounted row. Those are not new
+      // row sizes; retain measurements until its viewport is visible again.
+      if (instance.scrollElement?.clientHeight === 0) return cached ?? instance.options.estimateSize(index)
+      return (
+        entry?.borderBoxSize?.[0]?.blockSize ??
+        cached ??
+        (element.getBoundingClientRect().height || element.offsetHeight)
+      )
+    },
     getItemKey,
     initialOffset,
     overscan,

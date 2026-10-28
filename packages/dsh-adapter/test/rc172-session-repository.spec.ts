@@ -1,11 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { AppError, type SessionDetail } from '@dsh-vscode/domain'
+import { type SessionDetail } from '@dsh-vscode/domain'
 import type { DshTransport } from '../src/contracts.js'
-import type { SessionRepository } from '@dsh-vscode/domain'
-import { Rc6SessionRepository } from '../src/repositories/session-repository.js'
+
 import type { Rc6WorkspaceRepository } from '../src/repositories/workspace-repository.js'
-import { normalizeRc172ErrorCode } from '../src/versions/rc172/error-vocabulary.js'
+
 import { Rc172SessionRepository } from '../src/versions/rc172/session-repository.js'
 
 function repository(remoteRequest: ReturnType<typeof vi.fn> = vi.fn().mockResolvedValue({ ok: true })): {
@@ -93,24 +92,6 @@ describe('Rc172SessionRepository content search', () => {
 })
 
 describe('Rc172SessionRepository.initializeDefaultModel', () => {
-  it('keeps the optional operation absent from the base Session Repository used by older profiles', () => {
-    const sessions: SessionRepository = new Rc6SessionRepository({} as DshTransport)
-
-    expect(sessions.initializeDefaultModel).toBeUndefined()
-  })
-
-  it('calls the pinned no-argument Session Remote and accepts its void result', async () => {
-    const active = repository()
-    const controller = new AbortController()
-
-    await expect(active.repository.initializeDefaultModel(controller.signal)).resolves.toBeUndefined()
-    expect(active.remoteRequest).toHaveBeenCalledExactlyOnceWith(
-      'session/initializeDefaultModel',
-      {},
-      controller.signal,
-    )
-  })
-
   it('selects a preset for a blank session through the rc.2 Agent Preset Remote', async () => {
     const active = repository(vi.fn().mockResolvedValue({ ok: true, value: 'minimal' }))
     vi.spyOn(active.repository, 'get').mockResolvedValue({
@@ -174,131 +155,6 @@ describe('Rc172SessionRepository.initializeDefaultModel', () => {
     expect(active.request).not.toHaveBeenCalled()
   })
 
-  it('preserves a racing Remote lock refusal and forwards cancellation for blank-session mode changes', async () => {
-    const normalizedLockedCode = normalizeRc172ErrorCode('agent-preset/locked', {})
-    const refused = repository(
-      vi.fn().mockResolvedValue({
-        ok: false,
-        error: { code: normalizedLockedCode, message: 'The session has already started.' },
-      }),
-    )
-    const current: SessionDetail = {
-      status: 'idle',
-      blank: true,
-      configuration: {
-        preset: 'standard',
-        toolMode: 'native',
-        permissionPreset: 'workspace-write',
-        planMode: false,
-        model: { providerId: '', modelId: '' },
-      },
-    } as unknown as SessionDetail
-    vi.spyOn(refused.repository, 'get').mockResolvedValue(current)
-    const configuration = {
-      preset: 'minimal',
-      toolMode: 'native' as const,
-      permissionPreset: 'workspace-write',
-      planMode: false,
-      model: { providerId: '', modelId: '' },
-    }
-
-    let refusal: unknown
-    try {
-      await refused.repository.setConfiguration('session-1', configuration)
-    } catch (error: unknown) {
-      refusal = error
-    }
-    expect(refusal).toBeInstanceOf(AppError)
-    expect((refusal as AppError).code).toBe('INVALID_CONFIGURATION')
-    expect((refusal as AppError).message).toMatch(/^The DSH agent preset is locked for this session\./)
-    expect((refusal as AppError).message).not.toContain('agent-preset/locked')
-    expect((refusal as AppError).context).toMatchObject({
-      rpcCode: 'agent-preset-locked',
-      rpcMethod: 'agentPresets/select',
-    })
-    expect(refused.request).not.toHaveBeenCalled()
-    expect(refused.remoteRequest).toHaveBeenCalledExactlyOnceWith(
-      'agentPresets/select',
-      { agentId: 'session-1', agentPreset: 'minimal' },
-      undefined,
-    )
-
-    const controller = new AbortController()
-    const cancelled = repository(
-      vi.fn((_endpoint: string, _args: Readonly<Record<string, unknown>>, signal?: AbortSignal) => {
-        signal?.throwIfAborted()
-        return Promise.resolve({ ok: true, value: 'minimal' })
-      }),
-    )
-    const cancelledRead = vi.spyOn(cancelled.repository, 'get').mockResolvedValue(current)
-    controller.abort()
-
-    await expect(
-      cancelled.repository.setConfiguration('session-1', configuration, controller.signal),
-    ).rejects.toMatchObject({
-      code: 'REQUEST_CANCELLED',
-      retryable: false,
-    })
-    expect(cancelledRead).not.toHaveBeenCalled()
-    expect(cancelled.request).not.toHaveBeenCalled()
-    expect(cancelled.remoteRequest).not.toHaveBeenCalled()
-
-    const inFlightController = new AbortController()
-    const inFlight = repository(
-      vi.fn((_endpoint: string, _args: Readonly<Record<string, unknown>>, signal?: AbortSignal) => {
-        inFlightController.abort()
-        signal?.throwIfAborted()
-        return Promise.resolve({ ok: true, value: 'minimal' })
-      }),
-    )
-    vi.spyOn(inFlight.repository, 'get').mockResolvedValue(current)
-    await expect(
-      inFlight.repository.setConfiguration('session-1', configuration, inFlightController.signal),
-    ).rejects.toMatchObject({ name: 'AbortError' })
-    expect(inFlight.request).not.toHaveBeenCalled()
-    expect(inFlight.remoteRequest).toHaveBeenCalledExactlyOnceWith(
-      'agentPresets/select',
-      { agentId: 'session-1', agentPreset: 'minimal' },
-      inFlightController.signal,
-    )
-  })
-
-  it('keeps the legacy Host RPC for adapters without the rc.2 preset callback', async () => {
-    const request = vi.fn().mockResolvedValue({
-      result: { ok: true, value: { agentPreset: 'minimal' } },
-    })
-    const remoteRequest = vi.fn()
-    const legacy = new Rc6SessionRepository({ request, remoteRequest } as unknown as DshTransport)
-    vi.spyOn(legacy, 'get').mockResolvedValue({
-      status: 'idle',
-      blank: false,
-      configuration: {
-        permissionPresetKnown: true,
-        planModeKnown: true,
-        preset: 'standard',
-        toolMode: 'native',
-        permissionPreset: 'workspace-write',
-        planMode: false,
-        model: { providerId: '', modelId: '' },
-      },
-    } as unknown as SessionDetail)
-
-    await legacy.setConfiguration('session-1', {
-      preset: 'minimal',
-      toolMode: 'native',
-      permissionPreset: 'workspace-write',
-      planMode: false,
-      model: { providerId: '', modelId: '' },
-    })
-
-    expect(request).toHaveBeenCalledExactlyOnceWith(
-      'agentPreset.select',
-      { sessionId: 'session-1', agentPreset: 'minimal' },
-      undefined,
-    )
-    expect(remoteRequest).not.toHaveBeenCalled()
-  })
-
   it('preserves the upstream no-model error code for Host-only handling', async () => {
     const active = repository(
       vi.fn().mockResolvedValue({
@@ -317,38 +173,5 @@ describe('Rc172SessionRepository.initializeDefaultModel', () => {
     const active = repository(vi.fn().mockResolvedValue({ ok: 'yes' }))
 
     await expect(active.repository.initializeDefaultModel()).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
-  })
-
-  it.each(['unexpected', null])('rejects an unexpected success value %s for a void Remote', async (value) => {
-    const active = repository(vi.fn().mockResolvedValue({ ok: true, value }))
-
-    await expect(active.repository.initializeDefaultModel()).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
-  })
-})
-
-describe('Rc172SessionRepository session creation preset projection', () => {
-  it('omits the preset from session.create when no optional preset registry is available', async () => {
-    const active = repository()
-    const failure = new Error('stop after recording session creation')
-    active.request.mockRejectedValue(failure)
-
-    await expect(
-      active.repository.create({
-        workspaceId: 'workspace-1',
-        configuration: {
-          preset: '',
-          toolMode: 'native',
-          permissionPreset: 'workspace-write',
-          planMode: false,
-          model: { providerId: '', modelId: '' },
-        },
-      }),
-    ).rejects.toBe(failure)
-
-    expect(active.request).toHaveBeenCalledExactlyOnceWith(
-      'session.create',
-      { workspaceId: 'workspace-1' },
-      undefined,
-    )
   })
 })

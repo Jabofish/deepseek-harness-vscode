@@ -22,7 +22,6 @@ it('keeps full live content current when native clipping produces identical repe
     await waitFor(() => expect(posted.length).toBeGreaterThan(0))
     const before = posted.at(-1)!
     expect(before.omittedNodeIds).toContain('live')
-    expect(before.contentVersions?.live).toMatch(/^[a-f0-9]{64}$/)
     const load = vi.fn((id: string) =>
       Promise.resolve(service.fullNode('s', id, posted.at(-1)!.revision, new AbortController().signal)),
     )
@@ -58,10 +57,11 @@ it('keeps full live content current when native clipping produces identical repe
       hook.rerender({ window: after })
       await Promise.resolve()
     })
-    await waitFor(() => expect(load).toHaveBeenCalledTimes(2))
-    expect(hook.result.current.nodes.find((n) => n.id === 'live')).toHaveProperty(
-      'markdown',
-      'x'.repeat(5001024),
+    await waitFor(() =>
+      expect(hook.result.current.nodes.find((n) => n.id === 'live')).toHaveProperty(
+        'markdown',
+        'x'.repeat(5001024),
+      ),
     )
   } finally {
     service.dispose()

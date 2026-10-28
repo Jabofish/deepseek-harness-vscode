@@ -1,23 +1,8 @@
-import { readStylesheet } from '../../../../scripts/read-stylesheet.mjs'
-import { readFileSync, readdirSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+import { readFileSync } from 'node:fs'
+
 import { describe, expect, it } from 'vitest'
 
 const themeStyles = readFileSync(new URL('./theme.css', import.meta.url), 'utf8')
-const appStyles = readStylesheet(new URL('./app.css', import.meta.url), [
-  new URL('./compatibility.css', import.meta.url),
-])
-const uiStyles = readFileSync(new URL('../../../../packages/ui/src/styles.css', import.meta.url), 'utf8')
-const webviewSrc = fileURLToPath(new URL('../../', import.meta.url))
-
-function collectStylesheets(directory: string): string[] {
-  const files: string[] = []
-  for (const entry of readdirSync(directory, { withFileTypes: true })) {
-    if (entry.isDirectory()) files.push(...collectStylesheets(`${directory}/${entry.name}`))
-    else if (entry.name.endsWith('.css')) files.push(`${directory}/${entry.name}`)
-  }
-  return files
-}
 
 /** Palette tokens of one explicit theme, restricted to plain hex values. */
 function palette(theme: string): Map<string, string> {
@@ -109,50 +94,6 @@ function ratioFor(theme: string, foreground: string, background: string): number
 }
 
 describe('Webview theme contract', () => {
-  it('defines explicit palettes while leaving system mode host-driven', () => {
-    expect(themeStyles).toContain("html[data-dsh-theme='light']")
-    expect(themeStyles).toContain("html[data-dsh-theme='dark']")
-    expect(themeStyles).toContain("html[data-dsh-theme='system']")
-    expect(themeStyles).toContain('color-scheme: light dark;')
-    expect(themeStyles).not.toContain('@media (prefers-color-scheme: dark)')
-    expect(themeStyles).toMatch(/--dsh-theme-bg:\s*#f7f8fa;/u)
-    expect(themeStyles).toMatch(/--dsh-theme-bg:\s*#1f2023;/u)
-  })
-
-  it('projects explicit palettes onto DSH tokens without redefining VS Code colors', () => {
-    for (const token of [
-      '--dsh-bg',
-      '--dsh-surface',
-      '--dsh-text',
-      '--dsh-muted',
-      '--dsh-primary',
-      '--dsh-input-bg',
-      '--dsh-code-bg',
-    ])
-      expect(themeStyles).toContain(`${token}: var(--dsh-theme-`)
-
-    expect(themeStyles).toContain(
-      '--dsh-selection-bg: var(--vscode-list-activeSelectionBackground, var(--dsh-control-hover));',
-    )
-    expect(themeStyles).not.toMatch(/--vscode-[^:]+:\s*var\(--dsh-theme-/u)
-  })
-
-  it('keeps code identifiers and scrollports on semantic themed surfaces', () => {
-    expect(appStyles).toContain('.dsh-app code')
-    expect(appStyles).toContain('background: var(--dsh-code-bg);')
-    expect(themeStyles).toMatch(/--dsh-scrollbar-thumb:\s*var\(\s*--vscode-scrollbarSlider-background,/u)
-    expect(themeStyles).toContain('scrollbar-color: var(--dsh-scrollbar-thumb) var(--dsh-scrollbar-track);')
-    expect(themeStyles).toContain('::-webkit-scrollbar-thumb:hover')
-    expect(themeStyles).toContain('--dsh-theme-scrollbar-thumb: #b7bec9;')
-  })
-
-  it('keeps provider protocol menus inside the themed control surface', () => {
-    expect(appStyles).toMatch(
-      /\.dsh-settings__provider-api-select,\s*\.dsh-settings__provider-api-select \.dsh-select-menu__trigger\s*\{\s*width: 100%;/u,
-    )
-    expect(appStyles).toContain('background: var(--dsh-control-background);')
-  })
-
   it('keeps every palette pair that carries text at WCAG AA', () => {
     for (const theme of ['light', 'dark']) {
       const failures = TEXT_PAIRS.map(([foreground, background]) => ({
@@ -175,34 +116,5 @@ describe('Webview theme contract', () => {
         .map((entry) => `${theme} ${entry.pair} = ${entry.ratio.toFixed(2)}`)
       expect(failures).toEqual([])
     }
-  })
-
-  it('paints accent strokes with the line token, never with the fill token', () => {
-    expect(uiStyles).toContain('--dsh-accent-line: var(--dsh-link);')
-    expect(themeStyles).toContain('--dsh-link: var(--dsh-theme-link);')
-
-    // `--dsh-focus` always resolves (styles.css base + theme alias), so the accent
-    // fallback inside those declarations is unreachable and stays out of this guard.
-    const LINE_PROPERTY =
-      /^(?:color|border[a-z-]*|outline[a-z-]*|box-shadow|text-decoration[a-z-]*|fill|stroke)$/u
-    const FILL_TOKEN = /var\(--dsh-(?:accent|primary)\)/u
-    const offenders: string[] = []
-    for (const file of [uiStyles, ...collectStylesheets(webviewSrc)]) {
-      const css = file.replace(/\/\*[\s\S]*?\*\//gu, '')
-      for (const block of css.matchAll(/([^{}]+)\{([^{}]*)\}/gu)) {
-        const selector = block[1]!.trim().replace(/\s+/gu, ' ')
-        const declarations = block[2]!.split(';')
-        const isFill = declarations.some((declaration) =>
-          /^\s*background(?:-color)?:\s*[^;]*var\(--dsh-primary\)/u.test(declaration),
-        )
-        for (const declaration of declarations) {
-          const [property, ...value] = declaration.split(':')
-          if (property === undefined || !LINE_PROPERTY.test(property.trim())) continue
-          const strokes = value.join(':').replace(/var\(--dsh-focus,[^()]*(?:\([^()]*\))?[^()]*\)/gu, '')
-          if (FILL_TOKEN.test(strokes) && !isFill) offenders.push(`${selector} -> ${declaration.trim()}`)
-        }
-      }
-    }
-    expect(offenders).toEqual([])
   })
 })

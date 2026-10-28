@@ -43,22 +43,8 @@ describe('DiagnosticsPanel', () => {
     await waitFor(() => {
       expect(onReconnect).toHaveBeenCalledOnce()
       expect(onShowOutput).toHaveBeenCalledOnce()
-      expect(writeText).toHaveBeenCalledOnce()
       expect(screen.getByRole('status').textContent).toBe('Report copied')
+      expect(writeText).toHaveBeenCalledWith(expect.stringContaining('connection-state'))
     })
-  })
-
-  it('shows no recent events without inventing a failure detail', () => {
-    render(
-      <I18nProvider>
-        <DiagnosticsPanel
-          snapshot={{ ...snapshot, recentEvents: [], canReconnect: false }}
-          onShowOutput={vi.fn().mockResolvedValue(undefined)}
-        />
-      </I18nProvider>,
-    )
-
-    expect(screen.getByText('No recent diagnostic events.')).toBeDefined()
-    expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull()
   })
 })

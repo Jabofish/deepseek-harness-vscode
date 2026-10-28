@@ -25,6 +25,12 @@
     "../apps/extension/src/backend/path-safety.ts",
     "../apps/extension/src/backend/skill-documents.ts",
     "../apps/extension/src/backend/process-supervisor.ts",
+    "../apps/extension/src/backend/owned-process-tree.ts",
+    "../apps/extension/src/backend/windows-lock-owners.ts",
+    "../apps/extension/src/vscode/runtime-command.ts",
+    "../apps/extension/src/vscode/runtime-installation.ts",
+    "../apps/extension/src/vscode/update-runtime.ts",
+    "../apps/extension/src/vscode/windows-runtime-installation.ts",
     "../apps/extension/src/backend/session-watch-coordinator.ts",
     "../apps/extension/src/backend/endpoint-network.ts",
     "../apps/extension/src/backend/external-connection-access.ts",
@@ -57,6 +63,7 @@
     "../apps/extension/src/view/transcript-event-buffer.ts",
     "../apps/extension/src/schedules/schedule-feature-handler.ts",
     "../packages/dsh-adapter/test/fixtures/alpha211-contract.ts",
+    "../packages/dsh-adapter/test/fixtures/alpha222-contract.ts",
     "../packages/dsh-adapter/test/support/contract-harness.ts",
     "../packages/dsh-adapter/test/support/streaming-mux.ts"
   ]

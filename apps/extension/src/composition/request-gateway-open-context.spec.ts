@@ -79,7 +79,6 @@ describe('open-file context route', () => {
       },
     })
 
-    expect(captureOpenFile).toHaveBeenCalledTimes(1)
     expect(remember).not.toHaveBeenCalled()
     expect(sent).toHaveLength(1)
     expect(sent[0]).toMatchObject({

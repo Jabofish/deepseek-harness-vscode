@@ -26,6 +26,7 @@
     "test": "vitest run --passWithNoTests",
     "test:changed": "node scripts/test-changed.mjs",
     "test:stress": "vitest run --config config/vitest.stress.config.ts --tags-filter=stress",
+    "test:ui-stability": "node scripts/test-ui-stability.mjs",
     "test:contracts": "node scripts/test-changed.mjs --contracts",
     "test:billing-evidence": "vitest run --config config/vitest.billing.config.ts",
     "test:watch": "vitest",

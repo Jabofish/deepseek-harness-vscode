@@ -1930,5 +1930,6 @@
   "settings.dshUpdateRestartManaged": "Installed. Restart DSH to use the new version.",
   "settings.dshUpdateRestartFailed": "Could not restart DSH. Check the connection status and retry.",
   "sessions.actions": "Session actions for {title}",
-  "sessions.actionsTitle": "Session actions"
+  "sessions.actionsTitle": "Session actions",
+  "plugins.manager.failure.unsupportedPlatform": "This plugin does not support the DSH host's operating system or architecture."
 }

@@ -137,6 +137,16 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
   const removeProviderWasOpen = useRef(false)
 
   const removeProviderOpen = removingProviderId !== undefined
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null)
+  useLayoutEffect(() => {
+    // Capture before the modal makes the trigger inert. Browsers can blur it
+    // before passive effects run, leaving only the document body to restore.
+    if (open) {
+      previouslyFocusedRef.current =
+        document.activeElement instanceof HTMLElement ? document.activeElement : null
+      closeRef.current?.focus()
+    }
+  }, [open])
   useEffect(() => {
     if (removeProviderWasOpen.current && !removeProviderOpen) {
       const target = removeProviderTriggerRef.current
@@ -153,12 +163,11 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
     // the load effect would pull the keyboard back to the close button while
     // the user is already working in a field.
     if (!open) return
-    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    closeRef.current?.focus()
+    const previouslyFocused = props.returnFocusRef?.current ?? previouslyFocusedRef.current
     return () => {
       if (previouslyFocused?.isConnected) previouslyFocused.focus()
     }
-  }, [open])
+  }, [open, props.returnFocusRef])
 
   useEffect(() => {
     if (!open || settingsState !== undefined) return

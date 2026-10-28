@@ -12,6 +12,7 @@ Start with [Contributing in English](../.github/CONTRIBUTING.md) or [中文贡�
 | Supported features and limits               | [Capability matrix](capability-matrix.en.md)                    | [能力矩阵](capability-matrix.md)             |
 | Automated tests, manual checks and releases | [Testing guide](quality.md)                                     | —                                            |
 | Layout, styles, motion and accessibility    | [UI specification](ui.md)                                       | —                                            |
+| Daily UI scenarios and browser coverage     | [UI scenarios](ui-scenarios.en.md)                              | [UI 场景清单](ui-scenarios.md)               |
 | DSH-side editor tools                       | [Companion guide](../packages/dsh-editor-bridge/README.md)      | —                                            |
 | Agent instructions                          | [AGENTS.md](../AGENTS.md); [CLAUDE.md](../CLAUDE.md) imports it | —                                            |
 | Bug reports and diagnostics                 | [Support](../apps/extension/SUPPORT.md)                         | Chinese reports are welcome                  |

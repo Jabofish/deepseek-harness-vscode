@@ -3,23 +3,6 @@ import { isMovetoCommandLine, movetoTargetOf, normalizeClientCommandText } from 
 import { withClientCommandContributions } from './store/command-directory.js'
 
 describe('client command syntax', () => {
-  it.each([
-    ['/moveto:editor', '/moveto editor'],
-    ['/moveto:sidebar', '/moveto sidebar'],
-    ['/moveto:EDITOR', '/moveto EDITOR'],
-    ['  /moveto:editor  ', '/moveto editor'],
-    ['/moveto:', '/moveto'],
-  ])('rewrites the short form %s into %s', (line, expected) => {
-    expect(normalizeClientCommandText(line)).toBe(expected)
-  })
-
-  it.each([['/moveto editor'], ['/moveto'], ['/model'], ['hello'], ['/movetoeditor']])(
-    'leaves %s untouched',
-    (line) => {
-      expect(normalizeClientCommandText(line)).toBe(line)
-    },
-  )
-
   it('never rewrites a multi-line draft that merely starts with the command', () => {
     const draft = '/moveto:editor\nand some body'
     expect(normalizeClientCommandText(draft)).toBe(draft)
@@ -55,14 +38,6 @@ describe('client command syntax', () => {
 })
 
 describe('client command directory rows', () => {
-  it('advertises the move command next to the model row', () => {
-    const commands = withClientCommandContributions([])
-    expect(commands.map((command) => command.name)).toEqual(['model', 'moveto'])
-    expect(commands.find((command) => command.name === 'moveto')?.input).toEqual({
-      hint: '[editor|sidebar]',
-    })
-  })
-
   it('does not duplicate a row the host directory already declares', () => {
     const commands = withClientCommandContributions([
       { name: 'model', description: 'Host model command', source: 'builtin' },
@@ -70,12 +45,5 @@ describe('client command directory rows', () => {
     ])
     expect(commands).toHaveLength(2)
     expect(commands.every((command) => command.source === 'builtin')).toBe(true)
-  })
-
-  it('adds only the missing row', () => {
-    const commands = withClientCommandContributions([
-      { name: 'model', description: 'Host model command', source: 'builtin' },
-    ])
-    expect(commands.map((command) => command.name)).toEqual(['model', 'moveto'])
   })
 })

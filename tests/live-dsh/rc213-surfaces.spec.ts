@@ -7,7 +7,13 @@ import { canConnect, LIVE_TIMEOUT_MS, startManagedRuntime } from './harness.js'
  * ui-workspace/src/client/navigation.ts; llm-deepseek{,-api-key}/src/config.ts.
  * No prompt, paid model call, OAuth, global installation or production profile.
  */
-describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1' || process.env.DSH_LIVE_RUNTIME_VERSION !== '0.2.1-rc.3')(
+const version = process.env.DSH_LIVE_RUNTIME_VERSION ?? ''
+const protocols: Readonly<Record<string, string>> = {
+  '0.2.1-rc.3': 'rc213',
+  '0.2.1-rc.4': 'rc214',
+  '0.2.2-alpha.2': 'alpha222',
+}
+describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1' || protocols[version] === undefined)(
   'live rc.3 workspace blanks and model-listing configuration',
   () => {
     it(
@@ -15,10 +21,11 @@ describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1' || process.env.DSH_LIVE_RUNTI
       async () => {
         const runtime = await startManagedRuntime()
         try {
+          console.log(`[native-contract] ${version}: runtime ready`)
           const { backend } = runtime
           expect(backend.connection.capabilities).toMatchObject({
-            adapterId: 'dsh-0.2.1-rc.3',
-            protocolVersion: 'rc213',
+            adapterId: `dsh-${version}`,
+            protocolVersion: protocols[version],
             compatibilityMode: 'exact',
             blankSessionReuse: true,
           })
@@ -39,6 +46,7 @@ describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1' || process.env.DSH_LIVE_RUNTI
             model: { providerId: '', modelId: '' },
           }
           const original = await backend.sessions.create({ workspaceId: workspace.id, configuration })
+          console.log(`[native-contract] ${version}: session created`)
           const accounting = backend.sessions.readBillingPage
           expect(accounting).toBeDefined()
           const accountingPage = await accounting!.call(backend.sessions, original.id)
@@ -85,6 +93,7 @@ describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1' || process.env.DSH_LIVE_RUNTI
           expect(replacement.id).not.toBe(original.id)
           expect(await backend.workspaces.listArchivedSessionIds()).toContain(original.id)
 
+          console.log(`[native-contract] ${version}: blank reuse complete`)
           const initial = await backend.settings.readSnapshot()
           // Settings namespaces are Loader entry ids, not npm package names.
           const namespace = initial.schema.namespaces.find((ns) => ns.ns === 'llm-deepseek')!
@@ -145,6 +154,7 @@ describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1' || process.env.DSH_LIVE_RUNTI
           expect((await backend.settings.readSnapshot()).values[namespace.ns]).toEqual(
             initial.values[namespace.ns],
           )
+          console.log(`[native-contract] ${version}: settings complete`)
           const catalog = await backend.models.listSessionModels(created.id)
           // The disposable profile has no credentials: do not invent a successful
           // official listing or make a paid request to populate this catalog.
@@ -155,7 +165,7 @@ describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1' || process.env.DSH_LIVE_RUNTI
           expect(await canConnect(runtime.snapshot.port)).toBe(false)
         }
       },
-      LIVE_TIMEOUT_MS,
+      version === '0.2.2-alpha.2' ? LIVE_TIMEOUT_MS * 2 : LIVE_TIMEOUT_MS,
     )
   },
 )

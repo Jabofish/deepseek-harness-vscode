@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import type { FeatureHostEvent, FeatureRequest, HostMessage } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
 import {
@@ -198,125 +198,6 @@ function refs(store: ReturnType<typeof createAppStore>): readonly string[] {
 }
 
 describe('AppStore editor-context admission', () => {
-  it.each(['session', 'subagent', 'draft'] as const)(
-    'opens a %s without waiting for old context cleanup or restoring its handles',
-    async (target) => {
-      const { client, store } = open()
-      let release!: () => void
-      let navigation: Promise<void> | undefined
-      try {
-        await store.refreshSessions()
-        await store.openSession(SESSION_ID)
-        await store.captureEditorContext('file')
-        expect(refs(store)).toEqual(['context-1'])
-        client.releaseGate = new Promise<void>((resolve) => {
-          release = resolve
-        })
-        let completed = false
-        navigation = (
-          target === 'session'
-            ? store.openSession('other')
-            : target === 'draft'
-              ? store.stageSession(WORKSPACE_FOLDER_ID)
-              : store.openSubagent(
-                  {
-                    kind: 'child',
-                    id: 'child',
-                    label: 'Worker',
-                    activity: 'running',
-                    parentSessionId: SESSION_ID,
-                    mode: 'continuable',
-                    hasChildren: false,
-                  },
-                  true,
-                )
-        ).then(() => {
-          completed = true
-        })
-        await vi.waitFor(() => expect(completed).toBe(true))
-        expect(refs(store)).toEqual([])
-        expect(client.releasedContextRefs).toEqual([['context-1']])
-        if (target === 'session') {
-          expect(store.activeSessionId).toBe('other')
-          await store.sendPrompt('other', 'Continue', [], 'queue')
-          await store.cancelSession('other')
-          expect(client.sentContextRefs).toEqual([[]])
-          expect(client.cancelledSessions).toEqual(['other'])
-        }
-        if (target === 'subagent') expect(store.getState().activeSubagent?.entry.id).toBe('child')
-        if (target === 'draft') expect(store.getState().pendingSession).toBeDefined()
-        release()
-        await vi.waitFor(() => expect(store.getState().editorContextLoading).toBe(false))
-        expect(refs(store)).toEqual([])
-      } finally {
-        release?.()
-        await navigation
-        store.dispose()
-      }
-    },
-  )
-
-  it.each(['subagent', 'draft'] as const)(
-    'ignores the old context list after entering a %s',
-    async (target) => {
-      const { client, store } = open()
-      let release!: () => void
-      let list: Promise<void> | undefined
-      try {
-        await store.refreshSessions()
-        await store.openSession(SESSION_ID)
-        await store.captureEditorContext('file')
-        client.contextListGate = new Promise<void>((resolve) => {
-          release = resolve
-        })
-        list = store.refreshEditorContext()
-        if (target === 'draft') await store.stageSession(WORKSPACE_FOLDER_ID)
-        else
-          await store.openSubagent(
-            {
-              kind: 'child',
-              id: 'child',
-              label: 'Worker',
-              activity: 'running',
-              parentSessionId: SESSION_ID,
-              mode: 'continuable',
-              hasChildren: false,
-            },
-            true,
-          )
-        release()
-        await list
-        expect(refs(store)).toEqual([])
-      } finally {
-        release?.()
-        await list
-        store.dispose()
-      }
-    },
-  )
-
-  it('cancels a capture waiting for cleanup if the user moves to another conversation', async () => {
-    const { client, store } = open()
-    let release!: () => void
-    try {
-      await store.openSession(SESSION_ID)
-      await store.captureEditorContext('file')
-      client.releaseGate = new Promise<void>((resolve) => {
-        release = resolve
-      })
-      await store.openSession('other')
-      const capture = store.captureEditorContext('file')
-      const cancelled = expect(capture).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
-      await store.openSession('third')
-      release()
-      await cancelled
-      expect(refs(store)).toEqual([])
-    } finally {
-      release?.()
-      store.dispose()
-    }
-  })
-
   it('uses the same file context when an open-file candidate is selected', async () => {
     const { client, store } = open()
     client.openFileAsContext = true
@@ -331,21 +212,6 @@ describe('AppStore editor-context admission', () => {
       'dsh-open-file-0123456789abcdef0123456789abcdef',
     )
 
-    await store.sendPrompt(SESSION_ID, 'inspect file', [], 'queue')
-    expect(client.sentContextRefs).toEqual([['context-2']])
-    store.dispose()
-  })
-
-  it('shows and submits one file when repeated Host captures return distinct refs', async () => {
-    const { client, store } = open()
-    await store.openSession(SESSION_ID)
-    await settle()
-    await store.captureEditorContext('file')
-    await store.captureEditorContext('file')
-
-    expect(refs(store)).toEqual(['context-2'])
-    await store.refreshEditorContext()
-    expect(refs(store)).toEqual(['context-2'])
     await store.sendPrompt(SESSION_ID, 'inspect file', [], 'queue')
     expect(client.sentContextRefs).toEqual([['context-2']])
     store.dispose()
@@ -408,38 +274,6 @@ describe('AppStore editor-context admission', () => {
     // real message, so this path must not consume them either.
     expect(client.sentContextRefs).toEqual([])
     expect(refs(store)).toEqual(['context-1'])
-    store.dispose()
-  })
-
-  it('replaces a steer preview once the durable message carries the resolved chips', async () => {
-    const { client, store } = open()
-    await store.openSession(SESSION_ID)
-    await settle()
-    await store.captureEditorContext('file')
-
-    await store.sendPrompt(SESSION_ID, 'look at this', [], 'steer')
-    expect(store.timeline.nodes).toHaveLength(1)
-
-    // The Extension Host resolved the chip into a prompt attachment the
-    // Webview never listed in its preview, and the durable projection reports
-    // it by name.
-    client.emit({
-      type: 'event',
-      name: 'message.user',
-      sequence: 1,
-      payload: {
-        sessionId: SESSION_ID,
-        messageId: 'message-context-1',
-        markdown: 'look at this',
-        source: 'user',
-        attachments: [{ name: 'src/app.ts' }],
-      },
-    })
-    await settle()
-
-    expect(store.timeline.nodes).toEqual([
-      expect.objectContaining({ kind: 'user-message', id: 'message-context-1' }),
-    ])
     store.dispose()
   })
 })

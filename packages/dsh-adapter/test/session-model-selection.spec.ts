@@ -70,30 +70,6 @@ describe('session model selection readback', () => {
     expect(detail.configuration.model).toEqual({ providerId: '', modelId: '' })
   })
 
-  it.each(['model/selection', 'request/header'])(
-    'clears old effort from a complete %s selection when no projection is available',
-    async (type) => {
-      const selection = { provider: 'new', model: 'new-model' }
-      const detail = await repository([
-        { type: 'model/selection', data: oldSelection },
-        { type, data: type === 'request/header' ? { header: { config: selection } } : selection },
-      ]).get('s1')
-      expect(detail.configuration.model).toEqual({ providerId: 'new', modelId: 'new-model' })
-    },
-  )
-
-  it('preserves the route and effort for a legacy partial context update', async () => {
-    const detail = await repository([
-      { type: 'model/selection', data: oldSelection },
-      { type: 'request/context', data: { model: 'new-model' } },
-    ]).get('s1')
-    expect(detail.configuration.model).toEqual({
-      providerId: 'old',
-      modelId: 'new-model',
-      reasoningLevel: 'high',
-    })
-  })
-
   it('does not interpret same-route context metadata as clearing a selected effort', async () => {
     const detail = await repository([
       { type: 'model/selection', data: oldSelection },

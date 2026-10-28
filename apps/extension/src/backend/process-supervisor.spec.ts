@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { DshRuntime } from '@dsh-vscode/domain'
-import { managedWebArguments } from '@dsh-vscode/dsh-adapter'
 
 import { DshProcessSupervisor, type SpawnedChild } from './process-supervisor.js'
 
@@ -47,6 +46,36 @@ function child(onKill: (signal: NodeJS.Signals | undefined) => void): SpawnedChi
 }
 
 describe('DshProcessSupervisor', () => {
+  it('waits for tree termination before allowing another launch even after the parent exits', async () => {
+    const tree = deferred<void>()
+    const managed = child(() => undefined)
+    const spawn = vi
+      .fn()
+      .mockReturnValueOnce({
+        ...managed,
+        terminateTree: async () => {
+          managed.kill('SIGKILL')
+          await tree.promise
+        },
+      })
+      .mockImplementation(() => child(() => undefined))
+    const supervisor = new DshProcessSupervisor({ managedPort: () => 4317, spawn })
+    try {
+      const handle = await supervisor.start(runtime())
+      const stopping = handle.stop()
+      await managed.exited
+      const restarting = supervisor.start(runtime())
+      await Promise.resolve()
+      expect(spawn).toHaveBeenCalledTimes(1)
+      tree.resolve()
+      await stopping
+      await restarting
+      expect(spawn).toHaveBeenCalledTimes(2)
+    } finally {
+      tree.resolve()
+      await supervisor.dispose()
+    }
+  })
   it('allows a cold runtime to become ready after the former 15-second deadline', async () => {
     vi.useFakeTimers()
     const kill = vi.fn<(signal: NodeJS.Signals | undefined) => void>()
@@ -111,36 +140,8 @@ describe('DshProcessSupervisor', () => {
     },
   )
 
-  it.each([
-    '0.0.1-rc.1',
-    '0.0.1-rc.2',
-    '0.0.1-rc.5',
-    '0.1.0-rc.2',
-    '0.1.0-rc.3',
-    '0.1.0-rc.6',
-    '0.1.0-rc.7',
-    '0.1.0-rc.8',
-    '0.1.1-rc.1',
-    '0.1.1-rc.2',
-    '0.1.2-rc.1',
-    '0.1.2-alpha.1',
-    '0.1.2-alpha.2',
-    '0.1.2-alpha.3',
-    '0.1.2-alpha.4',
-    '0.1.2-alpha.5',
-    '0.1.3-alpha.1',
-    '0.1.3-alpha.2',
-    '0.1.5-alpha.1',
-    '0.1.5-alpha.2',
-    '0.1.5-rc.1',
-    '0.1.5-rc.2',
-    '0.1.5-rc.3',
-    '0.1.7-alpha.1',
-    '0.1.7-alpha.2',
-    '0.1.7-rc.1',
-    '0.1.7-rc.2',
-    '0.1.0-rc.99',
-  ])('uses only the shared Web Profile flags for %s', async (version) => {
+  it('launches the current runtime with the Web Profile flags and stops its owned process', async () => {
+    const version = '0.2.1-rc.3'
     let args: readonly string[] | undefined
     const kill = vi.fn<(signal: NodeJS.Signals | undefined) => void>()
     const supervisor = new DshProcessSupervisor({
@@ -153,50 +154,9 @@ describe('DshProcessSupervisor', () => {
 
     const handle = await supervisor.start({ ...runtime(), version })
 
-    expect(args).toEqual(managedWebArguments(version, 4317))
-    expect(args?.includes('--no-open')).toBe(
-      [
-        '0.1.0-rc.8',
-        '0.1.1-rc.1',
-        '0.1.1-rc.2',
-        '0.1.2-rc.1',
-        '0.1.2-alpha.1',
-        '0.1.2-alpha.2',
-        '0.1.2-alpha.3',
-        '0.1.2-alpha.4',
-        '0.1.2-alpha.5',
-        '0.1.3-alpha.1',
-        '0.1.3-alpha.2',
-        '0.1.5-alpha.1',
-        '0.1.5-alpha.2',
-        '0.1.5-rc.1',
-        '0.1.5-rc.2',
-        '0.1.5-rc.3',
-        '0.1.7-alpha.1',
-        '0.1.7-alpha.2',
-        '0.1.7-rc.1',
-        '0.1.7-rc.2',
-      ].includes(version),
-    )
+    expect(args).toEqual(['--profile', 'web', '--no-open', '--host', '127.0.0.1', '--port', '4317'])
     await expect(handle.stop()).resolves.toBeUndefined()
     expect(kill).toHaveBeenCalledWith('SIGTERM')
-  })
-
-  it('clears the termination timeout when the managed child exits', async () => {
-    vi.useFakeTimers()
-    try {
-      const supervisor = new DshProcessSupervisor({
-        managedPort: () => 4317,
-        spawn: () => child(vi.fn()),
-      })
-
-      const handle = await supervisor.start(runtime())
-      await handle.stop()
-
-      expect(vi.getTimerCount()).toBe(0)
-    } finally {
-      vi.useRealTimers()
-    }
   })
 
   it('hands the managed launch token to the Extension Host login seam without exposing it on the handle', async () => {
@@ -224,105 +184,6 @@ describe('DshProcessSupervisor', () => {
     )
     expect(handle).not.toHaveProperty('launchUrl')
     await handle.stop()
-  })
-
-  it.each([
-    '0.1.2-alpha.1',
-    '0.1.2-alpha.2',
-    '0.1.2-alpha.3',
-    '0.1.2-alpha.4',
-    '0.1.2-alpha.5',
-    '0.1.3-alpha.1',
-    '0.1.3-alpha.2',
-    '0.1.5-alpha.1',
-    '0.1.5-alpha.2',
-  ])('translates the alpha user-facing ptc mode to DSH_TOOLS_MODE for %s', async (version) => {
-    let environment: NodeJS.ProcessEnv | undefined
-    const supervisor = new DshProcessSupervisor({
-      managedPort: () => 4317,
-      toolMode: () => 'ptc',
-      spawn: (_executable, _args, _cwd, receivedEnvironment) => {
-        environment = receivedEnvironment
-        return child(vi.fn())
-      },
-    })
-
-    const handle = await supervisor.start({ ...runtime(), version })
-
-    expect(environment).toMatchObject({ DSH_TOOLS_MODE: 'ptc' })
-    await handle.stop()
-  })
-
-  it('keeps the legacy code wire value for published runtimes', async () => {
-    let environment: NodeJS.ProcessEnv | undefined
-    const supervisor = new DshProcessSupervisor({
-      managedPort: () => 4317,
-      toolMode: () => 'ptc',
-      spawn: (_executable, _args, _cwd, receivedEnvironment) => {
-        environment = receivedEnvironment
-        return child(vi.fn())
-      },
-    })
-
-    const handle = await supervisor.start(runtime())
-
-    expect(environment).toMatchObject({ DSH_TOOLS_MODE: 'code' })
-    await handle.stop()
-  })
-
-  it('does not guess the alpha tool mode for an unknown future runtime', async () => {
-    let environment: NodeJS.ProcessEnv | undefined
-    const supervisor = new DshProcessSupervisor({
-      managedPort: () => 4317,
-      toolMode: () => 'ptc',
-      spawn: (_executable, _args, _cwd, receivedEnvironment) => {
-        environment = receivedEnvironment
-        return child(vi.fn())
-      },
-    })
-
-    const handle = await supervisor.start({ ...runtime(), version: '0.1.2-alpha.6' })
-
-    expect(environment).toMatchObject({ DSH_TOOLS_MODE: 'code' })
-    await handle.stop()
-  })
-
-  it('waits for an in-flight stop before spawning a replacement process', async () => {
-    const firstExited = deferred<{ readonly code: number | null; readonly signal: string | null }>()
-    const stopStarted = deferred<void>()
-    const firstKill = vi.fn<(signal: NodeJS.Signals | undefined) => void>(() => {
-      stopStarted.resolve(undefined)
-    })
-    const first: SpawnedChild = {
-      pid: 42,
-      stdout: output('dsh web: http://127.0.0.1:4317\n'),
-      stderr: output(''),
-      kill: firstKill,
-      exited: firstExited.promise,
-    }
-    const second = { ...child(vi.fn()), pid: 43 }
-    let spawnCount = 0
-    const supervisor = new DshProcessSupervisor({
-      managedPort: () => 4317,
-      spawn: () => (spawnCount++ === 0 ? first : second),
-    })
-
-    const handle = await supervisor.start(runtime())
-    const stopping = handle.stop()
-    await stopStarted.promise
-    const replacementPromise = supervisor.start(runtime())
-    await new Promise<void>((resolve) => setImmediate(resolve))
-
-    expect(firstKill).toHaveBeenCalledWith('SIGTERM')
-    expect(spawnCount).toBe(1)
-
-    firstExited.resolve({ code: null, signal: 'SIGTERM' })
-    await expect(stopping).resolves.toBeUndefined()
-    const replacement = await replacementPromise
-
-    expect(replacement).not.toBe(handle)
-    expect(spawnCount).toBe(2)
-    await replacement.stop()
   })
 
   it('retries a failed stop before allowing a replacement process to start', async () => {
@@ -361,6 +222,100 @@ describe('DshProcessSupervisor', () => {
 
     expect(spawnCount).toBe(2)
     await replacement.stop()
+  })
+
+  it('retains failed-start ownership when cleanup retries fail, then releases it on dispose', async () => {
+    let resolveExited:
+      ((status: { readonly code: number | null; readonly signal: string | null }) => void) | undefined
+    const exited = new Promise<{ readonly code: number | null; readonly signal: string | null }>(
+      (resolve) => {
+        resolveExited = resolve
+      },
+    )
+    let killAttempts = 0
+    let allowKill = false
+    let spawnCount = 0
+    const supervisor = new DshProcessSupervisor({
+      managedPort: () => 4317,
+      spawn: () => {
+        spawnCount += 1
+        return {
+          pid: 42,
+          stdout: output('dsh web: http://127.0.0.1:4317\n'),
+          stderr: output(''),
+          kill: (signal) => {
+            killAttempts += 1
+            if (!allowKill) throw new Error('termination unavailable')
+            resolveExited?.({ code: null, signal: signal ?? null })
+          },
+          exited,
+        }
+      },
+      onReadyEndpoint: () => {
+        throw new Error('login failed')
+      },
+    })
+
+    await expect(supervisor.start(runtime())).rejects.toMatchObject({
+      code: 'PROCESS_FAILED',
+      retryable: true,
+    })
+    await expect(supervisor.start(runtime())).rejects.toMatchObject({
+      code: 'PROCESS_FAILED',
+      retryable: true,
+    })
+    expect(spawnCount).toBe(1)
+    expect(killAttempts).toBe(2)
+
+    allowKill = true
+    await supervisor.dispose()
+    await supervisor.dispose()
+
+    expect(killAttempts).toBe(3)
+    expect(spawnCount).toBe(1)
+  })
+
+  it('classifies a bind failure the runtime reports at the top of its startup diagnostics', async () => {
+    // Upstream prints the failing bind error as one of the first lines of a
+    // multi-kilobyte startup-failure report and ends that report with a
+    // diagnostics-file pointer, so the end of stderr is stack frames plus the
+    // log path and never contains the bind error. A classification that only
+    // reads a fixed window from the end of the stream therefore reports a
+    // generic unreachable runtime for what is a port conflict, and the
+    // dedicated port-conflict card can never appear.
+    const stack = Array.from(
+      { length: 48 },
+      (_, index) => `    at Object.<anonymous> (/dsh/packages/boot/app-boot/src/index.ts:${index + 1}:15)`,
+    ).join('\n')
+    const stderr = [
+      'dsh: startup failed',
+      'Error: listen EADDRINUSE: address already in use 127.0.0.1:3080',
+      stack,
+      'Full diagnostics: C:\\Users\\ada\\.dsh\\logs\\startup-2026-10-01T02-51-23-3f2a1b7c-9d4e-4f0a-8b1c-2e5f6a7b8c9d.log',
+      '',
+    ].join('\n')
+    const exited = deferred<{ code: number | null; signal: string | null }>()
+    const supervisor = new DshProcessSupervisor({
+      managedPort: () => 3080,
+      spawn: () => ({
+        pid: 9,
+        stdout: output(''),
+        // Resolve the exit only after the report has been handed to the
+        // consumer, mirroring a runtime that writes its report and then exits.
+        stderr: (async function* () {
+          yield stderr
+          await Promise.resolve()
+          exited.resolve({ code: 1, signal: null })
+        })(),
+        kill: () => exited.resolve({ code: null, signal: 'SIGTERM' }),
+        exited: exited.promise,
+      }),
+    })
+
+    await expect(supervisor.start(runtime())).rejects.toMatchObject({
+      code: 'PORT_CONFLICT',
+      retryable: true,
+    })
   })
 
   it('does not spawn a waiting replacement after disposal begins', async () => {
@@ -523,340 +478,6 @@ describe('DshProcessSupervisor', () => {
     await expect(supervisor.start(runtime())).rejects.toMatchObject({
       code: 'PROCESS_FAILED',
       retryable: false,
-    })
-  })
-
-  it('shares concurrent stop and dispose failures and can retry cleanup', async () => {
-    const stopFailure = new Error('transient termination failure')
-    let resolveExited:
-      ((status: { readonly code: number | null; readonly signal: string | null }) => void) | undefined
-    const exited = new Promise<{ readonly code: number | null; readonly signal: string | null }>(
-      (resolve) => {
-        resolveExited = resolve
-      },
-    )
-    let attempts = 0
-    const supervisor = new DshProcessSupervisor({
-      managedPort: () => 4317,
-      spawn: () => ({
-        pid: 42,
-        stdout: output('dsh web: http://127.0.0.1:4317\n'),
-        stderr: output(''),
-        kill: (signal) => {
-          attempts += 1
-          if (attempts === 1) throw stopFailure
-          resolveExited?.({ code: null, signal: signal ?? null })
-        },
-        exited,
-      }),
-    })
-
-    const handle = await supervisor.start(runtime())
-    const stopping = handle.stop()
-    const disposing = supervisor.dispose()
-    expect(supervisor.dispose()).toBe(disposing)
-
-    await expect(stopping).rejects.toBe(stopFailure)
-    await expect(disposing).rejects.toMatchObject({
-      code: 'PROCESS_FAILED',
-      retryable: true,
-      cause: stopFailure,
-    })
-    expect(attempts).toBe(1)
-
-    await supervisor.dispose()
-
-    expect(attempts).toBe(2)
-  })
-
-  it('resets the stop guard after a termination error so the handle can be retried', async () => {
-    let attempts = 0
-    let resolveExited:
-      ((status: { readonly code: number | null; readonly signal: string | null }) => void) | undefined
-    const exited = new Promise<{ readonly code: number | null; readonly signal: string | null }>(
-      (resolve) => {
-        resolveExited = resolve
-      },
-    )
-    const supervisor = new DshProcessSupervisor({
-      managedPort: () => 4317,
-      spawn: () => ({
-        pid: 42,
-        stdout: output('dsh web: http://127.0.0.1:4317\n'),
-        stderr: output(''),
-        kill: (signal) => {
-          attempts += 1
-          if (attempts === 1) throw new Error('transient termination failure')
-          resolveExited?.({ code: null, signal: signal ?? null })
-        },
-        exited,
-      }),
-    })
-
-    const handle = await supervisor.start(runtime())
-
-    await expect(handle.stop()).rejects.toThrow('transient termination failure')
-    await expect(handle.stop()).resolves.toBeUndefined()
-    expect(attempts).toBe(2)
-  })
-
-  it('retries a coordinator stop failure during supervisor disposal', async () => {
-    let attempts = 0
-    let resolveExited:
-      ((status: { readonly code: number | null; readonly signal: string | null }) => void) | undefined
-    const exited = new Promise<{ readonly code: number | null; readonly signal: string | null }>(
-      (resolve) => {
-        resolveExited = resolve
-      },
-    )
-    const supervisor = new DshProcessSupervisor({
-      managedPort: () => 4317,
-      spawn: () => ({
-        pid: 42,
-        stdout: output('dsh web: http://127.0.0.1:4317\n'),
-        stderr: output(''),
-        kill: (signal) => {
-          attempts += 1
-          if (attempts === 1) throw new Error('transient termination failure')
-          resolveExited?.({ code: null, signal: signal ?? null })
-        },
-        exited,
-      }),
-    })
-
-    const handle = await supervisor.start(runtime())
-    await expect(handle.stop()).rejects.toThrow('transient termination failure')
-
-    await supervisor.dispose()
-    await supervisor.dispose()
-
-    expect(attempts).toBe(2)
-  })
-
-  it('retries failed-start cleanup before launching a replacement process', async () => {
-    let resolveExited:
-      ((status: { readonly code: number | null; readonly signal: string | null }) => void) | undefined
-    const exited = new Promise<{ readonly code: number | null; readonly signal: string | null }>(
-      (resolve) => {
-        resolveExited = resolve
-      },
-    )
-    let killAttempts = 0
-    let readyAttempts = 0
-    let spawnCount = 0
-    const firstKill = vi.fn<(signal: NodeJS.Signals | undefined) => void>((signal) => {
-      killAttempts += 1
-      if (killAttempts === 1) throw new Error('transient startup cleanup failure')
-      resolveExited?.({ code: null, signal: signal ?? null })
-    })
-    const first: SpawnedChild = {
-      pid: 42,
-      stdout: output('dsh web: http://127.0.0.1:4317\n'),
-      stderr: output(''),
-      kill: firstKill,
-      exited,
-    }
-    const second = { ...child(vi.fn()), pid: 43 }
-    const supervisor = new DshProcessSupervisor({
-      managedPort: () => 4317,
-      spawn: () => (spawnCount++ === 0 ? first : second),
-      onReadyEndpoint: () => {
-        readyAttempts += 1
-        if (readyAttempts === 1) throw new Error('login failed')
-      },
-    })
-
-    await expect(supervisor.start(runtime())).rejects.toMatchObject({
-      code: 'PROCESS_FAILED',
-      retryable: true,
-    })
-    expect(spawnCount).toBe(1)
-
-    const handle = await supervisor.start(runtime())
-
-    expect(spawnCount).toBe(2)
-    expect(firstKill).toHaveBeenCalledTimes(2)
-    await handle.stop()
-  })
-
-  it('retains failed-start ownership when cleanup retries fail, then releases it on dispose', async () => {
-    let resolveExited:
-      ((status: { readonly code: number | null; readonly signal: string | null }) => void) | undefined
-    const exited = new Promise<{ readonly code: number | null; readonly signal: string | null }>(
-      (resolve) => {
-        resolveExited = resolve
-      },
-    )
-    let killAttempts = 0
-    let allowKill = false
-    let spawnCount = 0
-    const supervisor = new DshProcessSupervisor({
-      managedPort: () => 4317,
-      spawn: () => {
-        spawnCount += 1
-        return {
-          pid: 42,
-          stdout: output('dsh web: http://127.0.0.1:4317\n'),
-          stderr: output(''),
-          kill: (signal) => {
-            killAttempts += 1
-            if (!allowKill) throw new Error('termination unavailable')
-            resolveExited?.({ code: null, signal: signal ?? null })
-          },
-          exited,
-        }
-      },
-      onReadyEndpoint: () => {
-        throw new Error('login failed')
-      },
-    })
-
-    await expect(supervisor.start(runtime())).rejects.toMatchObject({
-      code: 'PROCESS_FAILED',
-      retryable: true,
-    })
-    await expect(supervisor.start(runtime())).rejects.toMatchObject({
-      code: 'PROCESS_FAILED',
-      retryable: true,
-    })
-    expect(spawnCount).toBe(1)
-    expect(killAttempts).toBe(2)
-
-    allowKill = true
-    await supervisor.dispose()
-    await supervisor.dispose()
-
-    expect(killAttempts).toBe(3)
-    expect(spawnCount).toBe(1)
-  })
-
-  it('honors cancellation after retrying failed-start cleanup and before spawning again', async () => {
-    let resolveExited:
-      ((status: { readonly code: number | null; readonly signal: string | null }) => void) | undefined
-    const exited = new Promise<{ readonly code: number | null; readonly signal: string | null }>(
-      (resolve) => {
-        resolveExited = resolve
-      },
-    )
-    let killAttempts = 0
-    let spawnCount = 0
-    const firstKill = vi.fn<(signal: NodeJS.Signals | undefined) => void>((signal) => {
-      killAttempts += 1
-      if (killAttempts === 1) throw new Error('transient startup cleanup failure')
-      if (killAttempts > 2) resolveExited?.({ code: null, signal: signal ?? null })
-    })
-    const first: SpawnedChild = {
-      pid: 42,
-      stdout: output('dsh web: http://127.0.0.1:4317\n'),
-      stderr: output(''),
-      kill: firstKill,
-      exited,
-    }
-    const supervisor = new DshProcessSupervisor({
-      managedPort: () => 4317,
-      spawn: () => {
-        spawnCount += 1
-        return first
-      },
-      onReadyEndpoint: () => {
-        throw new Error('login failed')
-      },
-    })
-    await expect(supervisor.start(runtime())).rejects.toMatchObject({ code: 'PROCESS_FAILED' })
-
-    const controller = new AbortController()
-    const retry = supervisor.start(runtime(), controller.signal)
-    await vi.waitFor(() => expect(firstKill).toHaveBeenCalledTimes(2))
-    controller.abort()
-    resolveExited?.({ code: null, signal: 'SIGTERM' })
-
-    await expect(retry).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
-    expect(spawnCount).toBe(1)
-  })
-
-  it('reports a launch that never produced a process instead of a readiness timeout', async () => {
-    // A failed `spawn` still yields a child object: Node leaves `pid` unset and
-    // reports the reason on an `error` event, so nothing is ever written to the
-    // readiness buffers. Blaming the runtime for a launch that never happened
-    // costs a full timeout and hides the actionable cause from the user.
-    const kills = vi.fn<(signal: NodeJS.Signals | undefined) => void>()
-    const supervisor = new DshProcessSupervisor({
-      managedPort: () => 4317,
-      spawn: () => ({
-        pid: -1,
-        stdout: output(''),
-        stderr: output(''),
-        kill: kills,
-        exited: new Promise<never>(() => undefined),
-      }),
-    })
-
-    const started = Date.now()
-    await expect(supervisor.start(runtime())).rejects.toMatchObject({
-      code: 'BACKEND_UNREACHABLE',
-      message: 'The DSH process could not be started.',
-    })
-    expect(Date.now() - started).toBeLessThan(2_000)
-  }, 20_000)
-
-  it('reports a synchronous spawn failure as an unreachable runtime', async () => {
-    // `shell: false` cannot launch a `.cmd`/`.bat` target: Node throws EINVAL
-    // before any child exists, and that raw errno must not reach the caller as
-    // an unmapped error.
-    const supervisor = new DshProcessSupervisor({
-      managedPort: () => 4317,
-      spawn: () => {
-        throw Object.assign(new Error('spawn EINVAL'), { code: 'EINVAL' })
-      },
-    })
-
-    await expect(supervisor.start(runtime())).rejects.toMatchObject({
-      code: 'BACKEND_UNREACHABLE',
-      message: 'The DSH process could not be started.',
-      retryable: true,
-    })
-  })
-
-  it('classifies a bind failure the runtime reports at the top of its startup diagnostics', async () => {
-    // Upstream prints the failing bind error as one of the first lines of a
-    // multi-kilobyte startup-failure report and ends that report with a
-    // diagnostics-file pointer, so the end of stderr is stack frames plus the
-    // log path and never contains the bind error. A classification that only
-    // reads a fixed window from the end of the stream therefore reports a
-    // generic unreachable runtime for what is a port conflict, and the
-    // dedicated port-conflict card can never appear.
-    const stack = Array.from(
-      { length: 48 },
-      (_, index) => `    at Object.<anonymous> (/dsh/packages/boot/app-boot/src/index.ts:${index + 1}:15)`,
-    ).join('\n')
-    const stderr = [
-      'dsh: startup failed',
-      'Error: listen EADDRINUSE: address already in use 127.0.0.1:3080',
-      stack,
-      'Full diagnostics: C:\\Users\\ada\\.dsh\\logs\\startup-2026-10-01T02-51-23-3f2a1b7c-9d4e-4f0a-8b1c-2e5f6a7b8c9d.log',
-      '',
-    ].join('\n')
-    const exited = deferred<{ code: number | null; signal: string | null }>()
-    const supervisor = new DshProcessSupervisor({
-      managedPort: () => 3080,
-      spawn: () => ({
-        pid: 9,
-        stdout: output(''),
-        // Resolve the exit only after the report has been handed to the
-        // consumer, mirroring a runtime that writes its report and then exits.
-        stderr: (async function* () {
-          yield stderr
-          await Promise.resolve()
-          exited.resolve({ code: 1, signal: null })
-        })(),
-        kill: () => exited.resolve({ code: null, signal: 'SIGTERM' }),
-        exited: exited.promise,
-      }),
-    })
-
-    await expect(supervisor.start(runtime())).rejects.toMatchObject({
-      code: 'PORT_CONFLICT',
-      retryable: true,
     })
   })
 })

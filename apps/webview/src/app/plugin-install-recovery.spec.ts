@@ -68,6 +68,103 @@ describe('PluginInstallRecoveryController', () => {
     ])
   })
 
+  it('treats a failed wait as unknown, keeps the id, refreshes the catalog, and permits explicit recheck', async () => {
+    const requests: FeatureRequest[] = []
+    let refreshCount = 0
+    let waitCount = 0
+    const controller = new PluginInstallRecoveryController({
+      featureRequest: <T>(request: FeatureRequest): Promise<T> => {
+        requests.push(request)
+        if (request.type === 'plugin.bundle.install') return Promise.reject(new Error('reply lost'))
+        if (request.type === 'plugin.bundle.waitForInstall') {
+          waitCount += 1
+          if (waitCount === 1) return Promise.reject(new Error('transport lost'))
+          return Promise.resolve(reply(null) as T)
+        }
+        return Promise.reject(new Error(`Unexpected request ${request.type}`))
+      },
+      requestId: (() => {
+        let next = 0
+        return () => `plugin-failed-wait-${++next}`
+      })(),
+      onStateChange: (_state, refresh) => {
+        if (refresh) refreshCount += 1
+      },
+    })
+
+    await controller.start({ spec: '@dsh-community/review' })
+    const installId = requests.find((request) => request.type === 'plugin.bundle.install')
+    if (installId?.type !== 'plugin.bundle.install') throw new Error('install request missing')
+    expect(controller.state).toMatchObject({
+      requestId: installId.payload.installRequestId,
+      phase: 'unknown',
+    })
+    await controller.recover()
+    expect(controller.state).toMatchObject({
+      requestId: installId.payload.installRequestId,
+      phase: 'unknown',
+    })
+    expect(requests.filter((request) => request.type === 'plugin.bundle.install')).toHaveLength(1)
+    expect(waitCount).toBe(2)
+    expect(refreshCount).toBe(2)
+  })
+
+  it('settles a known preflight failure without waiting and permits a fresh install', async () => {
+    const requests: FeatureRequest[] = []
+    let installCount = 0
+    let refreshCount = 0
+    const controller = new PluginInstallRecoveryController({
+      featureRequest: <T>(request: FeatureRequest): Promise<T> => {
+        requests.push(request)
+        if (request.type === 'plugin.bundle.install') {
+          installCount += 1
+          if (installCount === 1)
+            throw Object.assign(new Error('The host rejected preflight.'), {
+              code: 'PLUGIN_INSTALL_NOT_STARTED',
+              retryable: true,
+            })
+          return Promise.resolve({ kind: 'plugin.bundle.changed', result: installResult } as T)
+        }
+        throw new Error(`Unexpected request ${request.type}`)
+      },
+      requestId: (() => {
+        let next = 0
+        return () => `plugin-preflight-${++next}`
+      })(),
+      onStateChange: (_state, refresh) => {
+        if (refresh) refreshCount += 1
+      },
+    })
+
+    await controller.start({ spec: '@dsh-community/review' })
+    const firstInstall = requests.find((request) => request.type === 'plugin.bundle.install')
+    if (firstInstall?.type !== 'plugin.bundle.install') throw new Error('first install request missing')
+    expect(controller.state).toMatchObject({
+      requestId: firstInstall.payload.installRequestId,
+      phase: 'settled',
+      waiting: false,
+      result: {
+        name: 'plugin',
+        changed: false,
+        application: 'failed',
+        stage: 'install',
+        errorCode: 'operation-error',
+      },
+    })
+    expect(requests.filter((request) => request.type === 'plugin.bundle.waitForInstall')).toHaveLength(0)
+    expect(refreshCount).toBe(1)
+
+    await controller.start({ spec: '@dsh-community/review' })
+    const installIds = requests
+      .filter((request) => request.type === 'plugin.bundle.install')
+      .map((request) => (request.type === 'plugin.bundle.install' ? request.payload.installRequestId : ''))
+    expect(installIds).toHaveLength(2)
+    expect(installIds[1]).not.toBe(installIds[0])
+    expect(controller.state).toMatchObject({ phase: 'settled', result: installResult })
+    expect(requests.filter((request) => request.type === 'plugin.bundle.waitForInstall')).toHaveLength(0)
+    expect(refreshCount).toBe(2)
+  })
+
   it('cancels the same install id while lost-reply recovery is waiting, then settles the recovered result after too-late', async () => {
     const requests: FeatureRequest[] = []
     let finishWait!: (value: unknown) => void
@@ -350,154 +447,6 @@ describe('PluginInstallRecoveryController', () => {
       expect.objectContaining({ payload: { installRequestId: installId } }),
       expect.objectContaining({ payload: { installRequestId: installId } }),
     ])
-  })
-
-  it('treats a failed wait as unknown, keeps the id, refreshes the catalog, and permits explicit recheck', async () => {
-    const requests: FeatureRequest[] = []
-    let refreshCount = 0
-    let waitCount = 0
-    const controller = new PluginInstallRecoveryController({
-      featureRequest: <T>(request: FeatureRequest): Promise<T> => {
-        requests.push(request)
-        if (request.type === 'plugin.bundle.install') return Promise.reject(new Error('reply lost'))
-        if (request.type === 'plugin.bundle.waitForInstall') {
-          waitCount += 1
-          if (waitCount === 1) return Promise.reject(new Error('transport lost'))
-          return Promise.resolve(reply(null) as T)
-        }
-        return Promise.reject(new Error(`Unexpected request ${request.type}`))
-      },
-      requestId: (() => {
-        let next = 0
-        return () => `plugin-failed-wait-${++next}`
-      })(),
-      onStateChange: (_state, refresh) => {
-        if (refresh) refreshCount += 1
-      },
-    })
-
-    await controller.start({ spec: '@dsh-community/review' })
-    const installId = requests.find((request) => request.type === 'plugin.bundle.install')
-    if (installId?.type !== 'plugin.bundle.install') throw new Error('install request missing')
-    expect(controller.state).toMatchObject({
-      requestId: installId.payload.installRequestId,
-      phase: 'unknown',
-    })
-    await controller.recover()
-    expect(controller.state).toMatchObject({
-      requestId: installId.payload.installRequestId,
-      phase: 'unknown',
-    })
-    expect(requests.filter((request) => request.type === 'plugin.bundle.install')).toHaveLength(1)
-    expect(waitCount).toBe(2)
-    expect(refreshCount).toBe(2)
-  })
-
-  it('keeps the applying phase recoverable after a failed status query', async () => {
-    const requests: FeatureRequest[] = []
-    let rejectInstall!: (error: unknown) => void
-    let waitCount = 0
-    const controller = new PluginInstallRecoveryController({
-      featureRequest: async <T>(request: FeatureRequest): Promise<T> => {
-        requests.push(request)
-        if (request.type === 'plugin.bundle.install')
-          return new Promise<T>((_resolve, reject) => {
-            rejectInstall = reject
-          })
-        if (request.type === 'plugin.bundle.waitForInstall') {
-          waitCount += 1
-          return waitCount === 1
-            ? Promise.reject(new Error('status query timed out'))
-            : Promise.resolve(reply(installResult) as T)
-        }
-        throw new Error(`Unexpected request ${request.type}`)
-      },
-      requestId: (() => {
-        let next = 0
-        return () => `plugin-applying-recovery-${++next}`
-      })(),
-      onStateChange: () => undefined,
-    })
-
-    const installing = controller.start({ spec: '@dsh-community/review' })
-    const installId = controller.state?.requestId
-    if (installId === undefined) throw new Error('install id missing')
-    controller.progress({ requestId: installId, phase: 'applying' })
-    rejectInstall(new Error('install reply lost'))
-    await installing
-
-    expect(controller.state).toMatchObject({
-      requestId: installId,
-      phase: 'applying',
-      waiting: false,
-    })
-    await controller.recover()
-    expect(controller.state).toMatchObject({
-      requestId: installId,
-      phase: 'settled',
-      result: installResult,
-    })
-    expect(requests.filter((request) => request.type === 'plugin.bundle.install')).toHaveLength(1)
-    expect(requests.filter((request) => request.type === 'plugin.bundle.waitForInstall')).toEqual([
-      expect.objectContaining({ payload: { installRequestId: installId } }),
-      expect.objectContaining({ payload: { installRequestId: installId } }),
-    ])
-  })
-
-  it('settles a known preflight failure without waiting and permits a fresh install', async () => {
-    const requests: FeatureRequest[] = []
-    let installCount = 0
-    let refreshCount = 0
-    const controller = new PluginInstallRecoveryController({
-      featureRequest: <T>(request: FeatureRequest): Promise<T> => {
-        requests.push(request)
-        if (request.type === 'plugin.bundle.install') {
-          installCount += 1
-          if (installCount === 1)
-            throw Object.assign(new Error('The host rejected preflight.'), {
-              code: 'PLUGIN_INSTALL_NOT_STARTED',
-              retryable: true,
-            })
-          return Promise.resolve({ kind: 'plugin.bundle.changed', result: installResult } as T)
-        }
-        throw new Error(`Unexpected request ${request.type}`)
-      },
-      requestId: (() => {
-        let next = 0
-        return () => `plugin-preflight-${++next}`
-      })(),
-      onStateChange: (_state, refresh) => {
-        if (refresh) refreshCount += 1
-      },
-    })
-
-    await controller.start({ spec: '@dsh-community/review' })
-    const firstInstall = requests.find((request) => request.type === 'plugin.bundle.install')
-    if (firstInstall?.type !== 'plugin.bundle.install') throw new Error('first install request missing')
-    expect(controller.state).toMatchObject({
-      requestId: firstInstall.payload.installRequestId,
-      phase: 'settled',
-      waiting: false,
-      result: {
-        name: 'plugin',
-        changed: false,
-        application: 'failed',
-        stage: 'install',
-        errorCode: 'operation-error',
-      },
-    })
-    expect(requests.filter((request) => request.type === 'plugin.bundle.waitForInstall')).toHaveLength(0)
-    expect(refreshCount).toBe(1)
-
-    await controller.start({ spec: '@dsh-community/review' })
-    const installIds = requests
-      .filter((request) => request.type === 'plugin.bundle.install')
-      .map((request) => (request.type === 'plugin.bundle.install' ? request.payload.installRequestId : ''))
-    expect(installIds).toHaveLength(2)
-    expect(installIds[1]).not.toBe(installIds[0])
-    expect(controller.state).toMatchObject({ phase: 'settled', result: installResult })
-    expect(requests.filter((request) => request.type === 'plugin.bundle.waitForInstall')).toHaveLength(0)
-    expect(refreshCount).toBe(2)
   })
 
   it('keeps an explicit not-running cancellation when the pending preflight later proves no install was sent', async () => {
