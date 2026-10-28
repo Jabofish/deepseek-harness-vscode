@@ -19,8 +19,13 @@ export class Alpha222SessionRepository extends Rc213SessionRepository {
       const page = await this.history(sessionId, before, reading, { pageSize: 500 })
       reading.throwIfAborted()
       for (const { event } of page.events) {
-        if (event.type !== 'message.user' && event.type !== 'message.completed') continue
-        const attachment = event.images?.find((image) => image.attachmentId === attachmentId)
+        const images =
+          event.type === 'tool.updated'
+            ? event.tool.images
+            : event.type === 'message.user' || event.type === 'message.completed'
+              ? event.images
+              : undefined
+        const attachment = images?.find((image) => image.attachmentId === attachmentId)
         if (attachment !== undefined)
           return callRpc(this.remoteTransport, 'session.attachment', { sessionId, attachment }, reading)
       }

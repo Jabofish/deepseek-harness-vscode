@@ -9,11 +9,145 @@ import type { AlphaLoopbackApiClient } from '../src/versions/alpha/transport.js'
 import { Rc6WorkspaceRepository } from '../src/repositories/workspace-repository.js'
 import { FakeWebSocket } from './support/fake-web-socket.js'
 import { endpoint, transportOptions, wrappedResponse } from './support/contract-harness.js'
-import { imageData, imageReference, unsupportedPlatform } from './fixtures/alpha222-contract.js'
+import {
+  imageData,
+  imageReference,
+  toolImageResult,
+  unsupportedPlatform,
+} from './fixtures/alpha222-contract.js'
+import { alpha222SessionProfile } from '../src/versions/alpha222/session-wire.js'
+import { expandHistoryRecords } from '../src/versions/alpha/session-wire.js'
 import { normalizeAlpha222GlobalEvent } from '../src/versions/alpha222/interaction-events.js'
 import { normalizeEnvelope } from '../src/stream-envelopes.js'
 
 describe('alpha222 changed contracts', () => {
+  it.each([
+    [
+      'mismatched tool identity',
+      {
+        ...toolImageResult,
+        data: {
+          ...toolImageResult.data,
+          message: {
+            ...toolImageResult.data.message,
+            source: { kind: 'tool', callId: 'another-call' },
+          },
+        },
+      },
+    ],
+    [
+      'invalid image reference',
+      {
+        ...toolImageResult,
+        data: {
+          ...toolImageResult.data,
+          message: {
+            ...toolImageResult.data.message,
+            content: [{ type: 'image', attachment: { ...imageReference, width: 0 } }],
+          },
+        },
+      },
+    ],
+  ] as const)('refuses byte reads from a history record with %s', async (_description, event) => {
+    const requests: string[] = []
+    const transport: DshTransport = {
+      request: <T>(method: string) => {
+        requests.push(method)
+        const events = expandHistoryRecords(
+          [{ type: 'event', event }],
+          's',
+          'v4',
+          false,
+          alpha222SessionProfile,
+        ).map((event) => ({ event }))
+        return Promise.resolve({ result: { ok: true, value: { events, hasMore: false } } } as T)
+      },
+      remoteRequest: () => Promise.reject(new Error('unexpected Remote')),
+      async *openEventStream() {},
+      close: () => Promise.resolve(),
+    }
+    await expect(
+      new Alpha222SessionRepository(
+        transport,
+        new Rc6WorkspaceRepository(transport),
+        undefined,
+        {},
+      ).readAttachment('s', imageReference.attachmentId),
+    ).rejects.toMatchObject({ code: 'PERMISSION_DENIED' })
+    expect(requests).toEqual(['session.history'])
+  })
+  it('reads a tool-result-only image from an older history page and refuses it in another session', async () => {
+    const reads: unknown[] = []
+    const transport: DshTransport = {
+      request: <T>(method: string, payload: unknown) => {
+        reads.push({ method, payload })
+        const request = payload as { sessionId: string; beforeSeq?: number }
+        const value =
+          method === 'session.attachment'
+            ? { attachment: imageReference, data: imageData }
+            : request.sessionId !== 's'
+              ? { events: [], hasMore: false }
+              : request.beforeSeq === undefined
+                ? {
+                    events: [
+                      {
+                        event: {
+                          type: 'user/message',
+                          seq: 10,
+                          time: 10,
+                          data: {
+                            message: {
+                              id: 'recent-user',
+                              role: 'user',
+                              content: [{ type: 'text', text: 'newer message without images' }],
+                            },
+                          },
+                        },
+                      },
+                    ],
+                    hasMore: true,
+                  }
+                : {
+                    events: expandHistoryRecords(
+                      [{ type: 'event', event: toolImageResult }],
+                      's',
+                      'v4',
+                      false,
+                      alpha222SessionProfile,
+                    ).map((event) => ({ event })),
+                    hasMore: false,
+                  }
+        return Promise.resolve({ result: { ok: true, value } } as T)
+      },
+      remoteRequest: () => Promise.reject(new Error('unexpected Remote')),
+      async *openEventStream() {},
+      close: () => Promise.resolve(),
+    }
+    const repository = new Alpha222SessionRepository(
+      transport,
+      new Rc6WorkspaceRepository(transport),
+      undefined,
+      {},
+    )
+    const page = await repository.history('s', 10)
+    expect(page.events).toMatchObject([
+      { event: { type: 'tool.updated', tool: { images: [imageReference] } } },
+    ])
+    reads.length = 0
+    await expect(repository.readAttachment('s', imageReference.attachmentId)).resolves.toMatchObject({
+      uri: `data:image/png;base64,${imageData}`,
+    })
+    expect(reads).toEqual([
+      { method: 'session.history', payload: { sessionId: 's', maxMessages: 500 } },
+      { method: 'session.history', payload: { sessionId: 's', maxMessages: 500, beforeSeq: 10 } },
+      { method: 'session.attachment', payload: { sessionId: 's', attachment: imageReference } },
+    ])
+    reads.length = 0
+    await expect(repository.readAttachment('other', imageReference.attachmentId)).rejects.toMatchObject({
+      code: 'PERMISSION_DENIED',
+    })
+    expect(reads).toEqual([{ method: 'session.history', payload: { sessionId: 'other', maxMessages: 500 } }])
+  })
   it('projects blocking approvals as fixed actions and rejects incomplete authority', () => {
     const question = {
       id: 'access',
@@ -154,6 +288,15 @@ describe('alpha222 changed contracts', () => {
     await expect(
       repository.readAttachment('other-session', imageReference.attachmentId),
     ).rejects.toMatchObject({ code: 'PERMISSION_DENIED' })
+    expect(calls).toEqual([])
+    const duringRead = new AbortController()
+    repository.history.mockImplementationOnce(() => {
+      duringRead.abort()
+      return Promise.resolve(page)
+    })
+    await expect(
+      repository.readAttachment('s', imageReference.attachmentId, duringRead.signal),
+    ).rejects.toMatchObject({ name: 'AbortError' })
     expect(calls).toEqual([])
     const abort = new AbortController()
     abort.abort()
