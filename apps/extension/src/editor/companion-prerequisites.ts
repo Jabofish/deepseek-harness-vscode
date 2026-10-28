@@ -7,7 +7,7 @@ import type { EditorIntegrationStatus } from '@dsh-vscode/domain'
 import { runtimePathEntries } from '../backend/runtime-paths.js'
 import { resolveWindowsShim } from '../backend/windows-shim.js'
 
-export const PNPM_INSTALL_COMMAND = 'npm install --global pnpm@11.19.0'
+export const PNPM_INSTALL_COMMAND = 'npm install --global pnpm@11.19.0 --ignore-scripts'
 export const PNPM_INSTALL_GUIDE = 'https://pnpm.io/installation'
 
 /** Explicit user action: use Corepack's supported repair path, otherwise npm's installer. */
@@ -49,7 +49,14 @@ export async function prepareCompanionPackageManager(signal: AbortSignal): Promi
           windowsHide: true,
         })
       try {
-        await run(['install', '--global', 'pnpm@11.19.0'])
+        // npm runs package lifecycle scripts by default; suppress them so a
+        // compromised pnpm tarball cannot execute code in the Host environment.
+        // Corepack downloads pnpm directly and never runs npm scripts.
+        await run(
+          name === 'npm'
+            ? ['install', '--global', 'pnpm@11.19.0', '--ignore-scripts']
+            : ['install', '--global', 'pnpm@11.19.0'],
+        )
         signal.throwIfAborted()
         if ((await checkCompanionPackageManager(signal)) === 'ready') return
         // Installing Corepack's cached version does not create a missing pnpm launcher.
