@@ -46,6 +46,36 @@ function child(onKill: (signal: NodeJS.Signals | undefined) => void): SpawnedChi
 }
 
 describe('DshProcessSupervisor', () => {
+  it('waits for tree termination before allowing another launch even after the parent exits', async () => {
+    const tree = deferred<void>()
+    const managed = child(() => undefined)
+    const spawn = vi
+      .fn()
+      .mockReturnValueOnce({
+        ...managed,
+        terminateTree: async () => {
+          managed.kill('SIGKILL')
+          await tree.promise
+        },
+      })
+      .mockImplementation(() => child(() => undefined))
+    const supervisor = new DshProcessSupervisor({ managedPort: () => 4317, spawn })
+    try {
+      const handle = await supervisor.start(runtime())
+      const stopping = handle.stop()
+      await managed.exited
+      const restarting = supervisor.start(runtime())
+      await Promise.resolve()
+      expect(spawn).toHaveBeenCalledTimes(1)
+      tree.resolve()
+      await stopping
+      await restarting
+      expect(spawn).toHaveBeenCalledTimes(2)
+    } finally {
+      tree.resolve()
+      await supervisor.dispose()
+    }
+  })
   it('allows a cold runtime to become ready after the former 15-second deadline', async () => {
     vi.useFakeTimers()
     const kill = vi.fn<(signal: NodeJS.Signals | undefined) => void>()

@@ -23,6 +23,8 @@ export interface RuntimeCommandOptions {
   readonly signal?: AbortSignal
   readonly onOutput?: (text: string, stream: 'stdout' | 'stderr') => void
   readonly onHeartbeat?: (elapsedMs: number, silentMs: number) => void
+  /** Stop owned runtime processes only after staging has been verified. */
+  readonly beforeReplace?: () => Promise<void>
 }
 
 export interface RuntimeCommandResult {
@@ -164,16 +166,6 @@ export class DshRuntimeUpdater {
     let lastPublished = 0
     this.cached = undefined
     let resumeManagedRuntime: (() => Promise<void>) | undefined
-    try {
-      resumeManagedRuntime = await this.dependencies.prepareManagedUpdate?.()
-    } catch (error) {
-      throw updateError(
-        'install-failed',
-        'The managed DSH could not be stopped before updating. Reconnect and retry.',
-        true,
-        error,
-      )
-    }
     this.emitProgress({ phase: 'downloading', version: requested, startedAt })
     let installError: unknown
     try {
@@ -190,6 +182,18 @@ export class DshRuntimeUpdater {
         ],
         {
           ...this.commandOptions(RUNTIME_INSTALL_TIMEOUT_MS, signal),
+          beforeReplace: async () => {
+            try {
+              resumeManagedRuntime = await this.dependencies.prepareManagedUpdate?.()
+            } catch (error) {
+              throw updateError(
+                'install-failed',
+                'The managed DSH could not be stopped before updating. Reconnect and retry.',
+                true,
+                error,
+              )
+            }
+          },
           onOutput: () => {
             const now = Date.now()
             if (revision === this.revision && now - lastPublished >= 1_000) {
@@ -212,7 +216,11 @@ export class DshRuntimeUpdater {
     }
     if (installError !== undefined) {
       this.cached = undefined
-      if (installError instanceof AppError && installError.code === 'BACKEND_BUSY') throw installError
+      if (
+        installError instanceof AppError &&
+        (installError.code === 'BACKEND_BUSY' || installError.context?.operation === 'runtime.install')
+      )
+        throw installError
       if (isCancellation(installError, signal)) throw cancelledError(installError)
       if (isMissingExecutable(installError))
         throw updateError(

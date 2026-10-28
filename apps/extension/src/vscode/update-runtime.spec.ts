@@ -27,7 +27,10 @@ function updater(
   return new DshRuntimeUpdater({
     npmExecutable: () => 'npm.cmd',
     locateRuntime: () => Promise.resolve(current),
-    execute,
+    execute: async (executable, args, options) => {
+      if (args[0] === 'install') await options.beforeReplace?.()
+      return execute(executable, args, options)
+    },
     ...(onProgress === undefined ? {} : { onProgress }),
     ...(prepareManagedUpdate === undefined ? {} : { prepareManagedUpdate }),
     environment: () => ({ PATH: 'test-path' }),
