@@ -10,6 +10,7 @@ import {
   type SpawnedChild,
 } from '../../apps/extension/src/backend/process-supervisor.js'
 import { resolveWindowsShim } from '../../apps/extension/src/backend/windows-shim.js'
+import { terminateOwnedWindowsTree } from '../../apps/extension/src/backend/owned-process-tree.js'
 import { VersionedBackendFactory } from '../../packages/dsh-adapter/src/backend-factory.js'
 import type { ExportFileSystem } from '../../packages/dsh-adapter/src/repositories/export-repository.js'
 import { managedWebArguments } from '../../packages/dsh-adapter/src/launch-contract.js'
@@ -386,6 +387,7 @@ export function spawnManagedChild(
     kill: (signal?: NodeJS.Signals) => {
       child.kill(signal)
     },
+    ...(process.platform === 'win32' ? { terminateTree: () => terminateOwnedWindowsTree(child) } : {}),
     exited,
   }
 }

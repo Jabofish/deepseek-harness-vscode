@@ -21,6 +21,7 @@ import {
 } from '@dsh-vscode/application'
 import { VersionedBackendFactory, VersionedBackendProbe, redactText } from '@dsh-vscode/dsh-adapter'
 import { runtimeNpmEnvironment, streamRuntimeCommand } from '../vscode/runtime-command.js'
+import { installWindowsRuntime, verifyWindowsRuntime } from '../vscode/windows-runtime-installation.js'
 import { createAdapterOptions } from '../backend/adapter-options.js'
 import { createVersionAdapters } from '../backend/version-adapters.js'
 import { CompanionRegistryDiscoveryProvider } from '../backend/discovery/companion-provider.js'
@@ -391,31 +392,43 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
           }
         }
         try {
+          const installOptions = {
+            ...options,
+            cwd: homedir(),
+            env: withNpmFetchDefaults(environment),
+            onOutput: output,
+            onHeartbeat: (elapsedMs: number, silentMs: number) => {
+              if (silentMs >= 15_000)
+                installOutput?.appendLine(
+                  `npm is still running: ${Math.floor(elapsedMs / 1_000)}s elapsed, ${Math.floor(silentMs / 1_000)}s without new output.`,
+                )
+            },
+          }
+          const installArgs = [
+            ...args,
+            ...['--no-audit', '--no-fund', '--loglevel=info', '--ignore-scripts', '--timing'].filter(
+              (flag) => !args.includes(flag),
+            ),
+          ]
+          if (platform() === 'windows')
+            return await installWindowsRuntime(installArgs, installOptions, {
+              execute: (commandArgs, commandOptions) =>
+                streamRuntimeCommand(resolvedExecutable, [...(resolved?.prefixArgs ?? []), ...commandArgs], {
+                  ...installOptions,
+                  ...commandOptions,
+                }),
+              verify: (shim, version) =>
+                verifyWindowsRuntime(shim, version, environment, windowsShimOptions('windows', environment)),
+            })
+          await options.beforeReplace?.()
           return await streamRuntimeCommand(
             resolvedExecutable,
-            [
-              ...(resolved?.prefixArgs ?? []),
-              ...args,
-              ...['--no-audit', '--no-fund', '--loglevel=info', '--ignore-scripts', '--timing'].filter(
-                (flag) => !args.includes(flag),
-              ),
-            ],
-            {
-              ...options,
-              cwd: homedir(),
-              env: withNpmFetchDefaults(environment),
-              onOutput: output,
-              onHeartbeat: (elapsedMs, silentMs) => {
-                if (silentMs >= 15_000)
-                  installOutput?.appendLine(
-                    `npm is still running: ${Math.floor(elapsedMs / 1_000)}s elapsed, ${Math.floor(silentMs / 1_000)}s without new output.`,
-                  )
-              },
-            },
+            [...(resolved?.prefixArgs ?? []), ...installArgs],
+            installOptions,
           )
         } catch (error) {
           outcome =
-            runtimeInstallationFailureMessage(error) ??
+            (error instanceof AppError ? error.message : runtimeInstallationFailureMessage(error)) ??
             'npm failed. Check the installation output above and retry.'
           throw error
         } finally {
@@ -446,6 +459,19 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
     }
     return operation
   }
+  const prepareManagedUpdate = async (): Promise<(() => Promise<void>) | undefined> => {
+    const state = coordinator.getState()
+    if (platform() !== 'windows' || state.kind !== 'connected' || state.backend.ownership !== 'managed')
+      return undefined
+    appendInstallStatus('Stopping the managed DSH process tree before switching its global package…')
+    await coordinator.disconnect()
+    appendInstallStatus('Managed DSH process tree stopped. Continuing the update…')
+    return async () => {
+      runtimeLocator.invalidate()
+      appendInstallStatus('Reconnecting the managed DSH…')
+      await onRuntimeUpdateRestart()
+    }
+  }
   const runtimeInstaller = new RuntimeInstaller({
     tasks: vscode.tasks,
     window: vscode.window,
@@ -455,10 +481,18 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
     runInstall: async () => {
       const os = platform()
       const npm = resolveNpmExecutable(os, extensionRuntimePathEntries(os, process.env))
-      await executeRuntimeCommand(npm, ['install', '--global', DSH_PACKAGE], {
-        timeout: RUNTIME_INSTALL_TIMEOUT_MS,
-        maxBuffer: RUNTIME_INSTALL_MAX_BUFFER,
-      })
+      let resume: (() => Promise<void>) | undefined
+      try {
+        await executeRuntimeCommand(npm, ['install', '--global', DSH_PACKAGE], {
+          timeout: RUNTIME_INSTALL_TIMEOUT_MS,
+          maxBuffer: RUNTIME_INSTALL_MAX_BUFFER,
+          beforeReplace: async () => {
+            resume = await prepareManagedUpdate()
+          },
+        })
+      } finally {
+        await resume?.()
+      }
     },
     verifyInstall: async () => {
       runtimeLocator.invalidate()
@@ -496,18 +530,7 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
       const state = coordinator.getState()
       return state.kind === 'connected' && state.backend.ownership === 'managed'
     },
-    prepareManagedUpdate: async () => {
-      const state = coordinator.getState()
-      if (platform() !== 'windows' || state.kind !== 'connected' || state.backend.ownership !== 'managed')
-        return undefined
-      appendInstallStatus('Stopping the managed DSH before updating its global package…')
-      await coordinator.disconnect()
-      appendInstallStatus('Managed DSH stopped. Continuing the update…')
-      return async () => {
-        appendInstallStatus('Restarting the updated managed DSH…')
-        await onRuntimeUpdateRestart()
-      }
-    },
+    prepareManagedUpdate,
     onProgress: (progress) => {
       // Final verification happens after the npm process and must also reach
       // the native output window, even when the initiating chat has closed.

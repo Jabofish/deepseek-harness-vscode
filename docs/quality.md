@@ -96,6 +96,8 @@ Then select the live files affected by the change, or run `pnpm exec vitest run 
 
 Empty homes cover handshake, RPC and lifecycle paths; history-dependent scenarios need an explicit sanitised disposable fixture home directly under the OS temp directory (`DSH_LIVE_HISTORY_FIXTURE_HOME`). Without one, history/page/tool/export/subagent/review scenarios may skip. List skipped scenarios and their reasons in the results.
 
+For Windows installer changes, the default suite includes real file-sharing violations and owned descendant cleanup. Run `tests/live-dsh/windows-runtime-installation.spec.ts` separately with `DSH_LIVE_INSTALLATION=1`, `DSH_LIVE_INSTALL_FROM` and `DSH_LIVE_INSTALL_TO` set to exact package versions, and `DSH_LIVE_NPM_CLI` set to npm's `bin/npm-cli.js`. It installs both versions into a disposable global prefix, verifies the actual launchers and `npm list --global`, and removes that prefix. The test uses npm's offline cache; populate the cache in an isolated prefix first if the chosen packages are unavailable. This does not exercise the Settings installation flow in a real VS Code window.
+
 `DSH_LIVE_EDITOR_COMPANION=1` additionally exercises installation of the bundled companion in the isolated runtime. Windows `.cmd` shims are resolved by the harness, not by `shell: true`. Live files run serially with a managed lock; verify owned process and port cleanup even on failure. Close the PowerShell terminal after an opt-in run, or unset these variables before normal checks so they do not unexpectedly enable live tests.
 
 ## VS Code / Electron runner

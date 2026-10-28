@@ -12,8 +12,10 @@ Release entries describe behaviour at that release. `Unreleased` lists changes a
 - Fixes historical images referenced only by tool results on DSH `0.2.2-alpha.2`: session ownership lookup includes validated tool results while refusing cross-session references and invalid tool/image records before reading bytes.
 - 修复长会话滚动与布局跳动：流式内容、虚拟列表测量和加载更早历史时保持当前阅读位置，尾部状态留在最后一行下方；统计区域在内容波动时保持高度，切换宽度或会话时重置。
 - Stabilizes long-conversation scrolling and layout: streaming content, virtual-list measurements and older-history loading keep the visible row in place, with tail activity below the last row. The statistics area retains its height while contents fluctuate and resets for a different width or session.
-- Windows 上更新全局 DSH 前停止扩展持有的运行时，npm 结束后恢复连接，避免 `node-pty` 等原生模块锁定安装目录导致 npm 复制整棵树或失败；外部 DSH 不受影响。
-- On Windows, stops the extension-owned DSH before replacing the global package and reconnects after npm settles, avoiding native module locks such as `node-pty` that make npm copy the installation tree or fail. External instances are unaffected.
+- Windows 安装先在独立目录验证新版，再停止扩展持有的完整进程树并切换全局包及启动入口；绕过 npm 对旧目录的 `reify:retireShallow` 复制回退，文件锁只重试两秒。切换失败回滚，下次安装恢复中断事务；旧目录清理不阻塞完成。外部进程不会被终止，配置和会话保持原位置。
+- Windows installs verify the new CLI in a separate directory, then stop the owned process tree and switch the global package and launchers. This bypasses npm's old-tree `reify:retireShallow` copy fallback, with two seconds of file-lock retries. Failed switches roll back, interrupted transactions recover on the next install, and retired-tree cleanup does not delay completion. External processes are never terminated; configurations and sessions retain their locations.
+- Windows 仍有占用时，通过 Restart Manager 尝试在安装输出列出持锁进程名称及 PID；该诊断有时间和扫描上限，不把进程信息传给 Webview，也不会终止外部进程。
+- When Windows files remain in use, a bounded Restart Manager query reports identified process names and PIDs in installation output. Process details stay in the Host; diagnostics never terminate external processes.
 - 全局安装 DSH 前增加原生确认，并以 `--ignore-scripts` 禁用安装脚本；`dsh.runtime.executablePath` 不再允许工作区设置覆盖，且拒绝 UNC 网络路径。
 - Global DSH installs now require a native confirmation and run with `--ignore-scripts`; `dsh.runtime.executablePath` is no longer overridable by workspace settings and UNC paths are rejected.
 - 拒绝运行配置的 DSH 后，缓存中的同一路径也不会执行；网络及设备路径在访问前拦截。导出历史读取与输出分别限制为 64 MiB，超限后停止读取。

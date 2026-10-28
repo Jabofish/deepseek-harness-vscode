@@ -13,6 +13,7 @@ export interface SpawnedChild {
   readonly stdout: AsyncIterable<string>
   readonly stderr: AsyncIterable<string>
   readonly kill: (signal?: NodeJS.Signals) => void
+  readonly terminateTree?: () => Promise<void>
   readonly exited: Promise<{ readonly code: number | null; readonly signal: string | null }>
 }
 
@@ -277,7 +278,7 @@ export class DshProcessSupervisor implements ProcessSupervisor {
       this.active = handle
       void exited.then(() => {
         if (this.active?.pid === child.pid) this.active = undefined
-        this.failedStops.delete(handle)
+        if (stopping === undefined) this.failedStops.delete(handle)
       })
       return handle
     } catch (error) {
@@ -405,6 +406,15 @@ function launchFailure(cause?: unknown): AppError {
 }
 
 async function stopChild(child: SpawnedChild): Promise<void> {
+  if (child.terminateTree !== undefined) {
+    await child.terminateTree()
+    if (await waitForExit(child.exited, 2_000)) return
+    throw new AppError({
+      code: 'PROCESS_FAILED',
+      message: 'The managed DSH process did not exit after its process tree was terminated.',
+      retryable: true,
+    })
+  }
   child.kill('SIGTERM')
   const first = await waitForExit(child.exited, 2_000)
   if (first) return
