@@ -4,6 +4,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { installWindowsRuntime } from './windows-runtime-installation.js'
 import type { RuntimeCommandOptions } from './update-runtime.js'
+import { terminateOwnedWindowsTree } from '../backend/owned-process-tree.js'
 import {
   spawnFileLocker,
   stopFixtureChild,
@@ -71,6 +72,30 @@ async function fixture(): Promise<{
 }
 
 describe('transactional Windows DSH installation', () => {
+  it.skipIf(process.platform !== 'win32')(
+    'automatically releases an owned file lock and completes the update',
+    async () => {
+      const { root, version, dependencies } = await fixture()
+      const locker = spawnFileLocker(path.join(root, packagePath, 'bin.js'))
+      try {
+        await waitForFixtureOutput(locker)
+        await expect(
+          fs.rename(path.join(root, packagePath), path.join(root, 'blocked')),
+        ).rejects.toMatchObject({ code: 'EPERM' })
+        await installWindowsRuntime(
+          args,
+          { ...options, beforeReplace: () => terminateOwnedWindowsTree(locker) },
+          dependencies,
+        )
+        expect(await version()).toBe('0.2.2-alpha.2')
+        expect(locker.exitCode !== null || locker.signalCode !== null).toBe(true)
+        expect(await fs.readFile(path.join(root, 'dsh.cmd'), 'utf8')).toBe('launcher 0.2.2-alpha.2')
+      } finally {
+        await stopFixtureChild(locker)
+      }
+    },
+    20_000,
+  )
   it('completes verification and switching when the progress panel has closed', async () => {
     const { version, dependencies } = await fixture()
     await installWindowsRuntime(
@@ -142,15 +167,28 @@ describe('transactional Windows DSH installation', () => {
           code: 'EPERM',
         })
         const started = Date.now()
-        await expect(installWindowsRuntime(args, options, dependencies)).rejects.toMatchObject({
+        let diagnostic = ''
+        await expect(
+          installWindowsRuntime(
+            args,
+            {
+              ...options,
+              onOutput: (text) => {
+                diagnostic += text
+              },
+            },
+            dependencies,
+          ),
+        ).rejects.toMatchObject({
           code: 'BACKEND_BUSY',
           context: { reason: 'files-in-use' },
         })
         const elapsed = Date.now() - started
-        expect(elapsed).toBeLessThan(8_000)
+        expect(elapsed).toBeLessThan(12_000)
         expect(await version()).toBe('0.2.1-rc.3')
         expect(await fs.readFile(path.join(root, 'dsh.cmd'), 'utf8')).toBe('launcher 0.2.1-rc.3')
         expect(locker.exitCode).toBeNull()
+        expect(diagnostic).toContain(`powershell (PID ${locker.pid})`)
         console.info(
           `Windows external file-lock rejection: ${elapsed}ms; old package and external process preserved`,
         )

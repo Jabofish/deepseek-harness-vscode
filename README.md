@@ -54,7 +54,7 @@ Without a specified target, auto validates the last successful local connection 
 
 The General settings page can check upstream package versions and install an exact verified version. Updating a global package never stops an external DSH.
 
-On Windows, installation uses a separate directory on the same disk and verifies the new CLI before switching the global package and launchers. Only the extension-owned DSH process tree is stopped for the switch, then reconnected. File-lock retries are limited to two seconds; a blocked switch preserves the previous package and reports a retryable error. Switching failures restore the previous package and launchers; an interrupted switch is recovered on the next installation attempt. Allow temporary disk space for both versions. Configurations and sessions stay in their existing locations.
+On Windows, installation uses a separate directory on the same disk and verifies the new CLI before switching the global package and launchers. Only the extension-owned DSH process tree is stopped for the switch, then reconnected. File-lock retries are limited to two seconds; a blocked switch preserves the previous package and reports a retryable error. The installation output uses Windows Restart Manager to identify remaining file users by process name and PID when available; close the reported application and retry. Switching failures restore the previous package and launchers; an interrupted switch is recovered on the next installation attempt. Allow temporary disk space for both versions. Configurations and sessions stay in their existing locations.
 
 ## Connect to an external instance
 

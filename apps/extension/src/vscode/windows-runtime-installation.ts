@@ -8,6 +8,7 @@ import { DSH_PACKAGE_NAME, isDshPackageVersion } from '@dsh-vscode/dsh-adapter'
 import type { RuntimeCommandOptions, RuntimeCommandResult } from './update-runtime.js'
 import { resolveWindowsShim, type WindowsShimResolutionOptions } from '../backend/windows-shim.js'
 import { streamRuntimeCommand } from './runtime-command.js'
+import { findWindowsLockOwners } from '../backend/windows-lock-owners.js'
 
 const shims = ['dsh', 'dsh.cmd', 'dsh.ps1'] as const
 const packagePath = path.join('node_modules', '@deepseek-ai', 'dsh')
@@ -147,6 +148,22 @@ export async function installWindowsRuntime(
       }
     }
     await retireWorkspace(root, work, options).catch(() => undefined)
+    if (cause instanceof AppError && cause.context?.reason === 'files-in-use') {
+      report(options, 'Checking Windows for processes still holding DSH files…\n', 'stdout')
+      const owners = await findWindowsLockOwners([target, ...shims.map((shim) => path.join(root, shim))])
+      for (const owner of owners)
+        report(
+          options,
+          `Windows reports DSH files in use by ${owner.name} (PID ${owner.pid}). Close this application and retry.\n`,
+          'stdout',
+        )
+      if (owners.length === 0)
+        report(
+          options,
+          'Windows could not identify the remaining file holder. Check external DSH instances, terminals and security software.\n',
+          'stdout',
+        )
+    }
     throw cause
   } finally {
     await release()
@@ -202,7 +219,7 @@ async function move(source: string, destination: string, deadline = Date.now()):
         throw new AppError({
           code: 'BACKEND_BUSY',
           message:
-            'DSH files are still in use by another program. Close external DSH instances and programs holding these files, then retry. The previous package is preserved.',
+            'DSH files are still in use or not writable. Check DSH Installation output for the locking application, close it and retry. The previous package is preserved.',
           retryable: true,
           context: { operation: 'runtime.install', reason: 'files-in-use' },
           cause,
