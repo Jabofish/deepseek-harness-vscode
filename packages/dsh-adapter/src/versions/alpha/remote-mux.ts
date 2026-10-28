@@ -74,6 +74,8 @@ export interface AlphaLoopbackApiClientOptions {
   readonly presetWireVersion?: AlphaPresetWireVersion
   /** Alpha.2, rc.1, and rc.2 add the Session Controller turnWindow request field. */
   readonly sessionHistoryTurnWindow?: boolean
+  /** Exact newer hosts make follow passive unless activation is requested. */
+  readonly activateSessionFollow?: boolean
   /**
    * Child-session routing committed by the subagent catalog. The Session
    * Controller refuses a session-kind address for a subagent-origin Session,

@@ -851,6 +851,7 @@ export class AlphaLoopbackApiClient implements DshTransport {
     const request = {
       address: this.sessionAddress(sessionId),
       ...historyWindow,
+      ...(this.options.activateSessionFollow === true ? { activate: true } : {}),
       ...(assistantStream ? { assistantStream: true } : {}),
     }
     const projector = assistantStream ? new Alpha13AssistantStreamProjector() : undefined

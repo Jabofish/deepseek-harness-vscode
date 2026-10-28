@@ -49,7 +49,10 @@ export function apply(ctx) {
       const agent = ctx.agents.get(request.sessionId) ?? (await ctx.agents.resume({ resumeSessionId: request.sessionId })).agent
       const catalogue = ctx.tools.schemas(scopeOf(agent))
       if (!${JSON.stringify(Object.keys(EDITOR_COMPANION_TOOLS))}.every(name => catalogue.some(tool => tool.name === name))) return { ok: false, reason: 'not-catalogued' }
-      const result = await ctx.tools.execute({ name: request.name ?? 'vscode_get_editor_state', arguments: request.arguments ?? {}, callId: 'fixture-editor-call', agent, signal })
+      // The pinned alpha release changes Registry execution to ordered batches.
+      const result = ${JSON.stringify(version === '0.2.2-alpha.2')}
+        ? (await ctx.tools.execute({ calls: [{type:'tool-call',id:'fixture-editor-call',name:request.name ?? 'vscode_get_editor_state',arguments:JSON.stringify(request.arguments ?? {})}],agent,signal })).results[0].result
+        : await ctx.tools.execute({ name: request.name ?? 'vscode_get_editor_state', arguments: request.arguments ?? {}, callId: 'fixture-editor-call', agent, signal })
       return result.isError ? { ok: false, reason: result.error.code } : { ok: true, snapshot: result.value }
     }
   }

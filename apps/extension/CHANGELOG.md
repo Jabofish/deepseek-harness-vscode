@@ -6,6 +6,10 @@ Release entries describe behaviour at that release. `Unreleased` lists changes a
 
 ## Unreleased
 
+- 逐版本适配 DSH `0.2.1-rc.4` 与 `0.2.2-alpha.2`，保留独立精确入口与安装默认。新 alpha 显式激活实时会话；读取历史图片前校验会话归属；支持固定选项的阻塞授权、模型目录刷新和明确的平台不支持错误。DSH 新 alpha 需要 Node >=24.9.0。
+- Adds separate exact adapters for DSH `0.2.1-rc.4` and `0.2.2-alpha.2`, preserving the installation default. The new alpha explicitly activates live sessions, checks session ownership before historical image reads, and supports fixed-choice blocking approvals, model catalogue invalidation and platform refusal messages. This DSH alpha requires Node >=24.9.0.
+- 修复 DSH `0.2.2-alpha.2` 中仅由工具结果引用的历史图片无法加载：会话归属查找包含已验证的工具结果，跨会话引用及无效工具/图片记录仍在读取字节前拒绝。
+- Fixes historical images referenced only by tool results on DSH `0.2.2-alpha.2`: session ownership lookup includes validated tool results while refusing cross-session references and invalid tool/image records before reading bytes.
 - 修复长会话滚动与布局跳动：流式内容、虚拟列表测量和加载更早历史时保持当前阅读位置，尾部状态留在最后一行下方；统计区域在内容波动时保持高度，切换宽度或会话时重置。
 - Stabilizes long-conversation scrolling and layout: streaming content, virtual-list measurements and older-history loading keep the visible row in place, with tail activity below the last row. The statistics area retains its height while contents fluctuate and resets for a different width or session.
 - Windows 上更新全局 DSH 前停止扩展持有的运行时，npm 结束后恢复连接，避免 `node-pty` 等原生模块锁定安装目录导致 npm 复制整棵树或失败；外部 DSH 不受影响。

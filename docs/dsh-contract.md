@@ -12,7 +12,7 @@
 
 ## 上游来源与安装默认
 
-本仓库记录的最新发布包为 `@deepseek-ai/dsh@0.2.1-rc.3`；扩展引导安装默认包为 `@deepseek-ai/dsh@0.2.1-rc.2`，固定源码见下文版本表，隔离验证方法见[质量流程](quality.md)。该记录是仓库的适配快照；npm 远端的 `latest` / `next` 指向需另行查询。发布版本与安装默认分别由 `LATEST_PUBLISHED_DSH_VERSION`、`DEFAULT_INSTALL_DSH_VERSION` 维护；新增适配不自动切换默认，安装和更新均使用经过验证的精确版本，不跟随浮动 dist-tag。默认版本不代表所有能力完成，timed 提问等验收缺口仍见能力矩阵。
+本仓库记录的最新发布包为 `@deepseek-ai/dsh@0.2.2-alpha.2`；扩展引导安装默认包为 `@deepseek-ai/dsh@0.2.1-rc.2`，固定源码见下文版本表，隔离验证方法见[质量流程](quality.md)。该记录是仓库的适配快照；npm 远端的 `latest` / `next` 指向需另行查询。发布版本与安装默认分别由 `LATEST_PUBLISHED_DSH_VERSION`、`DEFAULT_INSTALL_DSH_VERSION` 维护；新增适配不自动切换默认，安装和更新均使用经过验证的精确版本，不跟随浮动 dist-tag。默认版本不代表所有能力完成，timed 提问等验收缺口仍见能力矩阵。
 
 历史 Host API 的固定基线是提交 [`47f943859bef60e4160492346772ded9b24f765a`](https://github.com/deepseek-ai/deepseek-harness/tree/47f943859bef60e4160492346772ded9b24f765a)：[RPC map](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/host/apiproxy/src/api/rpc-map.ts)、[events](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/host/apiproxy/src/api/events.ts)、[tool catalog](https://github.com/deepseek-ai/deepseek-harness/tree/47f943859bef60e4160492346772ded9b24f765a/packages/core/tools)。它只证明该 Host API 家族；较新的 Connection/Gateway、typed Remote 和 Session Controller 必须从**目标版本自己的 tag/commit 和实际存在的接口文件**核对。尤其 `0.1.5-rc.2` 与 `0.1.5-rc.3` 的 wire 比较不能引用上述已不存在的旧 RPC 文件；两者被适配器消费的 Session Controller、typed Remote、Connection/Gateway 与工具运行时源码相同，仍保留各自精确身份。
 
@@ -44,6 +44,8 @@
 | `0.2.1-rc.1`                                                                        | `rc211`                                         | 独立入口，复用已核对 alpha.5 消费契约；不作为未知版本回退                                                                                                         |
 | `0.2.1-rc.2`                                                                        | `rc212`                                         | 独立入口，复用已核对 rc.1 消费契约；动态承接 Search / Fetch 设置；不作为未知版本回退                                                                              |
 | `0.2.1-rc.3`                                                                        | `rc213`                                         | 独立精确入口；按预设复用空白草稿，动态承接官方模型目录与 listing 设置；不作为未知版本回退                                                                         |
+| `0.2.1-rc.4`                                                                        | `rc214`                                         | 独立精确身份；消费的 rc.3 契约不变，不参与未知版本回退。                                                                                                          |
+| `0.2.2-alpha.2`                                                                     | `alpha222`                                      | 精确 V4 codec；显式激活实时会话、保留本地会话归属的完整图片引用读取、阻塞授权选项、模型失效通知与平台拒绝；不参与未知版本回退。                                   |
 
 `0.1.7-rc.2` 的固定源码是 [tag `dsh-v0.1.7-rc.2`](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.1.7-rc.2)，提交 `477b4f420553e8a52c2fbccc464d7561b239c443`。其他新增版本也必须在 fixture 注明 tag、commit、文件和类型；版本身份、schema、错误词汇、启动参数与能力声明一起核对。
 
@@ -117,6 +119,24 @@ rc.2 与 rc.1 的 Connection / Gateway、全部 API Remote、Session V4、Accoun
 新增增量 fixture 为 `rc213-contract.spec.ts`，精确准入、继承的 Workspace/error/probe 取消与释放由共享版本表覆盖；Webview 草稿/导航/并发、Host 归属和严格协议各在对应边界回归。隔离真实运行入口为 `tests/live-dsh/rc213-surfaces.spec.ts`、`rc211-surfaces.spec.ts` 和 `run.spec.ts`：空白复用、归档候选替换、Preset 回读、Search/Fetch 与 listing 设置读写/拒绝/恢复、账号和可选服务读取、进程端口释放。空 home 不证明真实官方账号/凭据列表、付费模型、浏览器插槽或人工 Webview 体验，相关能力保持 `PARTIAL`。
 
 未发布主干的同版本开发构建不等于该 tag：已审计快照 `22ddee3792402c3e70ec5f86a63c3e3e895a2f60` 含 Gateway 访问控制、Typert resource resolver、Session summary/baseline、媒体与插件安装等后续变化，不能以 rc.3 标签套用未冻结的主干契约。精确支持范围针对上表固定发布来源；后续发布需重新比较自己的来源。
+
+### Rc.4 精确入口
+
+`0.2.1-rc.4` 固定到 [tag `dsh-v0.2.1-rc.4`](https://github.com/deepseek-ai/deepseek-harness/tree/504a01a9578abc2c6f1fb896b1dc322c9fe24f66)，提交 `504a01a9578abc2c6f1fb896b1dc322c9fe24f66`。与已固定的 rc.3 发布版相比，消费的 Gateway、Connection、typed Remote、Session V4、Workspace、Job、Schedule、Account、Plugin Manager、工具声明和 managed 启动源码均未变化。行为变化涉及 ACP stdout 日志、MCP resource 能力检查、浏览器 View 标签及相关浏览器文案。`rc214` 以独立精确身份继承已审查的 wire；安装默认不变。native 与人工验收证据独立报告，能力保持 `PARTIAL`。
+
+### 下一 minor 线的 alpha.2
+
+`0.2.2-alpha.2` 固定到 [tag `dsh-v0.2.2-alpha.2`](https://github.com/deepseek-ai/deepseek-harness/tree/f3803c96974ad4a94195fb97e5c637e9c2a3afe3)，提交 `f3803c96974ad4a94195fb97e5c637e9c2a3afe3`，与已固定的 rc.4 发布版单独比较。npm 历史和 Git tag 均未发布 `0.2.2-alpha.1`，不为该标签虚构身份。CLI 新增 Node **>=24.9.0** 要求；DSH 使用自己的启动环境，不改变扩展 Node 基线或引导安装默认。
+
+- [Session Controller](https://github.com/deepseek-ai/deepseek-harness/blob/f3803c96974ad4a94195fb97e5c637e9c2a3afe3/packages/api/session-controller/src/types.ts) 新增 passive state/event/projection 观察与 wait API；正在消费的 `follow` snapshot、control projection 和 V4 record 仍可用。实时订阅显式发送 `activate: true`，关闭预览时也保留；历史和模型读取保持 passive。保留的 `page` 别名仍接受固定 `throughSeq`；新增响应 cursor 不构成另一套客户端序号。summary 排除的 projection 是未知提示，不是权威空值。模型选择移至 Agent，但 wire 仍为 `{ lastUsed, next }`。
+- `session/attachment` 改为完整 `attachment` 引用，只校验存储完整性，不再检查 Session 日志归属。版本内仓储先从指定会话的 native 历史解析引用，覆盖用户/助手消息及已验证的工具结果图片，再请求字节；每次只保留一页，游标必须后退，固定期限和取消限制搜索，未引用 ID 在读取字节前拒绝。原有大小、MIME/签名及响应 ID 校验继续生效。
+- V4 codec 源码只修改 inherited delivery 的关系判定。精确发布 codec 与 prerelease Cordis peer 放在私有 codec workspace 中，锁文件保留历史 codec/peer 快照。Gateway resource resolver、pending event 元数据及可选压缩保留已核对的 root-client envelope、认证和取消，不冒充受限 Peer，也不跟随媒体跳转。
+- [User questions](https://github.com/deepseek-ai/deepseek-harness/blob/f3803c96974ad4a94195fb97e5c637e9c2a3afe3/packages/interaction/user-questions/src/types.ts) 新增阻塞 `intent: approval`。只有该精确入口把校验后的单个请求映射为既有固定单选流程：approve/reject/可选 always 标签必须匹配不同的已提供选项；保留 detail 与 RPC/会话身份，禁用自由文本和多选，不允许 wait claim。subject icon URL 与浏览器显示字典不外传。较早入口继续严格拒绝该 intent；定时问题保留既有生命周期和 Inbox admission 规则。
+- [Plugin Manager](https://github.com/deepseek-ai/deepseek-harness/blob/f3803c96974ad4a94195fb97e5c637e9c2a3afe3/packages/boot/plugin-manager/src/types.ts) 新增 `unsupported-platform`，仅在新 wire 中经 Domain、严格协议与双语界面投影；install/cancel/同 ID 恢复/remove/enable 保留已核对的契约。新增 inventory 字段、详情和版本更新 Remote 不代表扩展新增对应控件；私有包来源、诊断和 detail-file 地址不进入 Webview。
+- `llm/models-updated(provider)` 通过版本内事件映射使现有模型目录失效重读。名称、路由、推理与设置仍来自运行时；新增 badge 不改变路由。Schedule 批量删除已结束任务、工具原始值查看、实验推荐、OAR/Forge/worktree 视图及浏览器引用/多语言属于独立上游功能，不声明扩展已提供新增控制面。
+- companion 使用的工具注册、canonical output 和执行上下文字段保留；Registry 调用改为有序 batch。native 测试生产端使用目标版本 batch 形式，不改变 companion 准入，也不安装第二套 core 服务。可选 mods/Inspector 方法的 wire 保留；浏览器布局与内部服务变化不授予额外 Host 权限。
+
+精确 Adapter、增量 fixture、native 交互/附件探针及 managed VS Code 检查用于验证消费的接口。付费模型、真实 OAuth/账号、可选实验服务、远端操作系统和人工 Webview/无障碍验收独立完成；能力状态保持 `PARTIAL`。
 
 ### 未知版本
 
