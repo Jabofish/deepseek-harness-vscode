@@ -65,15 +65,17 @@ export const SUPPORTED_DSH_VERSIONS = [
   '0.2.1-rc.1',
   '0.2.1-rc.2',
   '0.2.1-rc.3',
+  '0.2.1-rc.4',
+  '0.2.2-alpha.2',
 ] as const
 
 export const SUPPORTED_DSH_RANGE =
-  '0.0.1-rc.1/.2/.5; 0.1.0-rc.2/.3/.6/.7/.8; 0.1.1-rc.1/.2; 0.1.2-rc.1; 0.1.2-alpha.1-.5; 0.1.3-alpha.1/.2; 0.1.5-alpha.1/.2/rc.1/.2/.3; 0.1.6-alpha.1/.2; 0.1.7-alpha.1/.2/rc.1/.2; 0.2.0-rc.1/.2; 0.2.1-alpha.1-.5/rc.1/.2/.3' as const
+  '0.0.1-rc.1/.2/.5; 0.1.0-rc.2/.3/.6/.7/.8; 0.1.1-rc.1/.2; 0.1.2-rc.1; 0.1.2-alpha.1-.5; 0.1.3-alpha.1/.2; 0.1.5-alpha.1/.2/rc.1/.2/.3; 0.1.6-alpha.1/.2; 0.1.7-alpha.1/.2/rc.1/.2; 0.2.0-rc.1/.2; 0.2.1-alpha.1-.5/rc.1/.2/.3/.4; 0.2.2-alpha.2' as const
 
 export const DSH_PACKAGE_NAME = '@deepseek-ai/dsh' as const
 
 /** Newest exact DSH package published upstream; not automatically the installer default. */
-export const LATEST_PUBLISHED_DSH_VERSION = '0.2.1-rc.3' as const
+export const LATEST_PUBLISHED_DSH_VERSION = '0.2.2-alpha.2' as const
 
 export const LATEST_SUPPORTED_DSH_VERSION = LATEST_PUBLISHED_DSH_VERSION
 
