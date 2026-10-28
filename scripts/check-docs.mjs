@@ -13,6 +13,8 @@ const expectedDocs = new Set([
   'capability-matrix.md',
   'capability-matrix.en.md',
   'ui.md',
+  'ui-scenarios.md',
+  'ui-scenarios.en.md',
   'quality.md',
 ])
 const errors = []

@@ -367,6 +367,9 @@
 }
 
 .dsh-tool-code-preview__body {
+  /* Keep absolute screen-reader line copies inside this scrollport after the
+     disclosure animation stops providing a containing block. */
+  position: relative;
   max-height: var(--dsh-tool-detail-max-height);
   margin: 0;
   overflow: auto;

@@ -41,9 +41,21 @@ For documentation-only work, the local documentation checks are sufficient. PR C
 | `pnpm check`                                                  | Format, documentation, i18n, lint, typecheck and the default automated suite.                   |
 | `pnpm build`                                                  | Build the companion resources, Webview and extension.                                           |
 | `pnpm test:stress`                                            | Separate serial stress suite, including large history/window and memory probes.                 |
+| `pnpm test:ui-stability`                                      | Selected functional UI suites, then production App/Timeline scenarios in isolated Chromium.     |
 | `pnpm test:billing-evidence`                                  | Separate billing evidence suite configured in `config/`; use when that evidence path changes.   |
 
 Run the applicable stress, native DSH and VS Code checks separately. Inspect `git status --short` alongside `git diff --check` so unrelated or generated files do not enter the PR.
+
+`pnpm test:ui-stability` first runs the functional UI suites selected in `scripts/ui-behavior-suites.mjs`, including input, queue admission, ownership, interactions, focus and scroll regressions. It then uses an installed Chrome, Chromium or Edge to exercise production App/Timeline behavior. Set `DSH_UI_BROWSER` to its executable when automatic discovery does not find it. The runner creates a temporary browser profile and a loopback fixture server, then releases both. Browser cases cover common delivery, session, attachment, model, keyboard and narrow-window flows alongside output, history insertion, nested details, visibility recovery, delayed images and navigation. Set `DSH_UI_SCENARIO` to a reported scenario name to reproduce it separately, or `DSH_UI_GROUP=daily` for full-App browser cases only. Filtered runs omit the functional suites. Unknown names fail instead of reporting success with no coverage. Functional results, browser observations and failure screenshots remain under the run's `artifacts/ui-stability-browser/` directory.
+
+Keep browser stability cases tied to reader behaviour:
+
+- Verify the setup and action have an effect: input actually leaves the tail, an inner scrollport actually moves, or incoming output makes a short conversation scrollable. A no-op action must not pass as coverage.
+- Assert the visible answer, retained reading source and its observed position. A zero bottom gap alone can hide a blank scroll range. Compare with the reader's position before the action; do not require a particular DOM structure, fixed row height, exact offset or implementation frame count.
+- Wait for geometry to become quiet and finite animations to finish. Observe reading positions after rendering so a jump followed by a return cannot pass solely on its final state. Keep observation bounds and geometric tolerances separate from product acceptance values.
+- Keep selectors in the fixture adapter. Retain JSON observations and failure screenshots under `artifacts/ui-stability-browser/`; verify defect regressions against a reproducing revision or a controlled test-build mutation when practical.
+
+The [daily UI inventory](ui-scenarios.en.md) lists behavior coverage and gaps. The browser runner also mounts the production App, Store and protocol client against a controlled Host fixture. These controlled browser scenarios do not replace real VS Code/DSH or assistive-technology acceptance.
 
 [CI](../.github/workflows/ci.yml) runs lint, static checks and tests on Linux, and builds on Linux, Windows and macOS. PRs use `pnpm test:changed` against their base branch; pushes to `main` and manual workflow runs execute the default suite in shards. The [release workflow](../.github/workflows/build-vsix.yml) runs `pnpm check` before packaging. Do not require contributors to run three operating systems locally.
 

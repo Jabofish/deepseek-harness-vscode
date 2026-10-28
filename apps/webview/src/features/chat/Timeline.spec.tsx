@@ -28,6 +28,32 @@ describe('Timeline', () => {
     expect(onLoadOlderHistory).toHaveBeenCalled()
   })
 
+  it('does not carry expanded process details into another session with reused source IDs', () => {
+    const nodes: readonly TimelineNode[] = [
+      {
+        kind: 'tool',
+        id: 'tool:read',
+        tool: {
+          id: 'read',
+          name: 'read',
+          category: 'filesystem',
+          title: 'Read',
+          status: 'completed',
+          inputSummary: 'README.md',
+          outputSummary: 'file contents',
+          metadata: {},
+        },
+      },
+    ]
+    const view = render(<Timeline sessionId="first" nodes={nodes} streaming={false} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Read details' }))
+    expect(screen.getByRole('button', { name: 'Collapse Read details' })).toBeDefined()
+
+    view.rerender(<Timeline sessionId="second" nodes={nodes} streaming={false} />)
+    expect(screen.getByRole('button', { name: 'Expand Read details' })).toBeDefined()
+    expect(screen.queryByRole('button', { name: 'Collapse Read details' })).toBeNull()
+  })
+
   it('projects hidden session-reference context onto the preceding user turn', () => {
     const onOpenLink = vi.fn()
     render(
