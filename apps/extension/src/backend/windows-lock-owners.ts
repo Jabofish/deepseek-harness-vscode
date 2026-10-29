@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import { windowsSystemToolEnvironment } from './child-environment.js'
 
 export interface WindowsLockOwner {
   readonly pid: number
@@ -92,7 +93,12 @@ export async function findWindowsLockOwners(
           'powershell.exe',
         ),
         ['-NoProfile', '-NonInteractive', '-Command', queryScript],
-        { shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] },
+        {
+          shell: false,
+          windowsHide: true,
+          stdio: ['pipe', 'pipe', 'ignore'],
+          env: windowsSystemToolEnvironment(),
+        },
       )
       let output = ''
       let settled = false
