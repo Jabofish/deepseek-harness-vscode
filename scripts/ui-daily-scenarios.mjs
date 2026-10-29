@@ -16,6 +16,46 @@ const clear = async (ui) => {
 export const dailyScenarios = [
   ...additionalScenarios,
   {
+    name: 'daily/session-title-picker',
+    coverage: ['SESSION-02'],
+    async run(ui) {
+      await input(ui, 'Alpha title picker draft')
+      const label = await ui.call('label', 'sessions.title')
+      const title = (name) => ({ role: 'button', name: `${label}: ${name} conversation` })
+      await ui.click(title('Alpha'))
+      await ui.waitFor(
+        (s) => s.controls.some((c) => c.role === 'option' && c.name === 'Beta conversation'),
+        'session dropdown',
+      )
+      await ui.key('ArrowDown')
+      await ui.key('Enter')
+      await ui.waitFor(
+        (s) => s.timeline?.includes('Answer owned by Beta conversation'),
+        'keyboard session switch',
+      )
+      assert.equal((await ui.snapshot()).prompt, '')
+      await ui.click(title('Beta'))
+      await ui.click({ role: 'option', name: 'Alpha conversation' })
+      await ui.waitFor(
+        (s) => s.timeline?.includes('Answer owned by Alpha conversation'),
+        'return to original session',
+      )
+      assert.equal((await ui.snapshot()).prompt, 'Alpha title picker draft')
+      for (const width of [1100, 420, 280]) {
+        await ui.viewport(width, 850)
+        await ui.click(title('Alpha'))
+        await ui.waitFor(
+          (s) => s.controls.filter((c) => c.role === 'option').length === 3,
+          'all available sessions',
+        )
+        await ui.afterPaint()
+        await ui.capture(`session-title-${width}`)
+        await ui.key('Escape')
+        await ui.waitFor((s) => !s.controls.some((c) => c.role === 'option'), 'dropdown dismissal')
+      }
+    },
+  },
+  {
     name: 'daily/connection-retry',
     coverage: ['BOOT-04'],
     async run(ui) {

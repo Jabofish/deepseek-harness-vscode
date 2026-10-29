@@ -6,6 +6,8 @@ Release entries describe behaviour at that release. `Unreleased` lists changes a
 
 ## Unreleased
 
+- Make the conversation title a keyboard-accessible session dropdown. Sidebar selections switch locally; editor selections open or reveal the chosen session's own tab, preserving drafts and panel ownership.
+- 对话标题改为可用键盘操作的会话下拉选择器。侧边栏内直接切换，编辑器内打开或显示所选会话自己的标签，保留草稿与面板归属。
 - Add `dsh.completionCue` (`notification`, `bell`, `off`, default `off`) for successfully completed live replies after rendering while VS Code is unfocused. History, failed/cancelled turns and duplicate panel receipts do not trigger cues.
 - 新增 `dsh.completionCue`（通知、短提示音、关闭，默认关闭）：VS Code 失去焦点时，在实时回复成功结束并渲染后提醒；历史、失败或取消的回合及重复面板回执不触发提醒。
 

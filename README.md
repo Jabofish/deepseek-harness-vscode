@@ -43,6 +43,8 @@ Set `dsh.completionCue` in VS Code Settings to `notification` or `bell` for a cu
 
 To open an editor tab, choose **Open in Editor Area** or run **DSH: Open Chat in Editor Area** (`/moveto:editor`); `/moveto:sidebar` returns the chat. You can drag an opened editor tab to split. Dragging within a manually sorted session list still reorders sessions.
 
+Click the conversation title to choose another session. In the sidebar this switches the current conversation; in an editor it opens or reveals that session's own tab. Arrow keys, Enter and Escape work in the dropdown.
+
 To drag a session directly into a split, run **DSH: Open Drag Sessions** to open **DSH Sessions** in Explorer, then drag a session row to an editor edge. The Explorer list is hidden until you run that command.
 
 Without a specified target, auto validates the last successful local connection first, then discovers other instances before starting one. An explicit server URL or attachment port list restricts connection to those targets; failure leaves Settings and Retry available. The extension stops only processes it created and still holds a handle for.
