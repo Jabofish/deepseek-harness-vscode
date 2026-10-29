@@ -72,6 +72,7 @@ const nodes = new Map<string, readonly TimelineNode[]>(
     ],
   ]),
 )
+let sessionOrder = sessions.map((session) => session.id)
 const revisions = new Map<string, number>()
 type WireConfiguration = Extract<WebviewRequest, { type: 'session.configure' }>['payload']['configuration']
 const configurations = new Map<string, WireConfiguration>()
@@ -176,7 +177,7 @@ function route(request: WebviewRequest): unknown {
           name: 'Daily workspace',
           createdAt: clock,
           updatedAt: clock,
-          sessionIds: sessions.map((session) => session.id),
+          sessionIds: sessionOrder,
           sessionCount: sessions.length,
         },
       ]
@@ -190,6 +191,15 @@ function route(request: WebviewRequest): unknown {
                 session.title.toLowerCase().includes(request.payload.search?.toLowerCase() ?? ''),
               ),
       }
+    case 'session.move': {
+      const remaining = sessionOrder.filter((id) => id !== request.payload.sessionId)
+      const index =
+        request.payload.beforeSessionId === undefined
+          ? remaining.length
+          : remaining.indexOf(request.payload.beforeSessionId)
+      sessionOrder = [...remaining.slice(0, index), request.payload.sessionId, ...remaining.slice(index)]
+      return {}
+    }
     case 'session.rename':
       sessions = sessions.map((session) =>
         session.id === request.payload.sessionId ? { ...session, title: request.payload.title } : session,
@@ -233,6 +243,7 @@ function route(request: WebviewRequest): unknown {
         updatedAt: clock,
       }
       sessions.push(summary)
+      sessionOrder.push(summary.id)
       configurations.set(summary.id, request.payload.configuration)
       return { ...summary, configuration: request.payload.configuration, transcript: transcript(summary.id) }
     }
@@ -499,6 +510,9 @@ const scenario = {
       (node) => node.getAttribute('aria-label') === translate('composer.prompt'),
     )
     return {
+      sessionTitles: [...document.querySelectorAll<HTMLElement>('.dsh-session-item__button strong')]
+        .filter(visible)
+        .map((node) => node.innerText),
       text: document.body.innerText,
       prompt: prompt?.value,
       timeline: document.querySelector(`[aria-label="${translate('timeline.aria')}"]`)?.textContent,
@@ -530,6 +544,29 @@ const scenario = {
         ...('payload' in request ? { payload: request.payload } : {}),
       })),
     }
+  },
+  dragSession(source: string, destination: string): void {
+    const row = (title: string): HTMLElement => {
+      const label = [...document.querySelectorAll<HTMLElement>('.dsh-session-item__button strong')].find(
+        (node) => visible(node) && node.innerText === title,
+      )
+      const item = label?.closest('li')
+      if (item === undefined || item === null) throw new Error(`Missing conversation: ${title}`)
+      return item
+    }
+    const from = row(source),
+      to = row(destination)
+    const dataTransfer = new DataTransfer()
+    for (const [element, type] of [
+      [from, 'dragstart'],
+      [to, 'dragover'],
+      [to, 'drop'],
+      [from, 'dragend'],
+    ] as const)
+      element.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer }))
+  },
+  toggleSessions(): void {
+    event('ui.sessions.toggle', {})
   },
   failNext(type: string): void {
     failures.add(type)

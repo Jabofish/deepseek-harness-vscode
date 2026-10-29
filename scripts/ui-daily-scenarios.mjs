@@ -16,6 +16,27 @@ const clear = async (ui) => {
 export const dailyScenarios = [
   ...additionalScenarios,
   {
+    name: 'daily/session-reorder',
+    coverage: ['SS-01'],
+    async run(ui) {
+      if ((await ui.snapshot()).sessionTitles.length === 0) await ui.call('toggleSessions')
+      const order = ['Alpha conversation', 'Beta conversation', 'Gamma conversation']
+      await ui.waitFor((s) => s.sessionTitles.length === 3, 'session list')
+      assert.deepEqual((await ui.snapshot()).sessionTitles, order)
+      await ui.capture('session-order-before')
+      await ui.call('dragSession', order[0], order[1])
+      await ui.waitFor(
+        (s) => s.sessionTitles.join() === [order[1], order[0], order[2]].join(),
+        'downward reorder',
+      )
+      await ui.call('dragSession', order[0], order[2])
+      await ui.waitFor((s) => s.sessionTitles.join() === [order[1], order[2], order[0]].join(), 'move to end')
+      await ui.capture('session-order-after')
+      await ui.call('dragSession', order[0], order[1])
+      await ui.waitFor((s) => s.sessionTitles.join() === order.join(), 'upward reorder')
+    },
+  },
+  {
     name: 'daily/compact-activity',
     coverage: ['READ-01'],
     async run(ui) {

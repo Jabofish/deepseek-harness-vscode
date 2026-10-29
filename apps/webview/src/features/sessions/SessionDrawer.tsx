@@ -33,6 +33,7 @@ import {
   projectSessionLists,
   renameConflictFor,
   sanitizeSearchQuery,
+  sortSessions,
   workspaceDisplayName,
   workspaceSessionsFor,
   type ArchiveFilter,
@@ -352,11 +353,32 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
    * the list unchanged, so without a report the drag is indistinguishable from
    * a no-op.
    */
-  const moveSession = (workspaceId: string, sessionId: string, beforeSessionId: string): void => {
+  const moveSession = (workspaceId: string, sessionId: string, targetSessionId: string): void => {
+    if (sorting !== 'manual' || mutationBusy || removingSessionId !== undefined) return
+    const workspace = props.workspaces.find((item) => item.id === workspaceId)
+    if (workspace === undefined) return
+    // Use the complete workspace order so filtered-out rows keep their place.
+    // A downward row drop belongs after the target; inserting before it would
+    // leave adjacent rows unchanged and make reaching the end impossible.
+    const ordered = sortSessions(
+      workspaceSessions(workspace),
+      'manual',
+      workspace.sessionIds,
+      props.activeSessionId,
+    )
+    const source = ordered.findIndex((item) => item.id === sessionId)
+    const target = ordered.findIndex((item) => item.id === targetSessionId)
+    if (source < 0 || target < 0 || source === target || ordered[source]?.blank || ordered[target]?.blank)
+      return
+    const beforeSessionId = source < target ? ordered[target + 1]?.id : targetSessionId
     setMoveError(undefined)
-    void props.onMoveSession(workspaceId, sessionId, beforeSessionId).catch((reason: unknown) => {
-      setMoveError(reason instanceof Error ? reason.message : t('sessions.moveFailed'))
-    })
+    setMutationBusy(true)
+    void props
+      .onMoveSession(workspaceId, sessionId, beforeSessionId)
+      .catch((reason: unknown) => {
+        setMoveError(reason instanceof Error ? reason.message : t('sessions.moveFailed'))
+      })
+      .finally(() => setMutationBusy(false))
   }
 
   const moveWorkspace = (workspaceId: string, beforeWorkspaceId: string): void => {

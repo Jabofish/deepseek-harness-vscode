@@ -37,7 +37,7 @@ export interface SessionRowProps {
   readonly onOpenInEditor?: (session: SessionSummary) => void
   readonly onArchive: (session: SessionSummary) => void
   readonly onRename: (session: SessionSummary, trigger: HTMLElement) => void
-  readonly onMove: (workspaceId: string, sessionId: string, beforeSessionId: string) => void
+  readonly onMove: (workspaceId: string, sessionId: string, targetSessionId: string) => void
 }
 
 export function SessionRow({
@@ -70,7 +70,7 @@ export function SessionRow({
   const statusLabel = t(
     waiting === undefined ? `sessions.status.${session.status}` : `sessions.waiting.${waiting}`,
   )
-  const canReorder = sorting === 'manual' && reorderWorkspaceId !== undefined
+  const canReorder = sorting === 'manual' && reorderWorkspaceId !== undefined && !session.blank
   const canOpenInEditor = onOpenInEditor !== undefined
   const dragHint = canOpenInEditor
     ? canReorder
@@ -110,12 +110,12 @@ export function SessionRow({
           )
       }}
       onDragOver={(event) => {
-        if (!canReorder) return
+        if (!canReorder || disabled) return
         event.preventDefault()
         event.dataTransfer.dropEffect = 'move'
       }}
       onDrop={(event) => {
-        if (!canReorder) return
+        if (!canReorder || disabled) return
         const drag = readOrderDrag(event.dataTransfer)
         if (drag?.kind !== 'session' || drag.workspaceId !== reorderWorkspaceId || drag.itemId === session.id)
           return
