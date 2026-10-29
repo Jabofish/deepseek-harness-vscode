@@ -32,7 +32,7 @@ it('waits for the settled response commit and deduplicates Strict Mode and unrel
   })
   const store = { responseRendered }
   function View({ completed }: { completed: boolean }): React.ReactElement {
-    useCompletionCue(store, timeline(completed))
+    useCompletionCue(store.responseRendered, timeline(completed))
     return <p>{completed ? 'Final answer' : 'Working'}</p>
   }
   const view = render(
@@ -86,7 +86,7 @@ it('plays the approved bell and releases audio when the panel closes', async () 
   )
   const store = { responseRendered: vi.fn(() => Promise.resolve(true)) }
   function View(): React.ReactElement {
-    useCompletionCue(store, timeline(true))
+    useCompletionCue(store.responseRendered, timeline(true))
     return <p>Final answer</p>
   }
   const view = render(<View />)

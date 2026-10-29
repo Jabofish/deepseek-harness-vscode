@@ -2,8 +2,12 @@ import { useEffect, useRef } from 'react'
 import type { TimelineState } from '@dsh-vscode/timeline'
 import type { AppStore } from './store.js'
 
-/** Passive effects run after React has committed the settled response. */
-export function useCompletionCue(store: Pick<AppStore, 'responseRendered'>, timeline: TimelineState): void {
+/** Called by the transcript renderer after current full bodies have committed. */
+export function useCompletionCue(
+  responseRendered: AppStore['responseRendered'] | undefined,
+  timeline: Pick<TimelineState, 'sessionId' | 'nodes'>,
+  pendingIds?: ReadonlySet<string>,
+): void {
   const last = useRef<string | undefined>(undefined)
   const answer = timeline.nodes.findLast(
     (node) =>
@@ -13,17 +17,19 @@ export function useCompletionCue(store: Pick<AppStore, 'responseRendered'>, time
       node.reasoning?.streaming !== true,
   )
   const turn = answer?.kind === 'assistant-message' ? answer.turn : undefined
+  const pending = timeline.nodes.some(
+    (node) => 'turn' in node && node.turn === turn && pendingIds?.has(node.id) === true,
+  )
   const sessionId = timeline.sessionId
   useEffect(() => {
-    if (sessionId === undefined || turn === undefined) return
+    if (sessionId === undefined || turn === undefined || pending || responseRendered === undefined) return
     const key = JSON.stringify([sessionId, turn])
     if (last.current === key) return
     let active = true
     let audio: AudioContext | undefined
     const timer = window.setTimeout(() => {
       last.current = key
-      void store
-        .responseRendered(sessionId, turn)
+      void responseRendered(sessionId, turn)
         .then(async (bell) => {
           if (!bell || !active || typeof AudioContext === 'undefined') return
           const context = new AudioContext()
@@ -56,5 +62,5 @@ export function useCompletionCue(store: Pick<AppStore, 'responseRendered'>, time
       window.clearTimeout(timer)
       if (audio !== undefined && audio.state !== 'closed') void audio.close().catch(() => undefined)
     }
-  }, [sessionId, turn, store])
+  }, [sessionId, turn, pending, responseRendered])
 }

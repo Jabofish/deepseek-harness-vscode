@@ -261,6 +261,7 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
       const surface = surfaceId === undefined ? undefined : surfaces.get(surfaceId)
       if (
         !surface?.isReady ||
+        !surface.visible ||
         !deps.transcript.hasSurface(surface.surfaceId) ||
         deps.transcript.forSurface(surface.surfaceId).activeSessionId() !== request.payload.sessionId
       )

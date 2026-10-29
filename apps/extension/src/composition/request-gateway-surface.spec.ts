@@ -323,6 +323,27 @@ describe('request gateway editor surface routes', () => {
     expect(harness.sent.find((entry) => entry.requestId === 'rendered')?.payload).toEqual({ bell: true })
   })
 
+  it('does not let a hidden surface consume the cue before a visible surface renders', async () => {
+    harness.openSidebar()
+    await harness.gateway.router.handle(request('app.ready', 'ready'), 'sidebar')
+    const window = harness.transcript.forSurface('sidebar')
+    window.installPage('s', { events: [], hasMore: false }, window.begin('s'))
+    harness.setSidebarVisible(false)
+    await harness.gateway.router.handle(
+      request('surface.responseRendered', 'hidden', { sessionId: 's', turn: 1 }),
+      'sidebar',
+    )
+    expect(host.responseRendered).not.toHaveBeenCalled()
+    expect(harness.sent.find((entry) => entry.requestId === 'hidden')?.payload).toEqual({ bell: false })
+    harness.setSidebarVisible(true)
+    await harness.gateway.router.handle(
+      request('surface.responseRendered', 'visible', { sessionId: 's', turn: 1 }),
+      'sidebar',
+    )
+    expect(host.responseRendered).toHaveBeenCalledExactlyOnceWith('s', 1)
+    expect(harness.sent.find((entry) => entry.requestId === 'visible')?.payload).toEqual({ bell: true })
+  })
+
   it('serves complete live nodes only through the owning surface and scoped session', async () => {
     const window = harness.transcript.forSurface('sidebar')
     const snapshot = window.installPage(
