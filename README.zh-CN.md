@@ -1,4 +1,4 @@
-# DeepSeek Harness Companion for VS Code
+# JaboDSH
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
@@ -6,9 +6,9 @@
 [![GitHub Release](https://img.shields.io/github/v/release/Jabofish/deepseek-harness-vscode)](https://github.com/Jabofish/deepseek-harness-vscode/releases)
 [![License](https://img.shields.io/github/license/Jabofish/deepseek-harness-vscode)](LICENSE)
 
-**DeepSeek Harness Companion for VS Code** 把本地或远程 [DeepSeek Harness（DSH）](https://github.com/deepseek-ai/deepseek-harness)会话带进编辑器。在代码旁查看流式回复、思考、工具、审批和会话历史。
+**JaboDSH** 把本地或远程 [DeepSeek Harness（DSH）](https://github.com/deepseek-ai/deepseek-harness)会话带进编辑器。在代码旁查看流式回复、思考、工具、审批和会话历史。
 
-这是一个非官方的 DeepSeek Harness 扩展。
+JaboDSH 是独立的社区扩展，与 DeepSeek 或 Microsoft 没有关联，不由两者发布，也未获得两者背书。
 
 ## 可以做什么
 
@@ -27,21 +27,29 @@
 
 ## 安装与开始使用
 
-从[最新 GitHub Release](https://github.com/Jabofish/deepseek-harness-vscode/releases/latest)下载与 Extension Host 操作系统和架构匹配的 VSIX，再执行 **Extensions: Install from VSIX...**；也提供 universal 包。[Marketplace 页面](https://marketplace.visualstudio.com/items?itemName=Direwolf.deepseek-harness-client)不可用时，也可通过这些 VSIX 文件安装。
+新扩展 ID 为 `Jabofish.jabodsh`，Marketplace 可用性取决于审核结果。从[最新 GitHub Release](https://github.com/Jabofish/deepseek-harness-vscode/releases/latest)下载与 Extension Host 操作系统和架构匹配的 VSIX，再执行 **Extensions: Install from VSIX...**；也提供 universal 包。
 
-1. 打开 **DeepSeek Harness** 视图。
+### 从旧扩展切换
+
+JaboDSH 接替 `Direwolf.deepseek-harness-client`（DeepSeek Harness Companion for VS Code）。安装前先停用或卸载旧扩展，避免两者注册相同的命令和视图；如需使用旧版的本地模板或检查点，请保留旧扩展数据。
+
+现有 `dsh.*` 设置和命令 ID 继续使用，DSH 会话数据仍保存在运行时中。VS Code 会将 JaboDSH 视为独立扩展，私有扩展存储、已保存的编辑器标签和 Webview 偏好不会自动迁移。请重新打开会话、重新授权外部连接，并在启用编辑器配套插件前检查其状态。旧扩展保存的全局模板和检查点仍留在其私有存储中。
+
+### 开始会话
+
+1. 打开 **JaboDSH** 视图。
 2. 如果缺少 DSH，使用引导安装、选择现有可执行文件，或复制视图显示的精确安装命令。安装器会显示 npm 输出并验证安装版本；npm 警告本身不会导致安装失败。
 3. 选择或创建工作区，开始会话并发送任务。
 
-DeepSeek Harness 的 Chat 视图默认注册在辅助侧边栏（VS Code 默认布局中位于编辑器右侧）。如果你以前移动过视图，VS Code 可能保留已有布局；可在命令面板运行 **DSH: Move View to Secondary Side Bar**，选择 Chat 视图和 **New Secondary Side Bar Entry**，或右键视图标题使用 **Move View**。
+JaboDSH 的 Chat 视图默认注册在辅助侧边栏（VS Code 默认布局中位于编辑器右侧）。如果你以前移动过视图，VS Code 可能保留已有布局；可在命令面板运行 **JaboDSH: Move View to Secondary Side Bar**，选择 Chat 视图和 **New Secondary Side Bar Entry**，或右键视图标题使用 **Move View**。
 
 打开编辑器聊天标签后，侧边栏仍可使用。通过视图标题栏的**会话**按钮切换或新建会话；原生标题栏在宽度足够时显示完整操作，变窄后逐步将低频操作收进“更多”，优先保留**会话**和**设置**。
 
 标题栏的 **Open Web UI** 默认使用 VS Code 内置浏览器。若要使用系统浏览器，在 VS Code 设置中将 `dsh.webUi.browser` 改为 `external`。
 
-选择 **在编辑器区打开** 或执行 **DSH: Open Chat in Editor Area**（`/moveto:editor`）打开标签，`/moveto:sidebar` 可移回侧边栏。也可拖动已打开的编辑器标签分栏。手动排序时，列表内拖动仍用于调整顺序。
+选择 **在编辑器区打开** 或执行 **JaboDSH: Open Chat in Editor Area**（`/moveto:editor`）打开标签，`/moveto:sidebar` 可移回侧边栏。也可拖动已打开的编辑器标签分栏。手动排序时，列表内拖动仍用于调整顺序。
 
-要直接拖拽会话分栏，可执行 **DSH: Open Drag Sessions**，在资源管理器中打开 **DSH Sessions**，将会话行拖到编辑器边缘即可分栏打开。运行该命令后才会显示资源管理器中的会话列表。
+要直接拖拽会话分栏，可执行 **JaboDSH: Open Drag Sessions**，在资源管理器中打开 **JaboDSH Sessions**，将会话行拖到编辑器边缘即可分栏打开。运行该命令后才会显示资源管理器中的会话列表。
 
 未指定目标时，auto 优先校验上次成功的本机连接，再发现其他实例，最后按需启动。手动指定服务地址或附加端口列表后，只连接这些目标；失败后仍可修改设置或重试。扩展只会停止自己创建且仍持有句柄的 DSH 进程。
 
@@ -60,11 +68,11 @@ Windows 安装时先在同一磁盘的独立目录安装并验证新版 CLI，�
 
 1. 选择 `custom`，将 `dsh.connection.serverUrl` 设为服务端 HTTP(S) 地址，不带路径、查询参数或凭据。
 2. 将 `dsh.connection.runtimeVersion` 设为服务端实际运行的受支持精确版本。
-3. 执行 **DSH: Authorize External Connection**，在原生密码框输入启动 token；无需认证的实例可留空，然后连接。
+3. 执行 **JaboDSH: Authorize External Connection**，在原生密码框输入启动 token；无需认证的实例可留空，然后连接。
 
 HTTPS 要求可信证书。远程 HTTP 必须确认明文传输，DNS 地址变化后需重新授权。服务端也需接受配置的主机地址；支持时可用 DSH 的 `--trusted-host host:port` 允许代理地址。远程连接不授予本地工作区文件或本地检查器访问权限。
 
-凭据按执行环境和完整 origin 存入 VS Code SecretStorage。更换环境或 origin 后需要重新授权；使用 **DSH: Clear External Connection Credentials** 清除当前执行环境的授权。
+凭据按执行环境和完整 origin 存入 VS Code SecretStorage。更换环境或 origin 后需要重新授权；使用 **JaboDSH: Clear External Connection Credentials** 清除当前执行环境的授权。
 
 ## 远程工作区
 

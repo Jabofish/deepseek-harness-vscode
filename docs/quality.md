@@ -153,7 +153,7 @@ Not run / blocked: <check, reason and remaining acceptance>
 
 For regressions, include the smallest reproducer and before/after behaviour. For performance, add workload/history size, visible/hidden panels, hardware, duration and measured process scope. Report cumulative CPU time in CPU seconds separately from wall time; identify whether the DSH backend is included. Distinguish samples/peaks from totals and native/model runs from deterministic fixtures. For a single comparison, report the observed values and test conditions.
 
-Keep model prompts, tool bodies, credentials, tokens and private paths out of shared logs and screenshots. Prefer **DSH: Show Redacted Diagnostics**; inspect any output before posting it. Vulnerabilities follow the [private security policy](../.github/SECURITY.md).
+Keep model prompts, tool bodies, credentials, tokens and private paths out of shared logs and screenshots. Prefer **JaboDSH: Show Redacted Diagnostics**; inspect any output before posting it. Vulnerabilities follow the [private security policy](../.github/SECURITY.md).
 
 `DONE` requires implementation, applicable automated checks and the necessary native DSH/UI evidence. Otherwise retain `PARTIAL` and state the gap. Keep capability scope and limits in the matrix; put test logs and benchmark results in PRs or release records. Update the [owning document](README.md) when a rule changes, and keep exact upstream version lists in the contract.
 

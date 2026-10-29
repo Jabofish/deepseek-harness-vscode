@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <title>JaboDSH</title>
+  <rect width="256" height="256" rx="56" fill="#102F35" />
+  <path d="M96 68h68v80c0 29-16 46-44 46s-44-17-44-42" fill="none" stroke="#82E6C5" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" />
+  <circle cx="194" cy="68" r="12" fill="#F4B95E" />
+</svg>

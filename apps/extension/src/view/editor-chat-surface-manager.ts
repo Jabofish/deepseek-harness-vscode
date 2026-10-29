@@ -19,7 +19,7 @@ export interface EditorChatSurfaceManagerDependencies {
   readonly onCountChanged: (count: number) => void
 }
 
-const DEFAULT_EDITOR_CHAT_TITLE = 'DeepSeek Harness'
+const DEFAULT_EDITOR_CHAT_TITLE = 'JaboDSH'
 
 /**
  * The session an editor chat was showing before a window reload. A panel

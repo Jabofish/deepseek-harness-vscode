@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a problem with the DeepSeek Harness extension
+description: Report a problem with JaboDSH
 labels: [bug]
 body:
   - type: markdown
@@ -78,4 +78,4 @@ body:
     id: logs
     attributes:
       label: Output channel excerpt
-      description: The `DeepSeek Harness` output channel. Inspect the excerpt and remove secrets, prompts, tool bodies and private paths before posting; prefer the redacted diagnostics above.
+      description: The `JaboDSH` output channel. Inspect the excerpt and remove secrets, prompts, tool bodies and private paths before posting; prefer the redacted diagnostics above.

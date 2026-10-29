@@ -32,7 +32,7 @@ export function createWebviewHtml(
     <meta name="color-scheme" content="light dark">
     <meta http-equiv="Content-Security-Policy" content="${csp}">
   <link rel="stylesheet" href="${style.toString()}">
-    <title>DeepSeek Harness</title>
+    <title>JaboDSH</title>
   </head>
   <body>
     <main id="root" aria-live="polite"></main>

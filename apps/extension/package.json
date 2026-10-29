@@ -1,10 +1,10 @@
 {
-  "name": "deepseek-harness-client",
-  "displayName": "DeepSeek Harness Companion for VS Code",
-  "description": "Run DSH sessions, tools, and coding tasks in VS Code.",
-  "version": "0.4.2",
-  "publisher": "Direwolf",
-  "icon": "resources/dsh.png",
+  "name": "jabodsh",
+  "displayName": "JaboDSH",
+  "description": "Unofficial community client for DeepSeek Harness sessions, tools, and coding tasks.",
+  "version": "0.4.3",
+  "publisher": "Jabofish",
+  "icon": "resources/jabodsh.png",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -64,7 +64,7 @@
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "dev": "node esbuild.mjs --watch",
     "prepackage:vsix": "node -e \"require('node:fs').mkdirSync('../../artifacts',{recursive:true})\"",
-    "package:vsix": "vsce package --no-dependencies --no-gitHubIssueLinking -o ../../artifacts/deepseek-harness-vscode.vsix",
+    "package:vsix": "vsce package --no-dependencies --no-gitHubIssueLinking -o ../../artifacts/jabodsh.vsix",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
@@ -86,7 +86,7 @@
     "customEditors": [
       {
         "viewType": "dsh.sessionDrop",
-        "displayName": "DeepSeek Harness Chat",
+        "displayName": "JaboDSH Chat",
         "selector": [
           {
             "filenamePattern": "*.dsh-chat"
@@ -99,8 +99,8 @@
       "secondarySidebar": [
         {
           "id": "dsh-container",
-          "title": "DeepSeek Harness",
-          "icon": "resources/dsh.svg"
+          "title": "JaboDSH",
+          "icon": "resources/jabodsh.svg"
         }
       ]
     },
@@ -111,28 +111,28 @@
           "name": "Chat",
           "type": "webview",
           "visibility": "visible",
-          "icon": "resources/dsh.svg",
+          "icon": "resources/jabodsh.svg",
           "contextualTitle": "Chat"
         }
       ],
       "explorer": [
         {
           "id": "dsh.sessionList",
-          "name": "DSH Sessions",
+          "name": "JaboDSH Sessions",
           "visibility": "hidden",
-          "icon": "resources/dsh.svg"
+          "icon": "resources/jabodsh.svg"
         }
       ]
     },
     "commands": [
       {
         "command": "dsh.connect",
-        "title": "DSH: Connect",
+        "title": "JaboDSH: Connect",
         "icon": "$(debug-disconnect)"
       },
       {
         "command": "dsh.reconnect",
-        "title": "DSH: Connected (Reconnect)",
+        "title": "JaboDSH: Connected (Reconnect)",
         "icon": {
           "light": "resources/connected.svg",
           "dark": "resources/connected.svg"
@@ -140,96 +140,96 @@
       },
       {
         "command": "dsh.newSession",
-        "title": "DSH: Open Sessions",
+        "title": "JaboDSH: Open Sessions",
         "icon": "$(comment-discussion)"
       },
       {
         "command": "dsh.openSettings",
-        "title": "DSH: Open Settings",
+        "title": "JaboDSH: Open Settings",
         "icon": "$(settings-gear)"
       },
       {
         "command": "dsh.openWebUi",
-        "title": "DSH: Open Web UI",
+        "title": "JaboDSH: Open Web UI",
         "icon": "$(globe)"
       },
       {
         "command": "dsh.installRuntime",
-        "title": "DSH: Install DeepSeek Harness"
+        "title": "JaboDSH: Install DeepSeek Harness"
       },
       {
         "command": "dsh.selectExecutable",
-        "title": "DSH: Select Executable"
+        "title": "JaboDSH: Select Executable"
       },
       {
         "command": "dsh.copyInstallCommand",
-        "title": "DSH: Copy Install Command"
+        "title": "JaboDSH: Copy Install Command"
       },
       {
         "command": "dsh.openDocumentation",
-        "title": "DSH: Open Documentation"
+        "title": "JaboDSH: Open Documentation"
       },
       {
         "command": "dsh.openInSecondarySidebar",
-        "title": "DSH: Move View to Secondary Side Bar"
+        "title": "JaboDSH: Move View to Secondary Side Bar"
       },
       {
         "command": "dsh.openChatInEditor",
-        "title": "DSH: Open Chat in Editor Area",
+        "title": "JaboDSH: Open Chat in Editor Area",
         "icon": "$(open-preview)"
       },
       {
         "command": "dsh.moveChatToSidebar",
-        "title": "DSH: Move Chat to Side Bar",
+        "title": "JaboDSH: Move Chat to Side Bar",
         "icon": "$(layout-sidebar-right)"
       },
       {
         "command": "dsh.showDiagnostics",
-        "title": "DSH: Show Redacted Diagnostics"
+        "title": "JaboDSH: Show Redacted Diagnostics"
       },
       {
         "command": "dsh.addSelectionContext",
-        "title": "DSH: Add Selection to Context",
+        "title": "JaboDSH: Add Selection to Context",
         "icon": "$(selection)"
       },
       {
         "command": "dsh.addFileContext",
-        "title": "DSH: Add File to Context",
+        "title": "JaboDSH: Add File to Context",
         "icon": "$(file)"
       },
       {
         "command": "dsh.addSymbolContext",
-        "title": "DSH: Add Symbol to Context",
+        "title": "JaboDSH: Add Symbol to Context",
         "icon": "$(symbol-method)"
       },
       {
         "command": "dsh.addDiagnosticContext",
-        "title": "DSH: Add Diagnostic to Context",
+        "title": "JaboDSH: Add Diagnostic to Context",
         "icon": "$(error)"
       },
       {
         "command": "dsh.shareEditorState",
-        "title": "DSH: Turn On Editor Tools",
+        "title": "JaboDSH: Turn On Editor Tools",
         "icon": "$(broadcast)"
       },
       {
         "command": "dsh.stopSharingEditorState",
-        "title": "DSH: Turn Off Editor Tools",
+        "title": "JaboDSH: Turn Off Editor Tools",
         "icon": "$(circle-slash)"
       },
       {
         "command": "dsh.manageEditorCompanion",
-        "title": "DSH: Manage Editor Companion",
+        "title": "JaboDSH: Manage Editor Companion",
         "icon": "$(plug)"
       },
       {
         "command": "dsh.installEditorCompanion",
-        "title": "DSH: Install Editor Companion",
+        "title": "JaboDSH: Install Editor Companion",
         "icon": "$(cloud-download)"
       },
       {
         "command": "dsh.undoEditorEdit",
-        "title": "DSH: Undo Last Editor Edit",
+        "title": "JaboDSH: Undo Last Editor Edit",
         "icon": "$(discard)"
       },
       {
@@ -244,37 +244,37 @@
       },
       {
         "command": "dsh.sessions.open",
-        "title": "DSH: Open Session",
+        "title": "JaboDSH: Open Session",
         "icon": "$(comment-discussion)"
       },
       {
         "command": "dsh.sessions.openInEditor",
-        "title": "DSH: Open Session in Editor Area",
+        "title": "JaboDSH: Open Session in Editor Area",
         "icon": "$(open-preview)"
       },
       {
         "command": "dsh.sessions.rename",
-        "title": "DSH: Rename Session",
+        "title": "JaboDSH: Rename Session",
         "icon": "$(edit)"
       },
       {
         "command": "dsh.sessions.archive",
-        "title": "DSH: Archive Session",
+        "title": "JaboDSH: Archive Session",
         "icon": "$(archive)"
       },
       {
         "command": "dsh.sessions.refresh",
-        "title": "DSH: Refresh Sessions",
+        "title": "JaboDSH: Refresh Sessions",
         "icon": "$(refresh)"
       },
       {
         "command": "dsh.sessions.loadMore",
-        "title": "DSH: Load More Sessions",
+        "title": "JaboDSH: Load More Sessions",
         "icon": "$(ellipsis)"
       },
       {
         "command": "dsh.openSessionList",
-        "title": "DSH: Open Drag Sessions",
+        "title": "JaboDSH: Open Drag Sessions",
         "icon": "$(list-tree)"
       }
     ],
@@ -541,7 +541,7 @@
       ]
     },
     "configuration": {
-      "title": "DeepSeek Harness",
+      "title": "JaboDSH",
       "properties": {
         "dsh.editor.enabled": {
           "type": "boolean",
