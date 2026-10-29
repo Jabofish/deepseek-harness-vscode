@@ -16,6 +16,7 @@ export const uiBehaviorSuites = {
   ],
   'sessions and ownership': [
     'apps/webview/src/features/sessions/SessionDrawer.spec.tsx',
+    'apps/webview/src/features/sessions/SessionDrawer.reorder.spec.tsx',
     'apps/webview/src/features/sessions/useSessionContentSearch.spec.ts',
     'apps/webview/src/app/store-session-navigation.spec.ts',
     'apps/webview/src/app/store-session-switch-integrity.spec.ts',

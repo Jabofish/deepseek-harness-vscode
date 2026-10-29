@@ -53,7 +53,7 @@ JaboDSH 的 Chat 视图默认注册在辅助侧边栏（VS Code 默认布局中�
 
 在 VS Code 设置中将 `dsh.completionCue` 设为 `notification`（通知）或 `bell`（短提示音），可在 VS Code 失去焦点、实时回复成功结束并渲染后提醒；默认 `off`（关闭）。通知使用 VS Code 通知界面；桌面弹窗和声音的实际投递受编辑器、浏览器及操作系统设置影响。
 
-选择 **在编辑器区打开** 或执行 **JaboDSH: Open Chat in Editor Area**（`/moveto:editor`）打开标签，`/moveto:sidebar` 可移回侧边栏。也可拖动已打开的编辑器标签分栏。手动排序时，列表内拖动仍用于调整顺序。
+选择 **在编辑器区打开** 或执行 **JaboDSH: Open Chat in Editor Area**（`/moveto:editor`）打开标签，`/moveto:sidebar` 可移回侧边栏。也可拖动已打开的编辑器标签分栏。手动排序时，拖到下方某行会放在该行之后，拖到上方某行会放在该行之前。顺序由 DSH 保存，当前空白会话保持置顶。
 
 点击对话标题可通过下拉菜单选择其他会话：侧边栏直接切换当前对话，编辑器内则打开或显示所选会话自己的标签。支持方向键、Enter 和 Escape。
 

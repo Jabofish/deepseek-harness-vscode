@@ -352,18 +352,49 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
    * the list unchanged, so without a report the drag is indistinguishable from
    * a no-op.
    */
-  const moveSession = (workspaceId: string, sessionId: string, beforeSessionId: string): void => {
+  const moveSession = (workspaceId: string, sessionId: string, targetSessionId: string): void => {
+    if (sorting !== 'manual' || mutationBusy || removingSessionId !== undefined) return
+    const workspace = props.workspaces.find((item) => item.id === workspaceId)
+    if (workspace === undefined) return
+    const members = workspaceSessions(workspace)
+    const sourceSession = members.find((item) => item.id === sessionId)
+    const targetSession = members.find((item) => item.id === targetSessionId)
+    if (
+      sourceSession === undefined ||
+      targetSession === undefined ||
+      sourceSession.blank ||
+      targetSession.blank
+    )
+      return
+    // Preserve native members whose summaries have not loaded, too. Summaries
+    // alone cannot distinguish the last visible row from the workspace tail.
+    const ordered = [...new Set([...(workspace.sessionIds ?? []), ...members.map((item) => item.id)])]
+    // A downward row drop belongs after the target; inserting before it would
+    // leave adjacent rows unchanged and make reaching the end impossible.
+    const source = ordered.indexOf(sessionId)
+    const target = ordered.indexOf(targetSessionId)
+    if (source === target) return
+    const beforeSessionId = source < target ? ordered[target + 1] : targetSessionId
     setMoveError(undefined)
-    void props.onMoveSession(workspaceId, sessionId, beforeSessionId).catch((reason: unknown) => {
-      setMoveError(reason instanceof Error ? reason.message : t('sessions.moveFailed'))
-    })
+    setMutationBusy(true)
+    void props
+      .onMoveSession(workspaceId, sessionId, beforeSessionId)
+      .catch((reason: unknown) => {
+        setMoveError(reason instanceof Error ? reason.message : t('sessions.moveFailed'))
+      })
+      .finally(() => setMutationBusy(false))
   }
 
   const moveWorkspace = (workspaceId: string, beforeWorkspaceId: string): void => {
+    if (sorting !== 'manual' || mutationBusy || removingSessionId !== undefined) return
     setMoveError(undefined)
-    void props.onMoveWorkspace(workspaceId, beforeWorkspaceId).catch((reason: unknown) => {
-      setMoveError(reason instanceof Error ? reason.message : t('sessions.moveFailed'))
-    })
+    setMutationBusy(true)
+    void props
+      .onMoveWorkspace(workspaceId, beforeWorkspaceId)
+      .catch((reason: unknown) => {
+        setMoveError(reason instanceof Error ? reason.message : t('sessions.moveFailed'))
+      })
+      .finally(() => setMutationBusy(false))
   }
 
   const startRename = (target: RenameTarget): void => {

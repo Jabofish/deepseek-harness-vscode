@@ -53,7 +53,7 @@ The side bar stays available while editor chat tabs are open. Use the view title
 
 Set `dsh.completionCue` in VS Code Settings to `notification` or `bell` for a cue after a successful live reply renders while VS Code is unfocused; the default is `off`. Notifications use VS Code's notification UI. Desktop popup delivery and sound depend on editor, browser and operating system settings.
 
-To open an editor tab, choose **Open in Editor Area** or run **JaboDSH: Open Chat in Editor Area** (`/moveto:editor`); `/moveto:sidebar` returns the chat. You can drag an opened editor tab to split. Dragging within a manually sorted session list still reorders sessions.
+To open an editor tab, choose **Open in Editor Area** or run **JaboDSH: Open Chat in Editor Area** (`/moveto:editor`); `/moveto:sidebar` returns the chat. You can drag an opened editor tab to split. In a manually sorted session list, drop onto a lower row to move after it, or an upper row to move before it. DSH saves the order; the current blank session stays first.
 
 Click the conversation title to choose another session. In the sidebar this switches the current conversation; in an editor it opens or reveals that session's own tab. Arrow keys, Enter and Escape work in the dropdown.
 
