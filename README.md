@@ -4,11 +4,12 @@
 
 [![CI](https://github.com/Jabofish/deepseek-harness-vscode/actions/workflows/ci.yml/badge.svg)](https://github.com/Jabofish/deepseek-harness-vscode/actions/workflows/ci.yml)
 [![GitHub Release](https://img.shields.io/github/v/release/Jabofish/deepseek-harness-vscode)](https://github.com/Jabofish/deepseek-harness-vscode/releases)
+[![Marketplace](https://img.shields.io/badge/Marketplace-Install-blue)](https://marketplace.visualstudio.com/items?itemName=Jabofish.jabodsh)
 [![License](https://img.shields.io/github/license/Jabofish/deepseek-harness-vscode)](LICENSE)
 
 **JaboDSH** brings local or remote [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) sessions into the editor. Follow streaming replies, thinking, tools, approvals, and conversation history beside your code.
 
-JaboDSH is an independent community extension. It is not affiliated with, endorsed by, or published by DeepSeek or Microsoft.
+JaboDSH is an independent community project for DeepSeek Harness.
 
 ## What you can do
 
@@ -19,15 +20,18 @@ JaboDSH is an independent community extension. It is not affiliated with, endors
 - Use local prompt templates, checkpoints, a Changes view, and a task center when their prerequisites are available.
 - Use the DSH-style focused layout with collapsible process details and a compact composer. Choose the focused or classic layout in **Settings → General → Conversation layout**; the choice is saved locally.
 - Open sessions in editor tabs alongside the side bar, with independent navigation and restored sessions after a window reload.
+- In compact transcript view, keep recent and ongoing/error activity visible and use **Show all activity** to expand earlier traces.
 - Enable optional session cost estimates in **Settings → Models → Model billing**. Inspect input, output and cache costs, choose a reference model, or enter custom rates. Chinese uses CNY and English uses USD; saved exchange quotes remain available when a refresh fails.
 
-The connected DSH version determines which advanced capabilities are available. Unsupported operations show a clear unavailable state. The [compatibility contract](docs/dsh-contract.en.md) lists exact adapter boundaries; the [capability matrix](docs/capability-matrix.en.md) summarizes supported functions, limitations and completion status.
+See the [compatibility guide](docs/dsh-contract.en.md) for supported DSH versions and the [feature list](docs/capability-matrix.en.md) for individual capabilities.
 
-The optional [editor integration](packages/dsh-editor-bridge/README.md) provides unsaved text/selection, diagnostics, language services, navigation and undoable edits. Choose **Settings → General → Editor integration → Install and enable companion** to install it. Once enabled, it follows your selected session and extension updates. Settings provides status, off/read-only switches and recovery actions, including Undo. Available tools depend on the companion and DSH versions. Chat and manual context attachment remain available without it.
+The optional [editor integration](packages/dsh-editor-bridge/README.md) lets DSH read unsaved text, selections and diagnostics, use language services, and apply undoable edits. Install it through **Settings → General → Editor integration → Install and enable companion**. The same settings page provides read-only mode, disable and Undo controls.
 
 ## Install and start
 
-The new extension ID is `Jabofish.jabodsh`; Marketplace availability depends on review. Download a VSIX matching the operating system and architecture of your Extension Host from the [latest GitHub Release](https://github.com/Jabofish/deepseek-harness-vscode/releases/latest), then run **Extensions: Install from VSIX...**. A universal VSIX is also provided.
+Install [JaboDSH from the Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=Jabofish.jabodsh), or run `code --install-extension Jabofish.jabodsh`.
+
+For manual installation, download a VSIX matching the operating system and architecture of your Extension Host from the [latest GitHub Release](https://github.com/Jabofish/deepseek-harness-vscode/releases/latest), then run **Extensions: Install from VSIX...**. A universal VSIX is also provided.
 
 ### Switch from the previous extension
 
@@ -55,7 +59,7 @@ Click the conversation title to choose another session. In the sidebar this swit
 
 To drag a session directly into a split, run **JaboDSH: Open Drag Sessions** to open **JaboDSH Sessions** in Explorer, then drag a session row to an editor edge. The Explorer list is hidden until you run that command.
 
-Without a specified target, auto validates the last successful local connection first, then discovers other instances before starting one. An explicit server URL or attachment port list restricts connection to those targets; failure leaves Settings and Retry available. The extension stops only processes it created and still holds a handle for.
+In `auto`, the extension tries the last successful local connection, discovers running instances, then starts DSH if needed. An explicit server URL or port list selects the instances to connect to.
 
 | Connection mode | Behavior                                                                             |
 | --------------- | ------------------------------------------------------------------------------------ |
@@ -66,7 +70,7 @@ Without a specified target, auto validates the last successful local connection 
 
 The General settings page can check upstream package versions and install an exact verified version. Updating a global package never stops an external DSH.
 
-On Windows, installation uses a separate directory on the same disk and verifies the new CLI before switching the global package and launchers. Only the extension-owned DSH process tree is stopped for the switch, then reconnected. File-lock retries are limited to two seconds; a blocked switch preserves the previous package and reports a retryable error. The installation output uses Windows Restart Manager to identify remaining file users by process name and PID when available; close the reported application and retry. Switching failures restore the previous package and launchers; an interrupted switch is recovered on the next installation attempt. Allow temporary disk space for both versions. Configurations and sessions stay in their existing locations.
+On Windows, the installer verifies the new CLI in a separate directory before switching the global package and launchers. If files are locked, check the installation output, close the listed applications and retry. A failed switch restores the previous version; an interrupted install is recovered on the next attempt. Allow enough temporary disk space for both versions during the update.
 
 ## Connect to an external instance
 
@@ -86,6 +90,6 @@ Remote file picking keeps the selected filesystem URI. Desktop Inspector actions
 
 ## Privacy and support
 
-Network connections, credentials, files, and process control stay in the Extension Host. The Webview receives no secrets or direct filesystem/network access. Inspect redacted diagnostics before sharing them; remove remaining private content from screenshots and excerpts. See the [security model](docs/architecture.en.md), [security reporting policy](.github/SECURITY.md) and [support instructions](apps/extension/SUPPORT.md).
+For connection or UI problems, run **JaboDSH: Show Redacted Diagnostics** and follow the [support instructions](apps/extension/SUPPORT.md). Check diagnostics and screenshots for private content before attaching them to an issue. Report vulnerabilities through the [security policy](.github/SECURITY.md).
 
 Developer documentation starts at the [documentation index](docs/README.md). Contribute with the [English guide](.github/CONTRIBUTING.md) or [中文指南](.github/CONTRIBUTING.zh-CN.md), the shared [testing guide](docs/quality.md) and [agent instructions](AGENTS.md). Release notes are recorded in the [extension changelog](apps/extension/CHANGELOG.md). Licensed under [MIT](LICENSE).

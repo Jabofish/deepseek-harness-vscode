@@ -4,11 +4,12 @@
 
 [![CI](https://github.com/Jabofish/deepseek-harness-vscode/actions/workflows/ci.yml/badge.svg)](https://github.com/Jabofish/deepseek-harness-vscode/actions/workflows/ci.yml)
 [![GitHub Release](https://img.shields.io/github/v/release/Jabofish/deepseek-harness-vscode)](https://github.com/Jabofish/deepseek-harness-vscode/releases)
+[![Marketplace](https://img.shields.io/badge/Marketplace-Install-blue)](https://marketplace.visualstudio.com/items?itemName=Jabofish.jabodsh)
 [![License](https://img.shields.io/github/license/Jabofish/deepseek-harness-vscode)](LICENSE)
 
 **JaboDSH** 把本地或远程 [DeepSeek Harness（DSH）](https://github.com/deepseek-ai/deepseek-harness)会话带进编辑器。在代码旁查看流式回复、思考、工具、审批和会话历史。
 
-JaboDSH 是独立的社区扩展，与 DeepSeek 或 Microsoft 没有关联，不由两者发布，也未获得两者背书。
+JaboDSH 是由社区独立维护的 DeepSeek Harness 客户端。
 
 ## 可以做什么
 
@@ -19,15 +20,18 @@ JaboDSH 是独立的社区扩展，与 DeepSeek 或 Microsoft 没有关联，不
 - 在满足前提时使用本地 Prompt 模板、检查点、变更视图和任务中心。
 - 使用接近 DSH 原版的聚焦布局，按需展开过程详情，并使用紧凑输入栏。在 **设置 → 常规 → 会话布局** 中可以选择聚焦或经典布局；选择保存在本地。
 - 在侧边栏旁打开独立导航的编辑器会话标签，窗口重载后恢复各自的会话。
+- 简洁对话视图保留最近活动及进行中或失败的工作，通过 **显示全部活动** 展开早期记录。
 - 在 **设置 → 模型 → 模型计费** 中按需启用会话费用估算，查看输入、输出和缓存分项，选择参考模型或填写自定义单价。中文显示人民币，英文显示美元；汇率刷新失败时沿用已保存的报价。
 
-高级能力取决于连接的 DSH 版本；不支持的操作会明确显示不可用。[兼容契约](docs/dsh-contract.md)列出精确 Adapter 边界；[能力矩阵](docs/capability-matrix.md)概述具体功能、限制和完成状态。
+支持的 DSH 版本见[兼容说明](docs/dsh-contract.md)，各项功能见[功能清单](docs/capability-matrix.md)。
 
-可选的[编辑器集成](packages/dsh-editor-bridge/README.md)提供未保存文本、选区、诊断、语言服务、导航和可撤销编辑。在 **设置 → 常规 → 编辑器集成 → 安装并启用配套插件** 中安装后，会自动跟随当前会话及扩展更新。设置页提供状态、关闭/只读开关及恢复操作，也可撤销编辑。具体工具取决于配套插件和 DSH 版本；不安装也可聊天和手动添加上下文。
+可选的[编辑器集成](packages/dsh-editor-bridge/README.md)让 DSH 读取未保存文本、选区和诊断，使用语言服务，并执行可撤销编辑。在 **设置 → 常规 → 编辑器集成 → 安装并启用配套插件** 中安装；同一页面可以切换只读模式、停用集成或撤销编辑。
 
 ## 安装与开始使用
 
-新扩展 ID 为 `Jabofish.jabodsh`，Marketplace 可用性取决于审核结果。从[最新 GitHub Release](https://github.com/Jabofish/deepseek-harness-vscode/releases/latest)下载与 Extension Host 操作系统和架构匹配的 VSIX，再执行 **Extensions: Install from VSIX...**；也提供 universal 包。
+从 [Visual Studio Marketplace 安装 JaboDSH](https://marketplace.visualstudio.com/items?itemName=Jabofish.jabodsh)，或执行 `code --install-extension Jabofish.jabodsh`。
+
+手动安装时，从[最新 GitHub Release](https://github.com/Jabofish/deepseek-harness-vscode/releases/latest)下载与 Extension Host 操作系统和架构匹配的 VSIX，再执行 **Extensions: Install from VSIX...**；也提供 universal 包。
 
 ### 从旧扩展切换
 
@@ -55,7 +59,7 @@ JaboDSH 的 Chat 视图默认注册在辅助侧边栏（VS Code 默认布局中�
 
 要直接拖拽会话分栏，可执行 **JaboDSH: Open Drag Sessions**，在资源管理器中打开 **JaboDSH Sessions**，将会话行拖到编辑器边缘即可分栏打开。运行该命令后才会显示资源管理器中的会话列表。
 
-未指定目标时，auto 优先校验上次成功的本机连接，再发现其他实例，最后按需启动。手动指定服务地址或附加端口列表后，只连接这些目标；失败后仍可修改设置或重试。扩展只会停止自己创建且仍持有句柄的 DSH 进程。
+`auto` 会先尝试上次成功的本机连接，再发现运行中的实例，最后按需启动 DSH。也可以通过服务地址或端口列表指定要连接的实例。
 
 | 连接模式       | 行为                                                       |
 | -------------- | ---------------------------------------------------------- |
@@ -66,7 +70,7 @@ JaboDSH 的 Chat 视图默认注册在辅助侧边栏（VS Code 默认布局中�
 
 常规设置页可以检查上游包版本并安装已验证的精确版本。更新全局包不会停止外部 DSH。
 
-Windows 安装时先在同一磁盘的独立目录安装并验证新版 CLI，再切换全局包和启动入口。切换前只停止扩展持有的 DSH 进程树，完成后恢复连接。文件锁重试最多两秒；无法切换时保留旧包并提示重试。安装输出会通过 Windows Restart Manager 尝试列出剩余占用程序的名称和 PID，关闭对应程序后可重试。切换失败会恢复原包及启动入口，中断的切换在下次安装时恢复。磁盘需临时容纳两个版本，配置和会话仍保留在原位置。
+在 Windows 上，安装器会先在独立目录验证新版 CLI，再切换全局包和启动入口。遇到文件占用时，查看安装输出，关闭列出的应用后重试。切换失败会恢复旧版；中断的安装会在下次尝试时恢复。更新期间请预留同时存放新旧版本的临时空间。
 
 ## 连接外部实例
 
@@ -86,6 +90,6 @@ HTTPS 要求可信证书。远程 HTTP 必须确认明文传输，DNS 地址变�
 
 ## 隐私与支持
 
-网络连接、凭据、文件和进程控制均由 Extension Host 处理。Webview 不接收密钥，也不能直接访问文件系统或网络。分享前仍需检查脱敏诊断，并移除截图和日志节选中残留的私人内容。详见[安全模型](docs/architecture.md)、[安全报告策略](.github/SECURITY.md)和[支持说明](apps/extension/SUPPORT.md)。
+遇到连接或界面问题时，执行 **JaboDSH: Show Redacted Diagnostics**，并按[支持说明](apps/extension/SUPPORT.md)提交反馈。附上诊断和截图前，请检查其中是否仍有私人内容。安全漏洞请通过[安全报告渠道](.github/SECURITY.md)提交。
 
 开发者文档从[文档索引](docs/README.md)开始；贡献入口提供 [English guide](.github/CONTRIBUTING.md) 和[中文指南](.github/CONTRIBUTING.zh-CN.md)，并共用[测试指南](docs/quality.md)与 [Agent 规范](AGENTS.md)。版本更新见[扩展更新日志](apps/extension/CHANGELOG.md)。项目使用 [MIT 许可](LICENSE)。

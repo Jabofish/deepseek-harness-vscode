@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "DeepSeek Harness integration for Visual Studio Code",
+  "description": "JaboDSH, an independent community VS Code client for DeepSeek Harness",
   "license": "MIT",
   "packageManager": "pnpm@11.19.0",
   "engines": {
