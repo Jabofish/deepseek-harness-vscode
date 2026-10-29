@@ -209,9 +209,8 @@ describe('OptionalBundleManager', () => {
     } satisfies OptionalBundleManagerProps
 
     const first = render(<OptionalBundleManager {...props} />)
-    await screen.findByRole('heading', { name: 'DSH Plugin Manager' })
     expect(
-      screen.getByText(
+      await screen.findByText(
         'The install result is still unknown. Check its status before starting another install.',
       ),
     ).toBeTruthy()
