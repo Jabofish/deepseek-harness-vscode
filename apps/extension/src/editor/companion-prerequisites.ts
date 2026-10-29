@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import type { EditorIntegrationStatus } from '@dsh-vscode/domain'
+import { withoutSecrets } from '../backend/child-environment.js'
 import { runtimePathEntries } from '../backend/runtime-paths.js'
 import { resolveWindowsShim } from '../backend/windows-shim.js'
 
@@ -24,7 +25,7 @@ export async function prepareCompanionPackageManager(signal: AbortSignal): Promi
       )
       .filter(existsSync)
   const environment = {
-    ...process.env,
+    ...withoutSecrets(process.env),
     PATH: entries.join(path.delimiter),
     COREPACK_ENABLE_NETWORK: '1',
     COREPACK_ENABLE_DOWNLOAD_PROMPT: '0',
@@ -95,7 +96,7 @@ export async function resolveCompanionPackageManager(signal?: AbortSignal): Prom
     .filter((file): file is string => file !== undefined)
   if (candidates.length === 0) return { status: 'missing' }
   const environment = {
-    ...process.env,
+    ...withoutSecrets(process.env),
     PATH: entries.join(path.delimiter),
     COREPACK_ENABLE_NETWORK: '0',
     COREPACK_ENABLE_PROJECT_SPEC: '0',

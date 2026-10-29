@@ -36,6 +36,26 @@ jobs:
           key: eslint-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'eslint.config.mjs') }}
       - run: pnpm lint
 
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+        with:
+          version: 11.19.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Audit the dependency graph for known vulnerabilities
+        # Report-only: the graph currently carries known advisories (e.g. a HIGH
+        # undici runtime dep). Keep this non-blocking until they are remediated,
+        # then flip to a hard gate.
+        continue-on-error: true
+        run: pnpm audit --audit-level high
+
   static:
     name: Format & typecheck
     runs-on: ubuntu-latest

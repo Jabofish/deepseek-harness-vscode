@@ -1,6 +1,7 @@
 import { execFile, type ChildProcess } from 'node:child_process'
 import path from 'node:path'
 import { AppError } from '@dsh-vscode/domain'
+import { windowsSystemToolEnvironment } from './child-environment.js'
 
 /** Retain the child handle: a discovered PID never grants termination authority. */
 export function terminateOwnedWindowsTree(child: ChildProcess): Promise<void> {
@@ -32,7 +33,7 @@ export function terminateOwnedWindowsTree(child: ChildProcess): Promise<void> {
     execFile(
       path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe'),
       ['/PID', String(child.pid), '/T', '/F'],
-      { windowsHide: true, timeout: 5_000 },
+      { windowsHide: true, timeout: 5_000, env: windowsSystemToolEnvironment() },
       (cause) => {
         if (cause !== null) {
           finish(cause)

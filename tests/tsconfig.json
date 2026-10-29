@@ -23,6 +23,7 @@
     "../packages/webview-protocol/src/**/*.ts",
     "../packages/timeline/src/**/*.ts",
     "../apps/extension/src/backend/path-safety.ts",
+    "../apps/extension/src/backend/child-environment.ts",
     "../apps/extension/src/backend/skill-documents.ts",
     "../apps/extension/src/backend/process-supervisor.ts",
     "../apps/extension/src/backend/owned-process-tree.ts",
