@@ -50,3 +50,23 @@ it('retains the actual current title if the catalog is delayed and follows renam
   fireEvent.click(screen.getByRole('button', { name: 'Sessions: Renamed' }))
   expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['Renamed', 'Beta'])
 })
+
+it('keeps ordinary forks selectable after navigating back to their parent', () => {
+  const parent = session('parent', 'Parent')
+  const fork = { ...session('fork', 'Branch'), parentSessionId: parent.id }
+  const sessions = [
+    parent,
+    fork,
+    { ...session('child'), parentSessionId: parent.id, origin: 'subagent' as const },
+  ]
+  const onOpen = vi.fn()
+  const view = render(<SessionTitlePicker active={fork} sessions={sessions} onOpen={onOpen} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Sessions: Branch' }))
+  fireEvent.click(screen.getByRole('option', { name: 'Parent' }))
+  expect(onOpen).toHaveBeenLastCalledWith('parent')
+  view.rerender(<SessionTitlePicker active={parent} sessions={sessions} onOpen={onOpen} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Sessions: Parent' }))
+  expect(screen.queryByRole('option', { name: 'child' })).toBeNull()
+  fireEvent.click(screen.getByRole('option', { name: 'Branch' }))
+  expect(onOpen).toHaveBeenLastCalledWith('fork')
+})

@@ -13,9 +13,7 @@ export const SessionTitlePicker = memo(function SessionTitlePicker(props: {
   const { t } = useI18n()
   const { active, sessions, onOpen } = props
   const options = useMemo(() => {
-    const available = sessions.filter(
-      (session) => session.origin !== 'subagent' && session.parentSessionId === undefined,
-    )
+    const available = sessions.filter((session) => session.origin !== 'subagent')
     return (available.some((session) => session.id === active.id) ? available : [active, ...available]).map(
       (session) => ({ value: session.id, label: displaySessionTitle(session.title, t) }),
     )
