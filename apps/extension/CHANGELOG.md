@@ -6,6 +6,9 @@ Release entries describe behaviour at that release. `Unreleased` lists changes a
 
 ## Unreleased
 
+- Recover a visible chat after a short Webview delivery outage also loses the recovery notification: after the initial burst, retry the latest bounded transcript window at three spaced intervals. Permanent failures remain bounded; hiding, switching and closing the surface release pending recovery work.
+- 修复短暂 Webview 投递故障连同恢复通知一起丢失后可见对话不再更新：快速重试后分三次退避投递最新有界窗口；持续失败仍有次数上限，隐藏、切换或关闭面板会释放待恢复任务。
+
 ## 0.4.2
 
 - 逐版本适配 DSH `0.2.1-rc.4` 与 `0.2.2-alpha.2`，保留独立精确入口与安装默认。新 alpha 显式激活实时会话；读取历史图片前校验会话归属；支持固定选项的阻塞授权、模型目录刷新和明确的平台不支持错误。DSH 新 alpha 需要 Node >=24.9.0。

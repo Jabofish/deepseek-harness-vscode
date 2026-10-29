@@ -243,11 +243,50 @@ describe('Host transcript windows', () => {
       expect(report).toHaveBeenLastCalledWith(expect.objectContaining({ retrying: false })),
     )
     expect(invalidate).toHaveBeenCalledWith(sessionId)
+    const immediate = sent.length
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(sent).toHaveLength(immediate + 3)
+    expect(report).toHaveBeenLastCalledWith({ attempt: 7, retrying: false })
     const delivered = sent.length
-    await vi.advanceTimersByTimeAsync(4_000)
+    await vi.advanceTimersByTimeAsync(20_000)
     expect(sent).toHaveLength(delivered)
+    expect(invalidate).toHaveBeenCalledTimes(1)
+    await service.resync(sessionId, new AbortController().signal)
+    service.accept({
+      type: 'message.delta',
+      sessionId,
+      messageId: 'live',
+      delta: ' after reread',
+      turn: 1,
+      step: 1,
+    })
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(sent).toHaveLength(delivered + 1)
     service.dispose()
   })
+
+  it.each(['hidden', 'switched', 'disposed'] as const)(
+    'releases delayed delivery recovery when the surface is %s',
+    async (action) => {
+      vi.useFakeTimers()
+      const post = vi.fn(() => Promise.resolve(false))
+      const service = new TranscriptWindowService({
+        read: () => Promise.resolve({ events: [], hasMore: false }),
+        publicValue: (value) => value,
+        post,
+      })
+      service.installPage(sessionId, { events: [], hasMore: false }, service.begin(sessionId))
+      service.accept(message(0).event)
+      for (let index = 0; index < 20; index++) await Promise.resolve()
+      expect(post).toHaveBeenCalledTimes(4)
+      if (action === 'hidden') service.setVisible(false)
+      else if (action === 'switched') service.begin('another-session')
+      else service.dispose()
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(post).toHaveBeenCalledTimes(4)
+      service.dispose()
+    },
+  )
 
   it('uses authoritative workingDirectory to qualify relative file models inside the authorized roots', () => {
     const root = path.resolve('synthetic-transcript-root')

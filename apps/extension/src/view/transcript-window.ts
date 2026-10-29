@@ -41,6 +41,8 @@ type ReadPage = (
 const MESSAGE_NODE_CHARS = TRANSCRIPT_MAX_CHARS - 192 * 1024
 /** Bound immediate recovery attempts when a window cannot enter the renderer. */
 const DELIVERY_RETRY_LIMIT = 3
+/** A transiently unavailable visible renderer may also miss the invalidation. */
+const DELIVERY_RECOVERY_DELAYS = [250, 1_000, 3_000] as const
 interface PendingOpen {
   readonly sessionId: string
   readonly generation: number
@@ -122,6 +124,8 @@ export class TranscriptWindowService {
     | undefined
   private invalidated = false
   private retryAttempt = 0
+  private recoveryAttempt = 0
+  private recoveryTimer: ReturnType<typeof setTimeout> | undefined
   private deliverySuspended = false
   private deliveryEpoch = 0
   private readonly recentEvents = new Map<string, true>()
@@ -157,6 +161,11 @@ export class TranscriptWindowService {
   ) {}
 
   public begin(sessionId: string, child = false, recovery = false): number {
+    this.cancelRecovery()
+    if (this.activeSessionId() !== sessionId) {
+      this.clearRetry()
+      this.deliverySuspended = false
+    }
     if (!recovery) this.overloadBudget = { started: performance.now(), count: 0 }
     const generation = ++this.generation
     this.deliveryEpoch++
@@ -534,6 +543,7 @@ export class TranscriptWindowService {
   public setVisible(visible: boolean): void {
     const becameVisible = visible && !this.visible
     this.visible = visible
+    if (!visible) this.cancelRecovery()
     if (visible && this.needsRebase) {
       this.invalidateIngress()
       return
@@ -840,7 +850,7 @@ export class TranscriptWindowService {
     this.flushIngress(false, false)
     this.deliveryEpoch++
     this.deliverySuspended = false
-    this.clearRetry()
+    this.cancelRecovery()
     this.invalidated = false
     this.published = undefined
     this.pendingAcks.clear()
@@ -1279,20 +1289,55 @@ export class TranscriptWindowService {
 
   private clearRetry(): void {
     this.retryAttempt = 0
+    this.recoveryAttempt = 0
+    this.cancelRecovery()
+  }
+
+  private cancelRecovery(): void {
+    if (this.recoveryTimer !== undefined) clearTimeout(this.recoveryTimer)
+    this.recoveryTimer = undefined
+  }
+
+  private scheduleDeliveryRecovery(): void {
+    const delay = DELIVERY_RECOVERY_DELAYS[this.recoveryAttempt]
+    if (
+      !this.visible ||
+      this.displayed === undefined ||
+      this.recoveryTimer !== undefined ||
+      delay === undefined
+    )
+      return
+    const generation = this.generation
+    const resident = this.displayed
+    this.recoveryAttempt++
+    this.recoveryTimer = setTimeout(() => {
+      this.recoveryTimer = undefined
+      if (
+        !this.visible ||
+        generation !== this.generation ||
+        resident !== this.displayed ||
+        !this.deliverySuspended
+      )
+        return
+      this.deliverySuspended = false
+      this.schedule()
+    }, delay)
+    this.recoveryTimer.unref?.()
   }
 
   /**
    * A failed post leaves the newest window untouched in the renderer. Retry a
-   * bounded number of times, then ask for the same reread a sequence gap uses:
-   * without this the final frame of a stream could be lost until the next
-   * navigation or readiness handshake.
+   * bounded number of times, then ask for the same reread a sequence gap uses.
+   * A few delayed window posts also cover a lost recovery notification. They
+   * never reread DSH, buffer old frames, or loop on a permanently refused view.
    */
   private retryDelivery(): void {
     this.dirty = true
     const retrying = this.retryAttempt < DELIVERY_RETRY_LIMIT
-    this.deps.report?.({ attempt: this.retryAttempt + 1, retrying })
+    this.deps.report?.({ attempt: this.retryAttempt + this.recoveryAttempt + 1, retrying })
     if (!retrying) {
       this.deliverySuspended = true
+      this.scheduleDeliveryRecovery()
       const sessionId = this.displayed?.sessionId
       if (this.invalidated || sessionId === undefined) return
       this.invalidated = true
