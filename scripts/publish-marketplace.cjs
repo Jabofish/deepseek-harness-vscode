@@ -8,7 +8,7 @@ const repositoryRoot = path.resolve(__dirname, '..')
 const extensionRoot = path.join(repositoryRoot, 'apps', 'extension')
 const extensionRequire = createRequire(path.join(extensionRoot, 'package.json'))
 const vsceRequire = createRequire(extensionRequire.resolve('@vscode/vsce/package.json'))
-const packagePath = path.join(repositoryRoot, 'artifacts', 'deepseek-harness-vscode-universal.vsix')
+const packagePath = path.join(repositoryRoot, 'artifacts', 'jabodsh-universal.vsix')
 const marketplaceSocketTimeout = 10 * 60 * 1000
 const maxPublishAttempts = 3
 

@@ -1,9 +1,12 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { EDITOR_CHAT_VIEW_TYPE } from '../constants.js'
+import { EDITOR_CHAT_VIEW_TYPE, EXTENSION_ID } from '../constants.js'
 import { COMMANDS } from './register-commands.js'
 
 interface Manifest {
+  readonly name: string
+  readonly publisher: string
+  readonly icon: string
   readonly activationEvents?: readonly string[]
   readonly contributes?: {
     readonly commands?: readonly { readonly command: string }[]
@@ -19,6 +22,20 @@ const manifest = JSON.parse(readFileSync(new URL('../../package.json', import.me
 const declaredCommands = new Set((manifest.contributes?.commands ?? []).map((entry) => entry.command))
 
 describe('command manifest contributions', () => {
+  it('uses the packaged extension identity for Host lookups', () => {
+    expect(EXTENSION_ID).toBe(`${manifest.publisher}.${manifest.name}`)
+  })
+
+  it('packages a PNG icon within Marketplace size and dimension limits', () => {
+    const icon = readFileSync(new URL(`../../${manifest.icon}`, import.meta.url))
+    expect(icon.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+    expect(icon.byteLength).toBeLessThanOrEqual(1024 * 1024)
+    expect(icon.readUInt32BE(16)).toBeGreaterThanOrEqual(128)
+    expect(icon.readUInt32BE(16)).toBeLessThanOrEqual(1024)
+    expect(icon.readUInt32BE(20)).toBeGreaterThanOrEqual(128)
+    expect(icon.readUInt32BE(20)).toBeLessThanOrEqual(1024)
+  })
+
   it('declares every registered command in the extension manifest', () => {
     const missing = COMMANDS.filter((command) => !declaredCommands.has(command))
     expect(missing).toEqual([])

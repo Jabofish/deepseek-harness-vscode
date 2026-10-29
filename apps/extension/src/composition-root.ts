@@ -241,7 +241,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     mode: () => vscode.workspace.getConfiguration('dsh').get('completionCue', 'off'),
     focused: () => vscode.window.state.focused,
     notify: () => {
-      void Promise.resolve(vscode.window.showInformationMessage('DeepSeek Harness response is ready.')).catch(
+      void Promise.resolve(vscode.window.showInformationMessage('JaboDSH response is ready.')).catch(
         () => undefined,
       )
     },

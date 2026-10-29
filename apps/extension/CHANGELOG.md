@@ -6,6 +6,10 @@ Release entries describe behaviour at that release. `Unreleased` lists changes a
 
 ## Unreleased
 
+## 0.4.3
+
+- 更名为 JaboDSH（`Jabofish.jabodsh`），使用独立图标并明确社区项目身份。保留 `dsh.*` 设置与命令；安装前请停用旧扩展，外部连接需要重新授权，旧扩展私有数据不会自动迁移。
+- Renames the extension to JaboDSH (`Jabofish.jabodsh`) with original branding and an explicit community-project identity. Retains `dsh.*` settings and commands. Disable the previous extension before installing; external connections require new authorisation and private extension data does not migrate automatically.
 - Recover visible chats after Webview delivery outages, including lost recovery notices: back off to one latest-window probe every ten seconds without rereading DSH. Reopening and visibility recovery restore delivery across history rebases; successful delivery permits a later outage notification. Hiding, switching and closing release pending recovery work.
 - 修复 Webview 投递故障连同恢复通知丢失后对话停止更新：退避后每十秒探测投递一次最新有界窗口，不重复读取 DSH；重开和重新显示面板时可跨历史重建恢复投递，成功后允许后续故障再次通知；隐藏、切换或关闭释放待恢复任务。
 - Compact transcript view keeps recent activity and ongoing/error work visible, with a local Show all / Show recent control for earlier traces. Replies, images, plans and user boundaries stay visible; standard/detail modes retain their full activity.

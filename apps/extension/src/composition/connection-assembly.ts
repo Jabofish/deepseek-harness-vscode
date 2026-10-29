@@ -127,7 +127,7 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
       const action = 'Run DSH executable'
       return (
         (await vscode.window.showWarningMessage(
-          `DeepSeek Harness will run ${candidate} to detect the DSH runtime. Only continue if you set this path yourself.`,
+          `JaboDSH will run ${candidate} to detect the DSH runtime. Only continue if you set this path yourself.`,
           { modal: true },
           action,
         )) === action

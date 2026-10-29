@@ -17,7 +17,7 @@ Search [existing issues](https://github.com/Jabofish/deepseek-harness-vscode/iss
 
 1. OS/architecture, local or remote workspace, VS Code and extension versions, exact `dsh --version` output (or “not installed”), and connection mode.
 2. Minimal steps, expected and actual behaviour, whether it repeats after reconnect/reload, and whether one or several panels are affected. Use disposable/synthetic data for reproduction.
-3. **DSH: Show Redacted Diagnostics**, if the command is available. Inspect the result before posting; remove residual private data. A short relevant excerpt is better than an entire log archive.
+3. **JaboDSH: Show Redacted Diagnostics**, if the command is available. Inspect the result before posting; remove residual private data. A short relevant excerpt is better than an entire log archive.
 4. For UI issues, a redacted screenshot/recording plus language, theme, sidebar/editor layout, window width and relevant accessibility settings. For a performance issue, add approximate history size, visible/hidden panels and the workload; identify CPU time versus wall time if you measured them.
 5. Checks already tried and their outcomes. Contributors can use the shared [test-result format](https://github.com/Jabofish/deepseek-harness-vscode/blob/main/docs/quality.md#report-test-results) to record automated/manual results and blocked checks.
 

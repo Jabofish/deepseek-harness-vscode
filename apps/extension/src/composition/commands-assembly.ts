@@ -19,7 +19,7 @@ import type { RuntimeInstaller } from '../vscode/install-runtime.js'
 import type { VsCodeConfigurationSource } from '../config/configuration-source.js'
 import { moveOrExplainSecondarySidebar } from '../vscode/secondary-sidebar.js'
 import { openDshWebUi } from '../vscode/open-web-ui.js'
-import { DSH_DOCUMENTATION_URL } from '../constants.js'
+import { DSH_DOCUMENTATION_URL, EXTENSION_ID } from '../constants.js'
 import { deliverOrRevealView } from '../view/deliver-or-reveal.js'
 import type { WebviewMessageRouter } from '../view/message-router.js'
 import { DshWebviewViewProvider } from '../view/dsh-webview-view-provider.js'
@@ -232,10 +232,7 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
         'dsh.openSettings': async () => {
           const delivered = await postEvent('ui.settings.toggle', {})
           if (!delivered)
-            await vscode.commands.executeCommand(
-              'workbench.action.openSettings',
-              '@ext:Direwolf.deepseek-harness-client',
-            )
+            await vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${EXTENSION_ID}`)
         },
         'dsh.openWebUi': () => openDshWebUi(coordinator.getState(), endpointLaunchUrls),
         'dsh.installRuntime': () => runtimeInstaller.install(),

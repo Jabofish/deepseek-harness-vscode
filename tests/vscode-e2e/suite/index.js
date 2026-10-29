@@ -7,7 +7,7 @@ import * as vscode from 'vscode'
 const ATTACH_TIMEOUT_MS = 20_000
 const POLL_INTERVAL_MS = 250
 const IDLE_OBSERVATION_MS = 4_000
-const EXTENSION_ID = 'Direwolf.deepseek-harness-client'
+const EXTENSION_ID = 'Jabofish.jabodsh'
 
 export async function run() {
   const extension = vscode.extensions.getExtension(EXTENSION_ID)

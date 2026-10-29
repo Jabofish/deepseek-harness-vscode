@@ -48,7 +48,7 @@ node -e "require('node:fs').mkdirSync('.test-workspace', {recursive: true})"
 
 每个 PR 处理一个具体问题，遵守分层和信任边界。[AGENTS.md](../AGENTS.md) 列出了开发者与 Coding Agent 共用的实现要求。
 
-用 VS Code 打开仓库根目录，在“运行和调试”中选择 **Run DSH VS Code Extension**。F5 会执行构建任务，再以上面创建的 `.test-workspace/` 启动 Extension Development Host；Ctrl+F5 不附加调试器。在新窗口中打开 **DeepSeek Harness** 视图，连接开发用 DSH，验证本次涉及的交互。`pnpm dev` 用于监听 Webview 和扩展构建。交互测试使用可丢弃的会话与工作区。
+用 VS Code 打开仓库根目录，在“运行和调试”中选择 **Run DSH VS Code Extension**。F5 会执行构建任务，再以上面创建的 `.test-workspace/` 启动 Extension Development Host；Ctrl+F5 不附加调试器。在新窗口中打开 **JaboDSH** 视图，连接开发用 DSH，验证本次涉及的交互。`pnpm dev` 用于监听 Webview 和扩展构建。交互测试使用可丢弃的会话与工作区。
 
 按[验证矩阵](../docs/quality.md#choose-validation-by-change)选择检查。开发时可用 `pnpm test:changed` 执行受影响的测试和固定契约测试，`pnpm test:contracts` 只执行固定契约测试。代码 PR 提交评审前运行 `pnpm check`、`pnpm build` 和 `git diff --check`；纯文档修改按指南运行文档检查。压力、真实 DSH 与 Electron 测试需单独启用，影响相应路径时再执行。命令和人工交互场景见[测试指南](../docs/quality.md)。
 

@@ -1378,7 +1378,7 @@
   "app.error.imageType": "{name} uses an image type this DSH host does not accept.",
   "app.error.imageTooLarge": "{name} is larger than the DSH image limit of {size}.",
   "app.error.imageTotalSize": "The combined image size exceeds the DSH image limit of {size}.",
-  "errorBoundary.title": "DeepSeek Harness view failed",
+  "errorBoundary.title": "JaboDSH view failed",
   "errorBoundary.description": "The view can be reloaded without stopping DSH.",
   "errorBoundary.reload": "Reload view",
   "goals.title": "Goals",

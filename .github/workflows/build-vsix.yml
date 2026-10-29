@@ -117,30 +117,30 @@ jobs:
         run: |
           node -e "require('node:fs').mkdirSync('artifacts', { recursive: true })"
           if [ "${{ matrix.target }}" = "universal" ]; then
-            pnpm --filter deepseek-harness-client exec vsce package \
+            pnpm --filter jabodsh exec vsce package \
               --no-dependencies \
               --no-gitHubIssueLinking \
               --allow-missing-repository \
-              --out "../../artifacts/deepseek-harness-vscode-${{ matrix.name }}.vsix"
+              --out "../../artifacts/jabodsh-${{ matrix.name }}.vsix"
           else
-            pnpm --filter deepseek-harness-client exec vsce package \
+            pnpm --filter jabodsh exec vsce package \
               --no-dependencies \
               --no-gitHubIssueLinking \
               --allow-missing-repository \
               --target "${{ matrix.target }}" \
-              --out "../../artifacts/deepseek-harness-vscode-${{ matrix.name }}.vsix"
+              --out "../../artifacts/jabodsh-${{ matrix.name }}.vsix"
           fi
 
       - name: Record universal VSIX digest
         if: matrix.target == 'universal'
         shell: bash
-        run: sha256sum artifacts/deepseek-harness-vscode-universal.vsix | tee artifacts/SHA256SUMS
+        run: sha256sum artifacts/jabodsh-universal.vsix | tee artifacts/SHA256SUMS
 
       - name: Upload platform VSIX
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: vsix-${{ matrix.name }}
-          path: artifacts/deepseek-harness-vscode-${{ matrix.name }}.vsix
+          path: artifacts/jabodsh-${{ matrix.name }}.vsix
           if-no-files-found: error
           retention-days: 14
 
@@ -180,7 +180,7 @@ jobs:
       - name: Attest universal VSIX provenance
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
-          subject-path: artifacts/deepseek-harness-vscode-universal.vsix
+          subject-path: artifacts/jabodsh-universal.vsix
 
   publish:
     name: Publish to Visual Studio Marketplace
@@ -246,7 +246,7 @@ jobs:
       - name: Publish extension
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        run: pnpm --filter deepseek-harness-client exec node ../../scripts/publish-marketplace.cjs
+        run: pnpm --filter jabodsh exec node ../../scripts/publish-marketplace.cjs
 
   release:
     name: Create GitHub Release
@@ -302,6 +302,6 @@ jobs:
           else
             gh release create "$TAG" artifacts/*.vsix \
               --repo "${GITHUB_REPOSITORY}" \
-              --title "DeepSeek Harness VS Code $TAG" \
+              --title "JaboDSH $TAG" \
               --notes-file artifacts/release-notes.md
           fi

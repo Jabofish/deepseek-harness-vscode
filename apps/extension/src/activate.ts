@@ -16,7 +16,7 @@ export async function activateExtension(context: vscode.ExtensionContext): Promi
     // command this extension contributes. Keep the failure visible and leave
     // the host usable so the reported problem can be fixed and retried.
     await vscode.window.showErrorMessage(
-      error instanceof Error ? error.message : 'DeepSeek Harness failed to activate.',
+      error instanceof Error ? error.message : 'JaboDSH failed to activate.',
     )
   }
 }

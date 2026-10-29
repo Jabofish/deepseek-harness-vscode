@@ -1378,7 +1378,7 @@
   "app.error.imageType": "{name} 使用了此 DSH 主机不接受的图片类型。",
   "app.error.imageTooLarge": "{name} 超过 DSH 图片大小限制 {size}。",
   "app.error.imageTotalSize": "图片总大小超过 DSH 的 {size} 图片上限。",
-  "errorBoundary.title": "DeepSeek Harness 视图加载失败",
+  "errorBoundary.title": "JaboDSH 视图加载失败",
   "errorBoundary.description": "可以重新加载视图，不会停止 DSH。",
   "errorBoundary.reload": "重新加载视图",
   "goals.title": "目标",
