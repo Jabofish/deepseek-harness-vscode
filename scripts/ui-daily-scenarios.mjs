@@ -16,6 +16,21 @@ const clear = async (ui) => {
 export const dailyScenarios = [
   ...additionalScenarios,
   {
+    name: 'daily/compact-activity',
+    coverage: ['READ-01'],
+    async run(ui) {
+      await ui.call('compactActivities')
+      const all = await ui.call('label', 'timeline.activity.showAll', { count: 6 })
+      await ui.waitFor((s) => s.controls.some((c) => c.name === all), 'earlier activity collapsed')
+      assert((await ui.snapshot()).timeline.includes('Answer owned by Alpha conversation'))
+      await ui.click({ role: 'button', name: all })
+      const recent = await ui.call('label', 'timeline.activity.showRecent')
+      await ui.waitFor((s) => s.controls.some((c) => c.name === recent), 'all activity expanded')
+      await ui.click({ role: 'button', name: recent })
+      await ui.waitFor((s) => s.controls.some((c) => c.name === all), 'older activity collapsed again')
+    },
+  },
+  {
     name: 'daily/connection-retry',
     coverage: ['BOOT-04'],
     async run(ui) {

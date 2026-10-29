@@ -6,6 +6,9 @@ Release entries describe behaviour at that release. `Unreleased` lists changes a
 
 ## Unreleased
 
+- Compact transcript view keeps recent activity and ongoing/error work visible, with a local Show all / Show recent control for earlier traces. Replies, images, plans and user boundaries stay visible; standard/detail modes retain their full activity.
+- 简洁对话视图只保留最近活动及进行中或失败的工作，可通过本地“显示全部 / 只显示最近”活动入口展开早期记录；正文、图片、计划和用户消息保持可见，标准及详细模式仍保留全部活动。
+
 ## 0.4.2
 
 - 逐版本适配 DSH `0.2.1-rc.4` 与 `0.2.2-alpha.2`，保留独立精确入口与安装默认。新 alpha 显式激活实时会话；读取历史图片前校验会话归属；支持固定选项的阻塞授权、模型目录刷新和明确的平台不支持错误。DSH 新 alpha 需要 Node >=24.9.0。

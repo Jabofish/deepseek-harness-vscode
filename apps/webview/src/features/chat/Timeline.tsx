@@ -1,6 +1,7 @@
 import {
   memo,
   useCallback,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -21,6 +22,7 @@ import {
   type ScrollAnchor,
 } from '../../components/common/index.js'
 import { Icon } from '../../ui/Icon.js'
+import { compactActivity } from './compact-activity.js'
 import { useI18n } from '../../i18n.js'
 import type { PerformanceUsageMode, TranscriptViewMode } from '../../app/ui-preferences.js'
 import {
@@ -161,6 +163,15 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
 
 const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): ReactElement {
   const { t } = useI18n()
+  const activityRegionId = useId()
+  const [activityDisclosure, setActivityDisclosure] = useState<{
+    expanded: boolean
+    dismissedReveal?: string
+  }>({ expanded: false })
+  const revealKey = props.revealTarget?.requestId ?? props.revealTarget?.nodeId
+  const allActivity =
+    activityDisclosure.expanded ||
+    (revealKey !== undefined && activityDisclosure.dismissedReveal !== revealKey)
   const layoutPreference = useConversationLayout()
   const conversationLayout = layoutPreference?.layout ?? 'classic'
   const [layoutAnchor, setLayoutAnchor] = useState<{
@@ -218,20 +229,26 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
   const sourceNodes = complete.nodes
   const changeStart = sourceNodes === props.nodes ? props.nodeChangeStart : undefined
   const changeBase = sourceNodes === props.nodes ? props.nodeChangeBase : undefined
+  const compactProjection = useMemo(
+    () => (transcriptView === 'compact' ? compactActivity(sourceNodes) : { nodes: sourceNodes, hidden: 0 }),
+    [sourceNodes, transcriptView],
+  )
+  const activityNodes = allActivity ? sourceNodes : compactProjection.nodes
   const displayProjection = useMemo(
     () =>
       displayProjector(
-        sourceNodes,
+        activityNodes,
         showDshEvents,
         conversationLayout === 'focused' ? 'verbose' : transcriptView,
-        changeStart,
-        changeBase,
+        activityNodes === sourceNodes ? changeStart : undefined,
+        activityNodes === sourceNodes ? changeBase : undefined,
       ),
     [
       displayProjector,
       changeBase,
       changeStart,
       sourceNodes,
+      activityNodes,
       showDshEvents,
       transcriptView,
       conversationLayout,
@@ -969,7 +986,26 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
       className="dsh-timeline-shell"
       onClickCapture={rememberOpenLinkTrigger}
     >
+      {compactProjection.hidden === 0 ? null : (
+        <button
+          type="button"
+          className="dsh-timeline__history-more-button dsh-timeline__activity-toggle"
+          aria-expanded={allActivity}
+          aria-controls={activityRegionId}
+          onClick={() =>
+            setActivityDisclosure({
+              expanded: !allActivity,
+              ...(revealKey === undefined ? {} : { dismissedReveal: revealKey }),
+            })
+          }
+        >
+          {allActivity
+            ? t('timeline.activity.showRecent')
+            : t('timeline.activity.showAll', { count: compactProjection.hidden })}
+        </button>
+      )}
       <div
+        id={activityRegionId}
         key={props.sessionId}
         ref={scrollRef}
         className="dsh-timeline"
