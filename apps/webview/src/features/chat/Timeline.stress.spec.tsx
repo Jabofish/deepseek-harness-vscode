@@ -4,6 +4,7 @@ import { fireEvent, render } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { TimelineNode } from '@dsh-vscode/timeline'
 import { Timeline } from './Timeline.js'
+import { ConversationLayoutProvider } from '../../app/ConversationLayoutProvider.js'
 
 // Counts DOM work under a simulated viewport; run with pnpm test:stress.
 const VIEWPORT_HEIGHT = 200
@@ -66,6 +67,50 @@ function withViewport(body: () => void): void {
 }
 
 describe('Long-session timeline stress', { tags: ['stress'] }, () => {
+  it('expands 10,000 compact activity nodes through a bounded virtual window and retains the final answer', () => {
+    withViewport(() => {
+      const nodes: TimelineNode[] = Array.from({ length: 9_999 }, (_, index) => ({
+        kind: 'tool',
+        id: `activity-${index}`,
+        tool: {
+          id: `activity-${index}`,
+          name: 'read',
+          title: 'Read source',
+          category: 'read',
+          status: 'completed',
+          turn: index,
+          metadata: {},
+        },
+      }))
+      nodes.push({
+        kind: 'assistant-message',
+        id: 'final-answer',
+        markdown: 'The final answer survives activity folding',
+        streaming: false,
+        turn: 10_000,
+        turnCompleted: true,
+      })
+      const view = render(
+        <ConversationLayoutProvider initialLayout="focused">
+          <Timeline sessionId="compact-scale" nodes={nodes} streaming={false} transcriptView="compact" />
+        </ConversationLayoutProvider>,
+      )
+      try {
+        expect(nodes).toHaveLength(10_000)
+        expect(view.container.textContent).toContain('The final answer survives activity folding')
+        fireEvent.click(view.getByRole('button', { name: 'Show all activity' }))
+        const expanded = measure(view.container, 0)
+        expect(expanded.rows).toBeGreaterThan(0)
+        expect(expanded.rows).toBeLessThan(MAX_EXPECTED_ROWS)
+        expect(expanded.elements).toBeLessThan(MAX_EXPECTED_DOM_ELEMENTS)
+        fireEvent.click(view.getByRole('button', { name: 'Show recent activity' }))
+        expect(view.container.textContent).toContain('The final answer survives activity folding')
+        expect(nodes).toHaveLength(10_000)
+      } finally {
+        view.unmount()
+      }
+    })
+  })
   it('reveals an offscreen Inspector target without materializing history or following later appends', () => {
     withViewport(() => {
       const nodes = largeSessionNodes()

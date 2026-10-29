@@ -12,6 +12,7 @@ import { SessionInspector } from './features/inspector/SessionInspector.js'
 import { AppNotices, type AppNotice } from './features/shell/AppNotices.js'
 import { AppHeader } from './features/shell/AppHeader.js'
 import { SessionLineage } from './features/subagents/SessionLineage.js'
+import { SessionTitlePicker } from './features/sessions/SessionTitlePicker.js'
 import { ConversationActionsMenu } from './features/shell/ConversationActionsMenu.js'
 import { ExportDialog } from './features/export/ExportDialog.js'
 import { GoalsTasksStrip } from './features/goals/GoalsTasksStrip.js'
@@ -119,6 +120,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
     scheduleOnOpenLinkedSession,
     scheduleOnStartSession,
     sessionControl,
+    sessionOnOpen,
     sessionOnOpenChange,
     setConversationFontSize,
     setConversationView,
@@ -466,12 +468,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                         {t('app.trajectory')}
                       </button>
                     </div>
-                    <span
-                      className="dsh-conversation__header-title"
-                      title={active.title.trim() === '' ? t('app.conversation') : active.title}
-                    >
-                      {active.title.trim() === '' ? t('app.conversation') : active.title}
-                    </span>
+                    <SessionTitlePicker active={active} sessions={state.sessions} onOpen={sessionOnOpen} />
                     <GoalsTasksStrip
                       key={active.id}
                       goals={state.goals}
@@ -587,6 +584,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                         : {})}
                       panelId={CONVERSATION_VIEW_IDS.chat.panel}
                       panelLabelledBy={CONVERSATION_VIEW_IDS.chat.tab}
+                      onResponseRendered={store.responseRendered}
                       nodes={state.timeline.nodes}
                       {...(state.timeline.nodeChangeStart === undefined
                         ? {}

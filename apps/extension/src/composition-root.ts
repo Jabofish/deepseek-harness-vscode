@@ -1,4 +1,5 @@
 import * as vscode from 'vscode'
+import { CompletionCue } from './view/completion-cue.js'
 import { BillingFeatureHost } from './billing/billing-feature-handler.js'
 import { ModelsDevPriceSource } from './billing/models-dev-price-source.js'
 import { FrankfurterExchangeSource } from './billing/frankfurter-exchange-source.js'
@@ -236,6 +237,15 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     },
     (hasSurface) => surfaces.list().some((surface) => surface.isReady && !hasSurface(surface.surfaceId)),
   )
+  const completionCue = new CompletionCue({
+    mode: () => vscode.workspace.getConfiguration('dsh').get('completionCue', 'off'),
+    focused: () => vscode.window.state.focused,
+    notify: () => {
+      void Promise.resolve(vscode.window.showInformationMessage('JaboDSH response is ready.')).catch(
+        () => undefined,
+      )
+    },
+  })
   const {
     postFeatureEvent,
     publishAccountSnapshot,
@@ -259,7 +269,10 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     transcript,
     post,
     postTo,
-    onEvent: (name, payload) => nativeNavigation.current?.acceptEvent(name, payload),
+    onEvent: (name, payload) => {
+      completionCue.accept(name, payload)
+      nativeNavigation.current?.acceptEvent(name, payload)
+    },
     backendService,
     diagnostics,
     editorContextUseCases,
@@ -378,6 +391,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     currentWorkspaceFolders,
   })
   const gateway = createRequestGateway({
+    responseRendered: (sessionId, turn) => completionCue.rendered(sessionId, turn),
     acknowledgeHostEvents: acknowledgeEvents,
     forgetHostSurface: forgetSurface,
     prepareEditorSession: (sessionId, signal) => commands.editorCompanion.prepareSession(sessionId, signal),

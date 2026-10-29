@@ -16,6 +16,75 @@ const clear = async (ui) => {
 export const dailyScenarios = [
   ...additionalScenarios,
   {
+    name: 'daily/compact-activity',
+    coverage: ['READ-01'],
+    async run(ui) {
+      await ui.afterPaint()
+      const before = await ui.call('activityMetrics')
+      await ui.call('compactActivities')
+      const all = await ui.call('label', 'timeline.activity.showAll')
+      await ui.waitFor((s) => s.controls.some((c) => c.name === all), 'earlier activity collapsed')
+      await ui.afterPaint()
+      const folded = await ui.call('activityMetrics')
+      assert.equal(folded.height, before.height, 'activity disclosure preserves the scroll viewport')
+      assert.equal(folded.top, before.top, 'activity disclosure does not move the scroll viewport')
+      await ui.capture('compact-folded')
+      assert((await ui.snapshot()).timeline.includes('Answer owned by Alpha conversation'))
+      await ui.click({ role: 'button', name: all })
+      const recent = await ui.call('label', 'timeline.activity.showRecent')
+      await ui.waitFor((s) => s.controls.some((c) => c.name === recent), 'all activity expanded')
+      await ui.afterPaint()
+      const expanded = await ui.call('activityMetrics')
+      assert(expanded.rows > folded.rows, 'expansion reveals actual transcript rows')
+      await ui.capture('compact-expanded')
+      console.log(JSON.stringify({ case: 'compact-activity', layout: ui.layout, before, folded, expanded }))
+      await ui.click({ role: 'button', name: recent })
+      await ui.waitFor((s) => s.controls.some((c) => c.name === all), 'older activity collapsed again')
+      await ui.afterPaint()
+      assert.equal((await ui.call('activityMetrics')).rows, folded.rows)
+    },
+  },
+  {
+    name: 'daily/session-title-picker',
+    coverage: ['SESSION-02'],
+    async run(ui) {
+      await input(ui, 'Alpha title picker draft')
+      const label = await ui.call('label', 'sessions.title')
+      const title = (name) => ({ role: 'button', name: `${label}: ${name} conversation` })
+      await ui.click(title('Alpha'))
+      await ui.waitFor(
+        (s) => s.controls.some((c) => c.role === 'option' && c.name === 'Beta conversation'),
+        'session dropdown',
+      )
+      await ui.key('ArrowDown')
+      await ui.key('Enter')
+      await ui.waitFor(
+        (s) => s.timeline?.includes('Answer owned by Beta conversation'),
+        'keyboard session switch',
+      )
+      assert.equal((await ui.snapshot()).prompt, '')
+      await ui.click(title('Beta'))
+      await ui.click({ role: 'option', name: 'Alpha conversation' })
+      await ui.waitFor(
+        (s) => s.timeline?.includes('Answer owned by Alpha conversation'),
+        'return to original session',
+      )
+      assert.equal((await ui.snapshot()).prompt, 'Alpha title picker draft')
+      for (const width of [1100, 420, 280]) {
+        await ui.viewport(width, 850)
+        await ui.click(title('Alpha'))
+        await ui.waitFor(
+          (s) => s.controls.filter((c) => c.role === 'option').length === 3,
+          'all available sessions',
+        )
+        await ui.afterPaint()
+        await ui.capture(`session-title-${width}`)
+        await ui.key('Escape')
+        await ui.waitFor((s) => !s.controls.some((c) => c.role === 'option'), 'dropdown dismissal')
+      }
+    },
+  },
+  {
     name: 'daily/connection-retry',
     coverage: ['BOOT-04'],
     async run(ui) {
