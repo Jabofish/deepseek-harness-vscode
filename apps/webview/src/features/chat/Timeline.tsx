@@ -48,6 +48,7 @@ import {
   type PresentedTimelineNode,
 } from './focused-timeline-projection.js'
 import { useCompleteTranscriptNodes } from './useCompleteTranscriptNodes.js'
+import { useCompletionCue } from '../../app/useCompletionCue.js'
 import { useTranscriptCopyFallback } from './useTranscriptCopyFallback.js'
 import { useConversationLayout } from '../../app/ConversationLayoutProvider.js'
 import type { ConversationLayout } from '../../app/conversation-layout.js'
@@ -91,6 +92,8 @@ export interface TimelineProps {
   readonly contentVersions?: Readonly<Record<string, string>>
   readonly loadFullNode?: (nodeId: string, signal?: AbortSignal) => Promise<TimelineNode>
   readonly loadFullContent?: (nodeId: string) => Promise<string>
+  /** Receipt after the settled turn's current full bodies have committed. */
+  readonly onResponseRendered?: (sessionId: string, turn: number) => Promise<boolean>
   /** Whether an older DSH history window is available. */
   readonly hasMoreHistory?: boolean
   readonly loadingOlderHistory?: boolean
@@ -227,6 +230,11 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
     props.contentVersions,
   )
   const sourceNodes = complete.nodes
+  useCompletionCue(
+    props.onResponseRendered,
+    { sessionId: props.sessionId, nodes: sourceNodes },
+    complete.pendingIds,
+  )
   const changeStart = sourceNodes === props.nodes ? props.nodeChangeStart : undefined
   const changeBase = sourceNodes === props.nodes ? props.nodeChangeBase : undefined
   const compactProjection = useMemo(

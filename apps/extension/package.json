@@ -543,6 +543,17 @@
     "configuration": {
       "title": "DeepSeek Harness",
       "properties": {
+        "dsh.completionCue": {
+          "type": "string",
+          "enum": [
+            "notification",
+            "bell",
+            "off"
+          ],
+          "default": "off",
+          "scope": "application",
+          "description": "Cue after a live response is rendered while the VS Code window is unfocused. Notification uses VS Code notifications; bell plays a brief sound in the chat. Notification and audio delivery follow the editor, browser and operating system settings."
+        },
         "dsh.editor.enabled": {
           "type": "boolean",
           "default": true,

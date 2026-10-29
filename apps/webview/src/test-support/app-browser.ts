@@ -406,7 +406,7 @@ const api: VsCodeApi = {
 Object.defineProperty(globalThis, 'acquireVsCodeApi', { value: () => api })
 
 interface Target {
-  readonly role: 'button' | 'textbox' | 'tab' | 'radio' | 'checkbox' | 'menuitem'
+  readonly role: 'button' | 'textbox' | 'tab' | 'radio' | 'checkbox' | 'menuitem' | 'option'
   readonly key?: string
   readonly name?: string
   readonly contains?: boolean
@@ -439,6 +439,7 @@ function target(value: Target): HTMLElement {
     radio: 'input[type="radio"],[role="radio"]',
     checkbox: 'input[type="checkbox"],[role="checkbox"]',
     menuitem: '[role="menuitem"],[role="menuitemradio"]',
+    option: '[role="option"]',
   }
   const name = value.key === undefined ? value.name : translate(value.key, value.params)
   const candidates = [...document.querySelectorAll<HTMLElement>(selectors[value.role])].filter(visible)
