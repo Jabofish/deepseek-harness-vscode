@@ -2,7 +2,7 @@
   "name": "jabodsh",
   "displayName": "JaboDSH",
   "description": "Unofficial community client for DeepSeek Harness sessions, tools, and coding tasks.",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "publisher": "Jabofish",
   "icon": "resources/jabodsh.png",
   "license": "MIT",
