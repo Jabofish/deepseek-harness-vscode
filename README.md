@@ -39,6 +39,8 @@ The side bar stays available while editor chat tabs are open. Use the view title
 
 **Open Web UI** uses VS Code's integrated browser by default. To use your system browser, set `dsh.webUi.browser` to `external` in VS Code Settings.
 
+Set `dsh.completionCue` in VS Code Settings to `notification` or `bell` for a cue after a successful live reply renders while VS Code is unfocused; the default is `off`. Notifications use VS Code's notification UI. Desktop popup delivery and sound depend on editor, browser and operating system settings.
+
 To open an editor tab, choose **Open in Editor Area** or run **DSH: Open Chat in Editor Area** (`/moveto:editor`); `/moveto:sidebar` returns the chat. You can drag an opened editor tab to split. Dragging within a manually sorted session list still reorders sessions.
 
 To drag a session directly into a split, run **DSH: Open Drag Sessions** to open **DSH Sessions** in Explorer, then drag a session row to an editor edge. The Explorer list is hidden until you run that command.

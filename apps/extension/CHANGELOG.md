@@ -6,6 +6,9 @@ Release entries describe behaviour at that release. `Unreleased` lists changes a
 
 ## Unreleased
 
+- Add `dsh.completionCue` (`notification`, `bell`, `off`, default `off`) for successfully completed live replies after rendering while VS Code is unfocused. History, failed/cancelled turns and duplicate panel receipts do not trigger cues.
+- 新增 `dsh.completionCue`（通知、短提示音、关闭，默认关闭）：VS Code 失去焦点时，在实时回复成功结束并渲染后提醒；历史、失败或取消的回合及重复面板回执不触发提醒。
+
 ## 0.4.2
 
 - 逐版本适配 DSH `0.2.1-rc.4` 与 `0.2.2-alpha.2`，保留独立精确入口与安装默认。新 alpha 显式激活实时会话；读取历史图片前校验会话归属；支持固定选项的阻塞授权、模型目录刷新和明确的平台不支持错误。DSH 新 alpha 需要 Node >=24.9.0。

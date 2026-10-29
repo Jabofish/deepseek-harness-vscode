@@ -275,6 +275,7 @@ export interface DshSettingsSnapshot {
 }
 
 export interface AppActions {
+  responseRendered(this: void, sessionId: string, turn: number): Promise<boolean>
   featureRequest<T>(this: void, request: FeatureRequest): Promise<T>
   subscribeFeature(this: void, listener: (message: FeatureHostEvent) => void): () => void
   loadAccountLifecycle(): Promise<void>
