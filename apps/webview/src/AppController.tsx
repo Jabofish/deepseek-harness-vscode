@@ -982,6 +982,7 @@ const useAppControllerImpl = () => {
     scheduleOnOpenLinkedSession,
     scheduleOnStartSession,
     sessionControl,
+    sessionOnOpen,
     sessionOnOpenChange,
     setConversationFontSize,
     setConversationView,

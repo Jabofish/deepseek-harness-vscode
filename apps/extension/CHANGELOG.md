@@ -6,6 +6,9 @@ Release entries describe behaviour at that release. `Unreleased` lists changes a
 
 ## Unreleased
 
+- Make the conversation title a keyboard-accessible session dropdown. Sidebar selections switch locally; editor selections open or reveal the chosen session's own tab, preserving drafts and panel ownership.
+- 对话标题改为可用键盘操作的会话下拉选择器。侧边栏内直接切换，编辑器内打开或显示所选会话自己的标签，保留草稿与面板归属。
+
 ## 0.4.2
 
 - 逐版本适配 DSH `0.2.1-rc.4` 与 `0.2.2-alpha.2`，保留独立精确入口与安装默认。新 alpha 显式激活实时会话；读取历史图片前校验会话归属；支持固定选项的阻塞授权、模型目录刷新和明确的平台不支持错误。DSH 新 alpha 需要 Node >=24.9.0。

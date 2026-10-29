@@ -389,6 +389,17 @@ try {
         viewport: (width, height) =>
           send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false }),
         snapshot: () => call('snapshot'),
+        capture: async (name) => {
+          assert(/^[a-z0-9-]+$/u.test(name))
+          await evaluate(
+            'Promise.all(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished.catch(() => undefined)))',
+          )
+          const screenshot = await send('Page.captureScreenshot', { format: 'png' })
+          await writeFile(
+            join(evidence, `${name}-${layout}-${locale}.png`),
+            Buffer.from(screenshot.data, 'base64'),
+          )
+        },
         locale,
         layout,
       }
