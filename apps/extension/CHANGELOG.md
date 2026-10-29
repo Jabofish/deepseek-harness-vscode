@@ -6,6 +6,8 @@ Release entries describe behaviour at that release. `Unreleased` lists changes a
 
 ## Unreleased
 
+- Recover visible chats after Webview delivery outages, including lost recovery notices: back off to one latest-window probe every ten seconds without rereading DSH. Reopening and visibility recovery restore delivery across history rebases; successful delivery permits a later outage notification. Hiding, switching and closing release pending recovery work.
+- 修复 Webview 投递故障连同恢复通知丢失后对话停止更新：退避后每十秒探测投递一次最新有界窗口，不重复读取 DSH；重开和重新显示面板时可跨历史重建恢复投递，成功后允许后续故障再次通知；隐藏、切换或关闭释放待恢复任务。
 - Compact transcript view keeps recent activity and ongoing/error work visible, with a local Show all / Show recent control for earlier traces. Replies, images, plans and user boundaries stay visible; standard/detail modes retain their full activity.
 - 简洁对话视图只保留最近活动及进行中或失败的工作，可通过本地“显示全部 / 只显示最近”活动入口展开早期记录；正文、图片、计划和用户消息保持可见，标准及详细模式仍保留全部活动。
 - Make the conversation title a keyboard-accessible session dropdown. Sidebar selections switch locally; editor selections open or reveal the chosen session's own tab, preserving drafts and panel ownership.

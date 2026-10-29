@@ -213,14 +213,15 @@ describe('Host transcript windows', () => {
     }
   })
 
-  it('reports a permanently lost delivery and asks for a reread after bounded retries', async () => {
+  it('bounds the retry rate for a permanently refused renderer without restarting the burst on rereads', async () => {
     vi.useFakeTimers()
     const sent: (TranscriptWindow | TranscriptPatch)[] = []
     const report = vi.fn()
     const invalidate = vi.fn()
+    const read = vi.fn(() => Promise.resolve({ events: [], hasMore: false }))
     let fullPosts = 0
     const service = new TranscriptWindowService({
-      read: () => Promise.resolve({ events: [], hasMore: false }),
+      read,
       publicValue: (value) => value,
       post: (value) => {
         sent.push(value)
@@ -243,10 +244,134 @@ describe('Host transcript windows', () => {
       expect(report).toHaveBeenLastCalledWith(expect.objectContaining({ retrying: false })),
     )
     expect(invalidate).toHaveBeenCalledWith(sessionId)
+    const immediate = sent.length
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(sent).toHaveLength(immediate + 3)
+    expect(report).toHaveBeenLastCalledWith({ attempt: 7, retrying: false })
     const delivered = sent.length
-    await vi.advanceTimersByTimeAsync(4_000)
-    expect(sent).toHaveLength(delivered)
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(sent).toHaveLength(delivered + 12)
+    expect(invalidate).toHaveBeenCalledTimes(1)
+    const beforeReread = sent.length
+    await service.resync(sessionId, new AbortController().signal)
+    service.accept({
+      type: 'message.delta',
+      sessionId,
+      messageId: 'live',
+      delta: ' after reread',
+      turn: 1,
+      step: 1,
+    })
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(sent).toHaveLength(beforeReread + 3)
+    expect(read).not.toHaveBeenCalled()
     service.dispose()
+  })
+
+  it.each(['hidden', 'switched', 'disposed'] as const)(
+    'releases delayed delivery recovery when the surface is %s',
+    async (action) => {
+      vi.useFakeTimers()
+      const post = vi.fn(() => Promise.resolve(false))
+      const service = new TranscriptWindowService({
+        read: () => Promise.resolve({ events: [], hasMore: false }),
+        publicValue: (value) => value,
+        post,
+      })
+      service.installPage(sessionId, { events: [], hasMore: false }, service.begin(sessionId))
+      service.accept(message(0).event)
+      for (let index = 0; index < 20; index++) await Promise.resolve()
+      expect(post).toHaveBeenCalledTimes(4)
+      if (action === 'hidden') service.setVisible(false)
+      else if (action === 'switched') service.begin('another-session')
+      else service.dispose()
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(post).toHaveBeenCalledTimes(4)
+      service.dispose()
+    },
+  )
+
+  it.each(['reopen', 'latest', 'resync rebase', 'visibility rebase'] as const)(
+    'restores delivery through %s after a refused renderer also loses invalidation',
+    async (route) => {
+      vi.useFakeTimers()
+      let available = false
+      const delivered: TranscriptWindow[] = []
+      const page = { events: [message(0), message(1), message(2)], hasMore: false }
+      const read = vi.fn(() => Promise.resolve(page))
+      const invalidate = vi.fn()
+      const service: TranscriptWindowService = new TranscriptWindowService({
+        read,
+        publicValue: (value) => value,
+        invalidate,
+        post: (window) => {
+          if (available) {
+            delivered.push(window)
+            service.acknowledge(window.sessionId, window.revision)
+          }
+          return Promise.resolve(available)
+        },
+      })
+      try {
+        const initial = service.installPage(
+          sessionId,
+          { events: [], hasMore: false },
+          service.begin(sessionId),
+        )
+        service.accept(message(0).event)
+        await vi.advanceTimersByTimeAsync(5_000)
+        expect(invalidate).toHaveBeenCalledTimes(1)
+        available = true
+        if (route === 'reopen') service.installPage(sessionId, page, service.begin(sessionId))
+        else if (route === 'latest')
+          await service.navigate(sessionId, 'latest', initial.revision + 1, new AbortController().signal)
+        else {
+          service.accept(message(2).event)
+          service.accept(message(1).event)
+          if (route === 'visibility rebase') {
+            service.setVisible(false)
+            service.setVisible(true)
+            expect(invalidate).toHaveBeenCalledTimes(2)
+          }
+          await service.resync(sessionId, new AbortController().signal)
+          expect(read).toHaveBeenCalledTimes(1)
+        }
+        service.accept(message(3).event)
+        await vi.advanceTimersByTimeAsync(15_000)
+        expect(delivered.at(-1)?.nodes.at(-1)).toMatchObject({ markdown: 'Answer 3' })
+      } finally {
+        service.dispose()
+      }
+    },
+  )
+
+  it('notifies a later delivery outage again after successful recovery', async () => {
+    vi.useFakeTimers()
+    let available = false
+    const invalidate = vi.fn()
+    const service: TranscriptWindowService = new TranscriptWindowService({
+      read: () => Promise.resolve({ events: [], hasMore: false }),
+      publicValue: (value) => value,
+      invalidate,
+      post: (window) => {
+        if (available) service.acknowledge(window.sessionId, window.revision)
+        return Promise.resolve(available)
+      },
+    })
+    try {
+      service.installPage(sessionId, { events: [], hasMore: false }, service.begin(sessionId))
+      service.accept(message(0).event)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(invalidate).toHaveBeenCalledTimes(1)
+      available = true
+      await vi.advanceTimersByTimeAsync(500)
+      available = false
+      service.accept(message(1).event)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(invalidate).toHaveBeenCalledTimes(2)
+    } finally {
+      service.dispose()
+    }
   })
 
   it('uses authoritative workingDirectory to qualify relative file models inside the authorized roots', () => {
