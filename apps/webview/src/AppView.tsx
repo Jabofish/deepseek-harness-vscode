@@ -584,6 +584,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                         : {})}
                       panelId={CONVERSATION_VIEW_IDS.chat.panel}
                       panelLabelledBy={CONVERSATION_VIEW_IDS.chat.tab}
+                      onResponseRendered={store.responseRendered}
                       nodes={state.timeline.nodes}
                       {...(state.timeline.nodeChangeStart === undefined
                         ? {}
