@@ -6,6 +6,7 @@ const root = fileURLToPath(new URL('../', import.meta.url))
 const vitest = fileURLToPath(new URL('../node_modules/vitest/vitest.mjs', import.meta.url))
 const contracts = [
   'tests/marketplace-retry.spec.ts',
+  'tests/publish-marketplace.spec.ts',
   'apps/webview/src/app/store-realtime-delivery.spec.ts',
   'apps/webview/src/app/store/feature-actions.tasks.spec.ts',
   'apps/extension/src/tasks/task-center-registry.spec.ts',

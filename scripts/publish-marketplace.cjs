@@ -8,19 +8,25 @@ const repositoryRoot = path.resolve(__dirname, '..')
 const extensionRoot = path.join(repositoryRoot, 'apps', 'extension')
 const extensionRequire = createRequire(path.join(extensionRoot, 'package.json'))
 const vsceRequire = createRequire(extensionRequire.resolve('@vscode/vsce/package.json'))
+const galleryRequire = createRequire(vsceRequire.resolve('azure-devops-node-api/package.json'))
 const packagePath = path.join(repositoryRoot, 'artifacts', 'jabodsh-universal.vsix')
 const marketplaceSocketTimeout = 10 * 60 * 1000
 const maxPublishAttempts = 3
 
-if (!process.env.VSCE_PAT) {
-  throw new Error('VSCE_PAT is required for Marketplace publishing.')
+if (
+  process.env.GITHUB_ACTIONS !== 'true' ||
+  !process.env.ACTIONS_ID_TOKEN_REQUEST_URL ||
+  !process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN
+) {
+  throw new Error('Trusted Marketplace publishing requires GitHub Actions with id-token: write.')
 }
 
 // @vscode/vsce constructs the Azure DevOps client without request options,
 // which makes typed-rest-client abort a publish after three minutes. Patch the
 // shared constructor before loading vsce so slow Marketplace responses get a
 // bounded, explicit timeout without changing the published package.
-const httpClientModule = vsceRequire('typed-rest-client/HttpClient')
+// vsce can use another typed-rest-client version; patch the upload owner's copy.
+const httpClientModule = galleryRequire('typed-rest-client/HttpClient')
 const BaseHttpClient = httpClientModule.HttpClient
 
 httpClientModule.HttpClient = class MarketplaceHttpClient extends BaseHttpClient {
@@ -43,7 +49,7 @@ async function publish() {
     try {
       await publishVSIX(packagePath, {
         cwd: extensionRoot,
-        pat: process.env.VSCE_PAT,
+        oidc: true,
         skipDuplicate: true,
       })
       return
