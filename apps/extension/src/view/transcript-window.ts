@@ -714,7 +714,10 @@ export class TranscriptWindowService {
           this.deps.onCapacity?.(false)
           // A lost-delivery notification must not hide a newly detected
           // history gap. Mark the rebase independently; deduplicate only its signal.
-          this.invalidateIngress()
+          if (!this.invalidated) {
+            this.invalidated = true
+            this.deps.invalidate?.(resident.sessionId)
+          }
         }
         return
       }
@@ -1468,8 +1471,10 @@ export class TranscriptWindowService {
         this.published = undefined
         this.retryDelivery()
       } else {
-        if (!this.needsRebase) this.invalidated = false
+        this.invalidated = false
         this.clearRetry()
+        // A healthy renderer may have missed the earlier gap notification.
+        if (this.needsRebase) this.invalidateIngress()
       }
     } catch {
       if (

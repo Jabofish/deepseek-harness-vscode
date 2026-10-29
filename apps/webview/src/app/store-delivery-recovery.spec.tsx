@@ -15,14 +15,15 @@ afterEach(() => {
 })
 
 it.each([
-  { reject: false, outage: 0 },
-  { reject: true, outage: 700 },
-  { reject: false, outage: 6_000 },
-  { reject: true, outage: 6_000 },
-  { reject: false, outage: 120_000 },
+  { reject: false, outage: 0, rebase: false },
+  { reject: true, outage: 700, rebase: false },
+  { reject: false, outage: 6_000, rebase: false },
+  { reject: true, outage: 6_000, rebase: false },
+  { reject: false, outage: 120_000, rebase: false },
+  { reject: false, outage: 6_000, rebase: true },
 ])(
-  'recovers a completed answer after refused delivery ($reject, $outage ms) without reloading',
-  async ({ reject, outage }) => {
+  'recovers a completed answer after refused delivery ($reject, $outage ms, rebase $rebase) without reloading',
+  async ({ reject, outage, rebase }) => {
     vi.useFakeTimers()
     const sessionId = 'delivery-session'
     const history: { sequence: number; time: string; event: BackendEvent }[] = []
@@ -81,7 +82,9 @@ it.each([
           payload = {}
         }
         if (request.type === 'session.transcript.resync')
-          payload = host.resync(sessionId, new AbortController().signal)
+          payload = host
+            .resync(sessionId, new AbortController().signal)
+            .then((transcript) => ({ transcript }))
         void Promise.resolve(payload).then((payload) =>
           client.handle({
             protocolVersion: PROTOCOL_VERSION,
@@ -91,7 +94,8 @@ it.each([
       },
     })
     const deliver = (name: string, payload: unknown): Promise<boolean> => {
-      if (initialized && name === 'session.transcript.invalidated') return Promise.resolve(false)
+      if (initialized && name === 'session.transcript.invalidated' && !available)
+        return Promise.resolve(false)
       if (
         initialized &&
         (name === 'session.transcript' || name === 'session.transcript.patch') &&
@@ -145,6 +149,28 @@ it.each([
         for (let index = 0; index < 20; index++) await Promise.resolve()
         if (event.type === 'turn.ended') await deliver(event.type, event)
       }
+      if (rebase) {
+        const missed: BackendEvent = {
+          type: 'message.completed',
+          sessionId,
+          messageId: 'delayed-answer',
+          markdown: 'Recovered delayed answer',
+          sequence: 2,
+        }
+        const next: BackendEvent = {
+          type: 'turn.ended',
+          sessionId,
+          turn: 2,
+          reason: 'completed',
+          sequence: 3,
+        }
+        history.push(
+          { sequence: 2, time: '2026-10-29T00:00:00Z', event: missed },
+          { sequence: 3, time: '2026-10-29T00:00:00Z', event: next },
+        )
+        host.accept(next)
+        host.accept(missed)
+      }
       await act(async () => {
         await vi.advanceTimersByTimeAsync(outage)
         available = true
@@ -153,6 +179,20 @@ it.each([
       expect(reports.some((report) => !report.retrying)).toBe(true)
       expect(refusals).toBeLessThanOrEqual(0)
       expect(screen.getByText('Recovered final answer')).toBeDefined()
+      if (rebase) {
+        expect(screen.getByText('Recovered delayed answer')).toBeDefined()
+        await act(async () => {
+          host.accept({
+            type: 'message.completed',
+            sessionId,
+            messageId: 'following-answer',
+            markdown: 'Following answer still streams',
+            sequence: 4,
+          })
+          await vi.advanceTimersByTimeAsync(100)
+        })
+        expect(screen.getByText('Following answer still streams')).toBeDefined()
+      }
     } finally {
       host.dispose()
       store.dispose()

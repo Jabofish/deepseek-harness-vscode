@@ -296,12 +296,11 @@ describe('Host transcript windows', () => {
     async (route) => {
       vi.useFakeTimers()
       let available = false
-      let service!: TranscriptWindowService
       const delivered: TranscriptWindow[] = []
       const page = { events: [message(0), message(1), message(2)], hasMore: false }
       const read = vi.fn(() => Promise.resolve(page))
       const invalidate = vi.fn()
-      service = new TranscriptWindowService({
+      const service: TranscriptWindowService = new TranscriptWindowService({
         read,
         publicValue: (value) => value,
         invalidate,
@@ -349,9 +348,8 @@ describe('Host transcript windows', () => {
   it('notifies a later delivery outage again after successful recovery', async () => {
     vi.useFakeTimers()
     let available = false
-    let service!: TranscriptWindowService
     const invalidate = vi.fn()
-    service = new TranscriptWindowService({
+    const service: TranscriptWindowService = new TranscriptWindowService({
       read: () => Promise.resolve({ events: [], hasMore: false }),
       publicValue: (value) => value,
       invalidate,
