@@ -119,8 +119,25 @@ function publish(sessionId: string, next: readonly TimelineNode[]): void {
   event('session.transcript', transcript(sessionId))
 }
 const settings = {
-  schema: { version: 'daily-ui-fixture', writable: true, hasDocument: false, fields: [], namespaces: [] },
-  values: {},
+  schema: {
+    version: 'daily-ui-fixture',
+    writable: true,
+    hasDocument: false,
+    fields: owner.includes('compact-activity')
+      ? [
+          {
+            path: 'ui-chat.transcriptView',
+            label: 'transcriptView',
+            type: 'enum',
+            required: false,
+            restartRequired: false,
+            enumValues: ['compact', 'standard', 'detailed', 'verbose'],
+          },
+        ]
+      : [],
+    namespaces: [],
+  },
+  values: owner.includes('compact-activity') ? { 'ui-chat': { transcriptView: 'compact' } } : {},
 }
 function reply(request: WebviewRequest, payload: unknown, error = false): void {
   const envelope = hostEnvelopeSchema.parse({
@@ -438,7 +455,7 @@ function target(value: Target): HTMLElement {
   return element
 }
 const scenario = {
-  label: (key: string): string => translate(key),
+  label: (key: string, params?: Readonly<Record<string, string | number>>): string => translate(key, params),
   async point(value: Target): Promise<{ x: number; y: number }> {
     let element = target(value)
     element.scrollIntoView({ block: 'nearest', inline: 'nearest' })
@@ -586,6 +603,37 @@ const scenario = {
     // Count content as rendered rather than depending on how React or the
     // Markdown renderer divides it across text nodes and elements.
     return (root.textContent ?? '').split(text).length - 1
+  },
+  activityMetrics(): { height: number; top: number; rows: number } {
+    const timeline = document.querySelector<HTMLElement>('.dsh-timeline')
+    if (timeline === null) throw new Error('Timeline is not mounted')
+    return {
+      height: timeline.clientHeight,
+      top: timeline.getBoundingClientRect().top,
+      rows: [...timeline.querySelectorAll<HTMLElement>('[data-node-id]')].filter(
+        (row) => row.getClientRects().length > 0,
+      ).length,
+    }
+  },
+  compactActivities(): void {
+    status(lastOpened, 'running')
+    publish(lastOpened, [
+      ...(nodes.get(lastOpened) ?? []),
+      ...Array.from({ length: 8 }, (_, index): TimelineNode => ({
+        kind: 'tool',
+        id: `activity-${index}`,
+        tool: {
+          id: `activity-${index}`,
+          name: 'read',
+          title: `Activity ${index}`,
+          inputSummary: `Activity ${index}`,
+          category: 'read',
+          status: index === 7 ? 'running' : 'completed',
+          turn: index + 2,
+          metadata: {},
+        },
+      })),
+    ])
   },
 }
 declare global {

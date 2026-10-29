@@ -552,6 +552,11 @@
   font-size: var(--dsh-font-size-xs);
 }
 
+.dsh-timeline__activity-toggle {
+  align-self: flex-start;
+  flex: 0 0 auto;
+}
+
 .dsh-timeline__history-more-skeleton {
   width: var(--dsh-space-3);
   height: var(--dsh-space-1);
