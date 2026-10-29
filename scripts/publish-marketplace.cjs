@@ -12,8 +12,12 @@ const packagePath = path.join(repositoryRoot, 'artifacts', 'jabodsh-universal.vs
 const marketplaceSocketTimeout = 10 * 60 * 1000
 const maxPublishAttempts = 3
 
-if (!process.env.VSCE_PAT) {
-  throw new Error('VSCE_PAT is required for Marketplace publishing.')
+if (
+  process.env.GITHUB_ACTIONS !== 'true' ||
+  !process.env.ACTIONS_ID_TOKEN_REQUEST_URL ||
+  !process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN
+) {
+  throw new Error('Trusted Marketplace publishing requires GitHub Actions with id-token: write.')
 }
 
 // @vscode/vsce constructs the Azure DevOps client without request options,
@@ -43,7 +47,7 @@ async function publish() {
     try {
       await publishVSIX(packagePath, {
         cwd: extensionRoot,
-        pat: process.env.VSCE_PAT,
+        oidc: true,
         skipDuplicate: true,
       })
       return
