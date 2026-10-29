@@ -112,6 +112,19 @@
   white-space: nowrap;
 }
 
+.dsh-conversation__header-title.dsh-session-title-picker {
+  overflow: visible;
+}
+
+.dsh-session-title-picker > .dsh-select-menu__trigger {
+  justify-content: flex-start;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  color: inherit;
+  font: inherit;
+}
+
 .dsh-conversation__views {
   display: flex;
   align-items: center;

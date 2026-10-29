@@ -829,6 +829,14 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     getState: () => state,
     subscribe: (listener, keys) =>
       disposed ? () => undefined : subscriptions.subscribe(listener, state, keys),
+    responseRendered: async (sessionId, turn) => {
+      const result = await client.request<{ bell?: unknown }>({
+        type: 'surface.responseRendered',
+        requestId: requestId(),
+        payload: { sessionId, turn },
+      })
+      return result?.bell === true
+    },
     watchSessionTurnEnd: (sessionId) => turnWatchers.watch(sessionId),
     ...lifecycleActions,
     refreshSessions: refresh,
