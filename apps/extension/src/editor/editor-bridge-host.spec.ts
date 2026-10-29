@@ -96,7 +96,7 @@ vi.mock('./companion-update.js', () => ({ companionNeedsUpdate: vi.fn(() => Prom
 vi.mock('./companion-prerequisites.js', () => ({
   checkCompanionPackageManager: () => Promise.resolve('ready'),
   prepareCompanionPackageManager: vi.fn(() => Promise.resolve()),
-  PNPM_INSTALL_COMMAND: 'npm install --global pnpm@11.19.0',
+  PNPM_INSTALL_COMMAND: 'npm install --global pnpm@11.19.0 --ignore-scripts',
   PNPM_INSTALL_GUIDE: 'https://pnpm.io/installation',
 }))
 vi.mock('./editor-companion-provider.js', () => ({
