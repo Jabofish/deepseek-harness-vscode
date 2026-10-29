@@ -256,6 +256,17 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     signal: AbortSignal,
     surfaceId: string | undefined,
   ): Promise<unknown> => {
+    if (request.type === 'surface.responseRendered') {
+      signal.throwIfAborted()
+      const surface = surfaceId === undefined ? undefined : surfaces.get(surfaceId)
+      if (
+        !surface?.isReady ||
+        !deps.transcript.hasSurface(surface.surfaceId) ||
+        deps.transcript.forSurface(surface.surfaceId).activeSessionId() !== request.payload.sessionId
+      )
+        return { bell: false }
+      return deps.responseRendered?.(request.payload.sessionId, request.payload.turn) ?? { bell: false }
+    }
     if (request.type === 'ui.events.ack') {
       if (surfaceId !== undefined) deps.acknowledgeHostEvents?.(surfaceId, request.payload.sequence)
       return {}

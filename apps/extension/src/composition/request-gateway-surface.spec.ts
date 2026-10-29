@@ -20,6 +20,7 @@ const host = vi.hoisted(() => {
     createGate: undefined as Promise<void> | undefined,
     createStarted: false,
     connectCount: 0,
+    responseRendered: vi.fn(() => ({ bell: true })),
   }
 })
 
@@ -151,6 +152,7 @@ function buildGateway(): Harness {
   host.createGate = undefined
   host.createStarted = false
   host.connectCount = 0
+  host.responseRendered.mockClear()
   const sent: Sent[] = []
   const events: Sent[] = []
   const rejected = new Set<string>()
@@ -172,6 +174,7 @@ function buildGateway(): Harness {
   const watchVisibility: { readonly surfaceId: string; readonly visible: boolean }[] = []
   let sidebarVisible: ((visible: boolean) => void) | undefined
   const gateway = createRequestGateway({
+    responseRendered: host.responseRendered,
     transcript,
     post: (message: unknown) => {
       record(sent, undefined, message)
@@ -296,6 +299,28 @@ describe('request gateway editor surface routes', () => {
 
   beforeEach(() => {
     harness = buildGateway()
+  })
+
+  it('accepts response render receipts only from the ready surface displaying that session', async () => {
+    harness.openSidebar()
+    await harness.gateway.router.handle(request('app.ready', 'ready'), 'sidebar')
+    const window = harness.transcript.forSurface('sidebar')
+    window.installPage('s', { events: [], hasMore: false }, window.begin('s'))
+    for (const [source, sessionId] of [
+      ['editor-foreign', 's'],
+      ['sidebar', 'foreign'],
+    ] as const)
+      await harness.gateway.router.handle(
+        request('surface.responseRendered', `${source}-${sessionId}`, { sessionId, turn: 1 }),
+        source,
+      )
+    expect(host.responseRendered).not.toHaveBeenCalled()
+    await harness.gateway.router.handle(
+      request('surface.responseRendered', 'rendered', { sessionId: 's', turn: 1 }),
+      'sidebar',
+    )
+    expect(host.responseRendered).toHaveBeenCalledExactlyOnceWith('s', 1)
+    expect(harness.sent.find((entry) => entry.requestId === 'rendered')?.payload).toEqual({ bell: true })
   })
 
   it('serves complete live nodes only through the owning surface and scoped session', async () => {

@@ -39,6 +39,8 @@ DeepSeek Harness 的 Chat 视图默认注册在辅助侧边栏（VS Code 默认�
 
 标题栏的 **Open Web UI** 默认使用 VS Code 内置浏览器。若要使用系统浏览器，在 VS Code 设置中将 `dsh.webUi.browser` 改为 `external`。
 
+在 VS Code 设置中将 `dsh.completionCue` 设为 `notification`（通知）或 `bell`（短提示音），可在 VS Code 失去焦点、实时回复成功结束并渲染后提醒；默认 `off`（关闭）。通知使用 VS Code 通知界面；桌面弹窗和声音的实际投递受编辑器、浏览器及操作系统设置影响。
+
 选择 **在编辑器区打开** 或执行 **DSH: Open Chat in Editor Area**（`/moveto:editor`）打开标签，`/moveto:sidebar` 可移回侧边栏。也可拖动已打开的编辑器标签分栏。手动排序时，列表内拖动仍用于调整顺序。
 
 要直接拖拽会话分栏，可执行 **DSH: Open Drag Sessions**，在资源管理器中打开 **DSH Sessions**，将会话行拖到编辑器边缘即可分栏打开。运行该命令后才会显示资源管理器中的会话列表。

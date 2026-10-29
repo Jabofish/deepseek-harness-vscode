@@ -32,6 +32,7 @@ import { ConversationActionItems } from './features/shell/ConversationActionItem
 import { createAppStore, type AppState, type AppStore } from './app/store.js'
 import { sameShallowSelection, useAppStoreSelector } from './app/useAppStoreSelector.js'
 import { selectAppViewState, APP_VIEW_SUBSCRIPTION } from './app/store/view-state.js'
+import { useCompletionCue } from './app/useCompletionCue.js'
 import { selectSessionModels } from './app/store/model-directory-state.js'
 import { activateDraftOwner, clearDraftIf, readDraft, resetDraft } from './app/draft-store.js'
 import { publicProtocolErrorMessage } from './app/protocol-client.js'
@@ -72,6 +73,7 @@ const useAppControllerImpl = () => {
   const disposeTimerRef = useRef<number | undefined>(undefined)
   const popupSelects = useMemo(() => new PopupSelectRegistry(), [])
   const state = useAppStoreSelector(store, selectAppViewState, sameShallowSelection, APP_VIEW_SUBSCRIPTION)
+  useCompletionCue(store, state.timeline)
   useEffect(() => {
     mountedRef.current = true
     // A remount (error-boundary recovery, test render) must not inherit the
