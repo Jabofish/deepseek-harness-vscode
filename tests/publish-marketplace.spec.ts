@@ -16,15 +16,28 @@ const oidcEnvironment = {
 async function runPublisher(
   publishVSIX = vi.fn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
   env: Record<string, string> = oidcEnvironment,
+  onRequest: (timeout: number | undefined) => void = () => undefined,
 ): Promise<{ delays: number[]; exitCode?: number; errors: unknown[][] }> {
   const delays: number[] = []
   const errors: unknown[][] = []
   const process = { env, exitCode: undefined as number | undefined }
-  const http = { HttpClient: class {} }
+  class HttpClient {
+    constructor(_agent: unknown, _handlers: unknown, options?: { socketTimeout?: number }) {
+      onRequest(options?.socketTimeout)
+    }
+  }
+  const http = { HttpClient }
+  const otherHttp = { HttpClient }
   const dependency = Object.assign(
     (name: string): unknown => {
-      if (name === 'typed-rest-client/HttpClient') return http
-      if (name === '@vscode/vsce') return { publishVSIX }
+      if (name === 'typed-rest-client/HttpClient') return otherHttp
+      if (name === '@vscode/vsce')
+        return {
+          publishVSIX: (...args: unknown[]) => {
+            new http.HttpClient('fixture', [], { socketTimeout: 180_000 })
+            return publishVSIX(...args)
+          },
+        }
       throw new Error(`Unexpected dependency ${name}`)
     },
     { resolve: (name: string) => name },
@@ -35,7 +48,16 @@ async function runPublisher(
     process,
     require: (name: string): unknown => {
       if (name === 'node:path') return path
-      if (name === 'node:module') return { createRequire: () => dependency }
+      if (name === 'node:module')
+        return {
+          createRequire: (manifest: string) =>
+            manifest === 'azure-devops-node-api/package.json'
+              ? (name: string) => {
+                  if (name === 'typed-rest-client/HttpClient') return http
+                  throw new Error(`Unexpected Azure dependency ${name}`)
+                }
+              : dependency,
+        }
       if (name === './marketplace-retry.cjs') return retry
       throw new Error(`Unexpected require ${name}`)
     },
@@ -49,6 +71,12 @@ async function runPublisher(
 }
 
 describe('Trusted Marketplace publisher', () => {
+  it('applies the ten-minute timeout to the upload client when vsce has another HTTP module instance', async () => {
+    const onRequest = vi.fn()
+    await runPublisher(undefined, oidcEnvironment, onRequest)
+    expect(onRequest).toHaveBeenCalledExactlyOnceWith(600_000)
+  })
+
   it('authenticates through OIDC even if a legacy PAT is present, and skips duplicate versions', async () => {
     const publish = vi.fn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined)
     const result = await runPublisher(publish, { ...oidcEnvironment, VSCE_PAT: 'unused-fixture-pat' })
