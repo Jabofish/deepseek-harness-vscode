@@ -21,9 +21,15 @@ interface Fixture {
   readonly store: AppStore
   readonly mount: () => ReturnType<typeof render>
   readonly refuseMove: () => void
+  readonly loadAll: () => Promise<void>
+  readonly holdMove: () => () => void
 }
 
-async function fixture(blank = false, searchable = false): Promise<Fixture> {
+async function fixture({
+  blank = false,
+  searchable = false,
+  partial = false,
+}: { blank?: boolean; searchable?: boolean; partial?: boolean } = {}): Promise<Fixture> {
   const { WebviewMessageRouter } = await vi.importActual<{
     WebviewMessageRouter: new (deps: {
       postMessage(message: HostMessage | FeatureHostMessage): Promise<boolean>
@@ -58,18 +64,37 @@ async function fixture(blank = false, searchable = false): Promise<Fixture> {
     blank: blank && id === 'a',
     status: 'completed',
     createdAt: time,
-    updatedAt: time,
+    updatedAt: `2026-01-0${index + 1}T00:00:00.000Z`,
   }))
   let refuseNextMove = false
+  let moveGate: Promise<void> | undefined
   const repository = new Rc6WorkspaceRepository({
     // Synthetic DSH wire: ordering is durable here, outside the rendered Store.
-    request: (
+    request: async (
       method: string,
-      payload: { workspaceId: string; sessionId: string; beforeSessionId?: string },
+      payload: {
+        workspaceId: string
+        sessionId: string
+        beforeSessionId?: string
+        beforeWorkspaceId?: string
+      },
     ) => {
       if (method === 'workspace.list')
-        return Promise.resolve({ result: { ok: true, value: { items: workspaces, archivedSessionIds: [] } } })
+        return { result: { ok: true, value: { items: workspaces, archivedSessionIds: [] } } }
+      const workspace = workspaces.find((item) => item.workspaceId === payload.workspaceId)
+      if (workspace === undefined) throw new Error('Unknown fixture workspace')
+      if (method === 'workspace.insertBefore') {
+        const remaining = workspaces.filter((item) => item !== workspace)
+        const index =
+          payload.beforeWorkspaceId === undefined
+            ? remaining.length
+            : remaining.findIndex((item) => item.workspaceId === payload.beforeWorkspaceId)
+        if (index < 0) throw new Error('Unknown fixture workspace anchor')
+        workspaces = [...remaining.slice(0, index), workspace, ...remaining.slice(index)]
+        return { result: { ok: true, value: { workspaceIds: workspaces.map((item) => item.workspaceId) } } }
+      }
       if (method !== 'workspace.insertSessionBefore') throw new Error(`Unexpected RPC: ${method}`)
+      await moveGate
       if (refuseNextMove) {
         refuseNextMove = false
         throw new AppError({
@@ -78,16 +103,17 @@ async function fixture(blank = false, searchable = false): Promise<Fixture> {
           retryable: true,
         })
       }
-      const workspace = workspaces.find((item) => item.workspaceId === payload.workspaceId)!
+      if (!workspace.sessionIds.includes(payload.sessionId)) throw new Error('Unknown fixture session')
       const remaining = workspace.sessionIds.filter((id) => id !== payload.sessionId)
       const index =
         payload.beforeSessionId === undefined ? remaining.length : remaining.indexOf(payload.beforeSessionId)
+      if (index < 0) throw new Error('Unknown fixture session anchor')
       const moved = {
         ...workspace,
         sessionIds: [...remaining.slice(0, index), payload.sessionId, ...remaining.slice(index)],
       }
       workspaces = workspaces.map((item) => (item === workspace ? moved : item))
-      return Promise.resolve({ result: { ok: true, value: { workspace: moved } } })
+      return { result: { ok: true, value: { workspace: moved } } }
     },
   })
   const router = new WebviewMessageRouter({
@@ -97,7 +123,12 @@ async function fixture(blank = false, searchable = false): Promise<Fixture> {
     },
     handleRequest: async (request, signal) => {
       if (request.type === 'session.list')
-        return { items: sessions.filter((session) => session.title.includes(request.payload.search ?? '')) }
+        return {
+          items: sessions.filter(
+            (session) =>
+              (!partial || session.id !== 'c') && session.title.includes(request.payload.search ?? ''),
+          ),
+        }
       if (request.type === 'workspace.list')
         return {
           items: (await repository.list(signal)).map(({ path: _path, ...workspace }) => workspace),
@@ -110,6 +141,8 @@ async function fixture(blank = false, searchable = false): Promise<Fixture> {
           request.payload.beforeSessionId,
           signal,
         )
+      if (request.type === 'workspace.move')
+        return repository.insertBefore(request.payload.workspaceId, request.payload.beforeWorkspaceId, signal)
       return []
     },
   })
@@ -162,6 +195,20 @@ async function fixture(blank = false, searchable = false): Promise<Fixture> {
     refuseMove: () => {
       refuseNextMove = true
     },
+    loadAll: async () => {
+      partial = false
+      await store.refreshSessions()
+    },
+    holdMove: () => {
+      let release = (): void => undefined
+      moveGate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      return () => {
+        moveGate = undefined
+        release()
+      }
+    },
   }
 }
 
@@ -182,10 +229,9 @@ function drag(source: string, target?: string): void {
     getData: (type: string) => values.get(type) ?? '',
   }
   const sourceRow = row(source)
-  fireEvent.dragStart(sourceRow, { dataTransfer })
+  if (!fireEvent.dragStart(sourceRow, { dataTransfer })) return
   if (target !== undefined) {
-    fireEvent.dragOver(row(target), { dataTransfer })
-    fireEvent.drop(row(target), { dataTransfer })
+    if (!fireEvent.dragOver(row(target), { dataTransfer })) fireEvent.drop(row(target), { dataTransfer })
   }
   fireEvent.dragEnd(sourceRow, { dataTransfer })
 }
@@ -240,7 +286,7 @@ it('reports a refused move, preserves the order and allows retry', async () => {
 })
 
 it('keeps the current blank session first while rearranging completed conversations', async () => {
-  const f = await fixture(true)
+  const f = await fixture({ blank: true })
   f.mount()
   drag(titles[1]!, titles[2])
   await waitFor(() => expect(visibleOrder()).toEqual([titles[0], titles[2], titles[1]]))
@@ -251,7 +297,7 @@ it('keeps the current blank session first while rearranging completed conversati
 })
 
 it('preserves hidden conversations when rearranging a filtered list', async () => {
-  const f = await fixture(false, true)
+  const f = await fixture({ searchable: true })
   f.mount()
   fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'match' } })
   expect(visibleOrder()).toEqual([titles[0], titles[2]])
@@ -265,8 +311,53 @@ it('does not rearrange a list sorted by last updated', async () => {
   const f = await fixture()
   f.mount()
   fireEvent.click(screen.getByRole('button', { name: 'Sort sessions by last updated' }))
+  expect(visibleOrder()).toEqual([titles[2], titles[1], titles[0]])
   drag(titles[0]!, titles[1])
   fireEvent.click(screen.getByRole('button', { name: 'Sort sessions by manual order' }))
   await act(() => f.store.refreshSessions())
   expect(visibleOrder()).toEqual(titles.slice(0, 3))
+})
+
+it('places a downward drop before the following member even when that member has not loaded', async () => {
+  const f = await fixture({ partial: true })
+  f.mount()
+  expect(visibleOrder()).toEqual(titles.slice(0, 2))
+  drag(titles[0]!, titles[1])
+  await waitFor(() => expect(visibleOrder()).toEqual([titles[1], titles[0]]))
+  await act(() => f.loadAll())
+  expect(visibleOrder()).toEqual([titles[1], titles[0], titles[2]])
+})
+
+it('keeps workspace order unchanged while a session move is pending', async () => {
+  const f = await fixture()
+  f.mount()
+  const release = f.holdMove()
+  try {
+    drag(titles[0]!, titles[1])
+    await waitFor(() =>
+      expect(
+        screen.getByRole<HTMLButtonElement>('button', {
+          name: /^(?!Session actions).*Beta conversation/u,
+        }).disabled,
+      ).toBe(true),
+    )
+    const source = screen.getByRole('button', { name: 'Two1' }).closest('.dsh-session-switcher__workspace')!
+    const target = screen.getByRole('button', { name: 'One3' }).closest('.dsh-session-switcher__workspace')!
+    const values = new Map<string, string>()
+    const dataTransfer = {
+      effectAllowed: '',
+      dropEffect: '',
+      setData: (type: string, value: string) => values.set(type, value),
+      getData: (type: string) => values.get(type) ?? '',
+    }
+    if (fireEvent.dragStart(source, { dataTransfer }) && !fireEvent.dragOver(target, { dataTransfer }))
+      fireEvent.drop(target, { dataTransfer })
+    fireEvent.dragEnd(source, { dataTransfer })
+  } finally {
+    release()
+  }
+  await waitFor(() => expect(visibleOrder()).toEqual([titles[1], titles[0], titles[2]]))
+  expect(
+    screen.getAllByRole('button', { name: /^(One|Two)\d$/u }).map((button) => button.textContent),
+  ).toEqual(['One3', 'Two1'])
 })

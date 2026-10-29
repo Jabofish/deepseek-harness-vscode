@@ -19,21 +19,34 @@ export const dailyScenarios = [
     name: 'daily/session-reorder',
     coverage: ['SS-01'],
     async run(ui) {
-      if ((await ui.snapshot()).sessionTitles.length === 0) await ui.call('toggleSessions')
       const order = ['Alpha conversation', 'Beta conversation', 'Gamma conversation']
-      await ui.waitFor((s) => s.sessionTitles.length === 3, 'session list')
-      assert.deepEqual((await ui.snapshot()).sessionTitles, order)
-      await ui.capture('session-order-before')
-      await ui.call('dragSession', order[0], order[1])
-      await ui.waitFor(
-        (s) => s.sessionTitles.join() === [order[1], order[0], order[2]].join(),
-        'downward reorder',
-      )
-      await ui.call('dragSession', order[0], order[2])
-      await ui.waitFor((s) => s.sessionTitles.join() === [order[1], order[2], order[0]].join(), 'move to end')
-      await ui.capture('session-order-after')
-      await ui.call('dragSession', order[0], order[1])
-      await ui.waitFor((s) => s.sessionTitles.join() === order.join(), 'upward reorder')
+      for (const width of [1080, 480]) {
+        await ui.viewport(width, 720)
+        await ui.afterPaint()
+        if ((await ui.snapshot()).sessionTitles.length === 0) await ui.call('toggleSessions')
+        await ui.waitFor((s) => s.sessionTitles.length === 3, 'session list')
+        assert.deepEqual((await ui.snapshot()).sessionTitles, order)
+        await ui.capture(`session-order-before-${width}`)
+        await ui.call('hold', 'session.move')
+        await ui.call('dragSession', order[0], order[1])
+        await ui.waitFor((s) => s.pending.includes('session.move'), 'pending move')
+        await ui.call('dragSession', order[2], order[1])
+        await ui.call('release')
+        const moved = [order[1], order[0], order[2]]
+        await ui.waitFor((s) => s.sessionTitles.join() === moved.join(), 'downward reorder')
+        await ui.call('failNext', 'session.move')
+        await ui.call('dragSession', order[0], order[2])
+        await ui.waitFor((s) => s.text.includes('Fixture delivery refused'), 'move failure')
+        assert.deepEqual((await ui.snapshot()).sessionTitles, moved)
+        await ui.call('dragSession', order[0], order[2])
+        await ui.waitFor(
+          (s) => s.sessionTitles.join() === [order[1], order[2], order[0]].join(),
+          'retry to end',
+        )
+        await ui.capture(`session-order-after-${width}`)
+        await ui.call('dragSession', order[0], order[1])
+        await ui.waitFor((s) => s.sessionTitles.join() === order.join(), 'upward reorder')
+      }
     },
   },
   {

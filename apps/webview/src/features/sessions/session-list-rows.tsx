@@ -193,13 +193,17 @@ export function WorkspaceCard({
 }: WorkspaceCardProps): ReactElement {
   const { t } = useI18n()
   const displayName = workspaceDisplayName(workspace.name, t)
+  const canReorder = sorting === 'manual' && !busy
   return (
     <div
       className={`dsh-session-switcher__workspace${selected ? ' dsh-session-switcher__workspace--active' : ''}`}
-      draggable={sorting === 'manual'}
-      title={sorting === 'manual' ? t('sessions.dragWorkspace') : undefined}
+      draggable={canReorder}
+      title={canReorder ? t('sessions.dragWorkspace') : undefined}
       onDragStart={(event) => {
-        if (sorting !== 'manual') return
+        if (!canReorder) {
+          event.preventDefault()
+          return
+        }
         event.dataTransfer.effectAllowed = 'move'
         event.dataTransfer.setData(
           ORDER_DRAG_MIME,
@@ -207,12 +211,12 @@ export function WorkspaceCard({
         )
       }}
       onDragOver={(event) => {
-        if (sorting !== 'manual') return
+        if (!canReorder) return
         event.preventDefault()
         event.dataTransfer.dropEffect = 'move'
       }}
       onDrop={(event) => {
-        if (sorting !== 'manual') return
+        if (!canReorder) return
         const drag = readOrderDrag(event.dataTransfer)
         if (drag?.kind !== 'workspace' || drag.itemId === workspace.id) return
         event.preventDefault()

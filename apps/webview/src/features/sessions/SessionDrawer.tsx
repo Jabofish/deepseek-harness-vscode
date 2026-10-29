@@ -33,7 +33,6 @@ import {
   projectSessionLists,
   renameConflictFor,
   sanitizeSearchQuery,
-  sortSessions,
   workspaceDisplayName,
   workspaceSessionsFor,
   type ArchiveFilter,
@@ -357,20 +356,25 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
     if (sorting !== 'manual' || mutationBusy || removingSessionId !== undefined) return
     const workspace = props.workspaces.find((item) => item.id === workspaceId)
     if (workspace === undefined) return
-    // Use the complete workspace order so filtered-out rows keep their place.
+    const members = workspaceSessions(workspace)
+    const sourceSession = members.find((item) => item.id === sessionId)
+    const targetSession = members.find((item) => item.id === targetSessionId)
+    if (
+      sourceSession === undefined ||
+      targetSession === undefined ||
+      sourceSession.blank ||
+      targetSession.blank
+    )
+      return
+    // Preserve native members whose summaries have not loaded, too. Summaries
+    // alone cannot distinguish the last visible row from the workspace tail.
+    const ordered = [...new Set([...(workspace.sessionIds ?? []), ...members.map((item) => item.id)])]
     // A downward row drop belongs after the target; inserting before it would
     // leave adjacent rows unchanged and make reaching the end impossible.
-    const ordered = sortSessions(
-      workspaceSessions(workspace),
-      'manual',
-      workspace.sessionIds,
-      props.activeSessionId,
-    )
-    const source = ordered.findIndex((item) => item.id === sessionId)
-    const target = ordered.findIndex((item) => item.id === targetSessionId)
-    if (source < 0 || target < 0 || source === target || ordered[source]?.blank || ordered[target]?.blank)
-      return
-    const beforeSessionId = source < target ? ordered[target + 1]?.id : targetSessionId
+    const source = ordered.indexOf(sessionId)
+    const target = ordered.indexOf(targetSessionId)
+    if (source === target) return
+    const beforeSessionId = source < target ? ordered[target + 1] : targetSessionId
     setMoveError(undefined)
     setMutationBusy(true)
     void props
@@ -382,10 +386,15 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
   }
 
   const moveWorkspace = (workspaceId: string, beforeWorkspaceId: string): void => {
+    if (sorting !== 'manual' || mutationBusy || removingSessionId !== undefined) return
     setMoveError(undefined)
-    void props.onMoveWorkspace(workspaceId, beforeWorkspaceId).catch((reason: unknown) => {
-      setMoveError(reason instanceof Error ? reason.message : t('sessions.moveFailed'))
-    })
+    setMutationBusy(true)
+    void props
+      .onMoveWorkspace(workspaceId, beforeWorkspaceId)
+      .catch((reason: unknown) => {
+        setMoveError(reason instanceof Error ? reason.message : t('sessions.moveFailed'))
+      })
+      .finally(() => setMutationBusy(false))
   }
 
   const startRename = (target: RenameTarget): void => {

@@ -192,11 +192,17 @@ function route(request: WebviewRequest): unknown {
               ),
       }
     case 'session.move': {
+      if (
+        request.payload.workspaceId !== 'daily-workspace' ||
+        !sessionOrder.includes(request.payload.sessionId)
+      )
+        throw new Error('Unknown fixture session membership')
       const remaining = sessionOrder.filter((id) => id !== request.payload.sessionId)
       const index =
         request.payload.beforeSessionId === undefined
           ? remaining.length
           : remaining.indexOf(request.payload.beforeSessionId)
+      if (index < 0) throw new Error('Unknown fixture session anchor')
       sessionOrder = [...remaining.slice(0, index), request.payload.sessionId, ...remaining.slice(index)]
       return {}
     }
@@ -557,13 +563,11 @@ const scenario = {
     const from = row(source),
       to = row(destination)
     const dataTransfer = new DataTransfer()
-    for (const [element, type] of [
-      [from, 'dragstart'],
-      [to, 'dragover'],
-      [to, 'drop'],
-      [from, 'dragend'],
-    ] as const)
+    const dispatch = (element: HTMLElement, type: string): boolean =>
       element.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer }))
+    if (!dispatch(from, 'dragstart')) return
+    if (!dispatch(to, 'dragover')) dispatch(to, 'drop')
+    dispatch(from, 'dragend')
   },
   toggleSessions(): void {
     event('ui.sessions.toggle', {})
@@ -597,7 +601,11 @@ const scenario = {
     holds.clear()
     for (const request of waiting.values()) {
       waiting.delete(request.requestId)
-      reply(request, route(request))
+      try {
+        reply(request, route(request))
+      } catch {
+        reply(request, undefined, true)
+      }
     }
   },
   status(value: SessionSummary['status']): void {
