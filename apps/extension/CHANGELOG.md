@@ -6,6 +6,11 @@ Release entries describe behaviour at that release. `Unreleased` lists changes a
 
 ## Unreleased
 
+## 0.4.4
+
+- Link installation instructions to the live JaboDSH Marketplace listing.
+- Simplify setup and support documentation and update JaboDSH labels.
+
 ## 0.4.3
 
 - 更名为 JaboDSH（`Jabofish.jabodsh`），使用独立图标并明确社区项目身份。保留 `dsh.*` 设置与命令；安装前请停用旧扩展，外部连接需要重新授权，旧扩展私有数据不会自动迁移。
