@@ -1,5 +1,5 @@
 {
-  "timeline.activity.showAll": "Show all activity ({count} earlier groups)",
+  "timeline.activity.showAll": "Show all activity",
   "timeline.activity.showRecent": "Show recent activity",
   "settings.activityPresentation.label": "Process display",
   "settings.activityPresentation.hint": "Quiet keeps thinking and tool activity stable while running. Details appear when finished or when you expand them. The answer continues streaming. Auto follows VS Code screen-reader mode. Saved locally.",

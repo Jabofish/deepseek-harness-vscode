@@ -40,18 +40,21 @@ it.each(['classic', 'focused'] as const)(
       </ConversationLayoutProvider>
     )
     const result = render(view('compact'))
+    const foldedRows = result.container.querySelectorAll('[data-node-id]').length
     expect(screen.getByText('Keep this question')).toBeDefined()
-    const showAll = screen.getByRole('button', { name: 'Show all activity (6 earlier groups)' })
+    const showAll = screen.getByRole('button', { name: 'Show all activity' })
     expect(showAll.getAttribute('aria-expanded')).toBe('false')
     fireEvent.click(showAll)
+    expect(result.container.querySelectorAll('[data-node-id]').length).toBeGreaterThan(foldedRows)
     expect(screen.getByRole('button', { name: 'Show recent activity' }).getAttribute('aria-expanded')).toBe(
       'true',
     )
     fireEvent.click(screen.getByRole('button', { name: 'Show recent activity' }))
+    expect(result.container.querySelectorAll('[data-node-id]').length).toBe(foldedRows)
     result.rerender(view('compact', true))
     expect(screen.getByRole('button', { name: 'Show recent activity' })).toBeDefined()
     fireEvent.click(screen.getByRole('button', { name: 'Show recent activity' }))
-    expect(screen.getByRole('button', { name: 'Show all activity (6 earlier groups)' })).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Show all activity' })).toBeDefined()
     result.rerender(view('standard'))
     expect(screen.queryByRole('button', { name: /Show all activity/ })).toBeNull()
     expect(source).toHaveLength(9)

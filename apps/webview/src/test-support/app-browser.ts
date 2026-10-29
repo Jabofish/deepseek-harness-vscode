@@ -603,6 +603,17 @@ const scenario = {
     // Markdown renderer divides it across text nodes and elements.
     return (root.textContent ?? '').split(text).length - 1
   },
+  activityMetrics(): { height: number; top: number; rows: number } {
+    const timeline = document.querySelector<HTMLElement>('.dsh-timeline')
+    if (timeline === null) throw new Error('Timeline is not mounted')
+    return {
+      height: timeline.clientHeight,
+      top: timeline.getBoundingClientRect().top,
+      rows: [...timeline.querySelectorAll<HTMLElement>('[data-node-id]')].filter(
+        (row) => row.getClientRects().length > 0,
+      ).length,
+    }
+  },
   compactActivities(): void {
     status(lastOpened, 'running')
     publish(lastOpened, [

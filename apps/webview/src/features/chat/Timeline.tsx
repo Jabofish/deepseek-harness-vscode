@@ -239,7 +239,7 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
       displayProjector(
         activityNodes,
         showDshEvents,
-        conversationLayout === 'focused' ? 'verbose' : transcriptView,
+        conversationLayout === 'focused' || transcriptView === 'compact' ? 'verbose' : transcriptView,
         activityNodes === sourceNodes ? changeStart : undefined,
         activityNodes === sourceNodes ? changeBase : undefined,
       ),
@@ -986,24 +986,6 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
       className="dsh-timeline-shell"
       onClickCapture={rememberOpenLinkTrigger}
     >
-      {compactProjection.hidden === 0 ? null : (
-        <button
-          type="button"
-          className="dsh-timeline__history-more-button dsh-timeline__activity-toggle"
-          aria-expanded={allActivity}
-          aria-controls={activityRegionId}
-          onClick={() =>
-            setActivityDisclosure({
-              expanded: !allActivity,
-              ...(revealKey === undefined ? {} : { dismissedReveal: revealKey }),
-            })
-          }
-        >
-          {allActivity
-            ? t('timeline.activity.showRecent')
-            : t('timeline.activity.showAll', { count: compactProjection.hidden })}
-        </button>
-      )}
       <div
         id={activityRegionId}
         key={props.sessionId}
@@ -1141,6 +1123,22 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
           ) : null}
         </div>
         <TurnProgressAnnouncement sessionId={props.sessionId} running={running} translate={t} />
+        {compactProjection.hidden === 0 ? null : (
+          <button
+            type="button"
+            className="dsh-timeline__history-more-button dsh-timeline__activity-toggle"
+            aria-expanded={allActivity}
+            aria-controls={activityRegionId}
+            onClick={() =>
+              setActivityDisclosure({
+                expanded: !allActivity,
+                ...(revealKey === undefined ? {} : { dismissedReveal: revealKey }),
+              })
+            }
+          >
+            {allActivity ? t('timeline.activity.showRecent') : t('timeline.activity.showAll')}
+          </button>
+        )}
         {/* Mounted only while an outcome is up, like the per-row copy button. */}
         {copyFallbackAnnounced ? (
           <span className="dsh-sr-only" role="status">

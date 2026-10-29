@@ -19,15 +19,26 @@ export const dailyScenarios = [
     name: 'daily/compact-activity',
     coverage: ['READ-01'],
     async run(ui) {
+      await ui.afterPaint()
+      const before = await ui.call('activityMetrics')
       await ui.call('compactActivities')
       const all = await ui.call('label', 'timeline.activity.showAll', { count: 6 })
       await ui.waitFor((s) => s.controls.some((c) => c.name === all), 'earlier activity collapsed')
+      await ui.afterPaint()
+      const folded = await ui.call('activityMetrics')
+      assert.equal(folded.height, before.height, 'activity disclosure preserves the scroll viewport')
+      assert.equal(folded.top, before.top, 'activity disclosure does not move the scroll viewport')
       assert((await ui.snapshot()).timeline.includes('Answer owned by Alpha conversation'))
       await ui.click({ role: 'button', name: all })
       const recent = await ui.call('label', 'timeline.activity.showRecent')
       await ui.waitFor((s) => s.controls.some((c) => c.name === recent), 'all activity expanded')
+      await ui.afterPaint()
+      const expanded = await ui.call('activityMetrics')
+      assert(expanded.rows > folded.rows, 'expansion reveals actual transcript rows')
       await ui.click({ role: 'button', name: recent })
       await ui.waitFor((s) => s.controls.some((c) => c.name === all), 'older activity collapsed again')
+      await ui.afterPaint()
+      assert.equal((await ui.call('activityMetrics')).rows, folded.rows)
     },
   },
   {

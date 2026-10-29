@@ -98,7 +98,7 @@ describe('Long-session timeline stress', { tags: ['stress'] }, () => {
       try {
         expect(nodes).toHaveLength(10_000)
         expect(view.container.textContent).toContain('The final answer survives activity folding')
-        fireEvent.click(view.getByRole('button', { name: 'Show all activity (9997 earlier groups)' }))
+        fireEvent.click(view.getByRole('button', { name: 'Show all activity' }))
         const expanded = measure(view.container, 0)
         expect(expanded.rows).toBeGreaterThan(0)
         expect(expanded.rows).toBeLessThan(MAX_EXPECTED_ROWS)

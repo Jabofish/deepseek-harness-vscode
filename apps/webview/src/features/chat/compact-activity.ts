@@ -44,21 +44,33 @@ export function compactActivity<Node extends ActivityNode>(
   readonly nodes: readonly Node[]
   readonly hidden: number
 } {
-  const hidden = new Set<number>()
-  let run: number[] = []
-  const flush = (): void => {
-    const completed = run.filter((index) => settled(nodes[index]!))
-    const keep = run.length > completed.length ? 1 : 2
-    for (const index of completed.slice(0, -keep)) hidden.add(index)
-    run = []
+  let result: Node[] | undefined
+  let hidden = 0
+  let index = 0
+  while (index < nodes.length) {
+    if (!trace(nodes[index]!)) {
+      result?.push(nodes[index]!)
+      index++
+      continue
+    }
+    const start = index
+    let completed = 0
+    while (index < nodes.length && trace(nodes[index]!)) {
+      if (settled(nodes[index]!)) completed++
+      index++
+    }
+    const keep = completed < index - start ? 1 : 2
+    let omit = Math.max(0, completed - keep)
+    hidden += omit
+    if (omit > 0) result ??= nodes.slice(0, start)
+    if (result === undefined) continue
+    // Allocate only the retained output, not index sets and full-run arrays
+    // on every streaming delta. The original nodes remain immutable.
+    for (let cursor = start; cursor < index; cursor++) {
+      const node = nodes[cursor]!
+      if (omit > 0 && settled(node)) omit--
+      else result.push(node)
+    }
   }
-  nodes.forEach((node, index) => {
-    if (trace(node)) run.push(index)
-    else flush()
-  })
-  flush()
-  return {
-    nodes: hidden.size === 0 ? nodes : nodes.filter((_, index) => !hidden.has(index)),
-    hidden: hidden.size,
-  }
+  return { nodes: result ?? nodes, hidden }
 }
