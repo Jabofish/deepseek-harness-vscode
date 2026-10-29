@@ -17,6 +17,9 @@ afterEach(() => {
 it.each([
   { reject: false, outage: 0 },
   { reject: true, outage: 700 },
+  { reject: false, outage: 6_000 },
+  { reject: true, outage: 6_000 },
+  { reject: false, outage: 120_000 },
 ])(
   'recovers a completed answer after refused delivery ($reject, $outage ms) without reloading',
   async ({ reject, outage }) => {

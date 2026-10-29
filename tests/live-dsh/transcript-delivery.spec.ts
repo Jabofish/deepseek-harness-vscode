@@ -169,8 +169,11 @@ describe.skipIf(!enabled)('native alpha212 transcript delivery recovery', () => 
       expect(
         persisted.events.some(({ event }) => event.type === 'message.completed' && event.markdown === answer),
       ).toBe(true)
+      // Outlast the initial 4.25-second recovery chain while also losing its
+      // invalidation. The retained answer must still reach a healthy renderer.
+      await new Promise((resolve) => setTimeout(resolve, 5_000))
       available = true
-      await vi.waitFor(() => expect(delivered).toBe(true), { timeout: 10_000 })
+      await vi.waitFor(() => expect(delivered).toBe(true), { timeout: 15_000 })
       console.info(
         `[dsh-live-delivery] ${version}: native append/persistence -> Adapter event -> Host retained reply -> recovered delivery passed; no model call`,
       )

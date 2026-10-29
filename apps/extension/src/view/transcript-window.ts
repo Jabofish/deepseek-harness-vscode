@@ -43,6 +43,7 @@ const MESSAGE_NODE_CHARS = TRANSCRIPT_MAX_CHARS - 192 * 1024
 const DELIVERY_RETRY_LIMIT = 3
 /** A transiently unavailable visible renderer may also miss the invalidation. */
 const DELIVERY_RECOVERY_DELAYS = [250, 1_000, 3_000] as const
+const DELIVERY_RECOVERY_MAX_DELAY = 10_000
 interface PendingOpen {
   readonly sessionId: string
   readonly generation: number
@@ -162,10 +163,10 @@ export class TranscriptWindowService {
 
   public begin(sessionId: string, child = false, recovery = false): number {
     this.cancelRecovery()
-    if (this.activeSessionId() !== sessionId) {
+    if (this.activeSessionId() !== sessionId || !recovery) {
       this.clearRetry()
-      this.deliverySuspended = false
     }
+    this.deliverySuspended = false
     if (!recovery) this.overloadBudget = { started: performance.now(), count: 0 }
     const generation = ++this.generation
     this.deliveryEpoch++
@@ -240,6 +241,7 @@ export class TranscriptWindowService {
     this.displayed = resident
     this.forward.length = 0
     this.invalidated = false
+    this.deliverySuspended = false
     this.recentEvents.clear()
     for (const entry of page.events) this.rememberIdentity(entry.event, entry.sequence)
     this.sameSequence.clear()
@@ -544,6 +546,11 @@ export class TranscriptWindowService {
     const becameVisible = visible && !this.visible
     this.visible = visible
     if (!visible) this.cancelRecovery()
+    if (becameVisible) {
+      this.deliverySuspended = false
+      this.clearRetry()
+      this.invalidated = false
+    }
     if (visible && this.needsRebase) {
       this.invalidateIngress()
       return
@@ -551,11 +558,6 @@ export class TranscriptWindowService {
     if (visible) this.flushIngress(false, false)
     if (visible && this.previewCanResume()) this.deps.onCapacity?.(true)
     if (visible && this.displayed !== undefined) {
-      if (becameVisible) {
-        this.deliverySuspended = false
-        this.clearRetry()
-        this.invalidated = false
-      }
       if (this.tail !== undefined) this.ensureProjected(this.tail)
       this.ensureProjected(this.displayed)
       this.deliveryEpoch++
@@ -706,12 +708,13 @@ export class TranscriptWindowService {
         // An Adapter recovery may fill an already-published view. Reread its
         // authoritative window; do not sort, backfill or replay another journal.
         const known = this.recentEvents.has(eventIdentity(event, sequence))
-        if (!known && sequence >= (resident.before ?? 0) && this.pending === undefined && !this.invalidated) {
+        if (!known && sequence >= (resident.before ?? 0) && this.pending === undefined) {
           this.needsRebase = true
           this.noteOverload()
           this.deps.onCapacity?.(false)
-          this.invalidated = true
-          this.deps.invalidate?.(resident.sessionId)
+          // A lost-delivery notification must not hide a newly detected
+          // history gap. Mark the rebase independently; deduplicate only its signal.
+          this.invalidateIngress()
         }
         return
       }
@@ -1299,14 +1302,8 @@ export class TranscriptWindowService {
   }
 
   private scheduleDeliveryRecovery(): void {
-    const delay = DELIVERY_RECOVERY_DELAYS[this.recoveryAttempt]
-    if (
-      !this.visible ||
-      this.displayed === undefined ||
-      this.recoveryTimer !== undefined ||
-      delay === undefined
-    )
-      return
+    const delay = DELIVERY_RECOVERY_DELAYS[this.recoveryAttempt] ?? DELIVERY_RECOVERY_MAX_DELAY
+    if (!this.visible || this.displayed === undefined || this.recoveryTimer !== undefined) return
     const generation = this.generation
     const resident = this.displayed
     this.recoveryAttempt++
@@ -1328,8 +1325,9 @@ export class TranscriptWindowService {
   /**
    * A failed post leaves the newest window untouched in the renderer. Retry a
    * bounded number of times, then ask for the same reread a sequence gap uses.
-   * A few delayed window posts also cover a lost recovery notification. They
-   * never reread DSH, buffer old frames, or loop on a permanently refused view.
+   * Delayed latest-window posts cover a lost recovery notification. After the
+   * fast attempts, a visible view is probed at most once every ten seconds.
+   * They never reread DSH or queue historical frames.
    */
   private retryDelivery(): void {
     this.dirty = true
@@ -1470,6 +1468,7 @@ export class TranscriptWindowService {
         this.published = undefined
         this.retryDelivery()
       } else {
+        if (!this.needsRebase) this.invalidated = false
         this.clearRetry()
       }
     } catch {
