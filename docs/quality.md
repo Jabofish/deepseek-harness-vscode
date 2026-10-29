@@ -6,7 +6,7 @@ Use this guide to choose checks, run tests and report results. Setup and PR subm
 
 Use the Node/pnpm requirements in the root [package.json](../package.json), and the VS Code requirement in the [extension manifest](../apps/extension/package.json). Install with `pnpm install --frozen-lockfile`; do not regenerate the lockfile as a setup workaround. Commands below run from the repository root.
 
-Open that root in VS Code, create the ignored `.test-workspace/` directory for the launch configuration, and select **Run DSH VS Code Extension**. F5 runs the `build` pre-launch task and starts an Extension Development Host; Ctrl+F5 runs without the debugger. `pnpm dev` watches extension and Webview builds. The launch configuration enables the development managed-runtime path; use disposable workspaces/sessions and check the selected connection settings before connecting.
+Open that root in VS Code, create the ignored `.test-workspace/` directory for the launch configuration, and select **Run JaboDSH Extension**. F5 runs the `build` pre-launch task and starts an Extension Development Host; Ctrl+F5 runs without the debugger. `pnpm dev` watches extension and Webview builds. The launch configuration enables the development managed-runtime path; use disposable workspaces/sessions and check the selected connection settings before connecting.
 
 If debugger attachment fails on an IPv6 probe, run without debugging first. The optional `node scripts/patch-js-debug-ipv6-probe.cjs` helper addresses the known single-address probe failure; confirm that diagnosis before modifying VS Code's installed debugger. Use `--restore` after an upstream fix or to undo the patch. Record an extension-host launch failure as a blocked check.
 

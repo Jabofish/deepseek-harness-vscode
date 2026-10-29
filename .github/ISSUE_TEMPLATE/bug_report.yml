@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         English or 中文 is welcome. Include reproduction steps and the versions below.
-        Use `DSH: Show Redacted Diagnostics` for diagnostics and inspect the output before posting.
+        Use `JaboDSH: Show Redacted Diagnostics` for diagnostics and inspect the output before posting.
         Remove API keys, passwords, tokens, prompts, tool bodies and private paths.
   - type: dropdown
     id: os
@@ -73,7 +73,7 @@ body:
     id: diagnostics
     attributes:
       label: Redacted diagnostics
-      description: 'Output of `DSH: Show Redacted Diagnostics`, if available.'
+      description: 'Output of `JaboDSH: Show Redacted Diagnostics`, if available.'
   - type: textarea
     id: logs
     attributes:
