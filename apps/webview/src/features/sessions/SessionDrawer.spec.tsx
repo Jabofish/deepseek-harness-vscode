@@ -307,7 +307,10 @@ describe('SessionDrawer', () => {
     })
     fireEvent.compositionStart(input)
     fireEvent.click(trigger)
-    fireEvent.click(trigger)
+    await act(async () => {
+      fireEvent.click(trigger)
+      await Promise.resolve()
+    })
     fireEvent.keyDown(screen.getByRole('searchbox'), { key: 'Enter' })
     expect(onOpen).toHaveBeenCalledExactlyOnceWith('s2')
   })
@@ -334,6 +337,32 @@ describe('SessionDrawer', () => {
     expect(onOpen).not.toHaveBeenCalled()
     expect(screen.getByText('Write docs')).toBeDefined()
     expect(screen.getByText('Other workspace note')).toBeDefined()
+  })
+
+  it('waits for a fresh content search when reopening the same query', async () => {
+    let resolveSearch!: (value: { items: readonly SessionSummary[] }) => void
+    const pending = new Promise<{ items: readonly SessionSummary[] }>((resolve) => {
+      resolveSearch = resolve
+    })
+    const onSearch = vi.fn().mockResolvedValueOnce({ items: [] }).mockReturnValue(pending)
+    const onOpen = vi.fn()
+    renderDrawer({ open: undefined, showTrigger: true, onOpen, onSearch })
+    const trigger = screen.getByRole('button', { name: /Fix login bug/u })
+    fireEvent.click(trigger)
+    await act(async () => {
+      fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'docs' } })
+      await Promise.resolve()
+    })
+    fireEvent.keyDown(screen.getByRole('searchbox'), { key: 'Escape' })
+    fireEvent.click(trigger)
+    fireEvent.keyDown(screen.getByRole('searchbox'), { key: 'Enter' })
+    expect(onOpen).not.toHaveBeenCalled()
+    await act(async () => {
+      resolveSearch({ items: [sessions[2]!] })
+      await Promise.resolve()
+    })
+    fireEvent.keyDown(screen.getByRole('searchbox'), { key: 'Enter' })
+    expect(onOpen).not.toHaveBeenCalled()
   })
 
   it('opens a unique content match from another workspace using the same search action', async () => {

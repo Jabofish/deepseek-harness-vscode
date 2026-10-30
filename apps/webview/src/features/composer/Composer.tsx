@@ -294,7 +294,6 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
     referenceKey,
     menuOpen,
     referenceMenuOpen,
-    menuHighlight,
     menuDismissed,
     highlight,
     referenceHighlightValue,
@@ -509,7 +508,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
         !event.altKey &&
         !event.repeat
       ) {
-        const selected = menuHighlight === undefined ? menuRows[0] : menuRows[menuHighlight]
+        const selected = highlight === undefined ? menuRows[0] : menuRows[highlight]
         if (selected !== undefined) {
           event.preventDefault()
           applyCommandSelection(
@@ -522,7 +521,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
         return
       }
       if (event.key === 'Enter' && !event.shiftKey && !event.repeat) {
-        const highlighted = menuHighlight === undefined ? undefined : menuRows[menuHighlight]
+        const highlighted = highlight === undefined ? undefined : menuRows[highlight]
         if (highlighted !== undefined) {
           event.preventDefault()
           pickMenuRow(highlighted)

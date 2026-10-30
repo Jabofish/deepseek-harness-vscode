@@ -171,7 +171,11 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
     visibleWorkspaces[0]
   const selectedWorkspaceKey = selectedWorkspace?.id
   const trimmedSearchQuery = searchQuery.trim()
-  const { contentSearch, unavailable: contentSearchUnavailable } = useSessionContentSearch({
+  const {
+    contentSearch,
+    unavailable: contentSearchUnavailable,
+    pending: contentSearchPending,
+  } = useSessionContentSearch({
     open,
     query: trimmedSearchQuery,
     archiveFilter,
@@ -742,7 +746,7 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
                   event.nativeEvent.isComposing ||
                   event.nativeEvent.keyCode === 229 ||
                   query === '' ||
-                  contentSearch.query !== trimmedSearchQuery ||
+                  contentSearchPending ||
                   archiveFilter === 'archived' ||
                   contentSearchHasMore ||
                   (archiveFilter !== 'hide' && archivedOpen && filteredArchivedSessions.length > 0) ||

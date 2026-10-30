@@ -16,6 +16,65 @@ const clear = async (ui) => {
 export const dailyScenarios = [
   ...additionalScenarios,
   {
+    name: 'daily/diagnostics-streaming-and-action-failure',
+    coverage: ['NAV-01', 'SESSION-04'],
+    async run(ui) {
+      await ui.call('hold', 'diagnostics.snapshot')
+      await ui.click(button('app.conversationActions'))
+      await ui.click(button('diagnostics.open'))
+      await ui.waitFor((s) => s.pending.includes('diagnostics.snapshot'), 'pending diagnostic read')
+      await ui.call('reasoning', 'First streamed update', true)
+      await ui.afterPaint()
+      await ui.call('reasoning', 'Second streamed update', true)
+      await ui.afterPaint()
+      assert.equal((await ui.snapshot()).requests.filter((r) => r.type === 'diagnostics.snapshot').length, 1)
+      await ui.call('release')
+      await ui.waitFor((s) => s.text.includes('0.1.11'), 'accepted diagnostics')
+      await ui.call('failNext', 'connection.retry')
+      await ui.click(button('diagnostics.reconnect'))
+      const failure = await ui.call('label', 'diagnostics.actionFailed')
+      await ui.waitFor((s) => s.text.includes(failure), 'reconnect failure')
+      await ui.waitFor(
+        (s) =>
+          s.requests.filter((r) => r.type === 'diagnostics.snapshot').length >= 2 &&
+          !s.pending.includes('diagnostics.snapshot'),
+        'background diagnostic refresh',
+      )
+      await ui.afterPaint()
+      assert((await ui.snapshot()).text.includes(failure), 'background refresh preserves action failure')
+    },
+  },
+  {
+    name: 'daily/reopened-session-search-pending',
+    coverage: ['SESSION-03', 'SESSION-04'],
+    async run(ui) {
+      await ui.viewport(480, 720)
+      await ui.afterPaint()
+      const searchLabel = await ui.call('label', 'sessions.searchAria')
+      if (!(await ui.snapshot()).controls.some((c) => c.name === searchLabel)) await ui.call('toggleSessions')
+      await ui.click({ role: 'textbox', name: searchLabel })
+      await ui.type('Beta')
+      await ui.waitFor((s) => s.sessionTitles.join() === 'Beta conversation', 'title match')
+      await ui.key('Escape')
+      await ui.call('hold', 'session.list')
+      await ui.call('toggleSessions')
+      await ui.waitFor(
+        (s) =>
+          s.pending.includes('session.list') &&
+          s.focus === searchLabel &&
+          s.requests.filter((r) => r.type === 'session.list' && r.payload.search === 'Beta').length >= 2,
+        'reopened search waiting for content',
+      )
+      await ui.key('Enter')
+      assert.equal((await ui.snapshot()).opened, 'daily-a')
+      await ui.call('release')
+      await ui.waitFor((s) => !s.pending.includes('session.list'), 'content search completed')
+      await ui.afterPaint()
+      await ui.key('Enter')
+      await ui.waitFor((s) => s.opened === 'daily-b', 'fresh unique result opens')
+    },
+  },
+  {
     name: 'daily/rc215-reasoning',
     coverage: ['READ-01'],
     async run(ui) {

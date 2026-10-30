@@ -654,15 +654,21 @@ const useAppControllerImpl = () => {
     const title = before.sessions.find((session) => session.id === sessionId)?.title ?? ''
     return store
       .removeSession(sessionId)
-      .then(() => {
-        const current = store.getState()
-        if (current.connectionEpoch === before.connectionEpoch && current.sessionRestore === true)
-          setArchivedSession({ id: sessionId, title, connectionEpoch: before.connectionEpoch })
-      })
       .catch((reason: unknown) => {
         const message = reason instanceof Error ? reason.message : t('app.error.archiveSession')
-        setError(message)
+        if (store.getState().connectionEpoch === before.connectionEpoch) setError(message)
         throw reason
+      })
+      .finally(() => {
+        // A follow-up refresh/open may fail after the Host has accepted the
+        // archive. Preserve recovery for that durable transition as well.
+        const current = store.getState()
+        if (
+          current.connectionEpoch === before.connectionEpoch &&
+          current.sessionRestore === true &&
+          current.archivedSessionIds.includes(sessionId)
+        )
+          setArchivedSession({ id: sessionId, title, connectionEpoch: before.connectionEpoch })
       })
   })
   const sessionOnUndoArchive = useStableCallback((): void => {

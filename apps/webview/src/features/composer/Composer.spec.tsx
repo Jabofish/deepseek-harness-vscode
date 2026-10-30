@@ -355,6 +355,33 @@ describe('Composer model availability notice', () => {
     expect(onCommand).not.toHaveBeenCalled()
   })
 
+  it('completes a visible suggestion when the command catalogue changes under the highlight', () => {
+    const onCommand = vi.fn()
+    function Controlled({ commands }: { readonly commands: readonly DynamicCommand[] }): ReactElement {
+      const [draft, setDraft] = useState('/cl')
+      return (
+        <Composer
+          {...baseProps()}
+          draft={draft}
+          commands={commands}
+          onCommand={onCommand}
+          onDraftChange={setDraft}
+        />
+      )
+    }
+    const clear = { name: 'clear', description: 'Clear conversation' }
+    const view = render(
+      <Controlled commands={[clear, { name: 'clone', description: 'Clone conversation' }]} />,
+    )
+    const textarea = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+    fireEvent.keyDown(textarea, { key: 'ArrowDown' })
+    fireEvent.keyDown(textarea, { key: 'ArrowDown' })
+    view.rerender(<Controlled commands={[clear]} />)
+    fireEvent.keyDown(textarea, { key: 'Tab' })
+    expect(textarea.value).toBe('/clear')
+    expect(onCommand).not.toHaveBeenCalled()
+  })
+
   it('walks through sent prompts with ↑ and restores the empty draft with ↓', () => {
     render(<ControlledComposer promptHistory={['newest prompt', 'older prompt']} />)
     const textarea = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })

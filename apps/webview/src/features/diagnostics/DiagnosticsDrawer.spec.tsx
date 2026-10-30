@@ -106,6 +106,31 @@ describe('DiagnosticsDrawer', () => {
     expect(screen.getByText('0.1.9')).toBeDefined()
   })
 
+  it('keeps a failed reconnect visible when a background snapshot read succeeds', async () => {
+    const onRead = vi.fn().mockResolvedValue(baseSnapshot)
+    render(
+      <DiagnosticsDrawer
+        onRead={onRead}
+        onReconnect={vi.fn().mockRejectedValue(new Error('Reconnect failed'))}
+        onShowOutput={vi.fn()}
+      />,
+    )
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /diagnostics/i }))
+      await Promise.resolve()
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }))
+      await Promise.resolve()
+    })
+    expect(screen.getByRole('alert')).toBeDefined()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000)
+    })
+    expect(onRead).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('alert')).toBeDefined()
+  })
+
   it('keeps a slow poll single and reads fresh diagnostics after reconnecting', async () => {
     let resolvePoll!: (snapshot: DiagnosticsSnapshot) => void
     const poll = new Promise<DiagnosticsSnapshot>((resolve) => {

@@ -6,6 +6,7 @@ import { Icon } from '../../ui/Icon.js'
 import { DiagnosticsDrawer } from '../diagnostics/DiagnosticsDrawer.js'
 
 export interface RuntimeMissingViewProps {
+  readonly connectionEpoch?: number
   readonly searchedLocations: readonly string[]
   readonly busyAction: 'install' | 'select' | undefined
   readonly onAction: (action: 'install' | 'select' | 'copy-command' | 'open-docs') => void
@@ -74,6 +75,7 @@ export function RuntimeMissingView(props: RuntimeMissingViewProps): ReactElement
         props.onReconnectDiagnostics === undefined ||
         props.onShowDiagnosticsOutput === undefined ? null : (
           <DiagnosticsDrawer
+            key={props.connectionEpoch}
             onRead={props.onReadDiagnostics}
             onReconnect={props.onReconnectDiagnostics}
             onShowOutput={props.onShowDiagnosticsOutput}

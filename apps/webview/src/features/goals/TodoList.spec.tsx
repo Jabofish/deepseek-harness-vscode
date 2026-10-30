@@ -27,4 +27,15 @@ describe('TodoList', () => {
     fireEvent.keyDown(toggle, { key: 'Escape' })
     expect(toggle.getAttribute('aria-expanded')).toBe('false')
   })
+
+  it('returns keyboard focus to the toggle when Escape hides the focused task list', () => {
+    render(<TodoList todos={todos} />)
+    const toggle = screen.getByRole('button', { name: 'Expand tasks' })
+    fireEvent.click(toggle)
+    const list = screen.getByRole('list')
+    list.focus()
+    fireEvent.keyDown(list, { key: 'Escape' })
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(document.activeElement).toBe(toggle)
+  })
 })

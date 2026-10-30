@@ -1,4 +1,4 @@
-import { memo, useMemo, useState, type ReactElement } from 'react'
+import { memo, useMemo, useRef, useState, type ReactElement } from 'react'
 import type { TodoView } from '@dsh-vscode/domain'
 import { ContentFlow } from '../../components/common/ContentFlow.js'
 import { useI18n } from '../../i18n.js'
@@ -14,6 +14,7 @@ export const TodoList = memo(function TodoList({ todos }: TodoListProps): ReactE
   const { t } = useI18n()
   const quiet = useQuietActivity()
   const [open, setOpen] = useState(false)
+  const toggleRef = useRef<HTMLButtonElement>(null)
   const { completed, current } = useMemo(() => summarizeTodos(todos), [todos])
   if (todos.length === 0) return null
   return (
@@ -31,6 +32,7 @@ export const TodoList = memo(function TodoList({ todos }: TodoListProps): ReactE
           event.preventDefault()
           event.stopPropagation()
           setOpen(false)
+          toggleRef.current?.focus({ preventScroll: true })
         }
       }}
       onClick={(event) => {
@@ -41,6 +43,7 @@ export const TodoList = memo(function TodoList({ todos }: TodoListProps): ReactE
       }}
     >
       <button
+        ref={toggleRef}
         className="dsh-todo-list__toggle"
         type="button"
         aria-expanded={open}

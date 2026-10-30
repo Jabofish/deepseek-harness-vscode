@@ -24,7 +24,9 @@ export function DiagnosticsDrawer(props: DiagnosticsDrawerProps): ReactElement {
   const [snapshot, setSnapshot] = useState<DiagnosticsSnapshot | undefined>(undefined)
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState(false)
+  const [readError, setReadError] = useState(false)
+  const [actionError, setActionError] = useState(false)
+  const error = readError || actionError
   const openRef = useRef(false)
   const readGeneration = useRef(0)
   const pendingRead = useRef<Promise<DiagnosticsSnapshot | undefined> | undefined>(undefined)
@@ -46,7 +48,10 @@ export function DiagnosticsDrawer(props: DiagnosticsDrawerProps): ReactElement {
       if (!openRef.current || (silent && pendingRead.current !== undefined)) return
       const generation = ++readGeneration.current
       if (!silent) setLoading(true)
-      if (!silent) setError(false)
+      if (!silent) {
+        setReadError(false)
+        setActionError(false)
+      }
       let pending = pendingRead.current
       if (pending === undefined) {
         try {
@@ -63,11 +68,11 @@ export function DiagnosticsDrawer(props: DiagnosticsDrawerProps): ReactElement {
         if (generation !== readGeneration.current || !openRef.current) return
         if (next === undefined) throw new Error('Diagnostics snapshot unavailable')
         setSnapshot(next)
-        setError(false)
+        setReadError(false)
       } catch {
         if (generation !== readGeneration.current || !openRef.current) return
         if (!silent) setSnapshot(undefined)
-        setError(true)
+        setReadError(true)
       } finally {
         if (pendingRead.current === pending) pendingRead.current = undefined
         if (!silent && generation === readGeneration.current && openRef.current) setLoading(false)
@@ -130,7 +135,8 @@ export function DiagnosticsDrawer(props: DiagnosticsDrawerProps): ReactElement {
   const run = async (action: () => Promise<void>): Promise<void> => {
     const generation = readGeneration.current
     setBusy(true)
-    setError(false)
+    setReadError(false)
+    setActionError(false)
     try {
       await action()
       // A poll started before the action cannot describe its result. Drain
@@ -139,7 +145,7 @@ export function DiagnosticsDrawer(props: DiagnosticsDrawerProps): ReactElement {
       if (!openRef.current || generation !== readGeneration.current) return
       await load()
     } catch {
-      if (openRef.current && generation === readGeneration.current) setError(true)
+      if (openRef.current && generation === readGeneration.current) setActionError(true)
     } finally {
       setBusy(false)
     }

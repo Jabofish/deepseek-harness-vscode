@@ -173,6 +173,15 @@ function route(request: WebviewRequest): unknown {
     case 'connection.retry':
       event('connection.snapshot', { kind: 'connected' })
       return {}
+    case 'diagnostics.snapshot':
+      return {
+        extensionVersion: '0.1.11',
+        dshVersion: '0.2.1-rc.5',
+        state: 'connected',
+        endpointKind: 'managed',
+        canReconnect: true,
+        recentEvents: [],
+      }
     case 'workspace.list':
       return [
         {

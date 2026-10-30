@@ -345,6 +345,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
         <section className="dsh-app__body">
           {backend.kind === 'runtime-missing' ? (
             <RuntimeMissingView
+              connectionEpoch={state.connectionEpoch ?? 0}
               searchedLocations={backend.searchedLocations}
               busyAction={busyAction}
               onAction={runRuntimeAction}
