@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { SessionSummary } from '@dsh-vscode/domain'
 
 const SEARCH_RESULT_LIMIT = 20
@@ -19,49 +19,54 @@ export function useSessionContentSearch(options: {
     readonly searchHasMore: boolean
   }
   unavailable: boolean
+  pending: boolean
 } {
   const { open, query, archiveFilter, onSearch } = options
-  const [contentSearch, setContentSearch] = useState<{
-    readonly query: string
+  // Query text alone does not identify a read: reopening a drawer or changing
+  // its search source requires a fresh result even when the text is unchanged.
+  const request = useMemo(
+    () => ({ open, query, archiveFilter, onSearch }),
+    [open, query, archiveFilter, onSearch],
+  )
+  const [result, setResult] = useState<{
+    readonly request: typeof request
     readonly matches: readonly SessionSummary[]
     readonly searchHasMore: boolean
-  }>({ query: '', matches: [], searchHasMore: false })
-  const [unavailable, setUnavailable] = useState(false)
-  const searchSequence = useRef(0)
+    readonly unavailable: boolean
+  }>()
+  const enabled = open && query !== '' && archiveFilter !== 'archived'
 
   useEffect(() => {
-    const sequence = searchSequence.current + 1
-    searchSequence.current = sequence
-    // The previous query's failure must not linger under a new query.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setUnavailable(false)
-    if (!open || query === '' || archiveFilter === 'archived') {
-      setContentSearch({ query, matches: [], searchHasMore: false })
-      return
-    }
+    if (!enabled) return
     let retired = false
-    void onSearch(query)
-      .then((page) => {
-        if (retired || searchSequence.current !== sequence) return
-        setContentSearch({
-          query,
+    const search = async (): Promise<void> => {
+      try {
+        const page = await request.onSearch(request.query)
+        if (retired) return
+        setResult({
+          request,
           matches: page.items.slice(0, SEARCH_RESULT_LIMIT),
-          searchHasMore: page.searchHasMore === true,
+          searchHasMore: page.searchHasMore === true || page.items.length > SEARCH_RESULT_LIMIT,
+          unavailable: false,
         })
-        setUnavailable(false)
-      })
-      .catch(() => {
-        if (retired || searchSequence.current !== sequence) return
+      } catch {
+        if (retired) return
         // A refused content search leaves the name filter as the only result
         // source; reporting the empty list as "no matches" would claim the
         // host searched and found nothing.
-        setContentSearch({ query, matches: [], searchHasMore: false })
-        setUnavailable(true)
-      })
+        setResult({ request, matches: [], searchHasMore: false, unavailable: true })
+      }
+    }
+    void search()
     return () => {
       retired = true
     }
-  }, [archiveFilter, onSearch, open, query])
+  }, [enabled, request])
 
-  return { contentSearch, unavailable }
+  const current = enabled && result?.request === request ? result : undefined
+  return {
+    contentSearch: { query, matches: current?.matches ?? [], searchHasMore: current?.searchHasMore === true },
+    unavailable: current?.unavailable === true,
+    pending: enabled && current === undefined,
+  }
 }

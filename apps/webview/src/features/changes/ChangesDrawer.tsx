@@ -4,6 +4,7 @@ import type { ChangeDetail, ChangeReviewState, ChangeSetFile } from '@dsh-vscode
 import { useI18n } from '../../i18n.js'
 import { useViewportMenuPosition } from '../../components/common/useViewportMenuPosition.js'
 import { Icon } from '../../ui/Icon.js'
+import { CopyButton } from '../chat/CopyButton.js'
 
 export interface ChangesDrawerProps {
   readonly changes: readonly ChangeSetFile[]
@@ -258,14 +259,19 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
             <section className="dsh-changes-popover__detail" aria-label={t('changes.detailTitle')}>
               <div className="dsh-changes-popover__detail-header">
                 <strong>{detail.relativePath}</strong>
-                <button
-                  className="dsh-icon-button"
-                  type="button"
-                  aria-label={t('changes.closeDetail')}
-                  onClick={closeDetail}
-                >
-                  <Icon name="close" />
-                </button>
+                <div className="dsh-changes-popover__detail-header-actions">
+                  {detail.redactedDiff === undefined ? null : (
+                    <CopyButton text={detail.redactedDiff} className="dsh-icon-button" translate={t} />
+                  )}
+                  <button
+                    className="dsh-icon-button"
+                    type="button"
+                    aria-label={t('changes.closeDetail')}
+                    onClick={closeDetail}
+                  >
+                    <Icon name="close" />
+                  </button>
+                </div>
               </div>
               <div className="dsh-changes-popover__detail-meta">
                 <span>{t(`changes.evidence.${detail.evidence}`)}</span>

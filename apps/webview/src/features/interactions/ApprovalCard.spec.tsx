@@ -48,6 +48,8 @@ describe('ApprovalCard', () => {
   })
 
   it('renders the command the request asks to authorize', () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.assign(navigator, { clipboard: { writeText } })
     const command = 'rm -rf build && pnpm install --frozen-lockfile && pnpm build'
     render(
       <ApprovalCard request={approvalRequest()} disabled={false} command={command} onRespond={vi.fn()} />,
@@ -56,6 +58,10 @@ describe('ApprovalCard', () => {
     // The command is the thing being approved: a strip that names a decision
     // without showing it asks the user to authorize text they cannot read.
     expect(screen.getByText(command)).toBeDefined()
+    const copyButton = screen.getByRole('button', { name: 'Copy' })
+    expect(copyButton).toBeDefined()
+    fireEvent.click(copyButton)
+    expect(writeText).toHaveBeenCalledWith(command)
   })
 
   it('renders the upstream display reason in the active language', () => {

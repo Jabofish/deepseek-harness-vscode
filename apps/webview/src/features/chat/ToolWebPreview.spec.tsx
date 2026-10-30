@@ -100,4 +100,17 @@ describe('ToolWebPreview', () => {
     expect(screen.queryByRole('button', { name: 'Unsafe' })).toBeNull()
     expect(screen.getByText('Unsafe')).toBeDefined()
   })
+
+  it('provides a copy button for the web search answer', () => {
+    render(
+      <ToolWebPreview
+        {...searchProps({
+          answer: 'Synthesized search result answer text',
+          sources: [],
+        })}
+      />,
+    )
+    const copyButton = screen.getByRole('button', { name: 'Copy' })
+    expect(copyButton).toBeDefined()
+  })
 })

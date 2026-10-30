@@ -5,6 +5,7 @@ import type { Translate } from '../../i18n.js'
 import { useConversationLayout } from '../../app/ConversationLayoutProvider.js'
 import { MarkdownContent } from './MarkdownContent.js'
 import { useQuietActivity } from '../../app/AccessibilityProvider.js'
+import { CopyButton } from './CopyButton.js'
 
 export interface ReasoningDisclosureProps {
   readonly id: string
@@ -82,6 +83,15 @@ export const ReasoningDisclosure = memo(function ReasoningDisclosure(
       </button>
       <div className="dsh-disclosure" data-open={props.expanded}>
         <div className="dsh-disclosure__inner">
+          {props.expanded ? (
+            <div className="dsh-timeline__reasoning-actions">
+              <CopyButton
+                text={content}
+                className="dsh-icon-button dsh-timeline__reasoning-copy"
+                translate={props.translate}
+              />
+            </div>
+          ) : null}
           <ContentFlow
             id={contentId}
             as="div"

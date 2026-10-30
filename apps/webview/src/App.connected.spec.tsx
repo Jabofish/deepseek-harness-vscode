@@ -3,6 +3,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import type { HostMessage, FeatureHostMessage, WebviewRequest } from '@dsh-vscode/webview-protocol'
+import type { DiagnosticsSnapshot } from '@dsh-vscode/domain'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AppState, AppStore, DshSettingsSnapshot } from './app/store.js'
 import type * as StoreModule from './app/store.js'
@@ -454,6 +455,99 @@ function presetSelectionState(enabled: boolean, defaultPresetId: string | undefi
 }
 
 describe('App connected rendering', () => {
+  it('coalesces diagnostics opened from conversation tools while the conversation renders', async () => {
+    const initial = connectedState(true)
+    const view = renderWithMutableState(initial)
+    let resolveRead!: (snapshot: DiagnosticsSnapshot) => void
+    const pending = new Promise<DiagnosticsSnapshot>((resolve) => {
+      resolveRead = resolve
+    })
+    const onRead = vi.spyOn(currentStore, 'readDiagnostics').mockReturnValue(pending)
+    fireEvent.click(screen.getByRole('button', { name: 'Conversation tools' }))
+    fireEvent.click(screen.getByRole('button', { name: /diagnostics/i }))
+    view.updateState({ ...initial, timeline: { ...initial.timeline, lastSequence: 1 } })
+    view.updateState({ ...initial, timeline: { ...initial.timeline, lastSequence: 2 } })
+    expect(onRead).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      resolveRead({
+        extensionVersion: '0.1.11',
+        state: 'connected',
+        endpointKind: 'managed',
+        canReconnect: false,
+        recentEvents: [],
+      })
+      await Promise.resolve()
+    })
+    expect(screen.getByText('0.1.11')).toBeDefined()
+  })
+
+  it('offers archive Undo after acceptance even when catalogue refresh fails', async () => {
+    const initial = connectedState(true)
+    const second = { ...initial.sessions[0]!, id: 's2', title: 'Second session' }
+    const state = {
+      ...initial,
+      sessionRestore: true,
+      drawer: 'sessions' as const,
+      sessions: [...initial.sessions, second],
+      workspaces: initial.workspaces.map((workspace) => ({
+        ...workspace,
+        sessionIds: ['s1', 's2'],
+        sessionCount: 2,
+      })),
+    }
+    const view = renderWithMutableState(state)
+    const restore = vi.spyOn(currentStore, 'restoreSession')
+    vi.spyOn(currentStore, 'removeSession').mockImplementation(() => {
+      view.updateState({ ...state, sessions: initial.sessions, archivedSessionIds: ['s2'] })
+      return Promise.reject(new Error('Catalogue refresh failed'))
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Session actions for Second session' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Archive session' }))
+    fireEvent.click(await screen.findByRole('button', { name: /Show notifications/u }))
+    const undo = await screen.findByRole('button', { name: 'Undo archive' })
+    fireEvent.click(undo)
+    expect(restore).toHaveBeenCalledWith('s2')
+  })
+
+  it.each(['connected', 'runtime-missing'] as const)(
+    'retires diagnostics on connection changes in the %s view',
+    async (kind) => {
+      const initial: AppState = {
+        ...connectedState(true),
+        backend: kind === 'connected' ? { kind } : { kind, searchedLocations: [] },
+      }
+      const view = renderWithMutableState(initial)
+      let resolveOld!: (snapshot: DiagnosticsSnapshot) => void
+      const oldRead = new Promise<DiagnosticsSnapshot>((resolve) => {
+        resolveOld = resolve
+      })
+      const snapshot: DiagnosticsSnapshot = {
+        extensionVersion: '0.1.12',
+        state: 'connected',
+        canReconnect: false,
+        recentEvents: [],
+      }
+      const onRead = vi
+        .spyOn(currentStore, 'readDiagnostics')
+        .mockReturnValueOnce(oldRead)
+        .mockResolvedValue(snapshot)
+      if (kind === 'connected') fireEvent.click(screen.getByRole('button', { name: 'Conversation tools' }))
+      fireEvent.click(screen.getByRole('button', { name: /diagnostics/i }))
+      view.updateState({ ...initial, connectionEpoch: 2 })
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /diagnostics/i }))
+        await Promise.resolve()
+      })
+      expect(onRead).toHaveBeenCalledTimes(2)
+      await act(async () => {
+        resolveOld({ ...snapshot, extensionVersion: '0.1.11' })
+        await Promise.resolve()
+      })
+      expect(screen.getByText('0.1.12')).toBeDefined()
+      expect(screen.queryByText('0.1.11')).toBeNull()
+    },
+  )
+
   it.each(['ordinary', 'approval', 'question'] as const)(
     'delivers %s Stop through the real store, protocol and Host router despite a failed model catalog',
     async (mode) => {

@@ -650,8 +650,8 @@
   "composer.added": "已添加",
   "composer.unsupported": "不支持",
   "composer.current": "当前文件",
-  "composer.idleHint": "按 Enter 发送，按 Shift+Enter 换行",
-  "composer.runningHint": "按 Enter 排队，按 Ctrl/Cmd+Enter 引导，按 Shift+Enter 换行",
+  "composer.idleHint": "按 Enter 发送，按 Shift+Enter 换行。按 ↑ 调出上一条提示。",
+  "composer.runningHint": "按 Enter 排队，按 Ctrl/Cmd+Enter 引导，按 Shift+Enter 换行。按 ↑ 调出上一条提示。",
   "composer.idleHintShort": "Enter 发送",
   "composer.runningHintShort": "Enter 排队 · Ctrl+Enter 引导",
   "composer.stopResponse": "停止响应",
@@ -1933,5 +1933,9 @@
   "settings.dshUpdateRestartFailed": "DSH 重启失败，请检查连接状态后重试。",
   "sessions.actions": "会话操作：{title}",
   "sessions.actionsTitle": "会话操作",
-  "plugins.manager.failure.unsupportedPlatform": "此插件不支持 DSH 所在系统或架构。"
+  "plugins.manager.failure.unsupportedPlatform": "此插件不支持 DSH 所在系统或架构。",
+  "app.dismissArchivedNotice": "关闭归档提示",
+  "app.sessionArchived": "已归档「{title}」",
+  "app.undoArchive": "撤销归档",
+  "sessions.searchHint": "输入关键词搜索，只有一条可见会话时按 Enter 打开。"
 }

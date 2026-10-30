@@ -2,7 +2,7 @@
 
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { ReactElement } from 'react'
+import { useState, type ReactElement } from 'react'
 import { SelectMenu, type SelectMenuOption } from './SelectMenu.js'
 
 afterEach(() => vi.useRealTimers())
@@ -17,6 +17,33 @@ const MODE_OPTIONS: readonly SelectMenuOption[] = [
 
 describe('SelectMenu keyboard navigation', () => {
   afterEach(() => cleanup())
+
+  it('closes an open menu from its trigger before Escape can cancel the surrounding editor', () => {
+    function Editor(): ReactElement {
+      const [open, setOpen] = useState(true)
+      return open ? (
+        <form
+          aria-label="Editor"
+          onKeyDown={(event) => {
+            if (event.key === 'Escape' && !event.defaultPrevented) setOpen(false)
+          }}
+        >
+          {menu({ value: 'act' })}
+        </form>
+      ) : (
+        <p>Editor closed</p>
+      )
+    }
+    render(<Editor />)
+    openMenu()
+    const trigger = screen.getByRole('button', { name: /Workflow mode/ })
+    trigger.focus()
+    fireEvent.keyDown(trigger, { key: 'Escape' })
+    expect(screen.getByRole('form', { name: 'Editor' })).toBeDefined()
+    expect(screen.queryByRole('listbox')).toBeNull()
+    fireEvent.keyDown(trigger, { key: 'Escape' })
+    expect(screen.getByText('Editor closed')).toBeDefined()
+  })
 
   it('moves up to the nearest enabled option above a disabled entry', () => {
     renderMenu({ value: 'act' })

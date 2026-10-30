@@ -40,17 +40,38 @@ export function ScheduleCreateForm({
   pendingCreate,
   listHeadingRef,
 }: ScheduleCreateFormProps): ReactElement {
+  const cancelForm = (): void => {
+    setCreateOpen(false)
+    setCreateStatus(pendingCreate.current === undefined ? 'idle' : 'unconfirmed')
+    setCreateError(undefined)
+    listHeadingRef.current?.focus()
+  }
+
   return (
     <form
       className="dsh-schedule-panel__editor dsh-schedule-panel__create-form"
       noValidate
       onSubmit={submitCreate}
+      onKeyDown={(event) => {
+        if (
+          event.key === 'Escape' &&
+          !event.defaultPrevented &&
+          !sessionStarting &&
+          !event.nativeEvent.isComposing &&
+          event.nativeEvent.keyCode !== 229
+        ) {
+          event.preventDefault()
+          event.stopPropagation()
+          cancelForm()
+        }
+      }}
     >
       <h2>{t('schedules.create.formTitle')}</h2>
       <p className="dsh-schedule-panel__muted">{t('schedules.create.instructions')}</p>
       <label>
         <span>{t('schedules.field.title')}</span>
         <input
+          autoFocus
           value={createDraft.title}
           maxLength={120}
           required
@@ -69,6 +90,20 @@ export function ScheduleCreateForm({
           onChange={(event) => {
             setCreateDraft({ ...createDraft, prompt: event.target.value })
             setCreateError(undefined)
+          }}
+          onKeyDown={(event) => {
+            if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return
+            if (
+              (event.ctrlKey || event.metaKey) &&
+              event.key === 'Enter' &&
+              !event.repeat &&
+              !event.shiftKey &&
+              !event.altKey &&
+              !sessionStarting
+            ) {
+              event.preventDefault()
+              event.currentTarget.form?.requestSubmit()
+            }
           }}
         />
       </label>
@@ -251,16 +286,7 @@ export function ScheduleCreateForm({
         >
           {sessionStarting ? t('schedules.working') : t('schedules.create.submit')}
         </button>
-        <button
-          type="button"
-          disabled={sessionStarting}
-          onClick={() => {
-            setCreateOpen(false)
-            setCreateStatus(pendingCreate.current === undefined ? 'idle' : 'unconfirmed')
-            setCreateError(undefined)
-            listHeadingRef.current?.focus()
-          }}
-        >
+        <button type="button" disabled={sessionStarting} onClick={cancelForm}>
           {t('schedules.create.cancel')}
         </button>
       </div>

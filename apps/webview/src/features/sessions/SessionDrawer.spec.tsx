@@ -1,10 +1,15 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
 import type { SessionSummary, WorkspaceSummary } from '@dsh-vscode/domain'
 import { SessionDrawer } from './SessionDrawer.js'
 import { ConversationLayoutProvider } from '../../app/ConversationLayoutProvider.js'
+
+afterEach(() => {
+  vi.restoreAllMocks()
+  window.localStorage.clear()
+})
 
 const workspaces: readonly WorkspaceSummary[] = [
   {
@@ -160,6 +165,242 @@ function openRowActions(title: string): void {
 
 describe('SessionDrawer', () => {
   afterEach(() => cleanup())
+
+  it('remembers sorting and grouping after the list is recreated without persisting a search', () => {
+    const first = renderDrawer()
+    fireEvent.click(screen.getByRole('button', { name: 'Sort sessions by last updated' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Show grouped workspaces' }))
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'docs' } })
+    first.unmount()
+    const second = renderDrawer()
+    expect(screen.getByRole('button', { name: 'Sort sessions by manual order' })).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Show current workspace' })).toBeDefined()
+    expect(screen.getByRole<HTMLInputElement>('searchbox').value).toBe('')
+    expect(screen.getByText('Other workspace note')).toBeDefined()
+    const rows = screen.getAllByRole('button', { name: /^(?!Session actions).*(Fix login bug|Write docs)/u })
+    expect(
+      rows.map((item) => (item.textContent?.includes('Write docs') ? 'Write docs' : 'Fix login bug')),
+    ).toEqual(['Write docs', 'Fix login bug'])
+    fireEvent.click(screen.getByRole('button', { name: 'Sort sessions by manual order' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Show current workspace' }))
+    second.unmount()
+    renderDrawer()
+    expect(screen.getByRole('button', { name: 'Sort sessions by last updated' })).toBeDefined()
+    expect(screen.queryByText('Other workspace note')).toBeNull()
+  })
+
+  it('keeps list controls usable when browser storage is unavailable', () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('storage denied')
+    })
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('storage denied')
+    })
+    renderDrawer()
+    fireEvent.click(screen.getByRole('button', { name: 'Sort sessions by last updated' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Show grouped workspaces' }))
+    expect(screen.getByRole('button', { name: 'Sort sessions by manual order' })).toBeDefined()
+    expect(screen.getByText('Other workspace note')).toBeDefined()
+  })
+
+  it('uses the existing defaults when saved presentation choices are malformed', () => {
+    window.localStorage.setItem('dsh-webview-session-list-preferences', '{broken')
+    renderDrawer()
+    expect(screen.getByRole('button', { name: 'Sort sessions by last updated' })).toBeDefined()
+    expect(screen.queryByText('Other workspace note')).toBeNull()
+  })
+
+  it('focuses search on opening and selects the previous query on reopening', () => {
+    renderDrawer({ open: undefined, showTrigger: true })
+    const trigger = screen.getByRole('button', { name: /Fix login bug/u })
+    fireEvent.click(trigger)
+    const input = screen.getByRole<HTMLInputElement>('searchbox')
+    expect(document.activeElement).toBe(input)
+    fireEvent.change(input, { target: { value: 'docs' } })
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect(screen.queryByRole('searchbox')).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+    fireEvent.click(trigger)
+    const reopened = screen.getByRole<HTMLInputElement>('searchbox')
+    expect(document.activeElement).toBe(reopened)
+    expect(reopened.value.slice(reopened.selectionStart ?? 0, reopened.selectionEnd ?? 0)).toBe('docs')
+  })
+
+  it.each([false, true])('opens the only visible search result with Enter, grouped=%s', async (grouped) => {
+    const onOpen = vi.fn()
+    renderDrawer({ onOpen })
+    if (grouped) fireEvent.click(screen.getByRole('button', { name: 'Show grouped workspaces' }))
+    const input = screen.getByRole('searchbox')
+    await act(async () => {
+      fireEvent.change(input, { target: { value: 'docs' } })
+      await Promise.resolve()
+    })
+    fireEvent.compositionStart(input)
+    fireEvent.keyDown(input, { key: 'Enter' })
+    fireEvent.compositionEnd(input)
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onOpen).toHaveBeenCalledExactlyOnceWith('s2')
+  })
+
+  it('keeps ambiguous and empty searches open instead of choosing a conversation', () => {
+    const onOpen = vi.fn()
+    renderDrawer({ onOpen })
+    const input = screen.getByRole('searchbox')
+    fireEvent.keyDown(input, { key: 'Enter' })
+    fireEvent.change(input, { target: { value: 'i' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    fireEvent.change(input, { target: { value: 'missing' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onOpen).not.toHaveBeenCalled()
+  })
+
+  it('does not treat IME confirmation, modified Enter or repeated Enter as opening a result', async () => {
+    const onOpen = vi.fn()
+    renderDrawer({ onOpen })
+    const input = screen.getByRole('searchbox')
+    await act(async () => {
+      fireEvent.change(input, { target: { value: 'docs' } })
+      await Promise.resolve()
+    })
+    for (const modifiers of [
+      { isComposing: true },
+      { keyCode: 229 },
+      { shiftKey: true },
+      { ctrlKey: true },
+      { metaKey: true },
+      { altKey: true },
+      { repeat: true },
+    ])
+      fireEvent.keyDown(input, { key: 'Enter', ...modifiers })
+    expect(onOpen).not.toHaveBeenCalled()
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onOpen).toHaveBeenCalledExactlyOnceWith('s2')
+  })
+
+  it('does not take focus from the composer when the docked list appears', () => {
+    vi.stubGlobal('matchMedia', () => ({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }))
+    const composer = document.createElement('textarea')
+    document.body.append(composer)
+    composer.focus()
+    try {
+      renderDrawer({ open: undefined }, 'focused')
+      expect(document.activeElement).toBe(composer)
+    } finally {
+      composer.remove()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('can search again after closing the list during IME composition', async () => {
+    const onOpen = vi.fn()
+    renderDrawer({ open: undefined, showTrigger: true, onOpen })
+    const trigger = screen.getByRole('button', { name: /Fix login bug/u })
+    fireEvent.click(trigger)
+    const input = screen.getByRole('searchbox')
+    await act(async () => {
+      fireEvent.change(input, { target: { value: 'docs' } })
+      await Promise.resolve()
+    })
+    fireEvent.compositionStart(input)
+    fireEvent.click(trigger)
+    await act(async () => {
+      fireEvent.click(trigger)
+      await Promise.resolve()
+    })
+    fireEvent.keyDown(screen.getByRole('searchbox'), { key: 'Enter' })
+    expect(onOpen).toHaveBeenCalledExactlyOnceWith('s2')
+  })
+
+  it('waits for pending content matches before opening an apparently unique title result', async () => {
+    let resolveSearch!: (value: { items: readonly SessionSummary[] }) => void
+    const onSearch = vi.fn(
+      () =>
+        new Promise<{ items: readonly SessionSummary[] }>((resolve) => {
+          resolveSearch = resolve
+        }),
+    )
+    const onOpen = vi.fn()
+    renderDrawer({ onSearch, onOpen })
+    const input = screen.getByRole('searchbox')
+    fireEvent.change(input, { target: { value: 'docs' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onOpen).not.toHaveBeenCalled()
+    await act(async () => {
+      resolveSearch({ items: [sessions[2]!] })
+      await Promise.resolve()
+    })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onOpen).not.toHaveBeenCalled()
+    expect(screen.getByText('Write docs')).toBeDefined()
+    expect(screen.getByText('Other workspace note')).toBeDefined()
+  })
+
+  it('waits for a fresh content search when reopening the same query', async () => {
+    let resolveSearch!: (value: { items: readonly SessionSummary[] }) => void
+    const pending = new Promise<{ items: readonly SessionSummary[] }>((resolve) => {
+      resolveSearch = resolve
+    })
+    const onSearch = vi.fn().mockResolvedValueOnce({ items: [] }).mockReturnValue(pending)
+    const onOpen = vi.fn()
+    renderDrawer({ open: undefined, showTrigger: true, onOpen, onSearch })
+    const trigger = screen.getByRole('button', { name: /Fix login bug/u })
+    fireEvent.click(trigger)
+    await act(async () => {
+      fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'docs' } })
+      await Promise.resolve()
+    })
+    fireEvent.keyDown(screen.getByRole('searchbox'), { key: 'Escape' })
+    fireEvent.click(trigger)
+    fireEvent.keyDown(screen.getByRole('searchbox'), { key: 'Enter' })
+    expect(onOpen).not.toHaveBeenCalled()
+    await act(async () => {
+      resolveSearch({ items: [sessions[2]!] })
+      await Promise.resolve()
+    })
+    fireEvent.keyDown(screen.getByRole('searchbox'), { key: 'Enter' })
+    expect(onOpen).not.toHaveBeenCalled()
+  })
+
+  it('opens a unique content match from another workspace using the same search action', async () => {
+    const onOpen = vi.fn()
+    const onSearch = vi.fn().mockResolvedValue({ items: [sessions[2]] })
+    renderDrawer({ onOpen, onSearch })
+    const input = screen.getByRole('searchbox')
+    fireEvent.change(input, { target: { value: 'needle' } })
+    await screen.findByText('Other workspace note')
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onOpen).toHaveBeenCalledExactlyOnceWith('s3')
+  })
+
+  it.each([false, true])(
+    'counts content matches when deciding if Enter is unambiguous, extra=%s',
+    async (extra) => {
+      const onOpen = vi.fn()
+      const onSearch = vi.fn().mockResolvedValue({ items: [sessions[1]], searchHasMore: extra })
+      renderDrawer({ onOpen, onSearch })
+      const input = screen.getByRole('searchbox')
+      await act(async () => {
+        fireEvent.change(input, { target: { value: 'docs' } })
+        await Promise.resolve()
+      })
+      fireEvent.keyDown(input, { key: 'Enter' })
+      expect(onOpen).toHaveBeenCalledTimes(extra ? 0 : 1)
+    },
+  )
+
+  it('leaves mixed active and archived results available for explicit selection', () => {
+    const onOpen = vi.fn()
+    renderDrawer({ onOpen, archivedSessions: [session({ id: 'old', title: 'Archived docs' })] })
+    chooseArchiveFilter('all')
+    const input = screen.getByRole('searchbox')
+    fireEvent.change(input, { target: { value: 'docs' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onOpen).not.toHaveBeenCalled()
+  })
 
   it('keeps a pasted search query inside the session.search wire contract', async () => {
     const onSearch = vi.fn().mockResolvedValue({ items: [] })

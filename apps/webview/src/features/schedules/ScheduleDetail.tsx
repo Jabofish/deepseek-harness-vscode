@@ -268,7 +268,24 @@ export function ScheduleDetail(input: ScheduleDetailProps): ReactElement {
         hidden={tab !== 'rule'}
       >
         {editing && draft !== undefined ? (
-          <form className="dsh-schedule-panel__editor" onSubmit={submitEdit}>
+          <form
+            className="dsh-schedule-panel__editor"
+            onSubmit={submitEdit}
+            onKeyDown={(event) => {
+              if (
+                event.key === 'Escape' &&
+                !event.defaultPrevented &&
+                !busy &&
+                !event.nativeEvent.isComposing &&
+                event.nativeEvent.keyCode !== 229
+              ) {
+                event.preventDefault()
+                event.stopPropagation()
+                setEditState({ editing: false })
+                setOperationError(undefined)
+              }
+            }}
+          >
             <fieldset
               className="dsh-schedule-panel__editor-fields"
               disabled={
@@ -291,6 +308,21 @@ export function ScheduleDetail(input: ScheduleDetailProps): ReactElement {
                   required
                   rows={5}
                   onChange={(event) => patchEditDraft({ prompt: event.currentTarget.value })}
+                  onKeyDown={(event) => {
+                    if (
+                      event.key === 'Enter' &&
+                      (event.ctrlKey || event.metaKey) &&
+                      !event.repeat &&
+                      !event.shiftKey &&
+                      !event.altKey &&
+                      !busy &&
+                      !event.nativeEvent.isComposing &&
+                      event.nativeEvent.keyCode !== 229
+                    ) {
+                      event.preventDefault()
+                      event.currentTarget.form?.requestSubmit()
+                    }
+                  }}
                 />
               </label>
               <label>

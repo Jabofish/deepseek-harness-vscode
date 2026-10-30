@@ -234,6 +234,9 @@ export function useDismissibleLayer({
       }
       if (event.defaultPrevented) return
       if (event.key !== 'Escape') return
+      // Escape may cancel an IME candidate. The input's own handler must not
+      // leave a second dismissal behind on this shared outer layer.
+      if (event.isComposing || event.keyCode === 229) return
       // A layer that is not the innermost open surface must leave the key for
       // the popover stacked on top of it.
       if (openLayers.at(-1)?.identity !== identity) return

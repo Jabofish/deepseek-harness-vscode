@@ -2,6 +2,7 @@ import { useId, useLayoutEffect, useRef, type ReactElement } from 'react'
 import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 import { Icon } from '../../ui/Icon.js'
 import type { Translate } from '../../i18n.js'
+import { CopyButton } from './CopyButton.js'
 
 /** Host/OS refusal while opening a file or URL from a tool card. The retry
  * repeats the sanctioned Host open operation; it never replays a tool call. */
@@ -83,9 +84,12 @@ export function ToolLinkErrorDialog({
         <p id={descriptionId} className="dsh-tool-error-modal__message">
           {message}
         </p>
-        <code className="dsh-tool-error-modal__path" title={href}>
-          {href}
-        </code>
+        <div className="dsh-tool-error-modal__target">
+          <code className="dsh-tool-error-modal__path" title={href}>
+            {href}
+          </code>
+          <CopyButton text={href} className="dsh-icon-button dsh-tool-error-modal__copy" translate={t} />
+        </div>
         <footer className="dsh-tool-error-modal__actions">
           <button
             className="dsh-button dsh-button--secondary"

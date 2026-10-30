@@ -650,8 +650,8 @@
   "composer.added": "Added",
   "composer.unsupported": "Unsupported",
   "composer.current": "Current",
-  "composer.idleHint": "Enter to send, Shift+Enter for a new line",
-  "composer.runningHint": "Enter to queue, Ctrl/Cmd+Enter to steer, Shift+Enter for a new line",
+  "composer.idleHint": "Enter to send, Shift+Enter for a new line. ↑ recalls a previous prompt.",
+  "composer.runningHint": "Enter to queue, Ctrl/Cmd+Enter to steer, Shift+Enter for a new line. ↑ recalls a previous prompt.",
   "composer.idleHintShort": "Enter to send",
   "composer.runningHintShort": "Enter to queue · Ctrl+Enter to steer",
   "composer.stopResponse": "Stop response",
@@ -1933,5 +1933,9 @@
   "settings.dshUpdateRestartFailed": "Could not restart DSH. Check the connection status and retry.",
   "sessions.actions": "Session actions for {title}",
   "sessions.actionsTitle": "Session actions",
-  "plugins.manager.failure.unsupportedPlatform": "This plugin does not support the DSH host's operating system or architecture."
+  "plugins.manager.failure.unsupportedPlatform": "This plugin does not support the DSH host's operating system or architecture.",
+  "app.dismissArchivedNotice": "Dismiss archive notice",
+  "app.sessionArchived": "Archived “{title}”",
+  "app.undoArchive": "Undo archive",
+  "sessions.searchHint": "Type to search. Press Enter to open the only visible conversation."
 }

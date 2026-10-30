@@ -129,6 +129,16 @@ export const SelectMenu = memo(function SelectMenu(props: SelectMenuProps): Reac
   }
 
   function onTriggerKeyDown(event: KeyboardEvent<HTMLButtonElement>): void {
+    if (
+      open &&
+      event.key === 'Escape' &&
+      !event.nativeEvent.isComposing &&
+      event.nativeEvent.keyCode !== 229
+    ) {
+      event.preventDefault()
+      close()
+      return
+    }
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault()
       const direction = event.key === 'ArrowDown' ? 1 : -1

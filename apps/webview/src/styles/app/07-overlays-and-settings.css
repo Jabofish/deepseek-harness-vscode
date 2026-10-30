@@ -670,6 +670,23 @@
   color: var(--dsh-link);
 }
 
+.dsh-tool-error-modal__target {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--dsh-space-2);
+  padding: 0 var(--dsh-space-4);
+}
+
+.dsh-tool-error-modal__target .dsh-tool-error-modal__path {
+  flex: 1 1 auto;
+  padding-inline: 0;
+}
+
+.dsh-tool-error-modal__copy {
+  flex: 0 0 auto;
+}
+
 .dsh-tool-error-modal__actions {
   display: flex;
   justify-content: flex-end;

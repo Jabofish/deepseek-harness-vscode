@@ -107,4 +107,39 @@ describe('PromptTemplatesDrawer', () => {
     expect(within(editor).getByLabelText('Title')).toHaveProperty('value', 'Keep draft')
     expect(within(editor).getByLabelText('Template text')).toHaveProperty('value', 'Keep body')
   })
+
+  it('focuses search input on open and clears query on Escape', () => {
+    renderDrawer()
+    const searchInput = screen.getByLabelText('Search templates')
+    expect(document.activeElement).toBe(searchInput)
+
+    fireEvent.change(searchInput, { target: { value: 'review' } })
+    expect(searchInput).toHaveProperty('value', 'review')
+
+    fireEvent.keyDown(searchInput, { key: 'Escape' })
+    expect(searchInput).toHaveProperty('value', '')
+  })
+
+  it('selects and previews the sole matching template on Enter', async () => {
+    const onRead = vi.fn().mockResolvedValue(template)
+    renderDrawer({ onRead })
+    const searchInput = screen.getByLabelText('Search templates')
+
+    fireEvent.change(searchInput, { target: { value: 'Review' } })
+    fireEvent.keyDown(searchInput, { key: 'Enter' })
+
+    await waitFor(() => expect(onRead).toHaveBeenCalledWith(summary.templateId))
+  })
+
+  it('returns focus to the editor trigger instead of selecting the search on cancellation', () => {
+    renderDrawer()
+    const create = screen.getByRole('button', { name: 'Create' })
+    fireEvent.click(create)
+    const editor = screen.getByRole('dialog', { name: 'Create prompt template' })
+    fireEvent.keyDown(within(editor).getByLabelText('Title'), { key: 'Escape', isComposing: true })
+    expect(screen.getByRole('dialog', { name: 'Create prompt template' })).toBe(editor)
+    fireEvent.keyDown(within(editor).getByLabelText('Title'), { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Create prompt template' })).toBeNull()
+    expect(document.activeElement).toBe(create)
+  })
 })

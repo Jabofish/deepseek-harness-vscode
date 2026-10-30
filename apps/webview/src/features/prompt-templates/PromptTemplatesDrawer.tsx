@@ -97,6 +97,8 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
   const dialogWasOpen = useRef(false)
   /** Whichever dialog surface is up; the focus trap and inert background hang off it. */
   const dialogSurfaceRef = useRef<HTMLElement | null>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const searchComposingRef = useRef(false)
 
   const dialogOpen = dialog !== undefined || pendingInsertion !== undefined
   useEffect(() => {
@@ -108,6 +110,13 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
     }
     dialogWasOpen.current = dialogOpen
   }, [dialogOpen])
+
+  useEffect(() => {
+    searchComposingRef.current = false
+    if (!open) return
+    searchInputRef.current?.focus({ preventScroll: true })
+    searchInputRef.current?.select()
+  }, [open])
 
   const visibleTemplates = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase()
@@ -284,6 +293,8 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
     // An inner layer (for example the scope SelectMenu) already consumed this
     // Escape; closing the editor here would discard the in-progress form.
     if (event.key !== 'Escape' || event.defaultPrevented) return
+    if (searchComposingRef.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229)
+      return
     event.preventDefault()
     if (dialogOpen) dismissDialog()
     else {
@@ -355,9 +366,47 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
           <label className="dsh-prompt-templates-popover__search">
             <span>{t('promptTemplates.searchLabel')}</span>
             <input
+              ref={searchInputRef}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder={t('promptTemplates.searchPlaceholder')}
+              onCompositionStart={() => {
+                searchComposingRef.current = true
+              }}
+              onCompositionEnd={() => {
+                searchComposingRef.current = false
+              }}
+              onKeyDown={(event) => {
+                if (
+                  event.key === 'Escape' &&
+                  query !== '' &&
+                  !searchComposingRef.current &&
+                  !event.nativeEvent.isComposing &&
+                  event.nativeEvent.keyCode !== 229
+                ) {
+                  event.preventDefault()
+                  setQuery('')
+                  return
+                }
+                if (
+                  event.key !== 'Enter' ||
+                  event.repeat ||
+                  event.shiftKey ||
+                  event.ctrlKey ||
+                  event.metaKey ||
+                  event.altKey ||
+                  searchComposingRef.current ||
+                  event.nativeEvent.isComposing ||
+                  event.nativeEvent.keyCode === 229 ||
+                  busy ||
+                  visibleTemplates.length !== 1
+                )
+                  return
+                const only = visibleTemplates[0]
+                if (only === undefined) return
+                event.preventDefault()
+                readTemplate(only.templateId)
+              }}
             />
           </label>
           {props.loading && props.templates.length === 0 ? (

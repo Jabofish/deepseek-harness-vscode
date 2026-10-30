@@ -267,6 +267,21 @@
   transform: rotate(180deg);
 }
 
+.dsh-timeline__reasoning-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 var(--dsh-space-3) var(--dsh-space-1);
+}
+
+.dsh-timeline__reasoning-copy {
+  color: var(--dsh-muted);
+}
+
+.dsh-timeline__reasoning-copy:hover,
+.dsh-timeline__reasoning-copy:focus-visible {
+  color: var(--dsh-text);
+}
+
 .dsh-timeline__reasoning-preview-content {
   display: block;
   max-height: var(--dsh-reasoning-max-height);
@@ -527,7 +542,8 @@
   white-space: nowrap;
 }
 
-.dsh-timeline__show-folder {
+.dsh-timeline__show-folder,
+.dsh-timeline__produced-copy {
   flex: 0 0 auto;
   white-space: nowrap;
 }

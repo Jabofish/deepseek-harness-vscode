@@ -31,6 +31,12 @@ export const GoalBar = memo(function GoalBar(props: GoalBarProps): ReactElement 
   const confirmingClear = confirmingClearGoalId === goalId
 
   useEffect(() => setConfirmingClearGoalId(undefined), [goalId])
+
+  useEffect(() => {
+    if (confirmingClearGoalId === undefined) return
+    const timer = window.setTimeout(() => setConfirmingClearGoalId(undefined), 4_000)
+    return () => window.clearTimeout(timer)
+  }, [confirmingClearGoalId])
   // An open editor holds a copy of the objective, and the live goal list is
   // re-read from the host on ordinary session events, so the host's title can
   // change underneath the input. Re-seeding keeps Save from writing a value the

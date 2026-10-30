@@ -675,6 +675,17 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
                   value={searchText}
                   aria-label={t('plugins.search')}
                   onChange={(event) => setSearchText(event.currentTarget.value)}
+                  onKeyDown={(event) => {
+                    if (
+                      event.key === 'Escape' &&
+                      searchText !== '' &&
+                      !event.nativeEvent.isComposing &&
+                      event.nativeEvent.keyCode !== 229
+                    ) {
+                      event.preventDefault()
+                      setSearchText('')
+                    }
+                  }}
                 />
               </label>
 

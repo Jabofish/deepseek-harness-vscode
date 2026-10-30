@@ -17,6 +17,7 @@ export function ComposerAttachmentsRail({
   scrollable,
   onOpenPreview,
   onRemove,
+  onRequestFocus,
 }: {
   readonly attachments: readonly PromptAttachment[]
   readonly previews: Readonly<Record<string, string>>
@@ -24,6 +25,7 @@ export function ComposerAttachmentsRail({
   readonly scrollable: boolean
   readonly onOpenPreview: (uri: string, trigger: HTMLButtonElement) => void
   readonly onRemove: (uri: string) => void
+  readonly onRequestFocus?: (() => void) | undefined
 }): ReactElement | null {
   const { t } = useI18n()
   useLayoutEffect(
@@ -100,6 +102,7 @@ export function ComposerAttachmentsRail({
                 aria-label={t('composer.remove', { name: attachment.name })}
                 onClick={() => {
                   onRemove(attachment.uri)
+                  onRequestFocus?.()
                 }}
               >
                 <Icon name="close" />

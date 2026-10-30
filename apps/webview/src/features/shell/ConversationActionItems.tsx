@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react'
+import { useCallback, type ReactElement } from 'react'
 import type { AppStore } from '../../app/store.js'
 import { setDraft } from '../../app/draft-store.js'
 import type { useI18n } from '../../i18n.js'
@@ -18,6 +18,7 @@ interface ConversationActionItemsProps {
   readonly state: Pick<
     ReturnType<AppStore['getState']>,
     | 'unavailableLists'
+    | 'connectionEpoch'
     | 'jobs'
     | 'jobControllerAvailable'
     | 'jobFollow'
@@ -72,6 +73,7 @@ export function ConversationActionItems({
   setError,
   t,
 }: ConversationActionItemsProps): ReactElement | null {
+  const readDiagnostics = useCallback(() => store.readDiagnostics(), [store])
   if (activeId === undefined) return null
   return (
     <>
@@ -191,8 +193,8 @@ export function ConversationActionItems({
         }}
       />
       <DiagnosticsDrawer
-        key={`diagnostics-${activeId}`}
-        onRead={() => store.readDiagnostics()}
+        key={`diagnostics-${state.connectionEpoch}:${activeId}`}
+        onRead={readDiagnostics}
         onReconnect={() => store.reconnect()}
         onShowOutput={() => store.showDiagnostics()}
       />

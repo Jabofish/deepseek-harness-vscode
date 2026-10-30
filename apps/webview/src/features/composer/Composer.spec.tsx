@@ -3,9 +3,10 @@
 import { useState, type ReactElement } from 'react'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { AgentConfiguration, DynamicCommand } from '@dsh-vscode/domain'
+import type { AgentConfiguration, DynamicCommand, PromptAttachment } from '@dsh-vscode/domain'
 
 import { Composer } from './Composer.js'
+import { ConversationLayoutProvider } from '../../app/ConversationLayoutProvider.js'
 
 function baseProps(): Parameters<typeof Composer>[0] {
   return {
@@ -48,6 +49,35 @@ describe('Composer', () => {
     expect(onIngestFiles).toHaveBeenCalledTimes(1)
     expect(onIngestFiles).toHaveBeenCalledWith([file])
   })
+
+  it.each(['classic', 'focused'] as const)(
+    'returns focus to the prompt after Send in the %s layout without reclaiming it later',
+    async (layout) => {
+      let finish = (): void => undefined
+      const pending = new Promise<void>((resolve) => {
+        finish = resolve
+      })
+      const onSubmit = vi.fn(() => pending)
+      render(
+        <ConversationLayoutProvider initialLayout={layout}>
+          <Composer {...baseProps()} draft="First prompt" onSubmit={onSubmit} />
+        </ConversationLayoutProvider>,
+      )
+      const prompt = screen.getByRole('textbox', { name: 'Prompt' })
+      const send = screen.getByRole('button', { name: 'Send message' })
+      send.focus()
+      fireEvent.submit(send.closest('form')!)
+      expect(onSubmit).toHaveBeenCalledOnce()
+      expect(document.activeElement).toBe(prompt)
+      const nextControl = screen.getByRole('button', { name: 'Cancel sending' })
+      nextControl.focus()
+      await act(async () => {
+        finish()
+        await pending
+      })
+      expect(document.activeElement).toBe(nextControl)
+    },
+  )
 
   it('keeps async submissions locked until settlement while leaving Stop available', async () => {
     let rejectFirstSubmission: (reason: Error) => void = () => undefined
@@ -185,6 +215,82 @@ describe('Composer', () => {
 
     expect(textarea.value).toBe('/goal fix the parser and the lexer')
   })
+
+  it('takes the keyboard only for a request addressed to its own conversation', () => {
+    const onFocusRequestHandled = vi.fn()
+    const view = render(
+      <Composer
+        {...baseProps()}
+        draft="kept draft"
+        draftKey="session-a"
+        onFocusRequestHandled={onFocusRequestHandled}
+      />,
+    )
+    const textarea = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+    expect(document.activeElement).not.toBe(textarea)
+
+    view.rerender(
+      <Composer
+        {...baseProps()}
+        draft="kept draft"
+        draftKey="session-a"
+        focusRequest={{ owner: 'session-b', token: 1 }}
+        onFocusRequestHandled={onFocusRequestHandled}
+      />,
+    )
+    expect(document.activeElement).not.toBe(textarea)
+    expect(onFocusRequestHandled).not.toHaveBeenCalled()
+
+    view.rerender(
+      <Composer
+        {...baseProps()}
+        draft="kept draft"
+        draftKey="session-a"
+        focusRequest={{ owner: 'session-a', token: 2 }}
+        onFocusRequestHandled={onFocusRequestHandled}
+      />,
+    )
+    expect(document.activeElement).toBe(textarea)
+    expect(textarea.selectionStart).toBe('kept draft'.length)
+    expect(onFocusRequestHandled).toHaveBeenCalledTimes(1)
+  })
+
+  it('never moves the keyboard into a read-only composer', () => {
+    const onFocusRequestHandled = vi.fn()
+    render(
+      <Composer
+        {...baseProps()}
+        draft="read only"
+        draftKey="session-a"
+        inputDisabled
+        focusRequest={{ owner: 'session-a', token: 1 }}
+        onFocusRequestHandled={onFocusRequestHandled}
+      />,
+    )
+    const textarea = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+    expect(textarea.disabled).toBe(true)
+    expect(document.activeElement).not.toBe(textarea)
+    // The request is still consumed: a later remount must not claim the
+    // keyboard for a navigation that already happened.
+    expect(onFocusRequestHandled).toHaveBeenCalledTimes(1)
+  })
+
+  it('restores focus to the composer textarea when removing an attachment from the rail', () => {
+    const onRemoveAttachment = vi.fn()
+    const attachment: PromptAttachment = {
+      uri: 'file:///path/to/image.png',
+      name: 'image.png',
+      mimeType: 'image/png',
+    }
+    render(<Composer {...baseProps()} attachments={[attachment]} onRemoveAttachment={onRemoveAttachment} />)
+
+    const removeBtn = screen.getByRole('button', { name: 'Remove image.png' })
+    fireEvent.click(removeBtn)
+
+    expect(onRemoveAttachment).toHaveBeenCalledWith('file:///path/to/image.png')
+    const textarea = screen.getByRole('textbox', { name: 'Prompt' })
+    expect(document.activeElement).toBe(textarea)
+  })
 })
 
 describe('Composer model availability notice', () => {
@@ -227,7 +333,97 @@ describe('Composer model availability notice', () => {
     // Choosing a served model remains available, but is not required to send a prompt to DSH.
     expect(screen.getByRole('button', { name: /^Model and reasoning/u }).hasAttribute('disabled')).toBe(false)
   })
+
+  it('accepts slash command suggestion via Tab key', () => {
+    const onCommand = vi.fn()
+    function Controlled(): ReactElement {
+      const [draft, setDraft] = useState('/cl')
+      return (
+        <Composer
+          {...baseProps()}
+          draft={draft}
+          commands={commandFixtures()}
+          onCommand={onCommand}
+          onDraftChange={setDraft}
+        />
+      )
+    }
+    render(<Controlled />)
+    const textarea = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+    fireEvent.keyDown(textarea, { key: 'Tab' })
+    expect(textarea.value).toBe('/clear')
+    expect(onCommand).not.toHaveBeenCalled()
+  })
+
+  it('completes a visible suggestion when the command catalogue changes under the highlight', () => {
+    const onCommand = vi.fn()
+    function Controlled({ commands }: { readonly commands: readonly DynamicCommand[] }): ReactElement {
+      const [draft, setDraft] = useState('/cl')
+      return (
+        <Composer
+          {...baseProps()}
+          draft={draft}
+          commands={commands}
+          onCommand={onCommand}
+          onDraftChange={setDraft}
+        />
+      )
+    }
+    const clear = { name: 'clear', description: 'Clear conversation' }
+    const view = render(
+      <Controlled commands={[clear, { name: 'clone', description: 'Clone conversation' }]} />,
+    )
+    const textarea = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+    fireEvent.keyDown(textarea, { key: 'ArrowDown' })
+    fireEvent.keyDown(textarea, { key: 'ArrowDown' })
+    view.rerender(<Controlled commands={[clear]} />)
+    fireEvent.keyDown(textarea, { key: 'Tab' })
+    expect(textarea.value).toBe('/clear')
+    expect(onCommand).not.toHaveBeenCalled()
+  })
+
+  it('walks through sent prompts with ↑ and restores the empty draft with ↓', () => {
+    render(<ControlledComposer promptHistory={['newest prompt', 'older prompt']} />)
+    const textarea = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+
+    fireEvent.keyDown(textarea, { key: 'ArrowUp' })
+    expect(textarea.value).toBe('newest prompt')
+    fireEvent.keyDown(textarea, { key: 'ArrowUp' })
+    expect(textarea.value).toBe('older prompt')
+    fireEvent.keyDown(textarea, { key: 'ArrowDown' })
+    expect(textarea.value).toBe('newest prompt')
+    fireEvent.keyDown(textarea, { key: 'ArrowDown' })
+    expect(textarea.value).toBe('')
+  })
+
+  it('leaves ↑ to the caret once the composer holds text, and never during an IME composition', () => {
+    render(<ControlledComposer promptHistory={['previous prompt']} />)
+    const textarea = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+
+    fireEvent.keyDown(textarea, { key: 'ArrowUp', isComposing: true })
+    expect(textarea.value).toBe('')
+
+    fireEvent.change(textarea, { target: { value: 'typed draft' } })
+    fireEvent.keyDown(textarea, { key: 'ArrowUp' })
+    expect(textarea.value).toBe('typed draft')
+
+    // An edited history entry is no longer an unedited walk position either.
+    fireEvent.change(textarea, { target: { value: '' } })
+    fireEvent.keyDown(textarea, { key: 'ArrowUp' })
+    expect(textarea.value).toBe('previous prompt')
+    fireEvent.change(textarea, { target: { value: 'previous prompt edited' } })
+    fireEvent.keyDown(textarea, { key: 'ArrowUp' })
+    expect(textarea.value).toBe('previous prompt edited')
+  })
 })
+
+/** A composer whose draft round-trips through a parent, as the store does. */
+function ControlledComposer(props: { readonly promptHistory: readonly string[] }): ReactElement {
+  const [draft, setDraft] = useState('')
+  return (
+    <Composer {...baseProps()} draft={draft} onDraftChange={setDraft} promptHistory={props.promptHistory} />
+  )
+}
 
 function commandFixtures(): readonly DynamicCommand[] {
   return [

@@ -24,7 +24,13 @@ export function DiagnosticsDrawer(props: DiagnosticsDrawerProps): ReactElement {
   const [snapshot, setSnapshot] = useState<DiagnosticsSnapshot | undefined>(undefined)
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState(false)
+  const [readError, setReadError] = useState(false)
+  const [actionError, setActionError] = useState(false)
+  const error = readError || actionError
+  const openRef = useRef(false)
+  const readGeneration = useRef(0)
+  const pendingRead = useRef<Promise<DiagnosticsSnapshot | undefined> | undefined>(undefined)
+  const onRead = props.onRead
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -36,22 +42,63 @@ export function DiagnosticsDrawer(props: DiagnosticsDrawerProps): ReactElement {
     align: 'end',
   })
 
-  const load = useCallback(async (): Promise<void> => {
-    setLoading(true)
-    setError(false)
-    try {
-      const next = await props.onRead()
-      if (next === undefined) throw new Error('Diagnostics snapshot unavailable')
-      setSnapshot(next)
-    } catch {
-      setSnapshot(undefined)
-      setError(true)
-    } finally {
-      setLoading(false)
-    }
-  }, [props])
+  const load = useCallback(
+    async (options?: { readonly silent?: boolean }): Promise<void> => {
+      const silent = options?.silent === true
+      if (!openRef.current || (silent && pendingRead.current !== undefined)) return
+      const generation = ++readGeneration.current
+      if (!silent) setLoading(true)
+      if (!silent) {
+        setReadError(false)
+        setActionError(false)
+      }
+      let pending = pendingRead.current
+      if (pending === undefined) {
+        try {
+          pending = onRead()
+        } catch (reason) {
+          pending = Promise.reject(
+            reason instanceof Error ? reason : new Error('Diagnostics snapshot unavailable'),
+          )
+        }
+        pendingRead.current = pending
+      }
+      try {
+        const next = await pending
+        if (generation !== readGeneration.current || !openRef.current) return
+        if (next === undefined) throw new Error('Diagnostics snapshot unavailable')
+        setSnapshot(next)
+        setReadError(false)
+      } catch {
+        if (generation !== readGeneration.current || !openRef.current) return
+        if (!silent) setSnapshot(undefined)
+        setReadError(true)
+      } finally {
+        if (pendingRead.current === pending) pendingRead.current = undefined
+        if (!silent && generation === readGeneration.current && openRef.current) setLoading(false)
+      }
+    },
+    [onRead],
+  )
+
+  useEffect(() => {
+    readGeneration.current += 1
+    pendingRead.current = undefined
+    if (openRef.current) void load()
+  }, [load])
+
+  useEffect(
+    () => () => {
+      openRef.current = false
+      readGeneration.current += 1
+    },
+    [],
+  )
 
   const close = useCallback((): void => {
+    openRef.current = false
+    readGeneration.current += 1
+    setLoading(false)
     setOpen(false)
     triggerRef.current?.focus()
   }, [])
@@ -67,23 +114,38 @@ export function DiagnosticsDrawer(props: DiagnosticsDrawerProps): ReactElement {
     if (open) panelRef.current?.focus()
   }, [open])
 
+  useEffect(() => {
+    if (!open) return
+    const interval = window.setInterval(() => {
+      if (!busy && !loading && pendingRead.current === undefined) void load({ silent: true })
+    }, 5_000)
+    return () => window.clearInterval(interval)
+  }, [open, busy, loading, load])
+
   const toggle = (): void => {
     if (open) {
       close()
       return
     }
     setOpen(true)
+    openRef.current = true
     void load()
   }
 
   const run = async (action: () => Promise<void>): Promise<void> => {
+    const generation = readGeneration.current
     setBusy(true)
-    setError(false)
+    setReadError(false)
+    setActionError(false)
     try {
       await action()
+      // A poll started before the action cannot describe its result. Drain
+      // that read before requesting a fresh snapshot without overlapping RPCs.
+      await pendingRead.current?.catch(() => undefined)
+      if (!openRef.current || generation !== readGeneration.current) return
       await load()
     } catch {
-      setError(true)
+      if (openRef.current && generation === readGeneration.current) setActionError(true)
     } finally {
       setBusy(false)
     }
@@ -121,7 +183,7 @@ export function DiagnosticsDrawer(props: DiagnosticsDrawerProps): ReactElement {
               <Icon name="close" />
             </button>
           </div>
-          {loading ? (
+          {loading && snapshot === undefined ? (
             <ContentFlow as="p" className="dsh-diagnostics-popover__status" role="status">
               {t('diagnostics.loading')}
             </ContentFlow>

@@ -19,6 +19,7 @@ import {
 } from '@dsh-vscode/webview-protocol'
 import type { VsCodeApi } from '../vscode-api.js'
 import { translate } from '../i18n.js'
+import { writeClipboard } from '../features/chat/clipboard.js'
 
 // Only the external Host boundary is controlled here. The entrypoint below
 // starts the production App, Store, protocol client, providers and styles.
@@ -54,8 +55,9 @@ let sessions: SessionSummary[] = ['daily-a', 'daily-b', 'daily-c'].map((id, i) =
   blank: false,
   status: 'idle',
   createdAt: clock,
-  updatedAt: clock,
+  updatedAt: owner.includes('session-list-preferences') ? `2026-10-${20 + i}T00:00:00Z` : clock,
 }))
+let archivedSessions: SessionSummary[] = []
 const nodes = new Map<string, readonly TimelineNode[]>(
   sessions.map((session) => [
     session.id,
@@ -161,6 +163,7 @@ function route(request: WebviewRequest): unknown {
         kind: 'connected',
         backendInstanceId: 'daily-fixture',
         connectionGeneration: 1,
+        sessionRestore: true,
       })
       return {}
     case 'surface.titlebarLayout':
@@ -170,6 +173,15 @@ function route(request: WebviewRequest): unknown {
     case 'connection.retry':
       event('connection.snapshot', { kind: 'connected' })
       return {}
+    case 'diagnostics.snapshot':
+      return {
+        extensionVersion: '0.1.11',
+        dshVersion: '0.2.1-rc.5',
+        state: 'connected',
+        endpointKind: 'managed',
+        canReconnect: true,
+        recentEvents: [],
+      }
     case 'workspace.list':
       return [
         {
@@ -184,13 +196,32 @@ function route(request: WebviewRequest): unknown {
     case 'session.list':
       return {
         items: request.payload.archived
-          ? []
+          ? archivedSessions
           : request.payload.search === undefined
             ? sessions
             : sessions.filter((session) =>
                 session.title.toLowerCase().includes(request.payload.search?.toLowerCase() ?? ''),
               ),
       }
+    case 'session.archive': {
+      const { sessionId, archived } = request.payload
+      if (archived) {
+        const target = sessions.find((session) => session.id === sessionId)
+        if (target !== undefined) {
+          sessions = sessions.filter((session) => session.id !== sessionId)
+          sessionOrder = sessionOrder.filter((id) => id !== sessionId)
+          archivedSessions = [...archivedSessions, target]
+        }
+        return {}
+      }
+      const restored = archivedSessions.find((session) => session.id === sessionId)
+      if (restored !== undefined) {
+        archivedSessions = archivedSessions.filter((session) => session.id !== sessionId)
+        sessions = [...sessions, restored]
+        sessionOrder = [...sessionOrder, sessionId]
+      }
+      return {}
+    }
     case 'session.move': {
       if (
         request.payload.workspaceId !== 'daily-workspace' ||
@@ -478,6 +509,22 @@ const scenario = {
       { kind: 'reasoning', id: 'daily-signed-reasoning', markdown, streaming },
     ])
     status(lastOpened, streaming ? 'running' : 'idle')
+  },
+  async legacyCopy(text: string): Promise<boolean> {
+    const previous = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: () =>
+          Promise.reject(new DOMException('Fixture clipboard policy denial', 'NotAllowedError')),
+      },
+    })
+    try {
+      return await writeClipboard(text)
+    } finally {
+      if (previous === undefined) Reflect.deleteProperty(navigator, 'clipboard')
+      else Object.defineProperty(navigator, 'clipboard', previous)
+    }
   },
   label: (key: string, params?: Readonly<Record<string, string | number>>): string => translate(key, params),
   async point(value: Target): Promise<{ x: number; y: number }> {

@@ -51,4 +51,22 @@ describe('ReasoningDisclosure', () => {
     expect(container.querySelector('[aria-live]')).toBeNull()
     expect(container.querySelector('[role="status"]')).toBeNull()
   })
+
+  it('renders a copy button when expanded to copy reasoning content', () => {
+    const props = {
+      id: 'reasoning-copy-test',
+      markdown: 'Detailed thought process here',
+      streaming: false,
+      expanded: false,
+      onExpandedChange: () => undefined,
+      translate: (key: string) => key,
+    }
+    const { container, rerender } = render(<ReasoningDisclosure {...props} />)
+    expect(container.querySelector('.dsh-timeline__reasoning-copy')).toBeNull()
+
+    rerender(<ReasoningDisclosure {...props} expanded={true} />)
+    const copyButton = container.querySelector<HTMLButtonElement>('.dsh-timeline__reasoning-copy')
+    expect(copyButton).not.toBeNull()
+    expect(copyButton?.getAttribute('aria-label')).toBe('message.copy')
+  })
 })

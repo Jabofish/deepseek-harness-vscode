@@ -306,6 +306,36 @@ describe('SchedulePanel', () => {
     })
   })
 
+  it('supports Escape to cancel editing and Ctrl+Enter to submit edit form', async () => {
+    let updated = false
+    mountPanel({
+      items: [active],
+      resolve: (request) => {
+        if (request.type === 'schedule.update') {
+          updated = true
+          return { kind: 'schedule.updated', result: { id: active.id, updated: true } }
+        }
+        return defaultResponse(request, [active])
+      },
+    })
+    fireEvent.click(await screen.findByRole('button', { name: /Water the plants/u }))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    const titleInput = screen.getByLabelText<HTMLInputElement>('Name')
+    expect(titleInput).toBeDefined()
+
+    // Test Escape cancels edit mode
+    fireEvent.keyDown(titleInput, { key: 'Escape' })
+    expect(screen.queryByLabelText('Name')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeDefined()
+
+    // Re-enter edit mode and test Ctrl+Enter submits
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    const promptInput = screen.getByLabelText<HTMLTextAreaElement>('Reminder instruction')
+    fireEvent.change(promptInput, { target: { value: 'Edited reminder text' } })
+    fireEvent.keyDown(promptInput, { key: 'Enter', ctrlKey: true })
+    await waitFor(() => expect(updated).toBe(true))
+  })
+
   it('retains delivery and retention metadata and requests older history with the returned cursor', async () => {
     const { requests } = mountPanel()
     fireEvent.click(await screen.findByRole('button', { name: /Water the plants/u }))
@@ -351,5 +381,31 @@ describe('SchedulePanel', () => {
     const deleteRequest = requests.find((request) => request.type === 'schedule.delete')
     expect(deleteRequest).toMatchObject({ payload: { sessionId: 'session-original', id: 'schedule-one' } })
     expect(await screen.findByText('No scheduled reminders yet.')).toBeDefined()
+  })
+
+  it('supports canceling creation via Escape and submitting via Ctrl+Enter in the prompt', async () => {
+    let started = false
+    const panel = mountPanel({
+      onStartScheduleSession: () => {
+        started = true
+        return Promise.resolve('session-new')
+      },
+    })
+    await screen.findByRole('button', { name: /Water the plants/u })
+    clickCreateOpen()
+    const nameInput = screen.getByLabelText('Name')
+    expect(document.activeElement).toBe(nameInput)
+
+    fireEvent.keyDown(nameInput, { key: 'Escape' })
+    expect(document.querySelector('.dsh-schedule-panel__create-form')).toBeNull()
+
+    clickCreateOpen()
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Shortcut schedule' } })
+    const promptInput = screen.getByLabelText('Reminder instruction')
+    fireEvent.change(promptInput, { target: { value: 'Remind me with shortcut' } })
+    fireEvent.keyDown(promptInput, { key: 'Enter', ctrlKey: true })
+
+    await waitFor(() => expect(started).toBe(true))
+    panel.view.unmount()
   })
 })

@@ -14,6 +14,7 @@ const time = '2026-01-01T00:00:00.000Z'
 const disposables: Array<() => void> = []
 afterEach(() => {
   cleanup()
+  window.localStorage.clear()
   for (const dispose of disposables.splice(0)) dispose()
 })
 
@@ -257,9 +258,9 @@ it.each([false, true])(
     expect(visibleOrder()).toEqual([titles[1], titles[2], titles[0], ...other])
     view.unmount()
     f.mount()
-    expect(visibleOrder()).toEqual([titles[1], titles[2], titles[0]])
+    expect(visibleOrder()).toEqual([titles[1], titles[2], titles[0], ...other])
     drag(titles[0]!, titles[1])
-    await waitFor(() => expect(visibleOrder()).toEqual(titles.slice(0, 3)))
+    await waitFor(() => expect(visibleOrder()).toEqual([...titles.slice(0, 3), ...other]))
   },
 )
 

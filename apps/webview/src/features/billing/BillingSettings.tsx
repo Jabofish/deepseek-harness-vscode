@@ -336,6 +336,19 @@ function BillingPriceEditor(props: {
           <form
             ref={editorRef}
             className="dsh-billing__form"
+            onKeyDown={(event) => {
+              if (
+                event.key === 'Escape' &&
+                !event.defaultPrevented &&
+                !busy &&
+                !event.nativeEvent.isComposing &&
+                event.nativeEvent.keyCode !== 229
+              ) {
+                event.preventDefault()
+                event.stopPropagation()
+                setEditorOpen(false)
+              }
+            }}
             onSubmit={(event) => {
               event.preventDefault()
               if (price !== undefined) void save([...withoutDraft, price], undefined, true)

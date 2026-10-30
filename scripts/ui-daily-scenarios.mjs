@@ -16,6 +16,65 @@ const clear = async (ui) => {
 export const dailyScenarios = [
   ...additionalScenarios,
   {
+    name: 'daily/diagnostics-streaming-and-action-failure',
+    coverage: ['NAV-01', 'SESSION-04'],
+    async run(ui) {
+      await ui.call('hold', 'diagnostics.snapshot')
+      await ui.click(button('app.conversationActions'))
+      await ui.click(button('diagnostics.open'))
+      await ui.waitFor((s) => s.pending.includes('diagnostics.snapshot'), 'pending diagnostic read')
+      await ui.call('reasoning', 'First streamed update', true)
+      await ui.afterPaint()
+      await ui.call('reasoning', 'Second streamed update', true)
+      await ui.afterPaint()
+      assert.equal((await ui.snapshot()).requests.filter((r) => r.type === 'diagnostics.snapshot').length, 1)
+      await ui.call('release')
+      await ui.waitFor((s) => s.text.includes('0.1.11'), 'accepted diagnostics')
+      await ui.call('failNext', 'connection.retry')
+      await ui.click(button('diagnostics.reconnect'))
+      const failure = await ui.call('label', 'diagnostics.actionFailed')
+      await ui.waitFor((s) => s.text.includes(failure), 'reconnect failure')
+      await ui.waitFor(
+        (s) =>
+          s.requests.filter((r) => r.type === 'diagnostics.snapshot').length >= 2 &&
+          !s.pending.includes('diagnostics.snapshot'),
+        'background diagnostic refresh',
+      )
+      await ui.afterPaint()
+      assert((await ui.snapshot()).text.includes(failure), 'background refresh preserves action failure')
+    },
+  },
+  {
+    name: 'daily/reopened-session-search-pending',
+    coverage: ['SESSION-03', 'SESSION-04'],
+    async run(ui) {
+      await ui.viewport(480, 720)
+      await ui.afterPaint()
+      const searchLabel = await ui.call('label', 'sessions.searchAria')
+      if (!(await ui.snapshot()).controls.some((c) => c.name === searchLabel)) await ui.call('toggleSessions')
+      await ui.click({ role: 'textbox', name: searchLabel })
+      await ui.type('Beta')
+      await ui.waitFor((s) => s.sessionTitles.join() === 'Beta conversation', 'title match')
+      await ui.key('Escape')
+      await ui.call('hold', 'session.list')
+      await ui.call('toggleSessions')
+      await ui.waitFor(
+        (s) =>
+          s.pending.includes('session.list') &&
+          s.focus === searchLabel &&
+          s.requests.filter((r) => r.type === 'session.list' && r.payload.search === 'Beta').length >= 2,
+        'reopened search waiting for content',
+      )
+      await ui.key('Enter')
+      assert.equal((await ui.snapshot()).opened, 'daily-a')
+      await ui.call('release')
+      await ui.waitFor((s) => !s.pending.includes('session.list'), 'content search completed')
+      await ui.afterPaint()
+      await ui.key('Enter')
+      await ui.waitFor((s) => s.opened === 'daily-b', 'fresh unique result opens')
+    },
+  },
+  {
     name: 'daily/rc215-reasoning',
     coverage: ['READ-01'],
     async run(ui) {
@@ -40,6 +99,104 @@ export const dailyScenarios = [
       await ui.waitFor((s) => s.timeline.includes('Expanded update'), 'settled reasoning')
       assert(!(await ui.snapshot()).timeline.includes('opaque-reasoning-metadata'))
       await ui.capture('rc215-reasoning-display')
+    },
+  },
+  {
+    name: 'daily/clipboard-focus-restore',
+    coverage: ['INPUT-01', 'READ-06'],
+    async run(ui) {
+      await input(ui, 'Selected draft remains editable')
+      await ui.key('a', 2)
+      await ui.call('legacyCopy', 'A different answer copied from the transcript')
+      const name = await ui.call('label', 'composer.prompt')
+      assert.equal((await ui.snapshot()).focus, name)
+      await ui.type('Replacement typed without refocusing')
+      assert.equal((await ui.snapshot()).prompt, 'Replacement typed without refocusing')
+      assert.equal((await ui.snapshot()).receipts.length, 0)
+      await ui.capture('copy-preserves-input-focus')
+    },
+  },
+  {
+    name: 'daily/composer-send-focus',
+    coverage: ['INPUT-01', 'INPUT-06'],
+    async run(ui) {
+      const name = await ui.call('label', 'composer.prompt')
+      await input(ui, 'Send by clicking the button')
+      await ui.call('hold', 'session.sendPrompt')
+      await ui.click(button('composer.sendMessage'))
+      await ui.waitFor(
+        (s) => s.pending.includes('session.sendPrompt') && s.focus === name,
+        'prompt keeps focus while sending',
+      )
+      await ui.call('release')
+      await ui.waitFor((s) => s.receipts.length === 1 && s.prompt === '', 'send accepted')
+      assert.equal((await ui.snapshot()).focus, name)
+      await ui.type('Next thought without another click')
+      assert.equal((await ui.snapshot()).prompt, 'Next thought without another click')
+      assert.equal((await ui.snapshot()).receipts.length, 1)
+      await ui.capture('send-keeps-prompt-focus')
+    },
+  },
+  {
+    name: 'daily/session-list-preferences',
+    coverage: ['WS-01', 'SESSION-03'],
+    async run(ui) {
+      if ((await ui.snapshot()).sessionTitles.length === 0) await ui.call('toggleSessions')
+      await ui.click(button('sessions.sortUpdated'))
+      await ui.click(button('sessions.groupWorkspaces'))
+      const expected = ['Gamma conversation', 'Beta conversation', 'Alpha conversation']
+      await ui.waitFor((s) => s.sessionTitles.join() === expected.join(), 'updated order')
+      await ui.reload()
+      await ui.waitFor((s) => s.timeline?.includes('Answer owned by Alpha conversation'), 'restored App')
+      if ((await ui.snapshot()).sessionTitles.length === 0) await ui.call('toggleSessions')
+      const sort = await ui.call('label', 'sessions.sortManual')
+      const grouped = await ui.call('label', 'sessions.showCurrentWorkspace')
+      await ui.waitFor(
+        (s) => s.controls.some((c) => c.name === sort) && s.controls.some((c) => c.name === grouped),
+        'saved list preferences',
+      )
+      assert.deepEqual((await ui.snapshot()).sessionTitles, expected)
+      await ui.capture('remembered-list-preferences')
+    },
+  },
+  {
+    name: 'daily/session-search-shortcuts',
+    coverage: ['SESSION-02', 'SESSION-03', 'WS-01'],
+    async run(ui) {
+      const draft = 'Keep this draft with Alpha'
+      await input(ui, draft)
+      await ui.viewport(480, 720)
+      await ui.afterPaint()
+      const search = await ui.call('label', 'sessions.searchAria')
+      if ((await ui.snapshot()).sessionTitles.length === 0) await ui.call('toggleSessions')
+      await ui.waitFor((s) => s.focus === search, 'search ready for typing')
+      await ui.type('Beta')
+      await ui.waitFor((s) => s.sessionTitles.join() === 'Beta conversation', 'unique Beta result')
+      await ui.capture('keyboard-session-search')
+      await ui.key('Enter')
+      const beta = await ui.waitFor(
+        (s) => s.timeline?.includes('Answer owned by Beta conversation'),
+        'Enter opens Beta',
+      )
+      assert.equal(beta.prompt, '')
+      await ui.call('toggleSessions')
+      await ui.waitFor((s) => s.focus === search, 'previous search selected on reopen')
+      await ui.type('Alpha')
+      await ui.waitFor(
+        (s) => s.sessionTitles.join() === 'Alpha conversation',
+        'new typing replaces the old query',
+      )
+      await ui.key('Enter')
+      const alpha = await ui.waitFor(
+        (s) => s.timeline?.includes('Answer owned by Alpha conversation'),
+        'Enter opens Alpha',
+      )
+      assert.equal(alpha.prompt, draft)
+      await ui.call('toggleSessions')
+      await ui.waitFor((s) => s.focus === search, 'search reopened')
+      await ui.key('Escape')
+      await ui.waitFor((s) => s.sessionTitles.length === 0, 'Escape closes the list')
+      assert.equal((await ui.snapshot()).prompt, draft)
     },
   },
   {
@@ -293,8 +450,9 @@ export const dailyScenarios = [
     name: 'daily/search-unavailable-and-clear',
     coverage: ['SESSION-04'],
     async run(ui) {
-      if (!(await ui.snapshot()).controls.some((c) => c.name.includes('Beta conversation')))
-        await ui.click({ role: 'button', name: 'Alpha conversation', contains: true })
+      const searchLabel = await ui.call('label', 'sessions.searchAria')
+      if (!(await ui.snapshot()).controls.some((c) => c.name === searchLabel))
+        await ui.click({ role: 'button', key: 'sessions.switch', params: { title: 'Alpha conversation' } })
       await ui.call('failNext', 'session.list')
       const search = { role: 'textbox', key: 'sessions.searchAria' }
       await ui.click(search)
@@ -324,8 +482,9 @@ export const dailyScenarios = [
     name: 'daily/rename-session-retry',
     coverage: ['SESSION-05'],
     async run(ui) {
-      if (!(await ui.snapshot()).controls.some((c) => c.name.includes('Beta conversation')))
-        await ui.click({ role: 'button', name: 'Alpha conversation', contains: true })
+      const searchLabel = await ui.call('label', 'sessions.searchAria')
+      if (!(await ui.snapshot()).controls.some((c) => c.name === searchLabel))
+        await ui.click({ role: 'button', key: 'sessions.switch', params: { title: 'Alpha conversation' } })
       await ui.click({ role: 'button', key: 'sessions.actions', params: { title: 'Beta conversation' } })
       await ui.click(button('sessions.renameTitle'))
       const field = { role: 'textbox', key: 'sessions.sessionName' }
@@ -365,8 +524,9 @@ export const dailyScenarios = [
     name: 'daily/search-sessions',
     coverage: ['WS-01', 'SESSION-03', 'SESSION-04'],
     async run(ui) {
-      if (!(await ui.snapshot()).controls.some((c) => c.name.includes('Beta conversation')))
-        await ui.click({ role: 'button', name: 'Alpha conversation', contains: true })
+      const searchLabel = await ui.call('label', 'sessions.searchAria')
+      if (!(await ui.snapshot()).controls.some((c) => c.name === searchLabel))
+        await ui.click({ role: 'button', key: 'sessions.switch', params: { title: 'Alpha conversation' } })
       const search = { role: 'textbox', key: 'sessions.searchAria' }
       await ui.click(search)
       await ui.type('Beta')
@@ -578,6 +738,57 @@ export const dailyScenarios = [
     },
   },
   {
+    name: 'daily/archive-undo',
+    coverage: ['SS-01'],
+    async run(ui) {
+      const searchLabel = await ui.call('label', 'sessions.searchAria')
+      const listOpen = async () => (await ui.snapshot()).controls.some((c) => c.name === searchLabel)
+      if (!(await listOpen()))
+        await ui.click({ role: 'button', key: 'sessions.switch', params: { title: 'Alpha conversation' } })
+      await ui.click({ role: 'button', key: 'sessions.actions', params: { title: 'Beta conversation' } })
+      await ui.click({ role: 'button', key: 'sessions.archiveTitle' })
+      const undoLabel = await ui.call('label', 'app.undoArchive')
+      await ui.waitFor(
+        (s) => !s.sessionTitles.includes('Beta conversation') && s.controls.some((c) => c.name === undoLabel),
+        'archived row and recovery action',
+      )
+      await ui.click({ role: 'button', name: undoLabel })
+      await ui.waitFor((s) => !s.controls.some((c) => c.name === undoLabel), 'notice cleared')
+      // The notice sits outside the floating list, so using its action also
+      // dismissed that list; reopen it to read the restored row.
+      if (!(await listOpen()))
+        await ui.click({ role: 'button', key: 'sessions.switch', params: { title: 'Alpha conversation' } })
+      await ui.waitFor((s) => s.sessionTitles.includes('Beta conversation'), 'row restored')
+    },
+  },
+  {
+    name: 'daily/focus-after-open',
+    coverage: ['SS-01', 'IN-01'],
+    async run(ui) {
+      const promptLabel = await ui.call('label', 'composer.prompt')
+      const searchLabel = await ui.call('label', 'sessions.searchAria')
+      const newLabel = await ui.call('label', 'sessions.new')
+      const listOpen = async () => (await ui.snapshot()).controls.some((c) => c.name === searchLabel)
+      // Opening a conversation from the list closes the list with the row that
+      // was clicked, so the composer has to take the keyboard.
+      if (!(await listOpen()))
+        await ui.click({ role: 'button', key: 'sessions.switch', params: { title: 'Alpha conversation' } })
+      await ui.click({ role: 'button', name: 'Beta conversation', contains: true })
+      await ui.waitFor((s) => s.timeline?.includes('Answer owned by Beta conversation'), 'second session')
+      const opened = await ui.waitFor((s) => s.focus === promptLabel, 'composer focused after opening')
+      assert.equal(opened.prompt, '')
+      await ui.type('typed right after switching')
+      await ui.waitFor((s) => s.prompt === 'typed right after switching', 'typing reaches the composer')
+      // A new conversation is a draft the user asked to type in as well.
+      if (!(await listOpen()))
+        await ui.click({ role: 'button', key: 'sessions.switch', params: { title: 'Beta conversation' } })
+      await ui.click({ role: 'button', name: newLabel })
+      await ui.waitFor((s) => s.focus === promptLabel, 'new draft focused')
+      await ui.type('new draft prompt')
+      await ui.waitFor((s) => s.prompt === 'new draft prompt', 'typing reaches the new draft')
+    },
+  },
+  {
     name: 'daily/settings-focus',
     coverage: ['NAV-01', 'NAV-02'],
     async run(ui) {
@@ -607,6 +818,35 @@ export const dailyScenarios = [
       )
       assert.equal(state.receipts.filter((receipt) => receipt.text === text).length, 1)
       assert.equal(await ui.call('countText', text), 1)
+    },
+  },
+  {
+    name: 'daily/prompt-history',
+    coverage: ['INPUT-01'],
+    async run(ui) {
+      await input(ui, 'First history prompt')
+      await ui.key('Enter')
+      await ui.waitFor((s) => s.receipts.length === 1 && s.prompt === '', 'first prompt sent')
+      await input(ui, 'Second history prompt')
+      await ui.key('Enter')
+      await ui.waitFor((s) => s.receipts.length === 2 && s.prompt === '', 'second prompt sent')
+      await ui.key('ArrowUp')
+      await ui.waitFor((s) => s.prompt === 'Second history prompt', 'newest prompt recalled')
+      await ui.key('ArrowUp')
+      await ui.waitFor((s) => s.prompt === 'First history prompt', 'older prompt recalled')
+      await ui.key('ArrowDown')
+      await ui.waitFor((s) => s.prompt === 'Second history prompt', 'newer prompt recalled')
+      await ui.key('ArrowDown')
+      await ui.waitFor((s) => s.prompt === '', 'empty draft restored')
+      // An edit ends the walk: ↑ must leave the edited text alone instead of
+      // jumping to an older prompt.
+      await ui.key('ArrowUp')
+      await ui.waitFor((s) => s.prompt === 'Second history prompt', 'history recalled again')
+      await ui.type(' edited')
+      await ui.waitFor((s) => s.prompt === 'Second history prompt edited', 'edited recall')
+      await ui.key('ArrowUp')
+      assert.equal((await ui.snapshot()).prompt, 'Second history prompt edited')
+      assert.equal((await ui.snapshot()).receipts.length, 2)
     },
   },
   {
