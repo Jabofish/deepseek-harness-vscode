@@ -6,6 +6,11 @@ Release entries describe behaviour at that release. `Unreleased` lists changes a
 
 ## Unreleased
 
+- Adds an exact adapter for DSH `0.2.1-rc.5`, retaining separate `0.2.1-rc.4` and `0.2.2-alpha.2` identities and the guided-install default. Chat hides leading reasoning signatures during streaming and after completion; raw history remains available to the trajectory inspector.
+- 适配 DSH `0.2.1-rc.5`，保留 `0.2.1-rc.4`、`0.2.2-alpha.2` 的独立身份与引导安装默认。聊天中的流式与已完成思考均隐藏开头的签名元数据，轨迹检查仍保留原始历史。
+- Confirm Windows shutdown when `taskkill` races an exiting descendant: require the owned child's close event and a process-tree check covering pre-stop descendants. Residual processes or unavailable diagnostics still report failure.
+- 修复 Windows 子进程退出与 `taskkill` 交错时的停止误报：同时确认持有进程的关闭事件与停止前后进程树，覆盖父进程先退出的后代；存在残留或无法查询时仍报告失败。
+
 ## 0.4.4
 
 - Link installation instructions to the live JaboDSH Marketplace listing.

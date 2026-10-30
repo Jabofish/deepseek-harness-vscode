@@ -472,6 +472,13 @@ function target(value: Target): HTMLElement {
   return element
 }
 const scenario = {
+  reasoning(markdown: string, streaming: boolean): void {
+    publish(lastOpened, [
+      ...(nodes.get(lastOpened) ?? []).filter((node) => node.id !== 'daily-signed-reasoning'),
+      { kind: 'reasoning', id: 'daily-signed-reasoning', markdown, streaming },
+    ])
+    status(lastOpened, streaming ? 'running' : 'idle')
+  },
   label: (key: string, params?: Readonly<Record<string, string | number>>): string => translate(key, params),
   async point(value: Target): Promise<{ x: number; y: number }> {
     let element = target(value)

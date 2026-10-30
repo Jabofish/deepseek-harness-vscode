@@ -16,6 +16,33 @@ const clear = async (ui) => {
 export const dailyScenarios = [
   ...additionalScenarios,
   {
+    name: 'daily/rc215-reasoning',
+    coverage: ['READ-01'],
+    async run(ui) {
+      for (const raw of [
+        '<sign',
+        '<signature>opaque-reasoning-metadata',
+        '<signature>opaque-reasoning-metadata</signature>\n',
+      ]) {
+        await ui.call('reasoning', raw, true)
+        await ui.afterPaint()
+        assert(!(await ui.snapshot()).timeline.includes('opaque-reasoning-metadata'))
+      }
+      const raw = '<signature>opaque-reasoning-metadata</signature>\nVisible thought\nMore detail'
+      await ui.call('reasoning', raw, true)
+      const show = await ui.call('label', 'timeline.showReasoning')
+      await ui.waitFor((s) => s.controls.some((c) => c.name === show), 'visible reasoning')
+      await ui.click(button('timeline.showReasoning'))
+      await ui.waitFor((s) => s.timeline.includes('More detail'), 'expanded reasoning')
+      await ui.call('reasoning', `${raw}\nExpanded update`, true)
+      await ui.waitFor((s) => s.timeline.includes('Expanded update'), 'growing expanded reasoning')
+      await ui.call('reasoning', `${raw}\nExpanded update`, false)
+      await ui.waitFor((s) => s.timeline.includes('Expanded update'), 'settled reasoning')
+      assert(!(await ui.snapshot()).timeline.includes('opaque-reasoning-metadata'))
+      await ui.capture('rc215-reasoning-display')
+    },
+  },
+  {
     name: 'daily/session-reorder',
     coverage: ['SS-01'],
     async run(ui) {

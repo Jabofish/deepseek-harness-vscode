@@ -12,7 +12,7 @@
 
 ## 上游来源与安装默认
 
-本仓库记录的最新发布包为 `@deepseek-ai/dsh@0.2.2-alpha.2`；扩展引导安装默认包为 `@deepseek-ai/dsh@0.2.1-rc.2`，固定源码见下文版本表，隔离验证方法见[质量流程](quality.md)。该记录是仓库的适配快照；npm 远端的 `latest` / `next` 指向需另行查询。发布版本与安装默认分别由 `LATEST_PUBLISHED_DSH_VERSION`、`DEFAULT_INSTALL_DSH_VERSION` 维护；新增适配不自动切换默认，安装和更新均使用经过验证的精确版本，不跟随浮动 dist-tag。默认版本不代表所有能力完成，timed 提问等验收缺口仍见能力矩阵。
+本仓库记录的最新发布包为 `@deepseek-ai/dsh@0.2.1-rc.5`；扩展引导安装默认包为 `@deepseek-ai/dsh@0.2.1-rc.2`，固定源码见下文版本表，隔离验证方法见[质量流程](quality.md)。该记录是仓库的适配快照；npm 远端的 `latest` / `next` 指向需另行查询。发布版本与安装默认分别由 `LATEST_PUBLISHED_DSH_VERSION`、`DEFAULT_INSTALL_DSH_VERSION` 维护；新增适配不自动切换默认，安装和更新均使用经过验证的精确版本，不跟随浮动 dist-tag。默认版本不代表所有能力完成，timed 提问等验收缺口仍见能力矩阵。
 
 历史 Host API 的固定基线是提交 [`47f943859bef60e4160492346772ded9b24f765a`](https://github.com/deepseek-ai/deepseek-harness/tree/47f943859bef60e4160492346772ded9b24f765a)：[RPC map](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/host/apiproxy/src/api/rpc-map.ts)、[events](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/host/apiproxy/src/api/events.ts)、[tool catalog](https://github.com/deepseek-ai/deepseek-harness/tree/47f943859bef60e4160492346772ded9b24f765a/packages/core/tools)。它只证明该 Host API 家族；较新的 Connection/Gateway、typed Remote 和 Session Controller 必须从**目标版本自己的 tag/commit 和实际存在的接口文件**核对。尤其 `0.1.5-rc.2` 与 `0.1.5-rc.3` 的 wire 比较不能引用上述已不存在的旧 RPC 文件；两者被适配器消费的 Session Controller、typed Remote、Connection/Gateway 与工具运行时源码相同，仍保留各自精确身份。
 
@@ -45,6 +45,7 @@
 | `0.2.1-rc.2`                                                                        | `rc212`                                         | 独立入口，复用已核对 rc.1 消费契约；动态承接 Search / Fetch 设置；不作为未知版本回退                                                                              |
 | `0.2.1-rc.3`                                                                        | `rc213`                                         | 独立精确入口；按预设复用空白草稿，动态承接官方模型目录与 listing 设置；不作为未知版本回退                                                                         |
 | `0.2.1-rc.4`                                                                        | `rc214`                                         | 独立精确身份；消费的 rc.3 契约不变，不参与未知版本回退。                                                                                                          |
+| `0.2.1-rc.5`                                                                        | `rc215`                                         | 独立精确 rc.4 wire；聊天隐藏开头的思考签名，原始历史不改写；不参与未知版本回退。                                                                                  |
 | `0.2.2-alpha.2`                                                                     | `alpha222`                                      | 精确 V4 codec；显式激活实时会话、保留本地会话归属的完整图片引用读取、阻塞授权选项、模型失效通知与平台拒绝；不参与未知版本回退。                                   |
 
 `0.1.7-rc.2` 的固定源码是 [tag `dsh-v0.1.7-rc.2`](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.1.7-rc.2)，提交 `477b4f420553e8a52c2fbccc464d7561b239c443`。其他新增版本也必须在 fixture 注明 tag、commit、文件和类型；版本身份、schema、错误词汇、启动参数与能力声明一起核对。
@@ -123,6 +124,12 @@ rc.2 与 rc.1 的 Connection / Gateway、全部 API Remote、Session V4、Accoun
 ### Rc.4 精确入口
 
 `0.2.1-rc.4` 固定到 [tag `dsh-v0.2.1-rc.4`](https://github.com/deepseek-ai/deepseek-harness/tree/504a01a9578abc2c6f1fb896b1dc322c9fe24f66)，提交 `504a01a9578abc2c6f1fb896b1dc322c9fe24f66`。与已固定的 rc.3 发布版相比，消费的 Gateway、Connection、typed Remote、Session V4、Workspace、Job、Schedule、Account、Plugin Manager、工具声明和 managed 启动源码均未变化。行为变化涉及 ACP stdout 日志、MCP resource 能力检查、浏览器 View 标签及相关浏览器文案。`rc214` 以独立精确身份继承已审查的 wire；安装默认不变。native 与人工验收证据独立报告，能力保持 `PARTIAL`。
+
+### Rc.5 精确入口与思考展示
+
+`0.2.1-rc.5` 固定到 [tag `dsh-v0.2.1-rc.5`](https://github.com/deepseek-ai/deepseek-harness/tree/b830ec950faba0a46dda564be3e2d854afed94f1)，提交 `b830ec950faba0a46dda564be3e2d854afed94f1`。以 rc.4 为基线单独比较，不套用下一 minor 的 alpha 线。349 个 package manifest 均仅修改版本号，其余 19 个文件涉及思考展示、Slot 契约、翻译包装、测试和迁移文档；消费的 Gateway、Connection、typed Remote、Session V4、Workspace、Job、Schedule、Account、Plugin Manager、工具与启动源码未变化。`rc215` 以独立精确身份继承已审查的 rc.4 wire，不参与未知版本回退。
+
+上游思考 Body Slot 将原始 `rawText` 与显示文本 `text` 分开。JaboDSH 不加载该浏览器 Slot，而是在聊天投影合并各步思考前，逐条应用固定来源的[显示规则](https://github.com/deepseek-ai/deepseek-harness/blob/b830ec950faba0a46dda564be3e2d854afed94f1/packages/client/ui-chat/src/client/reasoning-text.ts)：隐藏开头尚未完整或已完整的 `<signature>` 签名段，并跳过紧随其后的换行。两种布局的预览与展开正文均使用处理后的文本，流式更新也遵循同一规则；普通文本和正文内的字面标签不变。权威历史、原始轨迹检查、导出与助手回复不改写。引导安装仍默认 `0.2.1-rc.2`，native 与真实编辑器证据独立报告，能力保持 `PARTIAL`。
 
 ### 下一 minor 线的 alpha.2
 

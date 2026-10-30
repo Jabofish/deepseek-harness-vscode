@@ -17,6 +17,7 @@ import {
   type ReasoningBlock,
 } from './timeline-shared.js'
 import { isInjectedUserTimelineNode } from './timeline-user-text-facts.js'
+import { reasoningDisplayNode } from './reasoning-display.js'
 export { createUserTextFactsProjector } from './timeline-user-text-facts.js'
 
 interface VirtualizationCache {
@@ -358,7 +359,7 @@ function prepareVisibleNodes(
     if (node.kind === 'user-message' && isInjectedUserTimelineNode(node)) continue
     if (node.kind !== 'event') {
       activeEventGroup = undefined
-      display.push(node)
+      display.push(reasoningDisplayNode(node))
       continue
     }
     if (!showDshEvents) {
