@@ -11,6 +11,7 @@ const version = process.env.DSH_LIVE_RUNTIME_VERSION ?? ''
 const protocols: Readonly<Record<string, string>> = {
   '0.2.1-rc.3': 'rc213',
   '0.2.1-rc.4': 'rc214',
+  '0.2.1-rc.5': 'rc215',
   '0.2.2-alpha.2': 'alpha222',
 }
 describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1' || protocols[version] === undefined)(

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { DshTransport } from '../src/contracts.js'
 import { Alpha222VersionAdapter } from '../src/versions/alpha222/adapter.js'
 import { Rc214VersionAdapter } from '../src/versions/rc214/adapter.js'
+import { Rc215VersionAdapter } from '../src/versions/rc215/adapter.js'
 import {
   candidate,
   endpoint,
@@ -11,10 +12,11 @@ import {
 } from './support/contract-harness.js'
 import { ProbeFixtureTransport } from './support/probe-fixture.js'
 import { callRpc } from '../src/versions/rc6/rpc.js'
-import { namedBlank } from './fixtures/rc214-contract.js'
+import { namedBlank } from './fixtures/rc215-contract.js'
 
 describe.each([
   { AdapterBase: Rc214VersionAdapter, version: '0.2.1-rc.4', protocol: 'rc214' },
+  { AdapterBase: Rc215VersionAdapter, version: '0.2.1-rc.5', protocol: 'rc215' },
   { AdapterBase: Alpha222VersionAdapter, version: '0.2.2-alpha.2', protocol: 'alpha222' },
 ])('published upstream $version', ({ AdapterBase, version: release, protocol }) => {
   it('admits the release independently, rejects adjacent versions and closes every probe transport', async () => {
@@ -33,7 +35,7 @@ describe.each([
     expect(fixture.closeCalls).toBe(1)
     for (const version of [
       '0.2.1-rc.3',
-      release === '0.2.1-rc.4' ? '0.2.2-alpha.2' : '0.2.1-rc.4',
+      ...['0.2.1-rc.4', '0.2.1-rc.5', '0.2.1-rc.6', '0.2.2-alpha.2'].filter((v) => v !== release),
       `${release}+unverified`,
     ])
       expect(await adapter.probe(candidate(version))).toBeUndefined()
