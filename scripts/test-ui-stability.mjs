@@ -381,6 +381,23 @@ try {
         call,
         waitFor,
         click,
+        reload: async () => {
+          const previous = await evaluate('performance.timeOrigin')
+          await send('Page.reload', { ignoreCache: true })
+          const deadline = Date.now() + 8000
+          while (Date.now() < deadline) {
+            try {
+              if (
+                await evaluate(`performance.timeOrigin !== ${JSON.stringify(previous)} && !!window.dailyUi`)
+              )
+                return
+            } catch {
+              // The old execution context disappears during real navigation.
+            }
+            await delay(50)
+          }
+          throw new Error('The reloaded App did not become ready')
+        },
         key: press,
         afterPaint,
         type: (value) => send('Input.insertText', { text: value }),

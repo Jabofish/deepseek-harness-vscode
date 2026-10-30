@@ -329,6 +329,21 @@ export function MessageActions(props: MessageActionsProps): ReactElement {
                   maxLength={8_192}
                   readOnly={dialogSaving}
                   onChange={(event) => setDialogDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (
+                      event.key === 'Enter' &&
+                      !event.repeat &&
+                      (event.ctrlKey || event.metaKey) &&
+                      !event.shiftKey &&
+                      !event.altKey &&
+                      !event.nativeEvent.isComposing &&
+                      event.nativeEvent.keyCode !== 229 &&
+                      !dialogSaving
+                    ) {
+                      event.preventDefault()
+                      feedbackDialogRef.current?.requestSubmit()
+                    }
+                  }}
                 />
                 {dialogError === undefined ? null : (
                   <p className="dsh-session-dialog__error" role="alert">

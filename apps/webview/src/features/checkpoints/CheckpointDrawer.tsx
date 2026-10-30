@@ -70,7 +70,16 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
   const [busy, setBusy] = useState(false)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [error, setError] = useState<string | undefined>()
-  const [notice, setNotice] = useState<string | undefined>()
+  const [notice, setNotice] = useState<{ readonly text: string; readonly autoDismiss: boolean }>()
+
+  useEffect(() => {
+    if (notice === undefined || !notice.autoDismiss) return
+    const timer = window.setTimeout(
+      () => setNotice((current) => (current === notice ? undefined : current)),
+      4_000,
+    )
+    return () => window.clearTimeout(timer)
+  }, [notice])
   const previewGeneration = useRef(0)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -191,7 +200,7 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
         if (created === undefined) throw new Error(t('checkpoints.error'))
         setDialog(undefined)
         setLabel('')
-        setNotice(t('checkpoints.created'))
+        setNotice({ text: t('checkpoints.created'), autoDismiss: true })
       })
       .catch((reason: unknown) => {
         setError(reason instanceof Error ? reason.message : t('checkpoints.error'))
@@ -208,7 +217,7 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
       .onDelete(checkpointId)
       .then(() => {
         resetDialog()
-        setNotice(t('checkpoints.deleted'))
+        setNotice({ text: t('checkpoints.deleted'), autoDismiss: true })
       })
       .catch((reason: unknown) => {
         setError(reason instanceof Error ? reason.message : t('checkpoints.error'))
@@ -231,7 +240,10 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
       .then((result) => {
         if (result === undefined) throw new Error(t('checkpoints.error'))
         resetDialog()
-        setNotice(t(result === 'partial' ? 'checkpoints.restorePartial' : 'checkpoints.restoreCompleted'))
+        setNotice({
+          text: t(result === 'partial' ? 'checkpoints.restorePartial' : 'checkpoints.restoreCompleted'),
+          autoDismiss: result !== 'partial',
+        })
       })
       .catch((reason: unknown) => {
         setError(reason instanceof Error ? reason.message : t('checkpoints.error'))
@@ -376,7 +388,7 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
           </ul>
           {notice !== undefined ? (
             <div className="dsh-checkpoints-popover__status" role="status">
-              {notice}
+              {notice.text}
             </div>
           ) : null}
           {error !== undefined && !dialogOpen ? (

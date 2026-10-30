@@ -418,6 +418,17 @@ export function PluginInventory(props: PluginInventoryProps): ReactElement {
               onChange={(event) => {
                 onQueryChange(event.currentTarget.value)
               }}
+              onKeyDown={(event) => {
+                if (
+                  event.key === 'Escape' &&
+                  query !== '' &&
+                  !event.nativeEvent.isComposing &&
+                  event.nativeEvent.keyCode !== 229
+                ) {
+                  event.preventDefault()
+                  onQueryChange('')
+                }
+              }}
             />
           </label>
 

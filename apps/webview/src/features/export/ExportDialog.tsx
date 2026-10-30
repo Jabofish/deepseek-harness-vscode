@@ -4,6 +4,26 @@ import { useI18n } from '../../i18n.js'
 import { SelectMenu } from '../../components/common/SelectMenu.js'
 import { ModalDialog } from '../../components/common/ModalDialog.js'
 
+const STORAGE_KEY = 'dsh-export-format'
+const VALID_FORMATS: readonly SessionExportOptions['format'][] = ['markdown', 'json', 'zip']
+
+function storedFormat(): SessionExportOptions['format'] | undefined {
+  try {
+    const value = window.localStorage.getItem(STORAGE_KEY)
+    return VALID_FORMATS.find((entry) => entry === value)
+  } catch {
+    return undefined
+  }
+}
+
+function saveFormat(value: SessionExportOptions['format']): void {
+  try {
+    window.localStorage.setItem(STORAGE_KEY, value)
+  } catch {
+    /* Restricted storage keeps the dialog usable. */
+  }
+}
+
 export interface ExportDialogProps {
   readonly sessionId: string
   readonly onExport: (options: SessionExportOptions) => void
@@ -12,7 +32,7 @@ export interface ExportDialogProps {
 
 export function ExportDialog(props: ExportDialogProps): ReactElement {
   const { t } = useI18n()
-  const [format, setFormat] = useState<SessionExportOptions['format']>('markdown')
+  const [format, setFormat] = useState<SessionExportOptions['format']>(() => storedFormat() ?? 'markdown')
   const [includeAttachments, setIncludeAttachments] = useState(true)
   const [includeReasoning, setIncludeReasoning] = useState(true)
   // rc.6's ZIP archive is produced wholly by the host's session-log download;
@@ -24,6 +44,7 @@ export function ExportDialog(props: ExportDialogProps): ReactElement {
         className="dsh-export"
         onSubmit={(event) => {
           event.preventDefault()
+          saveFormat(format)
           props.onExport({
             sessionId: props.sessionId,
             format,

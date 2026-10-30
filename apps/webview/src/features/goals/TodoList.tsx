@@ -20,6 +20,19 @@ export const TodoList = memo(function TodoList({ todos }: TodoListProps): ReactE
     <section
       className={`dsh-todo-list${open ? '' : ' dsh-todo-list--collapsed'}`}
       aria-label={t('todo.aria')}
+      onKeyDown={(event) => {
+        if (
+          open &&
+          event.key === 'Escape' &&
+          !event.defaultPrevented &&
+          !event.nativeEvent.isComposing &&
+          event.nativeEvent.keyCode !== 229
+        ) {
+          event.preventDefault()
+          event.stopPropagation()
+          setOpen(false)
+        }
+      }}
       onClick={(event) => {
         // The collapsed card has intentional outer padding around the header.
         // Treat that otherwise empty surface as part of the same hit target;

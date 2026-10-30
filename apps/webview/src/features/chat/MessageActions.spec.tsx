@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MessageActions } from './MessageActions.js'
 
@@ -23,5 +23,18 @@ describe('MessageActions feedback controls', () => {
     expect(screen.getByRole('button', { name: 'Stability and speed' }).getAttribute('aria-pressed')).toBe(
       'true',
     )
+  })
+
+  it('submits feedback dialog when pressing Ctrl+Enter in the details textarea', async () => {
+    const onFeedbackSubmit = vi.fn().mockResolvedValue(undefined)
+    render(<MessageActions text="answer" onFeedbackSubmit={onFeedbackSubmit} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Good response' }))
+    const editor = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Feedback details' })
+    fireEvent.change(editor, { target: { value: 'quick submit with keyboard' } })
+    fireEvent.keyDown(editor, { key: 'Enter', ctrlKey: true })
+
+    expect(onFeedbackSubmit).toHaveBeenCalledWith('positive', 'quick submit with keyboard', undefined)
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Submit feedback' })).toBeNull())
   })
 })

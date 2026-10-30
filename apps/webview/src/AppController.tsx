@@ -88,6 +88,42 @@ const useAppControllerImpl = () => {
   const [busyAction, setBusyAction] = useState<'install' | 'select' | undefined>()
   const [respondingInteractionId, setRespondingInteractionId] = useState<string | undefined>()
   const [branching, setBranching] = useState(false)
+  /**
+   * The conversation the user archived most recently. Archiving is a registry
+   * operation with no confirmation, so the notice keeps one step of recovery
+   * next to the action that caused it instead of behind the archive filter.
+   */
+  const [archivedSession, setArchivedSession] = useState<{
+    readonly id: string
+    readonly title: string
+    readonly connectionEpoch: number | undefined
+  }>()
+  const undoingArchiveRef = useRef(false)
+  /**
+   * The composer that should take the keyboard after a navigation the user
+   * asked for. `token` makes a repeated request for the same conversation a new
+   * event; the composer clears the request once it has focused, so a later
+   * remount (reconnect, layout switch) never steals the keyboard again.
+   */
+  const [composerFocusRequest, setComposerFocusRequest] = useState<{
+    readonly owner: string
+    readonly token: number
+    readonly connectionEpoch: number | undefined
+  }>()
+  const composerNavigation = useRef(0)
+  const composerFocusToken = useRef(0)
+  const focusComposer = useStableCallback((owner: string | undefined): void => {
+    const current = store.getState()
+    if (owner === undefined || current.drawer !== undefined) return
+    setComposerFocusRequest({
+      owner,
+      token: ++composerFocusToken.current,
+      connectionEpoch: current.connectionEpoch,
+    })
+  })
+  const composerOnFocusHandled = useStableCallback((token: number): void =>
+    setComposerFocusRequest((request) => (request?.token === token ? undefined : request)),
+  )
   const [error, setErrorState] = useState<string | undefined>()
   /**
    * Every message owns its own dismissal window. Keyed on the message alone, a
@@ -486,13 +522,27 @@ const useAppControllerImpl = () => {
    * Declared here, ahead of `timelineOnOpenSession`, because both echo it.
    */
   const sessionOnOpen = useStableCallback((sessionId: string): void => {
+    const intent = ++composerNavigation.current
+    const connectionEpoch = store.getState().connectionEpoch
     void store
       .openSession(sessionId)
+      .then(() => {
+        // A newer navigation may have superseded this one; only the
+        // conversation actually on screen may take the keyboard.
+        const current = store.getState()
+        if (
+          intent === composerNavigation.current &&
+          current.connectionEpoch === connectionEpoch &&
+          current.activeSessionId === sessionId
+        )
+          focusComposer(sessionId)
+      })
       .catch((reason: unknown) =>
         setError(reason instanceof Error ? reason.message : t('app.error.openSession')),
       )
   })
   const sessionOnOpenInEditor = useStableCallback((sessionId: string): void => {
+    composerNavigation.current += 1
     // The Host owns the tab: it either creates one for the session or reveals
     // the existing tab, so this stays a request rather than local navigation.
     void store
@@ -572,20 +622,74 @@ const useAppControllerImpl = () => {
     store.setDrawer(open ? 'sessions' : undefined)
   })
   const beginNewDraft = useStableCallback((workspaceId?: string, presetId?: string): Promise<void> => {
-    return store.stageSession(workspaceId, presetId)
+    const intent = ++composerNavigation.current
+    const before = store.getState()
+    const staged =
+      before.blankSessionReuse === true
+        ? store.createSession(workspaceId, presetId)
+        : store.stageSession(workspaceId, presetId).then(() => undefined)
+    return staged.then((createdSessionId) => {
+      const next = store.getState()
+      if (intent !== composerNavigation.current || next.connectionEpoch !== before.connectionEpoch) return
+      const pending = next.pendingSession
+      // A staged draft and a reused blank session are both places the user
+      // just asked to type in; a superseded stage changes neither.
+      if (pending !== undefined && pending.revision !== before.pendingSession?.revision) {
+        focusComposer(`pending:${pending.revision}`)
+        return
+      }
+      if (createdSessionId !== undefined && next.activeSessionId === createdSessionId)
+        focusComposer(next.activeSessionId)
+    })
   })
   const sessionOnCreate = useStableCallback((workspaceId: string | undefined): void => {
     void beginNewDraft(workspaceId).catch((reason: unknown) =>
       setError(reason instanceof Error ? reason.message : t('app.error.createSession')),
     )
   })
-  const sessionOnArchive = useStableCallback((sessionId: string): Promise<void> =>
-    store.removeSession(sessionId).catch((reason: unknown) => {
-      const message = reason instanceof Error ? reason.message : t('app.error.archiveSession')
-      setError(message)
-      throw reason
-    }),
-  )
+  const sessionOnArchive = useStableCallback((sessionId: string): Promise<void> => {
+    // The row leaves the catalog once the Host accepts the archive, so its
+    // title has to be captured while the list still has it.
+    const before = store.getState()
+    const title = before.sessions.find((session) => session.id === sessionId)?.title ?? ''
+    return store
+      .removeSession(sessionId)
+      .then(() => {
+        const current = store.getState()
+        if (current.connectionEpoch === before.connectionEpoch && current.sessionRestore === true)
+          setArchivedSession({ id: sessionId, title, connectionEpoch: before.connectionEpoch })
+      })
+      .catch((reason: unknown) => {
+        const message = reason instanceof Error ? reason.message : t('app.error.archiveSession')
+        setError(message)
+        throw reason
+      })
+  })
+  const sessionOnUndoArchive = useStableCallback((): void => {
+    const target = archivedSession
+    if (target === undefined || undoingArchiveRef.current) return
+    const current = store.getState()
+    if (
+      target.connectionEpoch !== current.connectionEpoch ||
+      current.sessionRestore !== true ||
+      !current.archivedSessionIds.includes(target.id)
+    ) {
+      setArchivedSession((notice) => (notice === target ? undefined : notice))
+      return
+    }
+    undoingArchiveRef.current = true
+    void store
+      .restoreSession(target.id)
+      .then(() => setArchivedSession((notice) => (notice === target ? undefined : notice)))
+      .catch((reason: unknown) => {
+        if (store.getState().connectionEpoch === target.connectionEpoch)
+          setError(reason instanceof Error ? reason.message : t('sessions.restoreFailed'))
+      })
+      .finally(() => {
+        undoingArchiveRef.current = false
+      })
+  })
+  const sessionOnDismissArchiveNotice = useStableCallback((): void => setArchivedSession(undefined))
   const sessionOnRename = useStableCallback((sessionId: string, title: string): Promise<void> =>
     store.renameSession(sessionId, title),
   )
@@ -931,6 +1035,8 @@ const useAppControllerImpl = () => {
     composerOnSteerQueue,
     composerOnSubmit,
     composerOnToggleOpenFilePicker,
+    composerFocusRequest,
+    composerOnFocusHandled,
     composerStatus,
     connectionKey,
     connectionMessage,
@@ -982,6 +1088,9 @@ const useAppControllerImpl = () => {
     scheduleOnOpenLinkedSession,
     scheduleOnStartSession,
     sessionControl,
+    archivedSession,
+    sessionOnDismissArchiveNotice,
+    sessionOnUndoArchive,
     sessionOnOpen,
     sessionOnOpenChange,
     setConversationFontSize,

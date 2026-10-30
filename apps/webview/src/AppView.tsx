@@ -1,4 +1,4 @@
-import { useState, type ReactElement } from 'react'
+import { useCallback, useState, type ReactElement } from 'react'
 import { EmptyState } from '@dsh-vscode/ui'
 import { AppErrorBoundary } from './features/errors/AppErrorBoundary.js'
 import { AppSettingsDrawer } from './features/settings/AppSettingsDrawer.js'
@@ -7,12 +7,14 @@ import { RuntimeMissingView } from './features/runtime/RuntimeMissingView.js'
 import { RuntimeConnectionView } from './features/runtime/RuntimeConnectionView.js'
 import { EmptySessionPosture } from './features/sessions/EmptySessionPosture.js'
 import { ConnectedComposer } from './features/composer/ConnectedComposer.js'
+import { useRecentPrompts } from './features/composer/prompt-history.js'
 import { ModsBand } from './features/mods/ModsBand.js'
 import { SessionInspector } from './features/inspector/SessionInspector.js'
 import { AppNotices, type AppNotice } from './features/shell/AppNotices.js'
 import { AppHeader } from './features/shell/AppHeader.js'
 import { SessionLineage } from './features/subagents/SessionLineage.js'
 import { SessionTitlePicker } from './features/sessions/SessionTitlePicker.js'
+import { displaySessionTitle } from './features/sessions/session-title.js'
 import { ConversationActionsMenu } from './features/shell/ConversationActionsMenu.js'
 import { ExportDialog } from './features/export/ExportDialog.js'
 import { GoalsTasksStrip } from './features/goals/GoalsTasksStrip.js'
@@ -40,6 +42,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
     adoptExplicitLocaleFromDsh,
     applyLocale,
     approvalRespondFor,
+    archivedSession,
     assistantLabel,
     attachedOpenFileIds,
     attachingOpenFileId,
@@ -54,6 +57,8 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
     compatibilityWarning,
     composerOnCancel,
     composerOnCaptureEditorContext,
+    composerFocusRequest,
+    composerOnFocusHandled,
     composerOnCommand,
     composerOnCommandQueryChange,
     composerOnConfigurationChange,
@@ -120,8 +125,10 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
     scheduleOnOpenLinkedSession,
     scheduleOnStartSession,
     sessionControl,
+    sessionOnDismissArchiveNotice,
     sessionOnOpen,
     sessionOnOpenChange,
+    sessionOnUndoArchive,
     setConversationFontSize,
     setConversationView,
     setDismissedConnection,
@@ -158,7 +165,16 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
     visibleReferenceLoading,
     welcomeVisible,
   } = props
+  const readDiagnostics = useCallback(() => store.readDiagnostics(), [store])
   const [inspectorOpenRequestId, setInspectorOpenRequestId] = useState<string>()
+  // Recalling a prompt reads the conversation's own durable messages; a new
+  // draft has no transcript yet, so its history stays empty.
+  const promptHistoryOwner = `${state.connectionEpoch}:${state.timeline.sessionId ?? ''}`
+  const promptHistory = useRecentPrompts(
+    state.timeline.nodes,
+    promptHistoryOwner,
+    state.transcript?.omittedNodeIds,
+  )
   const [inspectorReveal, setInspectorReveal] = useState<{
     readonly sessionKey: string
     readonly nodeId: string
@@ -245,6 +261,21 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
       onDismiss: () => setDismissedConnection(connectionKey),
     })
   }
+  if (
+    archivedSession !== undefined &&
+    archivedSession.connectionEpoch === state.connectionEpoch &&
+    state.sessionRestore === true &&
+    state.archivedSessionIds.includes(archivedSession.id)
+  ) {
+    notices.push({
+      id: 'session-archived',
+      tone: 'info',
+      title: t('app.sessionArchived', { title: displaySessionTitle(archivedSession.title, t) }),
+      dismissLabel: t('app.dismissArchivedNotice'),
+      onDismiss: sessionOnDismissArchiveNotice,
+      action: { label: t('app.undoArchive'), icon: 'refresh', run: sessionOnUndoArchive },
+    })
+  }
   if (runtimeUpdateVisible) {
     notices.push({
       id: 'runtime-update',
@@ -319,7 +350,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
               onAction={runRuntimeAction}
               onRetry={retryConnection}
               onOpenSettings={() => store.setDrawer('settings')}
-              onReadDiagnostics={() => store.readDiagnostics()}
+              onReadDiagnostics={readDiagnostics}
               onReconnectDiagnostics={() => store.reconnect()}
               onShowDiagnosticsOutput={() => store.showDiagnostics()}
             />
@@ -359,6 +390,12 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                       key={state.pendingSession.revision}
                       draftKey={`pending:${state.pendingSession.revision}`}
                       disabled={backend.kind !== 'connected'}
+                      focusRequest={
+                        composerFocusRequest?.connectionEpoch === state.connectionEpoch
+                          ? composerFocusRequest
+                          : undefined
+                      }
+                      onFocusRequestHandled={composerOnFocusHandled}
                       running={false}
                       attachments={attachments}
                       configuration={state.pendingSession.configuration}
@@ -738,6 +775,14 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                           store={store}
                           modelScope="session"
                           disabled={backend.kind !== 'connected'}
+                          focusRequest={
+                            composerFocusRequest?.connectionEpoch === state.connectionEpoch
+                              ? composerFocusRequest
+                              : undefined
+                          }
+                          onFocusRequestHandled={composerOnFocusHandled}
+                          promptHistory={promptHistory}
+                          promptHistoryOwner={promptHistoryOwner}
                           inputDisabled={
                             subagentReadOnlyReason !== undefined ||
                             (activeSubagent !== undefined && activeSubagentState?.parentAvailable === false)

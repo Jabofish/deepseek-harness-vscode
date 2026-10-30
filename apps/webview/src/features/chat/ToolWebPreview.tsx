@@ -2,6 +2,7 @@ import type { ReactElement } from 'react'
 import type { ToolWebRenderProps } from '@dsh-vscode/ui'
 import { useI18n } from '../../i18n.js'
 import { MarkdownContent } from './MarkdownContent.js'
+import { CopyButton } from './CopyButton.js'
 
 /**
  * Webview renderer for structured web search/fetch results. Answers use the
@@ -26,6 +27,13 @@ function renderSearch(
     <div className="dsh-tool-web-preview" data-web="search">
       {hasAnswer ? (
         <div className="dsh-tool-web-preview__answer">
+          <div className="dsh-tool-web-preview__header">
+            <CopyButton
+              text={view.answer ?? ''}
+              className="dsh-tool-web-preview__copy"
+              translate={translate}
+            />
+          </div>
           <MarkdownContent markdown={view.answer ?? ''} onOpenLink={props.onOpenLink} />
         </div>
       ) : null}

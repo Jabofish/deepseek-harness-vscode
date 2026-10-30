@@ -1,6 +1,5 @@
 import { useEffect, useState, type ReactElement } from 'react'
 import { useI18n } from '../../i18n.js'
-import { useConversationLayout } from '../../app/ConversationLayoutProvider.js'
 
 export type SettingsTab = 'general' | 'models' | 'presets' | 'plugins'
 type SettingsTabOrientation = 'horizontal' | 'vertical'
@@ -10,7 +9,8 @@ const SECTION_STORAGE_KEY = 'dsh-webview-settings-section'
 
 function previousSection(): SettingsTab {
   try {
-    const section = window.sessionStorage.getItem(SECTION_STORAGE_KEY)
+    const section =
+      window.localStorage.getItem(SECTION_STORAGE_KEY) ?? window.sessionStorage.getItem(SECTION_STORAGE_KEY)
     return SETTINGS_TABS.find((entry) => entry === section) ?? 'general'
   } catch {
     return 'general'
@@ -31,16 +31,13 @@ export interface SettingsTabsProps {
 
 export function SettingsTabs(props: SettingsTabsProps): ReactElement {
   const { t } = useI18n()
-  const focused = useConversationLayout()?.layout === 'focused'
-  const [tab, setTab] = useState<SettingsTab>(() => (focused ? previousSection() : 'general'))
+  const [tab, setTab] = useState<SettingsTab>(() => previousSection())
   const selectTab = (next: SettingsTab): void => {
     setTab(next)
-    if (focused) {
-      try {
-        window.sessionStorage.setItem(SECTION_STORAGE_KEY, next)
-      } catch {
-        /* Restricted storage keeps this opening usable. */
-      }
+    try {
+      window.localStorage.setItem(SECTION_STORAGE_KEY, next)
+    } catch {
+      /* Restricted storage keeps this opening usable. */
     }
   }
   const [tabOrientation, setTabOrientation] = useState<SettingsTabOrientation>(settingsTabOrientation)

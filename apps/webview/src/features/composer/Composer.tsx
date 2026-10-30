@@ -1,6 +1,7 @@
 import {
   memo,
   useCallback,
+  useEffect,
   useId,
   useLayoutEffect,
   useMemo,
@@ -41,6 +42,7 @@ import { useComposerDragDrop } from './useComposerDragDrop.js'
 import { useComposerMenuState } from './useComposerMenuState.js'
 import { useComposerSubmit } from './useComposerSubmit.js'
 import { useDraftHistory } from './useDraftHistory.js'
+import { usePromptHistory } from './prompt-history.js'
 import { ComposerAttachmentsRail } from './ComposerAttachmentsRail.js'
 import { SessionControls, type SessionControlsProps } from './SessionControls.js'
 import {
@@ -68,6 +70,7 @@ const EMPTY_MODEL_FAILURES: readonly ModelCatalogFailure[] = []
 const EMPTY_PRESETS: readonly AgentPresetDescriptor[] = []
 const EMPTY_EDITOR_CONTEXT: readonly EditorContextItem[] = []
 const EMPTY_EDITOR_CONTEXT_KINDS: readonly EditorContextKind[] = []
+const EMPTY_PROMPT_HISTORY: readonly string[] = []
 
 export interface ComposerProps {
   readonly disabled: boolean
@@ -79,6 +82,20 @@ export interface ComposerProps {
   readonly draft: string
   /** Conversation identity that owns the draft; undo history resets with it. */
   readonly draftKey?: string | undefined
+  /**
+   * A navigation the user asked for, addressed to the conversation this
+   * composer shows. The request is cleared once the composer has taken the
+   * keyboard, so a later remount never steals it again.
+   */
+  readonly focusRequest?: { readonly owner: string; readonly token: number } | undefined
+  readonly onFocusRequestHandled?: ((token: number) => void) | undefined
+  /**
+   * Prompts already sent in this conversation, most recent first. ↑ in an empty
+   * composer walks back through them; the conversation's own transcript is the
+   * only source, so a new draft has nothing to recall.
+   */
+  readonly promptHistory?: readonly string[] | undefined
+  readonly promptHistoryOwner?: string | undefined
   readonly attachments: readonly PromptAttachment[]
   readonly editorContext?: readonly EditorContextItem[]
   readonly editorContextAvailableKinds?: readonly EditorContextKind[]
@@ -178,6 +195,15 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
   const hintId = useId()
   const pendingCursorRef = useRef<number | undefined>(undefined)
   const { restoreDraft } = useDraftHistory(props.draft, props.onDraftChange, props.draftKey)
+  const promptHistory = usePromptHistory({
+    draft: props.draft,
+    owner: props.promptHistoryOwner ?? props.draftKey,
+    prompts: props.promptHistory ?? EMPTY_PROMPT_HISTORY,
+    onDraftChange: props.onDraftChange,
+    onCursor: (offset) => {
+      pendingCursorRef.current = offset
+    },
+  })
   const { railRef: attachmentRailRef, scrollable: attachmentRailScrollable } = useAttachmentRail(
     props.attachments.length,
   )
@@ -211,6 +237,23 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
       }
     }
   }, [props.draft, focused])
+
+  const focusRequest = props.focusRequest
+  const onFocusRequestHandled = props.onFocusRequestHandled
+  useEffect(() => {
+    // Opening a conversation used to leave the keyboard on the row that was
+    // clicked (the list closes with it). The composer is the only place the
+    // user can type next, so a request addressed to this conversation puts the
+    // caret at the end of its own draft.
+    if (focusRequest === undefined || focusRequest.owner !== props.draftKey) return
+    const textarea = textareaRef.current
+    if (textarea !== null && !textarea.disabled) {
+      textarea.focus({ preventScroll: true })
+      const end = textarea.value.length
+      textarea.setSelectionRange(end, end)
+    }
+    onFocusRequestHandled?.(focusRequest.token)
+  }, [focusRequest, onFocusRequestHandled, props.draftKey])
 
   const ingestFiles = (files: readonly File[] | FileList | undefined): void => {
     if (props.attachmentsDisabled === true) return
@@ -458,6 +501,26 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
         setMenuHighlight(undefined)
         return
       }
+      if (
+        event.key === 'Tab' &&
+        !event.shiftKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        !event.repeat
+      ) {
+        const selected = menuHighlight === undefined ? menuRows[0] : menuRows[menuHighlight]
+        if (selected !== undefined) {
+          event.preventDefault()
+          applyCommandSelection(
+            selected.kind === 'argument'
+              ? { command: selected.command, argument: selected.option.value }
+              : { command: selected.command },
+            false,
+          )
+        }
+        return
+      }
       if (event.key === 'Enter' && !event.shiftKey && !event.repeat) {
         const highlighted = menuHighlight === undefined ? undefined : menuRows[menuHighlight]
         if (highlighted !== undefined) {
@@ -485,11 +548,35 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
     if (
       commandPaletteSelection !== undefined &&
       event.key === 'Tab' &&
-      !composing.current &&
-      !event.nativeEvent.isComposing
+      !event.shiftKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.altKey &&
+      !event.repeat &&
+      !isComposingKey(event)
     ) {
       event.preventDefault()
       applyCommandSelection(commandPaletteSelection, false)
+      return
+    }
+    // ↑ walks back through prompts this conversation already sent. It only
+    // takes the key when the composer is empty (nothing to edit) or when it
+    // still shows an unedited entry with the caret at the end; anywhere else
+    // the caret keeps its native movement.
+    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      if (event.shiftKey || event.altKey || event.ctrlKey || event.metaKey || isComposingKey(event)) return
+      const textarea = textareaRef.current
+      const caretAtEnd =
+        textarea === null ||
+        (textarea.selectionStart === textarea.selectionEnd &&
+          textarea.selectionStart === textarea.value.length)
+      if (event.key === 'ArrowUp') {
+        if (props.draft !== '' && (!promptHistory.browsing || !caretAtEnd)) return
+        if (promptHistory.recall('older')) event.preventDefault()
+        return
+      }
+      if (props.draft === '' || !promptHistory.browsing || !caretAtEnd) return
+      if (promptHistory.recall('newer')) event.preventDefault()
       return
     }
     if (event.key !== 'Enter') return
@@ -541,7 +628,12 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
         event.preventDefault()
         // The primary button is Stop while running (input stays free); the
         // implicit form submit only exists for the idle Send path.
-        if (!props.running && !sending) submit('queue')
+        if (!props.running && !sending) {
+          submit('queue')
+          // Return keyboard input immediately; an eventual reply must never
+          // steal focus back after the user has moved to another control.
+          textareaRef.current?.focus({ preventScroll: true })
+        }
       }}
     >
       {dropState !== undefined ? (
@@ -573,6 +665,12 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
         onRemove={(uri) => {
           if (previewUri === uri) closePreview()
           props.onRemoveAttachment(uri)
+        }}
+        onRequestFocus={() => {
+          const textarea = textareaRef.current
+          if (textarea !== null && !textarea.disabled) {
+            textarea.focus({ preventScroll: true })
+          }
         }}
       />
       <EditorContextRail

@@ -3,6 +3,7 @@ import type { PermissionRequest } from '@dsh-vscode/domain'
 import { Icon } from '../../ui/Icon.js'
 import { useI18n } from '../../i18n.js'
 import { ContentFlow } from '../../components/common/ContentFlow.js'
+import { CopyButton } from '../chat/CopyButton.js'
 
 export interface ApprovalCardProps {
   readonly request: PermissionRequest
@@ -52,9 +53,16 @@ export const ApprovalCard = memo(function ApprovalCard(props: ApprovalCardProps)
           {description}
         </ContentFlow>
         {props.command === undefined ? null : (
-          <pre className="dsh-approval__command">
-            <code>{props.command}</code>
-          </pre>
+          <div className="dsh-approval__command-container">
+            <pre className="dsh-approval__command">
+              <code>{props.command}</code>
+            </pre>
+            <CopyButton
+              text={props.command}
+              className="dsh-icon-button dsh-approval__command-copy"
+              translate={t}
+            />
+          </div>
         )}
       </div>
       <div className="dsh-interaction__actions">

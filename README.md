@@ -13,7 +13,8 @@ JaboDSH is an independent community project for DeepSeek Harness.
 
 ## What you can do
 
-- Create, switch, resume, and archive sessions in a workspace.
+- Create, switch, resume, and archive sessions in a workspace. Supported runtimes offer **Undo** after archiving.
+- Export sessions as Markdown, JSON, or ZIP archives; the export dialog remembers the chosen format.
 - Send text, images, and supported files; reference files or sessions with `@`.
 - Follow tool progress, answer questions and approvals, and open produced files through VS Code.
 - Choose the models, providers, permissions, and agent options exposed by the connected DSH runtime.
@@ -45,9 +46,11 @@ Existing `dsh.*` settings and command IDs are retained, and DSH session data sta
 2. If DSH is missing, use the guided installer, select an existing executable, or copy the exact install command shown in the view. The installer shows npm output and verifies the installed version; npm warnings alone do not fail the installation.
 3. Choose or create a workspace, start a session, and send a task.
 
+With the message box empty, press ↑ to bring back a prompt you already sent in that conversation; ↑ and ↓ move through older and newer prompts, and editing the text ends the walk.
+
 The JaboDSH Chat view appears in VS Code's Secondary Side Bar by default (on the right in the default workbench layout). If you previously moved it, VS Code may keep your saved layout. Run **JaboDSH: Move View to Secondary Side Bar** from the Command Palette to choose the Chat view and **New Secondary Side Bar Entry**, or right-click the view title and use **Move View**.
 
-The side bar stays available while editor chat tabs are open. Use the view title's **Sessions** button to switch or create a session. The native title bar shows its full controls when space permits; narrower views move lower-priority actions into **More**, keeping **Sessions** and **Settings** visible.
+The side bar stays available while editor chat tabs are open. The Sessions list remembers your sorting and workspace-grouping choices across reloads. Use the view title's **Sessions** button to switch or create a session. The native title bar shows its full controls when space permits; narrower views move lower-priority actions into **More**, keeping **Sessions** and **Settings** visible.
 
 **Open Web UI** uses VS Code's integrated browser by default. To use your system browser, set `dsh.webUi.browser` to `external` in VS Code Settings.
 
@@ -55,7 +58,9 @@ Set `dsh.completionCue` in VS Code Settings to `notification` or `bell` for a cu
 
 To open an editor tab, choose **Open in Editor Area** or run **JaboDSH: Open Chat in Editor Area** (`/moveto:editor`); `/moveto:sidebar` returns the chat. You can drag an opened editor tab to split. In a manually sorted session list, drop onto a lower row to move after it, or an upper row to move before it. DSH saves the order; the current blank session stays first.
 
-Click the conversation title to choose another session. In the sidebar this switches the current conversation; in an editor it opens or reveals that session's own tab. Arrow keys, Enter and Escape work in the dropdown.
+Click the conversation title to choose another session. In the sidebar this switches the current conversation; in an editor it opens or reveals that session's own tab. Arrow keys, Enter and Escape work in the dropdown. Opening a conversation or starting a new one places the keyboard in its message box, so you can type immediately.
+
+Opening the floating **Sessions** list focuses search; type a keyword and press Enter when only one conversation matches. Reopening selects the previous query so you can replace it by typing.
 
 To drag a session directly into a split, run **JaboDSH: Open Drag Sessions** to open **JaboDSH Sessions** in Explorer, then drag a session row to an editor edge. The Explorer list is hidden until you run that command.
 

@@ -97,4 +97,20 @@ describe('ChangesDrawer', () => {
       expect(screen.getByRole('alert').textContent).toBe('The review decision could not be saved.'),
     )
   })
+
+  it('provides a copy button in change detail that copies the diff', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.assign(navigator, { clipboard: { writeText } })
+    const diffText = '--- old\nold\n+++ new\nnew'
+    renderDrawer()
+
+    fireEvent.click(screen.getByRole('button', { name: '1 changes' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Review src/main.ts' }))
+    await waitFor(() => expect(screen.getByRole('region', { name: 'Change detail' })).toBeDefined())
+
+    const copyBtn = screen.getByRole('button', { name: 'Copy' })
+    expect(copyBtn).toBeDefined()
+    fireEvent.click(copyBtn)
+    expect(writeText).toHaveBeenCalledWith(diffText)
+  })
 })

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { GoalView } from '@dsh-vscode/domain'
 import { GoalBar } from './GoalBar.js'
@@ -23,6 +23,24 @@ describe('GoalBar', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Press again to clear this goal' }))
     expect(onClear).toHaveBeenCalledOnce()
     expect(onClear).toHaveBeenCalledWith('g2')
+  })
+
+  it('automatically reverts clear confirmation after 4 seconds of inactivity', () => {
+    vi.useFakeTimers()
+    try {
+      const onClear = vi.fn(() => Promise.resolve())
+      render(<GoalBar goals={[goal]} onClear={onClear} />)
+      fireEvent.click(screen.getByRole('button', { name: 'Clear goal' }))
+      expect(screen.getByRole('status').textContent).toBe('Press again to clear this goal')
+
+      act(() => {
+        vi.advanceTimersByTime(4000)
+      })
+      expect(screen.queryByRole('status')).toBeNull()
+      expect(screen.getByRole('button', { name: 'Clear goal' })).toBeDefined()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('explains a blocked goal with the host block reason', () => {

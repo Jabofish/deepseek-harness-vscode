@@ -2,6 +2,7 @@ import type { ReactElement } from 'react'
 import type { Translate } from '../../i18n.js'
 import { ContentFlow } from '../../components/common/index.js'
 import { Icon } from '../../ui/Icon.js'
+import { CopyButton } from './CopyButton.js'
 import type { ToolTimelineNode } from './ToolCallCollection.js'
 import type { DisplayTimelineNode } from './timeline-shared.js'
 
@@ -107,6 +108,11 @@ export function renderProducedFiles(
           )
         })}
       </div>
+      <CopyButton
+        text={paths.join('\n')}
+        className="dsh-icon-button dsh-timeline__produced-copy"
+        translate={t}
+      />
       {onShowInFolder === undefined ? null : (
         <button
           className="dsh-button dsh-button--secondary dsh-button--compact dsh-timeline__show-folder"

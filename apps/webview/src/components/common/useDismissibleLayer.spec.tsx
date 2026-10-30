@@ -74,6 +74,21 @@ function NestedLayers({
 }
 
 describe('useDismissibleLayer focus trap', () => {
+  it('leaves IME Escape to the candidate picker before dismissing the layer', () => {
+    const onDismiss = vi.fn()
+    render(
+      <Layer open label="Editing dialog" trapFocus onDismiss={onDismiss}>
+        <input aria-label="Draft" />
+      </Layer>,
+    )
+    const input = screen.getByRole('textbox', { name: 'Draft' })
+    expect(fireEvent.keyDown(input, { key: 'Escape', isComposing: true })).toBe(true)
+    expect(fireEvent.keyDown(input, { key: 'Escape', keyCode: 229 })).toBe(true)
+    expect(onDismiss).not.toHaveBeenCalled()
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect(onDismiss).toHaveBeenCalledOnce()
+  })
+
   it('does not dismiss an ancestor when a pointer lands inside a portalled child layer', () => {
     const onOuterDismiss = vi.fn()
     const onChildDismiss = vi.fn()

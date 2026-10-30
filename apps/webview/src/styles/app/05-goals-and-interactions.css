@@ -169,6 +169,21 @@
   padding-top: var(--dsh-space-1);
 }
 
+.dsh-approval__command-container {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--dsh-space-2);
+}
+
+.dsh-approval__command-container .dsh-approval__command {
+  flex: 1 1 auto;
+}
+
+.dsh-approval__command-copy {
+  flex: 0 0 auto;
+}
+
 .dsh-approval__command {
   min-width: 0;
   padding: var(--dsh-space-1) var(--dsh-space-2);

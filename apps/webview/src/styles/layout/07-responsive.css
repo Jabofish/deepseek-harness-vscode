@@ -79,6 +79,13 @@
   align-items: flex-start;
 }
 
+.dsh-changes-popover__detail-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--dsh-space-1);
+  flex: 0 0 auto;
+}
+
 .dsh-changes-popover__detail-header > strong {
   min-width: 0;
   overflow: hidden;

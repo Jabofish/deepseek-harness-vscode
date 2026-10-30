@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { CheckpointPreview, CheckpointSummary } from '@dsh-vscode/domain'
 
@@ -98,5 +98,34 @@ describe('CheckpointDrawer', () => {
     expect(onDelete).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Delete checkpoint' }))
     await waitFor(() => expect(onDelete).toHaveBeenCalledWith('dsh-checkpoint-1'))
+  })
+
+  it('automatically clears operation status notice after 4 seconds', async () => {
+    vi.useFakeTimers()
+    try {
+      let resolveDelete!: () => void
+      const onDelete = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveDelete = resolve
+          }),
+      )
+      renderDrawer({ onDelete })
+      fireEvent.click(screen.getByRole('button', { name: 'Delete Before refactor' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Delete checkpoint' }))
+
+      await act(async () => {
+        resolveDelete()
+        await Promise.resolve()
+      })
+      expect(screen.getByRole('status').textContent).toBe('Checkpoint deleted.')
+
+      act(() => {
+        vi.advanceTimersByTime(4000)
+      })
+      expect(screen.queryByRole('status')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

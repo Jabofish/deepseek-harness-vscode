@@ -38,10 +38,9 @@ import {
   type ArchiveFilter,
   type RenameTarget,
   type SessionListProjectionInput,
-  type SessionSorting,
-  type WorkspaceDisplay,
 } from './session-drawer-model.js'
 import { useSessionContentSearch } from './useSessionContentSearch.js'
+import { readSessionListPreferences, rememberSessionListPreferences } from './session-list-preferences.js'
 
 export interface SessionDrawerProps {
   readonly permissions?: readonly PermissionRequest[]
@@ -95,8 +94,13 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
   const [internalOpen, setInternalOpen] = useState(false)
   const [removingSessionId, setRemovingSessionId] = useState<string>()
   const [searchQuery, setSearchQuery] = useState('')
-  const [sorting, setSorting] = useState<SessionSorting>('manual')
-  const [workspaceDisplay, setWorkspaceDisplay] = useState<WorkspaceDisplay>('current')
+  const [listPreferences, setListPreferences] = useState(readSessionListPreferences)
+  const { sorting, workspaceDisplay } = listPreferences
+  const changeListPreferences = (change: Partial<typeof listPreferences>): void => {
+    const next = { ...listPreferences, ...change }
+    rememberSessionListPreferences(next)
+    setListPreferences(next)
+  }
   const [archiveFilter, setArchiveFilter] = useState<ArchiveFilter>('hide')
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>()
   const [renameTarget, setRenameTarget] = useState<RenameTarget>()
@@ -115,6 +119,8 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
   const [mutationBusy, setMutationBusy] = useState(false)
   const renameInputRef = useRef<HTMLInputElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const searchComposingRef = useRef(false)
   const panelRef = useRef<HTMLDivElement>(null)
   const renameDialogRef = useRef<HTMLFormElement>(null)
   const removeDialogRef = useRef<HTMLDivElement>(null)
@@ -129,6 +135,15 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
   if (dockState.requested !== props.open)
     setDockState({ requested: props.open, open: props.open === true || dockState.open })
   const open = docked ? props.open === true || dockState.open : (props.open ?? internalOpen)
+  useEffect(() => {
+    // A closed input may never receive compositionend from the browser.
+    searchComposingRef.current = false
+    // A persistent list must not take focus when the conversation mounts.
+    // A floating list or an explicit Host open request is ready for typing.
+    if (!open || (docked && props.open !== true)) return
+    searchInputRef.current?.focus({ preventScroll: true })
+    searchInputRef.current?.select()
+  }, [docked, open, props.open])
   const showTrigger = props.showTrigger !== false
   const setOpen = (next: boolean | ((current: boolean) => boolean)): void => {
     const resolved = typeof next === 'function' ? next(open) : next
@@ -496,7 +511,7 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
       busy={mutationBusy}
       onSelect={(target) => {
         setSelectedWorkspaceId(target.id)
-        setWorkspaceDisplay('current')
+        changeListPreferences({ workspaceDisplay: 'current' })
       }}
       onRename={(target, trigger) => {
         dialogTriggerRef.current = trigger
@@ -664,7 +679,9 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
                     : t('sessions.groupWorkspacesTitle')
                 }
                 onClick={() =>
-                  setWorkspaceDisplay((current) => (current === 'current' ? 'grouped' : 'current'))
+                  changeListPreferences({
+                    workspaceDisplay: workspaceDisplay === 'current' ? 'grouped' : 'current',
+                  })
                 }
               >
                 <Icon name="folder" />
@@ -674,7 +691,9 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
                 type="button"
                 aria-label={sorting === 'manual' ? t('sessions.sortUpdated') : t('sessions.sortManual')}
                 title={sorting === 'manual' ? t('sessions.sortUpdatedTitle') : t('sessions.sortManualTitle')}
-                onClick={() => setSorting((current) => (current === 'manual' ? 'updated' : 'manual'))}
+                onClick={() =>
+                  changeListPreferences({ sorting: sorting === 'manual' ? 'updated' : 'manual' })
+                }
               >
                 <Icon name={sorting === 'manual' ? 'list' : 'clock'} />
               </button>
@@ -697,12 +716,53 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
           </header>
           <div className="dsh-session-switcher__search">
             <input
+              ref={searchInputRef}
               type="search"
               value={searchQuery}
               placeholder={t('sessions.search')}
               aria-label={t('sessions.searchAria')}
+              title={t('sessions.searchHint')}
               maxLength={SEARCH_QUERY_MAX_CODE_UNITS}
+              onCompositionStart={() => {
+                searchComposingRef.current = true
+              }}
+              onCompositionEnd={() => {
+                searchComposingRef.current = false
+              }}
               onChange={(event) => setSearchQuery(sanitizeSearchQuery(event.target.value))}
+              onKeyDown={(event) => {
+                if (
+                  event.key !== 'Enter' ||
+                  event.repeat ||
+                  event.shiftKey ||
+                  event.ctrlKey ||
+                  event.metaKey ||
+                  event.altKey ||
+                  searchComposingRef.current ||
+                  event.nativeEvent.isComposing ||
+                  event.nativeEvent.keyCode === 229 ||
+                  query === '' ||
+                  contentSearch.query !== trimmedSearchQuery ||
+                  archiveFilter === 'archived' ||
+                  contentSearchHasMore ||
+                  (archiveFilter !== 'hide' && archivedOpen && filteredArchivedSessions.length > 0) ||
+                  mutationBusy ||
+                  removingSessionId !== undefined
+                )
+                  return
+                const matches = new Map(
+                  [
+                    ...currentWorkspaceSessions,
+                    ...matchedWorkspaceGroups.flatMap((group) => group.sessions),
+                    ...contentSearchResults,
+                  ].map((session) => [session.id, session]),
+                )
+                if (matches.size !== 1) return
+                const only = matches.values().next().value
+                if (only === undefined) return
+                event.preventDefault()
+                openSession(only)
+              }}
             />
             <SelectMenu
               className="dsh-session-switcher__archive-filter"

@@ -178,4 +178,15 @@ describe('PluginInventory', () => {
     openGroup('Global plugins')
     expect(await screen.findByText('ui-settings')).toBeDefined()
   })
+
+  it('clears the search query when Escape is pressed', async () => {
+    renderInventory()
+    await screen.findByRole('button', { name: /^Choose the Agent mode to inspect/u })
+    const searchInput = screen.getByRole<HTMLInputElement>('searchbox', { name: 'Search plugins' })
+    fireEvent.change(searchInput, { target: { value: 'shell' } })
+    expect(searchInput.value).toBe('shell')
+
+    fireEvent.keyDown(searchInput, { key: 'Escape' })
+    expect(searchInput.value).toBe('')
+  })
 })

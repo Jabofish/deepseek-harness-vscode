@@ -237,4 +237,15 @@ describe('OptionalBundleManager', () => {
     expect(await screen.findByText('This package does not declare a DSH plugin bundle.')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Install' }).getAttribute('disabled')).not.toBeNull()
   })
+
+  it('clears the search query when Escape is pressed in the search box', async () => {
+    mountManager()
+    await screen.findByRole('heading', { name: 'DSH Plugin Manager' })
+    const searchInput = screen.getByRole<HTMLInputElement>('searchbox', { name: 'Search plugins' })
+    fireEvent.change(searchInput, { target: { value: 'review' } })
+    expect(searchInput.value).toBe('review')
+
+    fireEvent.keyDown(searchInput, { key: 'Escape' })
+    expect(searchInput.value).toBe('')
+  })
 })
