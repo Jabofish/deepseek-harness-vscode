@@ -6,6 +6,8 @@ Release entries describe behaviour at that release. `Unreleased` lists changes a
 
 ## Unreleased
 
+## 0.4.5
+
 - Complete commands with Tab without executing them, recall complete authored prompts from the current conversation, and return input focus after explicit navigation, sending or removing attachments. Preserve IME input, modified shortcuts and conversation ownership.
 - 支持 Tab 补全命令而不执行、回看当前会话中的完整用户提示词，并在主动导航、发送或移除附件后回到输入框；保留输入法、组合快捷键及会话归属。
 - Remember session sorting/grouping, the settings tab and export format locally. Add archive Undo on supported runtimes, search shortcuts and keyboard controls for schedule, pricing, feedback and Todo surfaces.

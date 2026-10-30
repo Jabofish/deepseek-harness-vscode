@@ -9,6 +9,16 @@ import { ProtocolClient } from '../../app/protocol-client.js'
 import { createAppStore, type AppStore } from '../../app/store.js'
 import { SessionDrawer } from './SessionDrawer.js'
 
+const { WebviewMessageRouter } = await vi.importActual<{
+  WebviewMessageRouter: new (deps: {
+    postMessage(message: HostMessage | FeatureHostMessage): Promise<boolean>
+    handleRequest(request: WebviewRequest, signal: AbortSignal): Promise<unknown>
+  }) => { handle(message: unknown, surfaceId: string): Promise<void>; cancelAll(): void }
+}>('../../../../extension/src/view/message-router.js')
+const { Rc6WorkspaceRepository } = await vi.importActual<{
+  Rc6WorkspaceRepository: new (transport: unknown) => WorkspaceRepository
+}>('../../../../../packages/dsh-adapter/src/repositories/workspace-repository.js')
+
 const titles = ['Alpha conversation', 'Beta conversation', 'Gamma conversation', 'Delta conversation']
 const time = '2026-01-01T00:00:00.000Z'
 const disposables: Array<() => void> = []
@@ -31,15 +41,6 @@ async function fixture({
   searchable = false,
   partial = false,
 }: { blank?: boolean; searchable?: boolean; partial?: boolean } = {}): Promise<Fixture> {
-  const { WebviewMessageRouter } = await vi.importActual<{
-    WebviewMessageRouter: new (deps: {
-      postMessage(message: HostMessage | FeatureHostMessage): Promise<boolean>
-      handleRequest(request: WebviewRequest, signal: AbortSignal): Promise<unknown>
-    }) => { handle(message: unknown, surfaceId: string): Promise<void>; cancelAll(): void }
-  }>('../../../../extension/src/view/message-router.js')
-  const { Rc6WorkspaceRepository } = await vi.importActual<{
-    Rc6WorkspaceRepository: new (transport: unknown) => WorkspaceRepository
-  }>('../../../../../packages/dsh-adapter/src/repositories/workspace-repository.js')
   let workspaces = [
     {
       workspaceId: 'w1',
