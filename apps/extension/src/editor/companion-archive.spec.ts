@@ -1,8 +1,9 @@
 import { mkdtemp, writeFile, readFile, rm, readdir } from 'node:fs/promises'
+import type * as FileSystem from 'node:fs/promises'
 import { gzipSync } from 'node:zlib'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   cacheCompanionArchive,
   inspectCompanionArchive,
@@ -10,8 +11,42 @@ import {
   alternateCompanionArchive,
 } from './companion-archive.js'
 
+const writes = vi.hoisted(() => ({
+  used: false,
+  entered: undefined as (() => void) | undefined,
+  release: undefined as Promise<void> | undefined,
+}))
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof FileSystem>()
+  return {
+    ...actual,
+    writeFile: async (...args: Parameters<typeof actual.writeFile>): Promise<void> => {
+      const [file, contents, options] = args
+      if (
+        !writes.used &&
+        writes.release !== undefined &&
+        typeof file === 'string' &&
+        /[\\/]editor-companion[\\/]archives[\\/]/u.test(file) &&
+        typeof options === 'object' &&
+        options?.flag === 'wx'
+      ) {
+        writes.used = true
+        await actual.writeFile(file, Buffer.alloc(0), options)
+        writes.entered?.()
+        await writes.release
+        await actual.writeFile(file, contents, { ...options, flag: 'w' })
+        return
+      }
+      await actual.writeFile(...args)
+    },
+  }
+})
+
 const roots: string[] = []
 afterEach(async () => {
+  writes.used = false
+  writes.entered = undefined
+  writes.release = undefined
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true })
 })
 function archive(
@@ -39,7 +74,39 @@ async function root(): Promise<string> {
   roots.push(directory)
   return directory
 }
+function gate(): { promise: Promise<void>; resolve: () => void } {
+  let resolve: () => void = () => undefined
+  const promise = new Promise<void>((complete) => {
+    resolve = complete
+  })
+  return { promise, resolve }
+}
 describe('bounded companion archive inspection and recovery cache', () => {
+  it('publishes complete archives when an identical request arrives while another write is incomplete', async () => {
+    const directory = await root()
+    const first = path.join(directory, 'first.tgz')
+    const second = path.join(directory, 'second.tgz')
+    await writeFile(first, archive(undefined, false, 1))
+    await writeFile(second, archive(undefined, false, 2))
+    const entered = gate()
+    const release = gate()
+    writes.entered = entered.resolve
+    writes.release = release.promise
+    const pending = cacheCompanionArchive(first, directory)
+    try {
+      await entered.promise
+      const completed = await cacheCompanionArchive(second, directory)
+      release.resolve()
+      expect(await pending).toEqual(completed)
+      expect(await inspectCompanionArchive(completed.file)).toEqual({ version: '0.2.0' })
+      expect(await readdir(path.join(directory, 'editor-companion', 'archives'))).toEqual([
+        path.basename(completed.file),
+      ])
+    } finally {
+      release.resolve()
+      await pending
+    }
+  })
   it('reuses one immutable cache path across repackaging timestamps and concurrent identical requests', async () => {
     const directory = await root()
     const first = path.join(directory, 'first.tgz')

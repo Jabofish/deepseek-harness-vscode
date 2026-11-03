@@ -6,6 +6,8 @@ Release entries describe behaviour at that release. `Unreleased` lists changes a
 
 ## Unreleased
 
+- Publishes complete editor-companion cache archives atomically, preventing concurrent installations from reading an unfinished archive.
+
 ## 0.4.5
 
 - Complete commands with Tab without executing them, recall complete authored prompts from the current conversation, and return input focus after explicit navigation, sending or removing attachments. Preserve IME input, modified shortcuts and conversation ownership.

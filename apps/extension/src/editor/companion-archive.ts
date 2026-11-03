@@ -1,6 +1,6 @@
-import { readFile, stat, mkdir, readdir, writeFile, copyFile } from 'node:fs/promises'
+import { readFile, stat, mkdir, readdir, writeFile, copyFile, link, unlink } from 'node:fs/promises'
 import { constants } from 'node:fs'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { gunzip, gzip } from 'node:zlib'
 import { promisify } from 'node:util'
@@ -29,13 +29,27 @@ export async function cacheCompanionArchive(file: string, storage: string): Prom
       /* Another cache operation may have removed a previously listed file. */
     }
   }
-  const existing = await readdir(directory)
+  const existing = (await readdir(directory)).filter((name) => /^[a-f0-9]{64}\.tgz$/u.test(name))
   if (existing.length >= 32 && !existing.includes(`${hash}.tgz`)) throw new EditorCompanionError('limit')
+  const temporary = path.join(directory, `.${hash}.${randomUUID()}.tmp`)
   try {
-    await writeFile(destination, contents, { flag: 'wx' })
+    await writeFile(temporary, contents, { flag: 'wx' })
   } catch (error) {
     if (!(typeof error === 'object' && error !== null && 'code' in error && error.code === 'EEXIST'))
-      throw error
+      await unlink(temporary).catch(() => undefined)
+    throw error
+  }
+  try {
+    // Publish only a completed inode. Exclusive creation of the final path
+    // exposes an unfinished write to concurrent Extension Hosts and readers.
+    try {
+      await link(temporary, destination)
+    } catch (error) {
+      if (!(typeof error === 'object' && error !== null && 'code' in error && error.code === 'EEXIST'))
+        throw error
+    }
+  } finally {
+    await unlink(temporary)
   }
   const cached = await readFile(destination)
   if (createHash('sha256').update(cached).digest('hex') !== hash)
