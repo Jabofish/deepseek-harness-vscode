@@ -1050,7 +1050,7 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
         {displayNodes.length === 0 ? (
           <div className="dsh-timeline__empty" role="status">
             <span className="dsh-timeline__empty-icon" aria-hidden="true">
-              <Icon name="sparkles" />
+              <Icon name="conversation-start" />
             </span>
             <strong>{t('timeline.emptyTitle')}</strong>
             <span>{t('timeline.emptyHint')}</span>

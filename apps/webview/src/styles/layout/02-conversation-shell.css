@@ -146,15 +146,12 @@
   height: 2.75rem;
   place-items: center;
   margin-bottom: var(--dsh-space-1);
-  border: 1px solid color-mix(in srgb, var(--dsh-info) 45%, var(--dsh-border-color));
-  border-radius: 50%;
-  color: var(--dsh-info);
-  background: color-mix(in srgb, var(--dsh-info) 10%, var(--dsh-surface-soft));
+  color: var(--dsh-icon);
 }
 
 .dsh-timeline__empty-icon .dsh-icon {
-  width: 1.25rem;
-  height: 1.25rem;
+  width: 2.25rem;
+  height: 2.25rem;
 }
 
 .dsh-timeline__empty strong {
