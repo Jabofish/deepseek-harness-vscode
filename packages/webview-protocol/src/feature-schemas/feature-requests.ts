@@ -16,6 +16,8 @@ import {
   scheduleAtInputSchema,
   schedulePrompt,
   scheduleRecordSchema,
+  scheduleCreateTimingSchema,
+  scheduleTimestamp,
   scheduleTime,
   scheduleTitle,
 } from './feature-schedule.js'
@@ -471,7 +473,12 @@ export const featureRequestSchema = z.discriminatedUnion('type', [
       type: z.literal('schedule.history'),
       ...featureRequestBase,
       payload: z
-        .object({ sessionId: id, id, limit: z.number().int().min(1).max(100), before: id.optional() })
+        .object({
+          sessionId: id.optional(),
+          id,
+          limit: z.number().int().min(1).max(100),
+          before: id.optional(),
+        })
         .strict(),
     })
     .strict(),
@@ -481,11 +488,14 @@ export const featureRequestSchema = z.discriminatedUnion('type', [
       ...featureRequestBase,
       payload: z
         .object({
-          sessionId: id,
+          sessionId: id.optional(),
           id,
           expected: scheduleRecordSchema,
+          expectedUpdatedAt: scheduleTimestamp.nullable().optional(),
+          active: z.boolean().optional(),
           change: z
             .discriminatedUnion('kind', [
+              z.object({ kind: z.literal('rrule'), rrule: z.string().min(1).max(64_000) }).strict(),
               z.object({ kind: z.literal('at'), at: scheduleAtInputSchema }).strict(),
               z
                 .object({
@@ -535,7 +545,11 @@ export const featureRequestSchema = z.discriminatedUnion('type', [
         .strict()
         .superRefine((value, context) => {
           if (value.change === undefined && value.title === undefined && value.prompt === undefined)
-            context.addIssue({ code: 'custom', message: 'A Schedule update must change at least one field.' })
+            if (value.active === undefined)
+              context.addIssue({
+                code: 'custom',
+                message: 'A Schedule update must change at least one field.',
+              })
           if (value.id !== value.expected.id)
             context.addIssue({
               code: 'custom',
@@ -549,8 +563,28 @@ export const featureRequestSchema = z.discriminatedUnion('type', [
     .object({
       type: z.literal('schedule.delete'),
       ...featureRequestBase,
-      payload: z.object({ sessionId: id, id }).strict(),
+      payload: z
+        .object({ sessionId: id.optional(), id, expectedUpdatedAt: scheduleTimestamp.nullable().optional() })
+        .strict(),
     })
+    .strict(),
+  z
+    .object({
+      type: z.literal('schedule.create'),
+      ...featureRequestBase,
+      payload: z
+        .object({
+          workspaceId: id,
+          title: scheduleTitle,
+          prompt: schedulePrompt,
+          timing: scheduleCreateTimingSchema,
+          targetMode: z.enum(['new_once', 'new']),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({ type: z.literal('schedule.run'), ...featureRequestBase, payload: z.object({ id }).strict() })
     .strict(),
   z
     .object({

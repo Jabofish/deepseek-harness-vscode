@@ -277,6 +277,8 @@ function toRemoteHistoryRequest(request: ScheduleHistoryRequest): Record<string,
 
 function toRemoteRecord(record: ScheduleRecord): Record<string, unknown> {
   switch (record.kind) {
+    case 'rrule':
+      throw malformed('record')
     case 'at':
       return { ...record }
     case 'after':
@@ -294,6 +296,8 @@ function toRemoteRecord(record: ScheduleRecord): Record<string, unknown> {
 
 function toRemoteTimingChange(change: ScheduleTimingChange): Record<string, unknown> {
   switch (change.kind) {
+    case 'rrule':
+      throw malformed('timing change')
     case 'at':
       return { kind: 'at', at: toRemoteAtValue(change.at) }
     case 'every':
@@ -345,7 +349,7 @@ function validateUpdateRequest(request: ScheduleUpdateRequest): void {
   if (request.prompt !== undefined && typeof request.prompt !== 'string') throw malformed('update request')
 }
 
-function requireIdentifier(value: string, part: string): void {
+function requireIdentifier(value: unknown, part: string): asserts value is string {
   if (!isNonEmptyString(value))
     throw new AppError({
       code: 'INVALID_CONFIGURATION',

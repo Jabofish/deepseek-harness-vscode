@@ -80,6 +80,16 @@ export const scheduleRecordSchema = z.discriminatedUnion('kind', [
       timeZone: z.string().min(1).max(256),
     })
     .strict(),
+  z
+    .object({
+      id,
+      kind: z.literal('rrule'),
+      title: scheduleTitle,
+      prompt: schedulePrompt,
+      scheduledAt: scheduleTimestamp,
+      rrule: z.string().min(1).max(64_000),
+    })
+    .strict(),
 ])
 
 export const scheduleDeliveryReceiptSchema = z
@@ -87,19 +97,65 @@ export const scheduleDeliveryReceiptSchema = z
     scheduledAt: scheduleTimestamp,
     deliveredAt: scheduleTimestamp,
     messageId: id,
+    targetSessionId: id.optional(),
   })
   .strict()
 
-export const scheduleCatalogEntrySchema = z.intersection(
-  scheduleRecordSchema,
+const targetSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('session'), sessionId: id }).strict(),
+  z.object({ kind: z.literal('new_once'), sessionId: id, agentPreset: id.optional() }).strict(),
+  z.object({ kind: z.literal('new'), agentPreset: id.optional() }).strict(),
+])
+export const scheduleCatalogEntrySchema = z
+  .union(
+    scheduleRecordSchema.options.map((schema) =>
+      schema.safeExtend({
+        sessionId: id.optional(),
+        status: z.enum(['active', 'inactive', 'paused', 'ended']),
+        target: targetSchema.optional(),
+        updatedAt: scheduleTimestamp.optional(),
+        workspaceId: id.optional(),
+        lastDelivery: scheduleDeliveryReceiptSchema.optional(),
+      }),
+    ),
+  )
+  .superRefine((entry, context) => {
+    if (entry.target === undefined && entry.sessionId === undefined)
+      context.addIssue({ code: 'custom', message: 'A Schedule target or legacy session is required.' })
+    if (
+      entry.target !== undefined &&
+      entry.sessionId !== undefined &&
+      (entry.target.kind !== 'session' || entry.target.sessionId !== entry.sessionId)
+    )
+      context.addIssue({ code: 'custom', message: 'Schedule session and target must agree.' })
+  })
+
+export const scheduleCreateTimingSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('after'), seconds: z.number().int().positive().safe() }).strict(),
+  z.object({ kind: z.literal('at'), at: scheduleAtInputSchema }).strict(),
+  z.object({ kind: z.literal('every'), seconds: z.number().int().min(60).safe() }).strict(),
+  z.object({ kind: z.literal('daily'), time: scheduleTime, timeZone: z.string().min(1).max(256) }).strict(),
   z
     .object({
-      sessionId: id,
-      status: z.enum(['active', 'inactive']),
-      lastDelivery: scheduleDeliveryReceiptSchema.optional(),
+      kind: z.literal('weekly'),
+      time: scheduleTime,
+      timeZone: z.string().min(1).max(256),
+      weekdays: z
+        .array(z.number().int().min(1).max(7))
+        .min(1)
+        .max(7)
+        .refine((days) => new Set(days).size === days.length),
     })
     .strict(),
-)
+  z
+    .object({
+      kind: z.literal('cron'),
+      expression: z.string().min(1).max(256),
+      timeZone: z.string().min(1).max(256),
+    })
+    .strict(),
+  z.object({ kind: z.literal('rrule'), rrule: z.string().min(1).max(64_000) }).strict(),
+])
 
 export const scheduleDeliveryRecordSchema = z
   .object({
@@ -158,6 +214,8 @@ export const scheduleUpdatePayloadSchema = z.union([
 
 export const scheduleDeletePayloadSchema = z.union([
   z.object({ id, deleted: z.literal(true) }).strict(),
-  z.object({ id, deleted: z.literal(false), code: z.literal('schedule_not_found') }).strict(),
+  z
+    .object({ id, deleted: z.literal(false), code: z.enum(['schedule_not_found', 'schedule_conflict']) })
+    .strict(),
   scheduleToolFailureSchema,
 ])

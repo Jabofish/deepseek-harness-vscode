@@ -8,8 +8,11 @@ import { AlphaLoopbackApiClient } from '../../packages/dsh-adapter/src/versions/
 import { unwrapRpcResultValue } from '../../packages/dsh-adapter/src/versions/rc6/rpc.js'
 import { imageData } from '../../packages/dsh-adapter/test/fixtures/alpha222-contract.js'
 import { canConnect, startManagedRuntime } from './harness.js'
+import type { BackendEvent } from '../../packages/domain/src/index.js'
 
-const enabled = process.env.DSH_LIVE_SMOKE === '1' && process.env.DSH_LIVE_RUNTIME_VERSION === '0.2.2-alpha.2'
+const enabled =
+  process.env.DSH_LIVE_SMOKE === '1' &&
+  ['0.2.2-alpha.2', '0.2.2-alpha.3'].includes(process.env.DSH_LIVE_RUNTIME_VERSION ?? '')
 
 /** Test-only producer: the native store and Session.append own bytes and log authority. */
 function probeSource(moduleUrl: (name: string) => string): string {
@@ -48,6 +51,7 @@ describe.skipIf(!enabled)('native alpha222 tool-result image ownership', () => {
     const home = await mkdtemp(path.join(os.tmpdir(), 'dsh-live-tool-image-'))
     let runtime: Awaited<ReturnType<typeof startManagedRuntime>> | undefined
     let transport: AlphaLoopbackApiClient | undefined
+    let unsubscribe: (() => void) | undefined
     try {
       const runtimeRequire = createRequire(path.join(path.dirname(path.dirname(executable)), 'package.json'))
       const plugin = path.join(home, 'tool-image-probe.mjs')
@@ -79,6 +83,20 @@ describe.skipIf(!enabled)('native alpha222 tool-result image ownership', () => {
       const owner = await backend.sessions.create(input)
       const other = await backend.sessions.create(input)
       expect(other.id).not.toBe(owner.id)
+      const events: BackendEvent[] = []
+      if (process.env.DSH_LIVE_RUNTIME_VERSION === '0.2.2-alpha.3') {
+        unsubscribe = backend.events.subscribe((event) => events.push(event))
+        backend.events.watchSession?.(owner.id)
+        await vi.waitFor(
+          () =>
+            expect(
+              events.some((event) => event.type === 'session.subscribed' && event.sessionId === owner.id),
+            ).toBe(true),
+          { timeout: 15_000 },
+        )
+        // Keep only changes observed after the native follow/control baselines are established.
+        events.length = 0
+      }
       if (runtime.launchUrl === undefined) throw new Error('Missing isolated runtime login URL.')
       const login = await fetch(runtime.launchUrl, { redirect: 'manual' })
       const cookie = login.headers
@@ -96,6 +114,19 @@ describe.skipIf(!enabled)('native alpha222 tool-result image ownership', () => {
         await transport.remoteRequest('toolImageProbe/seed', { request: { sessionId: owner.id } }),
         'tool image fixture',
       )
+      if (process.env.DSH_LIVE_RUNTIME_VERSION === '0.2.2-alpha.3')
+        await vi.waitFor(
+          () =>
+            expect(
+              events.some(
+                (event) =>
+                  event.type === 'session.projection' &&
+                  event.sessionId === owner.id &&
+                  event.key === 'modelSelection',
+              ),
+            ).toBe(true),
+          { timeout: 10_000 },
+        )
       await vi.waitFor(
         async () => {
           const history = await backend.sessions.history(owner.id)
@@ -122,9 +153,10 @@ describe.skipIf(!enabled)('native alpha222 tool-result image ownership', () => {
         code: 'PERMISSION_DENIED',
       })
       console.info(
-        '[dsh-live-tool-image] alpha222: native stored tool-only image read passed; other session denied; no model call',
+        `[dsh-live-tool-image] ${process.env.DSH_LIVE_RUNTIME_VERSION}: native tool-only image read passed; other session denied; alpha.3 modelSelection control update observed when selected; no model call`,
       )
     } finally {
+      unsubscribe?.()
       try {
         await transport?.close()
       } finally {

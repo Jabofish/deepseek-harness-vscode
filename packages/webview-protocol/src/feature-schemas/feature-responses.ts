@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { SCHEDULE_INPUT_ERROR_CODES } from '@dsh-vscode/domain'
 import {
   billingEstimateResponseSchema,
   billingCatalogResponseSchema,
@@ -128,7 +129,15 @@ export const featureResponsePayloadSchema = z.discriminatedUnion('kind', [
     })
     .strict(),
   z
-    .object({ kind: z.literal('schedule.catalog'), items: z.array(scheduleCatalogEntrySchema).max(10_000) })
+    .object({
+      kind: z.literal('schedule.catalog'),
+      items: z.array(scheduleCatalogEntrySchema).max(10_000),
+      management: z.literal('host').optional(),
+      workspaces: z
+        .array(z.object({ id: z.string().min(1).max(256), name: z.string().min(1).max(1_024) }).strict())
+        .max(256)
+        .optional(),
+    })
     .strict(),
   z
     .object({ kind: z.literal('schedule.records'), items: z.array(scheduleRecordSchema).max(10_000) })
@@ -154,6 +163,25 @@ export const featureResponsePayloadSchema = z.discriminatedUnion('kind', [
     .strict(),
   z.object({ kind: z.literal('schedule.updated'), result: scheduleUpdatePayloadSchema }).strict(),
   z.object({ kind: z.literal('schedule.deleted'), result: scheduleDeletePayloadSchema }).strict(),
+  z.object({ kind: z.literal('schedule.created'), item: scheduleCatalogEntrySchema }).strict(),
+  z
+    .object({ kind: z.literal('schedule.create.refused'), reason: z.enum(SCHEDULE_INPUT_ERROR_CODES) })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('schedule.ran'),
+      result: z.union([
+        z.object({ id: z.string().min(1).max(256), admitted: z.literal(true) }).strict(),
+        z
+          .object({
+            id: z.string().min(1).max(256),
+            admitted: z.literal(false),
+            code: z.enum(['schedule_not_found', 'schedule_execution_pending', 'schedule_target_archived']),
+          })
+          .strict(),
+      ]),
+    })
+    .strict(),
   z
     .object({
       kind: z.literal('plugin.bundles'),

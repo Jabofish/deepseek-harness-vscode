@@ -168,7 +168,10 @@ export class MasterCe7073ScheduleClient {
     const endpoint = `schedule/${method}`
     // The transport owns deadlines, abort listeners and connections. Never retry:
     // a lost create/edit/run/delete reply may follow a committed mutation.
-    const response = await this.transport.remoteRequest(endpoint, args, signal)
+    const remoteArgs = ['catalog', 'deleteInactive', 'deliveryLimits'].includes(method)
+      ? {}
+      : { request: args }
+    const response = await this.transport.remoteRequest(endpoint, remoteArgs, signal)
     const failure = scheduleFailure.safeParse(response)
     if (failure.success) {
       const error = failure.data.error

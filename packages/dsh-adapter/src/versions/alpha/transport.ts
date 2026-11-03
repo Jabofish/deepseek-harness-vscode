@@ -742,6 +742,12 @@ export class AlphaLoopbackApiClient implements DshTransport {
       )
         continue
       const controlWireVersion = this.options.controlWireVersion ?? 'queue-v1'
+      if (this.options.normalizeControlFrame !== undefined) {
+        const frames = this.options.normalizeControlFrame(item)
+        if (frames === undefined) throw malformedResponse('session/control versioned frame')
+        yield* frames
+        continue
+      }
       if (controlWireVersion === 'projection-v2') {
         const frames = normalizeAlpha171ControlFrame(item)
         if (frames === undefined) throw malformedResponse('session/control alpha171 frame')

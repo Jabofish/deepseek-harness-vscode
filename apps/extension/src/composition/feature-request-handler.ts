@@ -3,6 +3,7 @@ import type { BillingFeatureHost } from '../billing/billing-feature-handler.js'
 import type { EditorBridgeHost } from '../editor/editor-bridge-host.js'
 import {
   AppError,
+  SCHEDULE_INPUT_ERROR_CODES,
   type CheckpointSummary,
   type EditorContextOwner,
   type SessionDetail,
@@ -43,6 +44,7 @@ import {
   createPluginRemoveConfirmation,
 } from '../plugins/plugin-manager-confirmations.js'
 import { handleScheduleFeatureRequest } from '../schedules/schedule-feature-handler.js'
+import { scopedSchedule } from '../schedules/schedule-scope.js'
 import { handleCheckpointFeatureRequest } from '../checkpoints/checkpoint-feature-handler.js'
 import { handleTaskFeatureRequest } from '../tasks/task-feature-handler.js'
 import { handlePromptTemplateFeatureRequest } from '../prompts/prompt-template-feature-handler.js'
@@ -345,7 +347,9 @@ export function createFeatureRequestHandler(deps: FeatureRequestHandlerDependenc
       request.type === 'schedule.list' ||
       request.type === 'schedule.history' ||
       request.type === 'schedule.update' ||
-      request.type === 'schedule.delete'
+      request.type === 'schedule.delete' ||
+      request.type === 'schedule.create' ||
+      request.type === 'schedule.run'
     ) {
       const backend = backendService.requireBackend()
       if (backend.schedules === undefined)
@@ -355,21 +359,129 @@ export function createFeatureRequestHandler(deps: FeatureRequestHandlerDependenc
           retryable: false,
         })
       const schedules = new ScheduleUseCases(backend.schedules)
+      const ensureTrust = (): void => {
+        if (
+          !vscode.workspace.isTrusted &&
+          (request.type === 'schedule.create' ||
+            request.type === 'schedule.run' ||
+            (request.type === 'schedule.update' &&
+              (request.payload.active !== false ||
+                request.payload.title !== undefined ||
+                request.payload.prompt !== undefined ||
+                request.payload.change !== undefined)))
+        )
+          throw new AppError({
+            code: 'PERMISSION_DENIED',
+            message: 'Trust the workspace before changing Schedule execution.',
+            retryable: false,
+          })
+      }
+      ensureTrust()
+      const ensureConnection = (): void => {
+        if (signal.aborted || backendService.requireBackend() !== backend)
+          throw new AppError({
+            code: 'REQUEST_CANCELLED',
+            message: 'The Schedule connection changed.',
+            retryable: true,
+          })
+      }
+      if (request.type === 'schedule.create') {
+        const workspaces = await listCurrentWorkspaces(signal)
+        ensureConnection()
+        const workspace = workspaces.find((item) => item.id === request.payload.workspaceId)
+        if (workspace?.path === undefined)
+          throw new AppError({
+            code: 'RESOURCE_NOT_OWNED',
+            message: 'The Schedule workspace is not owned by this window.',
+            retryable: false,
+          })
+        const { title, prompt, timing, targetMode } = request.payload
+        let created
+        ensureTrust()
+        try {
+          created = await schedules.create(
+            { title, prompt, timing, targetMode, workingDirectory: workspace.path },
+            signal,
+          )
+        } catch (error) {
+          ensureConnection()
+          const reason =
+            error instanceof AppError
+              ? SCHEDULE_INPUT_ERROR_CODES.find((value) => value === error.context?.scheduleReason)
+              : undefined
+          if (reason !== undefined) return { kind: 'schedule.create.refused', reason }
+          throw error
+        }
+        ensureConnection()
+        const item = scopedSchedule(created, workspaces)
+        if (item === undefined)
+          throw new AppError({
+            code: 'PROTOCOL_ERROR',
+            message: 'The created Schedule target did not match its workspace.',
+            retryable: false,
+          })
+        return { kind: 'schedule.created', item }
+      }
       if (request.type === 'schedule.catalog') {
         const [items, workspaces] = await Promise.all([
           schedules.catalog(signal),
           listCurrentWorkspaces(signal),
         ])
-        const currentWorkspaceSessionIds = new Set(
-          workspaces.flatMap((workspace) => workspace.sessionIds ?? []),
-        )
+        ensureConnection()
         return {
           kind: 'schedule.catalog',
-          items: items.filter((item) => currentWorkspaceSessionIds.has(item.sessionId)),
+          items: items.flatMap((item) => {
+            const safe = scopedSchedule(item, workspaces)
+            return safe === undefined ? [] : [safe]
+          }),
+          ...(backend.schedules.management === 'host'
+            ? { management: 'host', workspaces: workspaces.map(({ id, name }) => ({ id, name })) }
+            : {}),
         }
       }
-      await requireCurrentWorkspaceSession(request.payload.sessionId, signal, { allowArchived: true })
-      return handleScheduleFeatureRequest(request, schedules, signal)
+      if (backend.schedules.management === 'host' && request.type !== 'schedule.list') {
+        const [items, workspaces] = await Promise.all([
+          schedules.catalog(signal),
+          listCurrentWorkspaces(signal),
+        ])
+        ensureConnection()
+        const found = items.find((item) => item.id === request.payload.id)
+        const owned = found === undefined ? undefined : scopedSchedule(found, workspaces)
+        if (
+          owned === undefined ||
+          ('sessionId' in request.payload &&
+            request.payload.sessionId !== undefined &&
+            request.payload.sessionId !== owned.sessionId)
+        )
+          throw new AppError({
+            code: 'RESOURCE_NOT_OWNED',
+            message: 'The Schedule is not owned by this window.',
+            retryable: false,
+          })
+        if (
+          (request.type === 'schedule.update' || request.type === 'schedule.delete') &&
+          request.payload.expectedUpdatedAt === undefined
+        )
+          throw new AppError({
+            code: 'INVALID_CONFIGURATION',
+            message: 'An explicit Schedule edit revision is required.',
+            retryable: false,
+          })
+      } else if ('sessionId' in request.payload && typeof request.payload.sessionId === 'string') {
+        await requireCurrentWorkspaceSession(request.payload.sessionId, signal, { allowArchived: true })
+        ensureConnection()
+      } else
+        throw new AppError({
+          code: 'RESOURCE_NOT_OWNED',
+          message: 'A Schedule session is required.',
+          retryable: false,
+        })
+      // Trust authorises dispatch. A later revocation cannot turn an already
+      // committed write into a definite preflight refusal that invites replay.
+      ensureTrust()
+      const result = await handleScheduleFeatureRequest(request, schedules, signal)
+      ensureConnection()
+      return result
     }
     if (request.type === 'editor.context.capture') {
       const owner = featureContextOwner(request.payload.workspaceFolderId)

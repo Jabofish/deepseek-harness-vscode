@@ -17,6 +17,8 @@ import type { ScheduleSessionLink } from './session-link.js'
 export type CatalogPayload = {
   readonly kind: 'schedule.catalog'
   readonly items: readonly ScheduleCatalogEntry[]
+  readonly management?: 'host'
+  readonly workspaces?: readonly { readonly id: string; readonly name: string }[]
 }
 export type HistoryPayload = { readonly kind: 'schedule.history'; readonly result: ScheduleHistoryResult }
 export type UpdatePayload = { readonly kind: 'schedule.updated'; readonly result: ScheduleUpdateResult }
@@ -26,8 +28,8 @@ export type ScheduleUpdateFeaturePayload = Extract<
   { readonly type: 'schedule.update' }
 >['payload']
 export type DetailTab = 'rule' | 'history'
-export type TimingChoice = 'keep' | 'at' | 'every' | 'daily' | 'weekly' | 'cron'
-export type CreateTiming = 'after' | 'at' | 'every' | 'daily' | 'weekly' | 'cron'
+export type TimingChoice = 'keep' | 'at' | 'every' | 'daily' | 'weekly' | 'cron' | 'rrule'
+export type CreateTiming = 'after' | 'at' | 'every' | 'daily' | 'weekly' | 'cron' | 'rrule'
 export type StatusFilter = 'all' | 'active' | 'inactive'
 
 export function linkedSessionMessageKey(
@@ -45,8 +47,24 @@ export function linkedSessionMessageKey(
   }
 }
 
-export const CREATE_TIMINGS: readonly CreateTiming[] = ['after', 'at', 'every', 'daily', 'weekly', 'cron']
-export const EDIT_TIMINGS: readonly TimingChoice[] = ['keep', 'at', 'every', 'daily', 'weekly', 'cron']
+export const CREATE_TIMINGS: readonly CreateTiming[] = [
+  'after',
+  'at',
+  'every',
+  'daily',
+  'weekly',
+  'cron',
+  'rrule',
+]
+export const EDIT_TIMINGS: readonly TimingChoice[] = [
+  'keep',
+  'at',
+  'every',
+  'daily',
+  'weekly',
+  'cron',
+  'rrule',
+]
 
 /** Trigger and menu must name one timing identically. */
 export function timingLabel(timing: CreateTiming | TimingChoice, t: Translate): string {
@@ -70,12 +88,13 @@ export interface EditDraft {
   readonly seconds: string
   readonly weekdays: readonly number[]
   readonly expression: string
+  readonly rrule?: string
 }
 
 export interface EditState {
   readonly editing: boolean
   readonly draft?: EditDraft
-  readonly baseline?: { readonly key: string; readonly draft: EditDraft }
+  readonly baseline?: { readonly key: string; readonly draft: EditDraft; readonly revision?: string | null }
 }
 
 export interface CreateDraft extends Omit<EditDraft, 'timing'> {
@@ -95,6 +114,7 @@ export type ScheduleCreateArgs = { readonly title: string; readonly prompt: stri
       }
     }
   | { readonly cron: { readonly expression: string; readonly time_zone: string } }
+  | { readonly rrule: string }
 )
 
 export interface PendingCreate {
@@ -102,6 +122,8 @@ export interface PendingCreate {
   readonly baselineKeys: ReadonlySet<string>
   readonly args: ScheduleCreateArgs
   readonly expectedAt?: string
+  readonly workspaceId?: string
+  readonly targetMode?: 'new_once' | 'new'
 }
 
 export type CreateStatus = 'idle' | 'sending' | 'pending' | 'unconfirmed' | 'confirmed' | 'failed'
@@ -140,8 +162,11 @@ export function newRequestId(): string {
   return `schedule-${Date.now().toString(36)}-${requestOrdinal.toString(36)}`
 }
 
-export function scheduleKey(record: Pick<ScheduleCatalogEntry, 'sessionId' | 'id'>): string {
-  return `${record.sessionId}\u0000${record.id}`
+export function scheduleKey(record: Pick<ScheduleCatalogEntry, 'sessionId' | 'id' | 'target'>): string {
+  // Host task IDs survive new_once -> session delivery and later target edits.
+  return record.target === undefined
+    ? `${record.sessionId ?? ''}\u0000${record.id}`
+    : `host-task\u0000${record.id}`
 }
 
 export function initialCreateDraft(): CreateDraft {
@@ -347,6 +372,8 @@ export function cronExpressionsMatch(leftExpression: string, rightExpression: st
 }
 
 export function createValidation(draft: CreateDraft): string | undefined {
+  if (draft.timing === 'rrule' && ((draft.rrule ?? '').trim() === '' || (draft.rrule ?? '').length > 64_000))
+    return 'schedules.error.invalid_rule'
   if (draft.title.trim() === '') return 'schedules.create.validation.title'
   if (draft.title.trim().length > 120) return 'schedules.create.validation.titleLength'
   if (draft.prompt.trim() === '') return 'schedules.create.validation.prompt'
@@ -381,6 +408,8 @@ export function createValidation(draft: CreateDraft): string | undefined {
 export function createArguments(draft: CreateDraft): ScheduleCreateArgs {
   const common = { title: draft.title.trim(), prompt: draft.prompt.trim() }
   switch (draft.timing) {
+    case 'rrule':
+      return { ...common, rrule: (draft.rrule ?? '').trim() }
     case 'after':
       return { ...common, after_seconds: Number(draft.seconds) }
     case 'at':
@@ -421,12 +450,15 @@ export function scheduleMatchesCreate(record: ScheduleCatalogEntry, pending: Pen
   const { args } = pending
   if (
     pending.baselineKeys.has(scheduleKey(record)) ||
-    record.sessionId !== pending.sessionId ||
+    (pending.workspaceId === undefined
+      ? record.sessionId !== pending.sessionId
+      : record.workspaceId !== pending.workspaceId || record.target?.kind !== pending.targetMode) ||
     record.title !== args.title ||
     record.prompt !== args.prompt
   )
     return false
   if ('after_seconds' in args) return record.kind === 'after' && record.afterSeconds === args.after_seconds
+  if ('rrule' in args) return record.kind === 'rrule' && record.rrule === args.rrule
   if ('at' in args) return record.kind === 'at' && record.scheduledAt === pending.expectedAt
   if ('every_seconds' in args) return record.kind === 'every' && record.everySeconds === args.every_seconds
   if ('daily' in args)
@@ -512,6 +544,7 @@ export function initialDraft(record: ScheduleCatalogEntry): EditDraft {
     title: record.title,
     prompt: record.prompt,
     timing: 'keep',
+    ...(record.kind === 'rrule' ? { rrule: record.rrule } : {}),
     date: parts.date,
     time: parts.time,
     timeZone,
@@ -531,6 +564,7 @@ export function sameEditDraft(left: EditDraft, right: EditDraft): boolean {
     left.timeZone === right.timeZone &&
     left.seconds === right.seconds &&
     left.expression === right.expression &&
+    left.rrule === right.rrule &&
     [...left.weekdays].sort((a, b) => a - b).join(',') === [...right.weekdays].sort((a, b) => a - b).join(',')
   )
 }
@@ -543,6 +577,8 @@ export function expectedFeatureRecord(record: ScheduleRecord): ScheduleUpdateFea
     scheduledAt: record.scheduledAt,
   }
   switch (record.kind) {
+    case 'rrule':
+      return { ...common, kind: 'rrule', rrule: record.rrule }
     case 'at':
       return { ...common, kind: 'at' }
     case 'after':
@@ -566,6 +602,8 @@ export function expectedFeatureRecord(record: ScheduleRecord): ScheduleUpdateFea
 
 export function timingChange(draft: EditDraft): ScheduleTimingChange | undefined {
   switch (draft.timing) {
+    case 'rrule':
+      return { kind: 'rrule', rrule: (draft.rrule ?? '').trim() }
     case 'keep':
       return undefined
     case 'at': {
@@ -635,11 +673,13 @@ export function historyLoading(current: HistoryView, reset: boolean): HistoryVie
 
 export function deleteResultError(result: ScheduleDeleteResult): string | undefined {
   if ('message' in result) return `schedules.error.${result.code}`
-  return result.deleted ? undefined : 'schedules.error.schedule_not_found'
+  return result.deleted ? undefined : `schedules.error.${result.code}`
 }
 
 export function formatRule(record: ScheduleRecord, t: Translate): string {
   switch (record.kind) {
+    case 'rrule':
+      return `${t('schedules.kind.rrule')} · ${record.rrule}`
     case 'at':
       return `${t('schedules.kind.at')} · ${record.scheduledAt}`
     case 'after':

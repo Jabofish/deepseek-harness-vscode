@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ReactElement } from 'react'
 import type { ScheduleCatalogEntry, ScheduleDeliveryRecord, ScheduleRecord } from '@dsh-vscode/domain'
@@ -33,6 +33,19 @@ const delivery: ScheduleDeliveryRecord = {
   deliveredAt: '2026-10-01T09:00:02.000Z',
   messageId: 'delivery-one',
   prompt: 'Remind me to water the plants.',
+}
+
+const nativeTask: ScheduleCatalogEntry = {
+  id: 'native-task',
+  kind: 'rrule',
+  title: 'Native review',
+  prompt: 'Review the project',
+  scheduledAt: '2099-11-04T09:00:00.000Z',
+  rrule: 'DTSTART:20991104T090000Z\nRRULE:FREQ=DAILY',
+  status: 'paused',
+  target: { kind: 'new_once', sessionId: 'reserved' },
+  workspaceId: 'workspace',
+  updatedAt: '2026-11-03T00:00:00.000Z',
 }
 
 interface MountedPanel {
@@ -132,6 +145,7 @@ function submitCreateForm(): void {
 }
 
 const timingLabels: Readonly<Record<string, string>> = {
+  rrule: 'Recurrence rule (RRULE)',
   after: 'After a delay',
   at: 'One time',
   every: 'Every interval',
@@ -407,5 +421,179 @@ describe('SchedulePanel', () => {
 
     await waitFor(() => expect(started).toBe(true))
     panel.view.unmount()
+  })
+})
+
+describe('native Schedule management', () => {
+  afterEach(() => cleanup())
+  const catalog = (items: readonly ScheduleCatalogEntry[]): unknown => ({
+    kind: 'schedule.catalog',
+    management: 'host',
+    workspaces: [{ id: 'workspace', name: 'Fixture project' }],
+    items,
+  })
+
+  it('opens a delivered target only after a receipt and local session availability establish navigation', async () => {
+    let delivered = false
+    const open = vi.fn()
+    const lookup = vi.fn((sessionId: string) => ({
+      status: 'available' as const,
+      title: sessionId === 'reserved' ? 'Review delivery' : 'Unknown session',
+    }))
+    mountPanel({
+      getLinkedSession: lookup,
+      onOpenLinkedSession: open,
+      resolve: (request) =>
+        request.type === 'schedule.catalog'
+          ? catalog([
+              {
+                ...nativeTask,
+                ...(delivered
+                  ? {
+                      sessionId: 'reserved',
+                      target: { kind: 'session' as const, sessionId: 'reserved' },
+                      lastDelivery: { ...delivery, targetSessionId: 'reserved' },
+                    }
+                  : {}),
+              },
+            ])
+          : undefined,
+    })
+    fireEvent.click(await screen.findByRole('button', { name: /Native review/u }))
+    expect(screen.getByRole('button', { name: /Open original session/u }).hasAttribute('disabled')).toBe(true)
+    expect(lookup).not.toHaveBeenCalled()
+    delivered = true
+    fireEvent.click(screen.getByRole('button', { name: /Refresh/u }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Open original session: Review delivery' }))
+    expect(open).toHaveBeenCalledExactlyOnceWith('reserved')
+    expect(lookup.mock.calls.every(([id]) => id === 'reserved')).toBe(true)
+    expect(screen.getByRole('button', { name: 'Edit' }).hasAttribute('disabled')).toBe(false)
+  })
+
+  it.each(['Run now', 'Resume'])('ignores a late %s receipt after the connection changes', async (action) => {
+    let settle: ((value: unknown) => void) | undefined
+    const panel = mountPanel({
+      resolve: (request) => {
+        if (request.type === 'schedule.catalog') return catalog([nativeTask])
+        if (request.type === 'schedule.run' || request.type === 'schedule.update')
+          return new Promise((resolve) => {
+            settle = resolve
+          })
+        return undefined
+      },
+    })
+    fireEvent.click(await screen.findByRole('button', { name: /Native review/u }))
+    fireEvent.click(screen.getByRole('button', { name: 'More task actions' }))
+    fireEvent.click(screen.getByRole('button', { name: action }))
+    await waitFor(() => expect(settle).toBeDefined())
+    panel.setConnectionEpoch(1)
+    await waitFor(() =>
+      expect(panel.requests.filter((request) => request.type === 'schedule.catalog')).toHaveLength(2),
+    )
+    await act(async () => {
+      settle?.(
+        action === 'Run now'
+          ? { kind: 'schedule.ran', result: { id: nativeTask.id, admitted: true } }
+          : { kind: 'schedule.updated', result: { id: nativeTask.id, updated: true, record: nativeTask } },
+      )
+      await Promise.resolve()
+    })
+    expect(screen.queryByText('Delivery accepted by DSH.')).toBeNull()
+    expect(panel.requests.filter((request) => request.type === 'schedule.catalog')).toHaveLength(2)
+  })
+
+  it('creates RRULE tasks through the native route without starting an Agent session', async () => {
+    const start = vi.fn(() => Promise.resolve('legacy-session'))
+    const { requests } = mountPanel({
+      onStartScheduleSession: start,
+      resolve: (request) =>
+        request.type === 'schedule.catalog'
+          ? catalog([])
+          : request.type === 'schedule.create'
+            ? { kind: 'schedule.created', item: nativeTask }
+            : undefined,
+    })
+    await screen.findByText(
+      'Create a scheduled task directly in the selected workspace. No model request is sent.',
+    )
+    clickCreateOpen()
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: nativeTask.title } })
+    fireEvent.change(screen.getByLabelText('Reminder instruction'), { target: { value: nativeTask.prompt } })
+    chooseTiming('rrule')
+    fireEvent.change(screen.getByLabelText('Recurrence rule (RRULE)'), {
+      target: { value: nativeTask.kind === 'rrule' ? nativeTask.rrule : '' },
+    })
+    submitCreateForm()
+    await screen.findByText('The reminder was created in DSH.')
+    expect(requests.filter((request) => request.type === 'schedule.create')).toEqual([
+      expect.objectContaining({
+        payload: {
+          workspaceId: 'workspace',
+          title: nativeTask.title,
+          prompt: nativeTask.prompt,
+          targetMode: 'new_once',
+          timing: { kind: 'rrule', rrule: nativeTask.kind === 'rrule' ? nativeTask.rrule : '' },
+        },
+      }),
+    ])
+    expect(start).not.toHaveBeenCalled()
+  })
+
+  it('keeps the original edit revision during background refresh and rebases only after a visible conflict', async () => {
+    let current = nativeTask
+    let updates = 0
+    const { requests } = mountPanel({
+      resolve: (request) => {
+        if (request.type === 'schedule.catalog') return catalog([current])
+        if (request.type === 'schedule.update' && ++updates === 1)
+          return {
+            kind: 'schedule.updated',
+            result: { id: nativeTask.id, updated: false, code: 'schedule_conflict' },
+          }
+        return defaultResponse(request, [current])
+      },
+    })
+    fireEvent.click(await screen.findByRole('button', { name: /Native review/u }))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'My native draft' } })
+    current = { ...nativeTask, title: 'Changed elsewhere', updatedAt: '2026-11-03T00:00:01.000Z' }
+    fireEvent.click(screen.getByRole('button', { name: /Refresh/u }))
+    await screen.findAllByText('Changed elsewhere')
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+    expect((await screen.findByRole('alert')).textContent).toContain('changed elsewhere')
+    expect(requests.filter((request) => request.type === 'schedule.update')[0]).toMatchObject({
+      payload: { expectedUpdatedAt: nativeTask.updatedAt },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+    await waitFor(() => expect(updates).toBe(2))
+    expect(requests.filter((request) => request.type === 'schedule.update')[1]).toMatchObject({
+      payload: {
+        expectedUpdatedAt: current.updatedAt,
+        title: 'My native draft',
+      },
+    })
+  })
+
+  it('does not replay an uncertain native create or fall back to a model request', async () => {
+    const start = vi.fn(() => Promise.resolve('legacy-session'))
+    const { requests } = mountPanel({
+      onStartScheduleSession: start,
+      resolve: (request) => {
+        if (request.type === 'schedule.catalog') return catalog([])
+        if (request.type === 'schedule.create')
+          return Promise.reject(Object.assign(new Error('Disconnected'), { code: 'BACKEND_UNREACHABLE' }))
+        return undefined
+      },
+    })
+    await screen.findByText(
+      'Create a scheduled task directly in the selected workspace. No model request is sent.',
+    )
+    clickCreateOpen()
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Unknown outcome' } })
+    fireEvent.change(screen.getByLabelText('Reminder instruction'), { target: { value: 'Review later' } })
+    submitCreateForm()
+    await screen.findByText(/no matching reminder is confirmed/u)
+    expect(requests.filter((request) => request.type === 'schedule.create')).toHaveLength(1)
+    expect(start).not.toHaveBeenCalled()
   })
 })

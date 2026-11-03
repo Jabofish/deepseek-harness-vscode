@@ -47,6 +47,7 @@
 | `0.2.1-rc.4`                                                                        | `rc214`                                         | 独立精确身份；消费的 rc.3 契约不变，不参与未知版本回退。                                                                                                          |
 | `0.2.1-rc.5`                                                                        | `rc215`                                         | 独立精确 rc.4 wire；聊天隐藏开头的思考签名，原始历史不改写；不参与未知版本回退。                                                                                  |
 | `0.2.2-alpha.2`                                                                     | `alpha222`                                      | 精确 V4 codec；显式激活实时会话、保留本地会话归属的完整图片引用读取、阻塞授权选项、模型失效通知与平台拒绝；不参与未知版本回退。                                   |
+| `0.2.2-alpha.3`                                                                     | `alpha223`                                      | 批量 control 投影；原生 Host 定时任务、RRULE、工作区目标授权及修订编辑；精确身份，不参与未知版本回退。                                                            |
 
 `0.1.7-rc.2` 的固定源码是 [tag `dsh-v0.1.7-rc.2`](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.1.7-rc.2)，提交 `477b4f420553e8a52c2fbccc464d7561b239c443`。其他新增版本也必须在 fixture 注明 tag、commit、文件和类型；版本身份、schema、错误词汇、启动参数与能力声明一起核对。
 
@@ -145,7 +146,19 @@ rc.2 与 rc.1 的 Connection / Gateway、全部 API Remote、Session V4、Accoun
 
 精确 Adapter、增量 fixture、native 交互/附件探针及 managed VS Code 检查用于验证消费的接口。付费模型、真实 OAuth/账号、可选实验服务、远端操作系统和人工 Webview/无障碍验收独立完成；能力状态保持 `PARTIAL`。
 
-### 未发布 master 的预适配
+### Alpha.3 批量投影与原生定时任务
+
+`0.2.2-alpha.3` 固定到 [tag `dsh-v0.2.2-alpha.3`](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.2.2-alpha.3)，提交 `05b1cae8db6e674c5685101494d4eec24652424a`。`alpha223` 保留精确身份，继承已核对的 alpha.2 能力，不参与未知版本回退。DSH 仍要求 Node **>=24.9.0**，引导安装默认不变。消费的 Session V4 codec 与 `core/session` 源码相对 alpha.2 未变，因此有意复用固定的 alpha222 格式库。
+
+- [Session Controller](https://github.com/deepseek-ai/deepseek-harness/blob/05b1cae8db6e674c5685101494d4eec24652424a/packages/api/session-controller/src/types.ts) 改发 `{ type: 'projection', sessionId, seq, changes: [{ key, val }] }`。先校验完整且有界的批次，拒绝重复键，各变化键保留同一序号；缺席的键保持原值。Inbox 队列值先于自身投影水位发布。旧精确入口继续拒绝新 wire。sequenced 会话列表提示包含可用的摘要键；cached 提示仍是局部值，`contextPressure` 与 `contextBreakdown` 均不进入摘要。
+- [Schedule](https://github.com/deepseek-ai/deepseek-harness/blob/05b1cae8db6e674c5685101494d4eec24652424a/packages/schedule/schedule/src/types.ts) 启用预适配的 Host 任务契约：RRULE、既有会话/新建一次/每次新建目标、paused/ended 状态和修订编辑。`create`、`list`、`view`、`history`、`edit`、`run` 参数使用 `{ request: ... }` 包装；`catalog`、`deleteInactive`、`deliveryLimits` 无参数。版本客户端校验请求、响应身份、分页与动作关联，映射已声明拒绝，不重放写入。
+- 原生创建表单直接创建任务，由 Host 授权工作区并选择新建一次或每次新建目标，不启动 Agent 轮次。旧运行时保留既有 Agent 工作流；不会向 alpha.3 已变化的 `schedule_create` 工具发送旧 JSON。修改/删除携带所选修订；有修改的草稿在后台刷新时保留原修订，冲突可见后由用户明确重试。首次投递将新建一次目标转换成既有会话时，原生任务身份仍保持稳定。结果不确定的创建保持未确认，仅通过目录核对，不重新提交。
+- Host 全局目录按当前工作区过滤。既有目标校验会话归属，新目标要求工作目录与已授权目录精确匹配。目标目录及涉及的会话证据仅在 Host 使用，不进入 Webview。创建/执行/恢复要求工作区可信；撤销信任后仍可暂停/删除。每次原生任务操作在派发前重新核对范围，对需要执行的操作重新检查信任；回复返回途中撤销信任时，仍保留已提交写入的成功回执。不暴露 Host 全局批量删除。立即执行只表示获准入队，不证明模型轮次完成。
+- 先前 Gateway 私有事件上下文修正、Plugin Manager 诊断语义和结构化部分补丁结果沿用下文核对的契约。Account、提问、Workspace 等消费的 Remote 保留源码核对的行为；模型、命令、插件和设置目录继续从运行时发现。
+
+`alpha223-contract.spec.ts`、`alpha223-schedule-projection.spec.ts` 和 Schedule UI 回归覆盖 wire 拒绝、原生请求、严格公开投影、归属、修订冲突、取消及创建结果不确定。隔离的官方 npm `0.2.2-alpha.3` 原生探针覆盖连接、工作区/模型设置、仅工具结果图片的归属、任务管理，以及新建一次/每次新建会话的手动 Inbox 投递。投递探针在模型生成前拒绝每个 Agent 步骤，并核对原生 Inbox 日志，不证明模型执行完成。定时模型执行、真实会话投递、账号/OAuth 及独立手工/无障碍验收仍待补充，相关能力保持 `PARTIAL`。
+
+### 历史 master 预适配
 
 未发布快照 [`ce7073d51254c26cd63b22a60835b8f948deb447`](https://github.com/deepseek-ai/deepseek-harness/tree/ce7073d51254c26cd63b22a60835b8f948deb447) 已改变 Schedule wire，但仍报告 `0.2.2-alpha.2`。比较基线为已发布 alpha.2 的提交 `f3803c96974ad4a94195fb97e5c637e9c2a3afe3`；不能按共用版本号选择新契约。
 
@@ -159,7 +172,7 @@ rc.2 与 rc.1 的 Connection / Gateway、全部 API Remote、Session V4、Accoun
 | SDK 与文件系统服务 | SDK 新增 `session/query`、明确的问题关闭结果和图片显示名；文件系统新增 patch/delete/move 方法，属于独立服务契约。本客户端使用 Web Host API 和 VS Code 管理的 editor bridge；这些新增接口不替代其 Session prompt/question 或原生文件访问边界。                                                                                                                                                                                                                                                        |
 | 其他已消费服务     | Workspace、Job、userQuestions、Account 和 Session V4 保留已核对 wire。可选 mods 修改释放顺序，Remote 签名保留。实验 Forge/UI 功能不代表扩展新增控件。                                                                                                                                                                                                                                                                                                                                                |
 
-`master-ce7073-schedule-*.spec.ts` 覆盖精确源码标签拒绝、畸形请求/响应、业务失败、取消、传输超时透传和不重放。客户端只接受调用方已独立确认身份后传入的完整提交哈希；它本身不发现或证明身份、不持有传输，也不授权 Host 全局访问。客户端及 DTO 均未注册到实时 Adapter 或 Webview。启用仍需可信运行时身份、新目标与状态语义的 Domain/Host/UI 映射、跨会话及批量操作的 Host 授权和真实运行验证。既有能力保持 `PARTIAL`。
+`master-ce7073-schedule-*.spec.ts` 覆盖精确源码标签拒绝、畸形请求/响应、业务失败、取消、传输超时透传和不重放。历史客户端仍要求独立确认的完整提交身份，且未注册为实时入口。上文已发布的 alpha.3 入口现已提供原生 Adapter、Domain/Host/UI 映射和工作区范围授权。历史预适配不授权其他快照或 Host 全局批量操作；尚缺运行/UI 验收的能力保持 `PARTIAL`。
 
 ### 未知版本
 

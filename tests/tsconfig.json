@@ -2,9 +2,10 @@
   "extends": "../config/tsconfig.base.json",
   "compilerOptions": {
     "composite": true,
+    "jsx": "react-jsx",
     "noEmit": true,
     "allowImportingTsExtensions": true,
-    "types": ["node", "vitest/globals"],
+    "types": ["node", "vitest/globals", "vite/client"],
     "baseUrl": "..",
     "paths": {
       "@dsh-vscode/domain": ["packages/domain/src/index.ts"],
@@ -17,6 +18,12 @@
   "include": [
     "../apps/extension/src/view/transcript-content-version.ts",
     "**/*.ts",
+    "../apps/extension/src/**/*.ts",
+    "../apps/webview/src/**/*.ts",
+    "../apps/webview/src/**/*.tsx",
+    "../apps/webview/vite.config.ts",
+    "../packages/dsh-editor-bridge/src/companion-broker.ts",
+    "../packages/dsh-adapter/test/fixtures/alpha223-contract.ts",
     "../packages/domain/src/**/*.ts",
     "../packages/application/src/**/*.ts",
     "../packages/dsh-adapter/src/**/*.ts",

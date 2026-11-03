@@ -140,6 +140,7 @@ const SUBAGENT_DIAGNOSTIC_REASON: Record<SubagentDiagnosticView['reason'], true>
   unavailable: true,
 }
 const SCHEDULE_KIND: Record<ScheduleRecord['kind'], true> = {
+  rrule: true,
   at: true,
   after: true,
   every: true,
@@ -147,7 +148,12 @@ const SCHEDULE_KIND: Record<ScheduleRecord['kind'], true> = {
   weekly: true,
   cron: true,
 }
-const SCHEDULE_STATUS: Record<'active' | 'inactive', true> = { active: true, inactive: true }
+const SCHEDULE_STATUS: Record<'active' | 'inactive' | 'paused' | 'ended', true> = {
+  active: true,
+  inactive: true,
+  paused: true,
+  ended: true,
+}
 const SCHEDULE_FILTER: Record<'all' | 'active' | 'inactive', true> = {
   all: true,
   active: true,

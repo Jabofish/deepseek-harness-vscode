@@ -12,6 +12,12 @@ import {
 } from './schedule-model.js'
 
 interface ScheduleCreateFormProps {
+  readonly nativeManagement?: boolean
+  readonly workspaceChoices?: readonly { id: string; name: string }[]
+  readonly creationWorkspaceId?: string
+  readonly setCreationWorkspaceId?: (value: string) => void
+  readonly targetMode?: 'new_once' | 'new'
+  readonly setTargetMode?: (value: 'new_once' | 'new') => void
   readonly t: Translate
   readonly createDraft: CreateDraft
   readonly setCreateDraft: Dispatch<SetStateAction<CreateDraft>>
@@ -27,6 +33,12 @@ interface ScheduleCreateFormProps {
 }
 
 export function ScheduleCreateForm({
+  nativeManagement = false,
+  workspaceChoices = [],
+  creationWorkspaceId = '',
+  setCreationWorkspaceId,
+  targetMode = 'new_once',
+  setTargetMode,
   t,
   createDraft,
   setCreateDraft,
@@ -67,7 +79,47 @@ export function ScheduleCreateForm({
       }}
     >
       <h2>{t('schedules.create.formTitle')}</h2>
-      <p className="dsh-schedule-panel__muted">{t('schedules.create.instructions')}</p>
+      <p className="dsh-schedule-panel__muted">
+        {t(nativeManagement ? 'schedules.create.nativeInstructions' : 'schedules.create.instructions')}
+      </p>
+      {nativeManagement ? (
+        <>
+          <label>
+            <span>{t('schedules.create.workspace')}</span>
+            <SelectMenu
+              icon="folder"
+              density="regular"
+              label={
+                workspaceChoices.find((item) => item.id === creationWorkspaceId)?.name ??
+                t('schedules.create.workspace')
+              }
+              ariaLabel={t('schedules.create.workspace')}
+              title={t('schedules.create.workspace')}
+              value={creationWorkspaceId}
+              options={workspaceChoices.map(({ id, name }) => ({ value: id, label: name }))}
+              onChange={(value) => setCreationWorkspaceId?.(value)}
+            />
+          </label>
+          <label>
+            <span>{t('schedules.create.target')}</span>
+            <SelectMenu
+              icon="session"
+              density="regular"
+              label={t(`schedules.target.${targetMode}`)}
+              ariaLabel={t('schedules.create.target')}
+              title={t('schedules.create.target')}
+              value={targetMode}
+              options={(['new_once', 'new'] as const).map((value) => ({
+                value,
+                label: t(`schedules.target.${value}`),
+              }))}
+              onChange={(value) => {
+                if (value === 'new_once' || value === 'new') setTargetMode?.(value)
+              }}
+            />
+          </label>
+        </>
+      ) : null}
       <label>
         <span>{t('schedules.field.title')}</span>
         <input
@@ -117,7 +169,10 @@ export function ScheduleCreateForm({
           ariaLabel={t('schedules.field.timing')}
           title={t('schedules.field.timing')}
           value={createDraft.timing}
-          options={timingChoices(CREATE_TIMINGS, t)}
+          options={timingChoices(
+            nativeManagement ? CREATE_TIMINGS : CREATE_TIMINGS.filter((value) => value !== 'rrule'),
+            t,
+          )}
           onChange={(value) => {
             const timing = value as CreateTiming
             setCreateDraft({
@@ -129,6 +184,17 @@ export function ScheduleCreateForm({
           }}
         />
       </label>
+      {createDraft.timing === 'rrule' ? (
+        <label>
+          <span>{t('schedules.kind.rrule')}</span>
+          <textarea
+            value={createDraft.rrule ?? ''}
+            rows={4}
+            maxLength={64_000}
+            onChange={(event) => setCreateDraft({ ...createDraft, rrule: event.target.value })}
+          />
+        </label>
+      ) : null}
       {createDraft.timing === 'after' || createDraft.timing === 'every' ? (
         <div className="dsh-schedule-panel__create-fields">
           <label>
@@ -284,7 +350,9 @@ export function ScheduleCreateForm({
           className="dsh-schedule-panel__primary"
           disabled={sessionStarting || catalogStatus !== 'ready'}
         >
-          {sessionStarting ? t('schedules.working') : t('schedules.create.submit')}
+          {sessionStarting
+            ? t('schedules.working')
+            : t(nativeManagement ? 'schedules.create.open' : 'schedules.create.submit')}
         </button>
         <button type="button" disabled={sessionStarting} onClick={cancelForm}>
           {t('schedules.create.cancel')}

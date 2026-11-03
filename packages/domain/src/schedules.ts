@@ -25,11 +25,18 @@ export type ScheduleRecord =
       readonly expression: string
       readonly timeZone: string
     })
+  | (ScheduleBaseRecord & { readonly kind: 'rrule'; readonly rrule: string })
+
+export type ScheduleTarget =
+  | { readonly kind: 'session'; readonly sessionId: string }
+  | { readonly kind: 'new_once'; readonly sessionId: string; readonly agentPreset?: string }
+  | { readonly kind: 'new'; readonly agentPreset?: string }
 
 export interface ScheduleDeliveryReceipt {
   readonly scheduledAt: string
   readonly deliveredAt: string
   readonly messageId: string
+  readonly targetSessionId?: string
 }
 
 export interface ScheduleDeliveryRecord extends ScheduleDeliveryReceipt {
@@ -39,8 +46,14 @@ export interface ScheduleDeliveryRecord extends ScheduleDeliveryReceipt {
 
 export type ScheduleCatalogEntry = ScheduleRecord & {
   /** The Session binding is authoritative and is retained for every mutation. */
-  readonly sessionId: string
-  readonly status: 'active' | 'inactive'
+  readonly sessionId?: string
+  readonly status: 'active' | 'inactive' | 'paused' | 'ended'
+  readonly target?: ScheduleTarget
+  readonly updatedAt?: string
+  readonly workspaceId?: string
+  /** Host-only scope evidence. Remove before sending a Webview response. */
+  readonly targetWorkingDirectory?: string
+  readonly involvedSessionIds?: readonly string[]
   readonly lastDelivery?: ScheduleDeliveryReceipt
 }
 
@@ -63,9 +76,38 @@ export type ScheduleTimingChange =
       readonly weekdays: readonly number[]
     }
   | { readonly kind: 'cron'; readonly expression: string; readonly timeZone: string }
+  | { readonly kind: 'rrule'; readonly rrule: string }
+
+export type ScheduleCreateTiming = ScheduleTimingChange | { readonly kind: 'after'; readonly seconds: number }
+export interface ScheduleCreateRequest {
+  readonly title: string
+  readonly prompt: string
+  readonly timing: ScheduleCreateTiming
+  /** Host-authorised DSH workspace directory; never supplied by the Webview. */
+  readonly workingDirectory: string
+  readonly targetMode: 'new_once' | 'new'
+}
+export type ScheduleRunResult =
+  | { readonly id: string; readonly admitted: true }
+  | {
+      readonly id: string
+      readonly admitted: false
+      readonly code: 'schedule_not_found' | 'schedule_execution_pending' | 'schedule_target_archived'
+    }
+
+export const SCHEDULE_INPUT_ERROR_CODES = [
+  'invalid_prompt',
+  'invalid_selector',
+  'invalid_rule',
+  'invalid_time_zone',
+  'not_future',
+  'time_out_of_range',
+  'frequency_too_high',
+  'subagent_session',
+] as const
 
 export interface ScheduleHistoryRequest {
-  readonly sessionId: string
+  readonly sessionId?: string
   readonly id: string
   readonly limit: number
   readonly before?: string
@@ -85,13 +127,15 @@ export type ScheduleHistoryResult =
   | { readonly id: string; readonly code: 'schedule_not_found' | 'delivery_cursor_not_found' }
 
 export interface ScheduleUpdateRequest {
-  readonly sessionId: string
+  readonly sessionId?: string
   readonly id: string
   /** Complete rule snapshot captured when the user began editing. */
   readonly expected: ScheduleRecord
   readonly change?: ScheduleTimingChange
   readonly title?: string
   readonly prompt?: string
+  readonly expectedUpdatedAt?: string | null
+  readonly active?: boolean
 }
 
 export type ScheduleMutationFailure =
@@ -123,7 +167,11 @@ export type ScheduleUpdateResult =
 
 export type ScheduleDeleteResult =
   | { readonly id: string; readonly deleted: true }
-  | { readonly id: string; readonly deleted: false; readonly code: 'schedule_not_found' }
+  | {
+      readonly id: string
+      readonly deleted: false
+      readonly code: 'schedule_not_found' | 'schedule_conflict'
+    }
   | {
       readonly code:
         | 'invalid_prompt'
@@ -139,11 +187,19 @@ export type ScheduleDeleteResult =
 
 /** Domain port for the DSH Host's read, update, and delete Schedule surface. */
 export interface ScheduleRepository {
+  readonly management?: 'host'
+  create?(request: ScheduleCreateRequest, signal?: AbortSignal): Promise<ScheduleCatalogEntry>
+  run?(id: string, signal?: AbortSignal): Promise<ScheduleRunResult>
   /** All retained tasks, including inactive tasks, bound to their original Sessions. */
   catalog(signal?: AbortSignal): Promise<readonly ScheduleCatalogEntry[]>
   /** Active tasks for one Session, without activating its Agent. */
   list(sessionId: string, signal?: AbortSignal): Promise<readonly ScheduleRecord[]>
   history(request: ScheduleHistoryRequest, signal?: AbortSignal): Promise<ScheduleHistoryResult>
   update(request: ScheduleUpdateRequest, signal?: AbortSignal): Promise<ScheduleUpdateResult>
-  delete(sessionId: string, id: string, signal?: AbortSignal): Promise<ScheduleDeleteResult>
+  delete(
+    sessionId: string | undefined,
+    id: string,
+    signal?: AbortSignal,
+    expectedUpdatedAt?: string | null,
+  ): Promise<ScheduleDeleteResult>
 }

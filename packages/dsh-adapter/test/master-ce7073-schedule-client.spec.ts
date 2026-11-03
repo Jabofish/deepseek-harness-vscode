@@ -131,7 +131,9 @@ describe('commit-scoped master Schedule Remote preparation', () => {
       expect(JSON.stringify(value)).not.toContain('/private/example')
       expect(remoteRequest).toHaveBeenCalledExactlyOnceWith(
         `schedule/${operation.method}`,
-        operation.args,
+        ['catalog', 'deleteInactive', 'deliveryLimits'].includes(operation.method)
+          ? {}
+          : { request: operation.args },
         signal,
       )
     })
@@ -260,7 +262,7 @@ describe('commit-scoped master Schedule Remote preparation', () => {
     })
     expect(remoteRequest).toHaveBeenLastCalledWith(
       'schedule/edit',
-      { id: row.id, action: 'delete', expectedUpdatedAt: null },
+      { request: { id: row.id, action: 'delete', expectedUpdatedAt: null } },
       undefined,
     )
   })

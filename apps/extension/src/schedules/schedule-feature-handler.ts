@@ -5,7 +5,12 @@ export type ScheduleFeatureRequest = Extract<
   FeatureRequest,
   {
     readonly type:
-      'schedule.catalog' | 'schedule.list' | 'schedule.history' | 'schedule.update' | 'schedule.delete'
+      | 'schedule.catalog'
+      | 'schedule.list'
+      | 'schedule.history'
+      | 'schedule.update'
+      | 'schedule.delete'
+      | 'schedule.run'
   }
 >
 
@@ -21,22 +26,30 @@ export async function handleScheduleFeatureRequest(
     case 'schedule.list':
       return { kind: 'schedule.records', items: await schedules.list(request.payload.sessionId, signal) }
     case 'schedule.history': {
-      const { before, ...historyRequest } = request.payload
+      const { before, sessionId, ...historyRequest } = request.payload
       return {
         kind: 'schedule.history',
         result: await schedules.history(
-          { ...historyRequest, ...(before === undefined ? {} : { before }) },
+          {
+            ...historyRequest,
+            ...(before === undefined ? {} : { before }),
+            ...(sessionId === undefined ? {} : { sessionId }),
+          },
           signal,
         ),
       }
     }
     case 'schedule.update': {
-      const { change, title, prompt, ...updateRequest } = request.payload
+      const { change, title, prompt, sessionId, expectedUpdatedAt, active, ...updateRequest } =
+        request.payload
       return {
         kind: 'schedule.updated',
         result: await schedules.update(
           {
             ...updateRequest,
+            ...(sessionId === undefined ? {} : { sessionId }),
+            ...(expectedUpdatedAt === undefined ? {} : { expectedUpdatedAt }),
+            ...(active === undefined ? {} : { active }),
             ...(change === undefined ? {} : { change }),
             ...(title === undefined ? {} : { title }),
             ...(prompt === undefined ? {} : { prompt }),
@@ -48,7 +61,14 @@ export async function handleScheduleFeatureRequest(
     case 'schedule.delete':
       return {
         kind: 'schedule.deleted',
-        result: await schedules.delete(request.payload.sessionId, request.payload.id, signal),
+        result: await schedules.delete(
+          request.payload.sessionId,
+          request.payload.id,
+          signal,
+          request.payload.expectedUpdatedAt,
+        ),
       }
+    case 'schedule.run':
+      return { kind: 'schedule.ran', result: await schedules.run(request.payload.id, signal) }
   }
 }

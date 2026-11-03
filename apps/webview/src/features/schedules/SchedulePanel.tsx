@@ -8,7 +8,12 @@ import {
   type KeyboardEvent,
   type ReactElement,
 } from 'react'
-import type { ScheduleCatalogEntry } from '@dsh-vscode/domain'
+import type {
+  ScheduleCatalogEntry,
+  ScheduleCreateTiming,
+  ScheduleRunResult,
+  SCHEDULE_INPUT_ERROR_CODES,
+} from '@dsh-vscode/domain'
 import type { FeatureHostEvent, FeatureRequest } from '@dsh-vscode/webview-protocol'
 
 import { useI18n } from '../../i18n.js'
@@ -70,6 +75,10 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
   const featureRequestRef = useRef(props.featureRequest)
 
   const [records, setRecords] = useState<readonly ScheduleCatalogEntry[]>([])
+  const [nativeManagement, setNativeManagement] = useState(false)
+  const [workspaceChoices, setWorkspaceChoices] = useState<readonly { id: string; name: string }[]>([])
+  const [creationWorkspaceId, setCreationWorkspaceId] = useState('')
+  const [targetMode, setTargetMode] = useState<'new_once' | 'new'>('new_once')
   const [catalogStatus, setCatalogStatus] = useState<'loading' | 'ready' | 'error' | 'unavailable'>('loading')
   const [catalogSettled, setCatalogSettled] = useState(false)
   const [search, setSearch] = useState('')
@@ -177,6 +186,13 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
       .then((payload) => {
         if (!mounted.current || generation !== catalogGeneration.current) return
         if (payload.kind !== 'schedule.catalog') throw new Error('malformed-catalog')
+        setNativeManagement(payload.management === 'host')
+        setWorkspaceChoices(payload.workspaces ?? [])
+        setCreationWorkspaceId((current) =>
+          payload.workspaces?.some((item) => item.id === current) === true
+            ? current
+            : (payload.workspaces?.[0]?.id ?? ''),
+        )
         if (selectedKeyRef.current !== undefined) {
           const refreshedSelection = payload.items.find(
             (record) => scheduleKey(record) === selectedKeyRef.current,
@@ -188,10 +204,22 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
               const baseline = current.baseline
               if (!current.editing || current.draft === undefined || baseline?.key !== key) return current
               const nextBaseline = initialDraft(refreshedSelection)
+              if (
+                refreshedSelection.target !== undefined &&
+                baseline.revision !== undefined &&
+                !sameEditDraft(current.draft, baseline.draft)
+              )
+                return current
               return {
                 ...current,
                 draft: sameEditDraft(current.draft, baseline.draft) ? nextBaseline : current.draft,
-                baseline: { key, draft: nextBaseline },
+                baseline: {
+                  key,
+                  draft: nextBaseline,
+                  ...(refreshedSelection.target === undefined
+                    ? {}
+                    : { revision: refreshedSelection.updatedAt ?? null }),
+                },
               }
             })
           }
@@ -256,7 +284,7 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
       type: 'schedule.history',
       requestId,
       payload: {
-        sessionId: record.sessionId,
+        ...(record.sessionId === undefined ? {} : { sessionId: record.sessionId }),
         id: record.id,
         limit: 20,
         ...(before === undefined ? {} : { before }),
@@ -351,6 +379,13 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
   useEffect(() => {
     if (observedConnectionEpoch.current === props.connectionEpoch) return
     observedConnectionEpoch.current = props.connectionEpoch
+    setBusy(false)
+    setSessionStarting(false)
+    if (pendingCreate.current !== undefined) {
+      pendingCreate.current = undefined
+      setCreateStatus('unconfirmed')
+      setCreateOpen(false)
+    }
     reloadRef.current()
     const selected = selectedRecordRef.current
     if (tabRef.current === 'history' && selected !== undefined) reloadHistoryRef.current(selected)
@@ -369,10 +404,11 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
   const visibleRecords = useMemo(() => {
     const query = search.trim().toLocaleLowerCase()
     return records.filter((record) => {
-      if (statusFilter !== 'all' && record.status !== statusFilter) return false
+      if (statusFilter === 'active' && record.status !== 'active') return false
+      if (statusFilter === 'inactive' && record.status === 'active') return false
       if (query === '') return true
       return [record.id, record.title, record.prompt, record.sessionId, formatRule(record, t)].some((value) =>
-        value.toLocaleLowerCase().includes(query),
+        (value ?? '').toLocaleLowerCase().includes(query),
       )
     })
   }, [records, search, statusFilter, t])
@@ -389,8 +425,9 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
     draft !== undefined &&
     editState.baseline?.key === scheduleKey(selected) &&
     !sameEditDraft(draft, editState.baseline.draft)
+  const selectedLinkedSessionId = selected?.sessionId ?? selected?.lastDelivery?.targetSessionId
   const selectedLinkedSession =
-    selected === undefined ? undefined : props.getLinkedSession(selected.sessionId)
+    selectedLinkedSessionId === undefined ? undefined : props.getLinkedSession(selectedLinkedSessionId)
 
   const resetSelectedDetails = (): void => {
     setActiveTab('rule')
@@ -444,6 +481,10 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
       return
     }
     const args = createArguments(createDraft)
+    if (nativeManagement && !workspaceChoices.some((item) => item.id === creationWorkspaceId)) {
+      setCreateError('schedules.create.validation.workspace')
+      return
+    }
     const expectedAt =
       'at' in args
         ? wallClockInstant(args.at.date, args.at.time, args.at.time_zone)?.toISOString()
@@ -452,6 +493,94 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
     setCreateError(undefined)
     setCreateStatus('sending')
     setSessionStarting(true)
+    if (nativeManagement) {
+      const requestEpoch = observedConnectionEpoch.current
+      const timing: ScheduleCreateTiming =
+        'rrule' in args
+          ? { kind: 'rrule', rrule: args.rrule }
+          : 'after_seconds' in args
+            ? { kind: 'after', seconds: args.after_seconds }
+            : 'at' in args
+              ? { kind: 'at', at: { date: args.at.date, time: args.at.time, timeZone: args.at.time_zone } }
+              : 'every_seconds' in args
+                ? { kind: 'every', seconds: args.every_seconds }
+                : 'daily' in args
+                  ? { kind: 'daily', time: args.daily.time, timeZone: args.daily.time_zone }
+                  : 'weekly' in args
+                    ? {
+                        kind: 'weekly',
+                        time: args.weekly.time,
+                        timeZone: args.weekly.time_zone,
+                        weekdays: args.weekly.weekdays,
+                      }
+                    : { kind: 'cron', expression: args.cron.expression, timeZone: args.cron.time_zone }
+      pendingCreate.current = {
+        sessionId: '',
+        baselineKeys,
+        args,
+        workspaceId: creationWorkspaceId,
+        targetMode,
+        ...(expectedAt === undefined ? {} : { expectedAt }),
+      }
+      void send<
+        | { kind: 'schedule.created'; item: ScheduleCatalogEntry }
+        | { kind: 'schedule.create.refused'; reason: (typeof SCHEDULE_INPUT_ERROR_CODES)[number] }
+      >({
+        type: 'schedule.create',
+        requestId: newRequestId(),
+        payload: {
+          workspaceId: creationWorkspaceId,
+          title: args.title,
+          prompt: args.prompt,
+          targetMode,
+          timing: timing.kind === 'weekly' ? { ...timing, weekdays: [...timing.weekdays] } : timing,
+        },
+      })
+        .then((payload) => {
+          if (!mounted.current || observedConnectionEpoch.current !== requestEpoch) return
+          if (payload.kind === 'schedule.create.refused') {
+            pendingCreate.current = undefined
+            setCreateStatus('failed')
+            setCreateError(`schedules.error.${payload.reason}`)
+            setCreateOpen(true)
+            return
+          }
+          if (payload.kind !== 'schedule.created') throw new Error('malformed-create')
+          pendingCreate.current = undefined
+          setConfirmedCreate(payload.item)
+          setCreateStatus('confirmed')
+          setCreateOpen(false)
+          refreshCatalog()
+        })
+        .catch((reason: unknown) => {
+          if (!mounted.current || observedConnectionEpoch.current !== requestEpoch) return
+          const code =
+            typeof reason === 'object' && reason !== null ? (reason as { code?: unknown }).code : undefined
+          if (
+            typeof code === 'string' &&
+            [
+              'INVALID_CONFIGURATION',
+              'PERMISSION_DENIED',
+              'RESOURCE_NOT_OWNED',
+              'CAPABILITY_UNAVAILABLE',
+            ].includes(code)
+          ) {
+            pendingCreate.current = undefined
+            setCreateStatus('failed')
+            setCreateError('schedules.create.nativeFailed')
+            setCreateOpen(true)
+            return
+          }
+          setCreateOpen(false)
+          setCreateStatus('unconfirmed')
+          checkingCreateCatalog.current = true
+          refreshCatalog()
+        })
+        .finally(() => {
+          if (mounted.current && observedConnectionEpoch.current === requestEpoch) setSessionStarting(false)
+        })
+      return
+    }
     let keepCreateLocked = false
     void Promise.resolve()
       .then(() => props.onStartScheduleSession(scheduleCreatePrompt(args)))
@@ -502,7 +631,7 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
   const beginEdit = (): void => {
     if (
       selected === undefined ||
-      selected.status !== 'active' ||
+      (selected.status !== 'active' && selected.target === undefined) ||
       !selectedInCatalog ||
       catalogStatus !== 'ready'
     )
@@ -513,7 +642,11 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
     setEditState({
       editing: true,
       draft: initial,
-      baseline: { key: scheduleKey(selected), draft: initial },
+      baseline: {
+        key: scheduleKey(selected),
+        draft: initial,
+        ...(selected.target === undefined ? {} : { revision: selected.updatedAt ?? null }),
+      },
     })
   }
 
@@ -523,12 +656,13 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
       selected === undefined ||
       draft === undefined ||
       busy ||
-      selected.status !== 'active' ||
+      (selected.status !== 'active' && selected.target === undefined) ||
       !selectedInCatalog ||
       catalogStatus !== 'ready'
     )
       return
     const operationKey = scheduleKey(selected)
+    const requestEpoch = observedConnectionEpoch.current
     if (draft.timing === 'every') {
       const seconds = Number(draft.seconds)
       if (!Number.isSafeInteger(seconds) || seconds < 60) {
@@ -538,8 +672,9 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
     }
     const change = timingChange(draft)
     const update: ScheduleUpdateFeaturePayload = {
-      sessionId: selected.sessionId,
+      ...(selected.sessionId === undefined ? {} : { sessionId: selected.sessionId }),
       id: selected.id,
+      ...(selected.target === undefined ? {} : { expectedUpdatedAt: editState.baseline?.revision ?? null }),
       expected: expectedFeatureRecord(selected),
       title: draft.title.trim(),
       prompt: draft.prompt.trim(),
@@ -551,11 +686,17 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
     const requestId = newRequestId()
     void send<UpdatePayload>({ type: 'schedule.update', requestId, payload: update })
       .then((payload) => {
-        if (!mounted.current) return
+        if (!mounted.current || observedConnectionEpoch.current !== requestEpoch) return
         if (payload.kind !== 'schedule.updated') throw new Error('malformed-update')
         const errorKey = updateResultError(payload.result)
         if (errorKey !== undefined) {
           if (selectedKeyRef.current === operationKey) setOperationError(errorKey)
+          if (selected.target !== undefined && errorKey === 'schedules.error.schedule_conflict')
+            setEditState((current) => {
+              if (current.baseline === undefined) return current
+              const baseline = { key: current.baseline.key, draft: current.baseline.draft }
+              return { ...current, baseline }
+            })
           refreshCatalog()
           return
         }
@@ -566,27 +707,36 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
         refreshCatalog()
       })
       .catch(() => {
-        if (mounted.current && selectedKeyRef.current === operationKey)
+        if (
+          mounted.current &&
+          observedConnectionEpoch.current === requestEpoch &&
+          selectedKeyRef.current === operationKey
+        )
           setOperationError('schedules.update.failed')
       })
       .finally(() => {
-        if (mounted.current) setBusy(false)
+        if (mounted.current && observedConnectionEpoch.current === requestEpoch) setBusy(false)
       })
   }
 
   const deleteSelected = (): void => {
     if (selected === undefined || busy || !selectedInCatalog || catalogStatus !== 'ready') return
     const operationKey = scheduleKey(selected)
+    const requestEpoch = observedConnectionEpoch.current
     setBusy(true)
     setOperationError(undefined)
     const requestId = newRequestId()
     void send<DeletePayload>({
       type: 'schedule.delete',
       requestId,
-      payload: { sessionId: selected.sessionId, id: selected.id },
+      payload: {
+        ...(selected.sessionId === undefined ? {} : { sessionId: selected.sessionId }),
+        id: selected.id,
+        ...(selected.target === undefined ? {} : { expectedUpdatedAt: selected.updatedAt ?? null }),
+      },
     })
       .then((payload) => {
-        if (!mounted.current) return
+        if (!mounted.current || observedConnectionEpoch.current !== requestEpoch) return
         if (payload.kind !== 'schedule.deleted') throw new Error('malformed-delete')
         const errorKey = deleteResultError(payload.result)
         if (errorKey !== undefined) {
@@ -605,11 +755,88 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
         }
       })
       .catch(() => {
-        if (mounted.current && selectedKeyRef.current === operationKey)
+        if (
+          mounted.current &&
+          observedConnectionEpoch.current === requestEpoch &&
+          selectedKeyRef.current === operationKey
+        )
           setOperationError('schedules.delete.failed')
       })
       .finally(() => {
-        if (mounted.current) setBusy(false)
+        if (mounted.current && observedConnectionEpoch.current === requestEpoch) setBusy(false)
+      })
+  }
+
+  const runSelected = (): void => {
+    if (selected === undefined || busy || !selectedInCatalog || catalogStatus !== 'ready') return
+    const key = scheduleKey(selected)
+    const requestEpoch = observedConnectionEpoch.current
+    setBusy(true)
+    setOperationError(undefined)
+    void send<{ kind: 'schedule.ran'; result: ScheduleRunResult }>({
+      type: 'schedule.run',
+      requestId: newRequestId(),
+      payload: { id: selected.id },
+    })
+      .then(({ result }) => {
+        if (
+          mounted.current &&
+          observedConnectionEpoch.current === requestEpoch &&
+          selectedKeyRef.current === key
+        ) {
+          if (!result.admitted) setOperationError(`schedules.error.${result.code}`)
+          else setOperationNotice('schedules.run.success')
+          refreshCatalog()
+        }
+      })
+      .catch(() => {
+        if (
+          mounted.current &&
+          observedConnectionEpoch.current === requestEpoch &&
+          selectedKeyRef.current === key
+        )
+          setOperationError('schedules.run.failed')
+      })
+      .finally(() => {
+        if (mounted.current && observedConnectionEpoch.current === requestEpoch) setBusy(false)
+      })
+  }
+  const toggleSelected = (): void => {
+    if (selected === undefined || busy || !selectedInCatalog || catalogStatus !== 'ready') return
+    const key = scheduleKey(selected)
+    const requestEpoch = observedConnectionEpoch.current
+    setBusy(true)
+    setOperationError(undefined)
+    void send<UpdatePayload>({
+      type: 'schedule.update',
+      requestId: newRequestId(),
+      payload: {
+        id: selected.id,
+        expected: expectedFeatureRecord(selected),
+        expectedUpdatedAt: selected.updatedAt ?? null,
+        active: selected.status !== 'active',
+      },
+    })
+      .then(({ result }) => {
+        if (
+          mounted.current &&
+          observedConnectionEpoch.current === requestEpoch &&
+          selectedKeyRef.current === key
+        ) {
+          setOperationError(updateResultError(result))
+          refreshCatalog()
+        }
+      })
+      .catch(() => {
+        if (
+          mounted.current &&
+          observedConnectionEpoch.current === requestEpoch &&
+          selectedKeyRef.current === key
+        )
+          setOperationError('schedules.update.failed')
+      })
+      .finally(() => {
+        if (mounted.current && observedConnectionEpoch.current === requestEpoch) setBusy(false)
       })
   }
 
@@ -660,11 +887,14 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
   }
 
   const detailView = {
+    runSelected,
+    toggleSelected,
     props,
     t,
     locale,
     labelId,
     selectedLinkedSession,
+    selectedLinkedSessionId,
     moreActionsTriggerRef,
     moreActionsOpen,
     setMoreActionsOpen,
@@ -708,7 +938,7 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
             <h1 id={`${labelId}-title`} ref={listHeadingRef} tabIndex={-1}>
               {t('schedules.title')}
             </h1>
-            <p>{t('schedules.createViaChat')}</p>
+            <p>{t(nativeManagement ? 'schedules.create.nativeInstructions' : 'schedules.createViaChat')}</p>
           </div>
           <div className="dsh-schedule-panel__heading-actions">
             <button
@@ -745,7 +975,13 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
             role={createStatus === 'failed' ? 'alert' : 'status'}
             aria-live="polite"
           >
-            <span>{t(`schedules.create.${createStatus}`)}</span>
+            <span>
+              {t(
+                nativeManagement && createStatus === 'sending'
+                  ? 'schedules.create.nativeSending'
+                  : `schedules.create.${createStatus}`,
+              )}
+            </span>
             {createStatus === 'pending' || createStatus === 'unconfirmed' ? (
               <button type="button" disabled={catalogStatus === 'loading'} onClick={checkCreateCatalog}>
                 {t('schedules.create.check')}
@@ -776,6 +1012,12 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
 
         {createOpen ? (
           <ScheduleCreateForm
+            nativeManagement={nativeManagement}
+            workspaceChoices={workspaceChoices}
+            creationWorkspaceId={creationWorkspaceId}
+            setCreationWorkspaceId={setCreationWorkspaceId}
+            targetMode={targetMode}
+            setTargetMode={setTargetMode}
             t={t}
             createDraft={createDraft}
             setCreateDraft={setCreateDraft}

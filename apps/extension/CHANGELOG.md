@@ -6,6 +6,7 @@ Release entries describe behaviour at that release. `Unreleased` lists changes a
 
 ## Unreleased
 
+- Adds an exact DSH `0.2.2-alpha.3` adapter for batched Session projections and native Schedule management. Create one-time or recurring tasks, including RRULE, with workspace-scoped targets; run, pause, resume, edit and delete with revision conflict handling. Preserves task selection after first delivery and successful write receipts when workspace trust changes during a reply. Older runtimes retain their existing Schedule workflow. The guided-install default is unchanged.
 - Publishes complete editor-companion cache archives atomically, preventing concurrent installations from reading an unfinished archive.
 
 ## 0.4.5

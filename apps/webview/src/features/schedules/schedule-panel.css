@@ -7,6 +7,10 @@
   color: var(--dsh-text);
 }
 
+.dsh-schedule-panel [role='tabpanel'][hidden] {
+  display: none;
+}
+
 .dsh-schedule-panel__catalog,
 .dsh-schedule-panel__detail {
   display: grid;
@@ -309,7 +313,9 @@
   background: color-mix(in srgb, var(--dsh-success) 12%, transparent);
 }
 
-.dsh-schedule-panel__status--inactive {
+.dsh-schedule-panel__status--inactive,
+.dsh-schedule-panel__status--paused,
+.dsh-schedule-panel__status--ended {
   color: var(--dsh-muted);
   background: var(--dsh-surface-raised);
 }

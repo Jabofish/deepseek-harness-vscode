@@ -68,6 +68,8 @@ export interface AlphaLoopbackApiClientOptions {
   }
   /** Session Controller control profile; alpha.2 replaces queue snapshots with Inbox projections. */
   readonly controlWireVersion?: AlphaSessionControlWireVersion
+  /** Exact newer Session Controller frame codec; absence retains historical validation. */
+  readonly normalizeControlFrame?: (value: unknown) => readonly unknown[] | undefined
   /** Workspace follow profile; alpha171 adds a registry-global pinned-session set. */
   readonly workspaceWireVersion?: AlphaWorkspaceWireVersion
   /** Preset roster profile; alpha171's registry has no user-root authoring fields. */
