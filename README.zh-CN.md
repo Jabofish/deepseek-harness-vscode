@@ -11,6 +11,28 @@
 
 JaboDSH 是由社区独立维护的 DeepSeek Harness 客户端。
 
+## 界面预览
+
+保持代码编辑器打开，在旁边与 DSH 对话：
+
+![VS Code 原生深色主题中的 JaboDSH，左侧为代码，右侧为对话](apps/extension/resources/showcase/workbench-en.png)
+
+[查看浅色主题](apps/extension/resources/showcase/workbench-light-en.png)。
+
+素材采集于真实 VS Code 窗口，使用其 Dark Modern 和 Light Modern 原生主题，界面和示例内容均为英文；对话使用受控示例数据。
+
+### 查看工具输出
+
+展开 Read 结果，查看工具返回的文件内容，再收起详情回到对话。
+
+![展开 Read 结果、查看文件内容并收起详情](apps/extension/resources/showcase/inspect-tool-en.gif)
+
+### 继续追问
+
+在当前对话中发送后续问题，并在代码旁查看逐步呈现的回复。
+
+![输入并发送后续问题，再查看回复的呈现过程](apps/extension/resources/showcase/follow-up-en.gif)
+
 ## 可以做什么
 
 - 在工作区中创建、切换、恢复和归档会话；支持恢复的运行时可在归档通知中直接撤销。

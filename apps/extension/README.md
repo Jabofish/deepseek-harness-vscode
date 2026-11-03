@@ -4,6 +4,28 @@ Bring local or remote [DeepSeek Harness](https://github.com/deepseek-ai/deepseek
 
 JaboDSH is an independent community project for DeepSeek Harness.
 
+## See it in action
+
+Keep your code open while you chat with DSH:
+
+![JaboDSH in VS Code Dark Modern, with code on the left and chat on the right](https://raw.githubusercontent.com/Jabofish/deepseek-harness-vscode/main/apps/extension/resources/showcase/workbench-en.png)
+
+[View the light theme](https://raw.githubusercontent.com/Jabofish/deepseek-harness-vscode/main/apps/extension/resources/showcase/workbench-light-en.png).
+
+Captured in a real VS Code window using its Dark Modern and Light Modern themes. The conversation uses controlled example data.
+
+### Inspect tool output
+
+Expand a Read result to inspect the file content returned by the tool, then collapse it to return to the conversation.
+
+![Expand a Read result, inspect its file content and collapse the details](https://raw.githubusercontent.com/Jabofish/deepseek-harness-vscode/main/apps/extension/resources/showcase/inspect-tool-en.gif)
+
+### Ask a follow-up
+
+Send another question in the current conversation and follow the reply beside your code.
+
+![Type and send a follow-up question, then read the reply as it arrives](https://raw.githubusercontent.com/Jabofish/deepseek-harness-vscode/main/apps/extension/resources/showcase/follow-up-en.gif)
+
 ## Use the extension
 
 - Create, switch, resume, and archive sessions by workspace.
