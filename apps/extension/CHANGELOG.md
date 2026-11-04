@@ -6,8 +6,11 @@ Release entries describe behaviour at that release. `Unreleased` lists changes a
 
 ## Unreleased
 
-- Adds an exact DSH `0.2.2-alpha.3` adapter for batched Session projections and native Schedule management. Create one-time or recurring tasks, including RRULE, with workspace-scoped targets; run, pause, resume, edit and delete with revision conflict handling. Preserves task selection after first delivery and successful write receipts when workspace trust changes during a reply. Older runtimes retain their existing Schedule workflow. The guided-install default is unchanged.
-- Publishes complete editor-companion cache archives atomically, preventing concurrent installations from reading an unfinished archive.
+## 0.4.6
+
+- Adds exact DSH `0.2.2-alpha.3` support for batched Session projections and native scheduled tasks. Create one-time or recurring tasks with RRULE and workspace-scoped targets; run, pause, resume, edit and delete with revision conflict handling. Older runtimes retain their Schedule workflow and the guided-install default is unchanged.
+- Preserves task selection after first delivery and successful write receipts when workspace trust changes during a reply. Publishes complete companion cache archives atomically so concurrent installs cannot read unfinished files.
+- Adds real VS Code screenshots and separate tool-inspection and follow-up walkthroughs to the README and Marketplace page, and refines the empty-conversation icon.
 
 ## 0.4.5
 
