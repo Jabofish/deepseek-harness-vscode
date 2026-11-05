@@ -6,6 +6,8 @@ Release entries describe behaviour at that release. `Unreleased` lists changes a
 
 ## Unreleased
 
+## 0.4.7
+
 - Adds exact DSH `0.2.2-rc.1` support, retaining the source-verified alpha.3 batched Session projections, native scheduled tasks and scoped tool images. Keeps older release identities and the guided-install default; newer unverified versions do not inherit this contract.
 - 适配 DSH `0.2.2-rc.1`，沿用经源码核对的 alpha.3 批量会话投影、原生定时任务和受限工具图片读取。保留旧版独立身份及引导安装默认；未核对的新版本不会沿用此契约。
 
