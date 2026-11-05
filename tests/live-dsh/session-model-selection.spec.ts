@@ -9,9 +9,10 @@ import { canConnect, LIVE_TIMEOUT_MS, startManagedRuntime } from './harness.js'
 // dsh-v0.2.1-alpha.2 / d743267388641bc76f17c45ce8b4c231aed1d32c:
 // session-persistence-jsonl/src/format.ts and session-controller/src/model-selection-projection.ts.
 // Test-owned V4 facts only; no model requests, accounts or production profile.
-describe.skipIf(
-  process.env.DSH_LIVE_SMOKE !== '1' || process.env.DSH_LIVE_RUNTIME_VERSION !== '0.2.1-alpha.2',
-)('live DSH model selection readback', () => {
+// rc.1 also consumes the native V4 facts through its separately pinned codec.
+const version = process.env.DSH_LIVE_RUNTIME_VERSION ?? ''
+const enabled = process.env.DSH_LIVE_SMOKE === '1' && ['0.2.1-alpha.2', '0.2.2-rc.1'].includes(version)
+describe.skipIf(!enabled)('live DSH model selection readback', () => {
   it(
     'keeps pending intent over a different past request and clears omitted effort',
     async () => {
@@ -28,7 +29,15 @@ describe.skipIf(
       const directory = path.join(home, 'sessions', `--${slug.slice(0, 251)}--`, id)
       await mkdir(directory, { recursive: true })
       const rows = [
-        { type: 'session', version: 4, id, cwd: home, createdAt: 1000, isSeeded: false, delegationDepth: 0 },
+        {
+          type: 'session',
+          version: 4,
+          id,
+          cwd: home,
+          createdAt: 1000,
+          isSeeded: false,
+          delegationDepth: 0,
+        },
         {
           type: 'model/selection',
           seq: 0,
@@ -68,7 +77,7 @@ describe.skipIf(
       )
       const runtime = await startManagedRuntime({ dshHome: home, removeDshHomeOnStop: true })
       try {
-        expect(runtime.backend.connection.capabilities.adapterId).toBe('dsh-0.2.1-alpha.2')
+        expect(runtime.backend.connection.capabilities.adapterId).toBe(`dsh-${version}`)
         expect((await runtime.backend.sessions.list()).items.some((item) => item.id === id)).toBe(true)
         const history = await runtime.backend.sessions.history(id)
         expect(history.projection?.values.modelSelection).toMatchObject({

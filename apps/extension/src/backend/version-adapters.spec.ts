@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { VersionedBackendProbe } from '@dsh-vscode/dsh-adapter'
+import { SUPPORTED_DSH_VERSIONS, VersionedBackendProbe } from '@dsh-vscode/dsh-adapter'
 
 import { createAdapterOptions } from './adapter-options.js'
 import { createVersionAdapters } from './version-adapters.js'
@@ -13,6 +13,26 @@ const exportFileSystem = {
 }
 
 describe('production version adapter registry', () => {
+  it('registers every supported exact identity once, including the newest candidate', () => {
+    const adapters = createVersionAdapters(
+      createAdapterOptions({
+        requestTimeoutMs: () => 1_000,
+        fetch: globalThis.fetch,
+        samePath: (left, right) => left === right,
+        exportFileSystem,
+        authCookie: () => undefined,
+      }),
+    )
+    expect(adapters.map((adapter) => adapter.supportedVersion).sort()).toEqual(
+      [...SUPPORTED_DSH_VERSIONS].sort(),
+    )
+    expect(adapters[0]).toMatchObject({
+      id: 'dsh-0.2.2-rc.1',
+      protocolVersion: 'rc221',
+      fallback: false,
+    })
+  })
+
   it.each([401, 403])(
     'propagates HTTP %i authentication failures without trying another version',
     async (status) => {

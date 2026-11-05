@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { canConnect, LIVE_TIMEOUT_MS, startManagedRuntime, type ManagedLiveRuntime } from './harness.js'
 
 describe.skipIf(
-  process.env.DSH_LIVE_SMOKE !== '1' || process.env.DSH_LIVE_RUNTIME_VERSION !== '0.2.1-alpha.2',
+  process.env.DSH_LIVE_SMOKE !== '1' ||
+    !['0.2.1-alpha.2', '0.2.2-rc.1'].includes(process.env.DSH_LIVE_RUNTIME_VERSION ?? ''),
 )('live DSH session configuration on an isolated home', () => {
   it(
     'restores a permission change whose real successful HTTP receipt is lost during cancellation',

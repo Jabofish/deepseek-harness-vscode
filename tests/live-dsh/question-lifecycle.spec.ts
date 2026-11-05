@@ -16,9 +16,15 @@ import { canConnect, startManagedRuntime, spawnManagedChild } from './harness.js
 const version = process.env.DSH_LIVE_RUNTIME_VERSION ?? ''
 const enabled =
   process.env.DSH_LIVE_SMOKE === '1' &&
-  ['0.2.1-alpha.2', '0.2.1-rc.3', '0.2.1-rc.4', '0.2.1-rc.5', '0.2.2-alpha.2', '0.2.2-alpha.3'].includes(
-    version,
-  )
+  [
+    '0.2.1-alpha.2',
+    '0.2.1-rc.3',
+    '0.2.1-rc.4',
+    '0.2.1-rc.5',
+    '0.2.2-alpha.2',
+    '0.2.2-alpha.3',
+    '0.2.2-rc.1',
+  ].includes(version)
 
 // Test-only Remote invokes the real question owner. Native Session.append records
 // the caller's tool boundaries; the question service, Gateway, Inbox, driver and
@@ -232,7 +238,7 @@ describe.skipIf(!enabled)('real DSH question lifecycle in an isolated profile', 
         { id: 'first', response: ['One'] },
         { id: 'second', response: 'fixture answer' },
       ]
-      if (['0.2.2-alpha.2', '0.2.2-alpha.3'].includes(version)) {
+      if (['0.2.2-alpha.2', '0.2.2-alpha.3', '0.2.2-rc.1'].includes(version)) {
         const approvalCall = randomUUID()
         await invoke('approval', { callId: approvalCall })
         await vi.waitFor(

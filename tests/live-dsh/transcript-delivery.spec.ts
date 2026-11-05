@@ -11,7 +11,7 @@ import { TranscriptWindowService } from '../../apps/extension/src/view/transcrip
 import type { BackendEvent } from '../../packages/domain/src/events.js'
 
 const version = process.env.DSH_LIVE_RUNTIME_VERSION
-const enabled = process.env.DSH_LIVE_SMOKE === '1' && version === '0.2.1-alpha.2'
+const enabled = process.env.DSH_LIVE_SMOKE === '1' && ['0.2.1-alpha.2', '0.2.2-rc.1'].includes(version ?? '')
 const answer = 'Native delivery recovery fixture answer'
 
 /** Test producer using Session.append at the pinned alpha212 commit
@@ -48,10 +48,10 @@ export function apply(ctx) {
 `
 }
 
-describe.skipIf(!enabled)('native alpha212 transcript delivery recovery', () => {
+describe.skipIf(!enabled)('native transcript delivery recovery', () => {
   it('recovers the persisted reply after the renderer refuses the initial burst and invalidation', async () => {
     const executable = process.env.DSH_LIVE_RUNTIME
-    if (executable === undefined) throw new Error('Select an exact package-local alpha212 CLI.')
+    if (executable === undefined) throw new Error('Select an exact supported package-local CLI.')
     const home = await mkdtemp(path.join(os.tmpdir(), 'dsh-live-delivery-'))
     const resolvedHome = path.resolve(home)
     if (

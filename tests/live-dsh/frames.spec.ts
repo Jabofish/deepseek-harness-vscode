@@ -236,11 +236,21 @@ async function absentIdentityFrames(
   session: SessionDetail,
   steps: string[],
 ): Promise<void> {
-  const attachment = await frame('session.attachment on an absent attachment', () =>
-    backend.sessions.readAttachment(session.id, ABSENT_ATTACHMENT),
-  )
-  expect(attachment.accepted, 'an absent attachment cannot be read').toBe(false)
-  steps.push(`sessions.readAttachment refused ${attachment.code}`)
+  if (['0.2.2-alpha.2', '0.2.2-alpha.3', '0.2.2-rc.1'].includes(backend.connection.capabilities.dshVersion)) {
+    // These hosts read a full image reference without checking log ownership.
+    // The adapter must refuse an absent reference before calling that Remote.
+    await expect(backend.sessions.readAttachment(session.id, ABSENT_ATTACHMENT)).rejects.toMatchObject({
+      code: 'PERMISSION_DENIED',
+      retryable: false,
+    })
+    steps.push('sessions.readAttachment refused by the session ownership check')
+  } else {
+    const attachment = await frame('session.attachment on an absent attachment', () =>
+      backend.sessions.readAttachment(session.id, ABSENT_ATTACHMENT),
+    )
+    expect(attachment.accepted, 'an absent attachment cannot be read').toBe(false)
+    steps.push(`sessions.readAttachment refused ${attachment.code}`)
+  }
 
   // The feedback sidecar answers its own business union: a message that is not
   // in the session log is `target-not-found`, and the Webview hides the whole

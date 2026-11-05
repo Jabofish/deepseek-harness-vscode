@@ -43,15 +43,21 @@ export function apply(ctx) {
 `
 }
 
-/** Exact published alpha.3, empty disposable home, future deliveries only; no model call. */
-describe.skipIf(
-  process.env.DSH_LIVE_SMOKE !== '1' || process.env.DSH_LIVE_RUNTIME_VERSION !== '0.2.2-alpha.3',
-)('native alpha223 Host Schedule lifecycle', () => {
+const version = process.env.DSH_LIVE_RUNTIME_VERSION ?? ''
+const protocols: Readonly<Record<string, string>> = {
+  '0.2.2-alpha.3': 'alpha223',
+  '0.2.2-rc.1': 'rc221',
+}
+
+const enabled = process.env.DSH_LIVE_SMOKE === '1' && protocols[version] !== undefined
+
+/** Exact published batched-control releases, disposable home; no model call. */
+describe.skipIf(!enabled)('native Host Schedule lifecycle', () => {
   it(
     'delivers native Run now into real new_once/new sessions, retains history and maps input refusals without a model',
     async () => {
       const executable = process.env.DSH_LIVE_RUNTIME
-      if (executable === undefined) throw new Error('Select the exact alpha223 runtime.')
+      if (executable === undefined) throw new Error('Select an exact supported Schedule runtime.')
       const home = await mkdtemp(path.join(os.tmpdir(), 'dsh-live-schedule-delivery-'))
       let runtime: Awaited<ReturnType<typeof startManagedRuntime>> | undefined
       let transport: AlphaLoopbackApiClient | undefined
@@ -100,7 +106,10 @@ describe.skipIf(
         }
         await expect(
           schedules.create({ ...create, timing: { kind: 'at', at: '2000-01-01T00:00:00.000Z' } }),
-        ).rejects.toMatchObject({ code: 'INVALID_CONFIGURATION', context: { scheduleReason: 'not_future' } })
+        ).rejects.toMatchObject({
+          code: 'INVALID_CONFIGURATION',
+          context: { scheduleReason: 'not_future' },
+        })
         const sessions = new Set<string>()
         for (const targetMode of ['new_once', 'new'] as const) {
           const task = await schedules.create({ ...create, targetMode })
@@ -117,7 +126,11 @@ describe.skipIf(
           expect(await schedules.history({ id: task.id, limit: 10 })).toMatchObject({
             id: task.id,
             records: [
-              { messageId: receipt.messageId, targetSessionId: receipt.targetSessionId, prompt: task.prompt },
+              {
+                messageId: receipt.messageId,
+                targetSessionId: receipt.targetSessionId,
+                prompt: task.prompt,
+              },
             ],
           })
           // Delivery persists Inbox insertion; a pre-step rejection intentionally
@@ -158,7 +171,7 @@ describe.skipIf(
         )
         expect(await schedules.catalog()).toEqual([])
         console.log(
-          '[native-alpha223] positive Run now/new_once transition/new delivery/actual Session persistence/history/input refusal passed; every Agent step rejected before model generation',
+          `[native-${version}] positive Run now/new_once transition/new delivery/actual Session persistence/history/input refusal passed; every Agent step rejected before model generation`,
         )
       } finally {
         try {
@@ -182,8 +195,8 @@ describe.skipIf(
       try {
         const { backend } = runtime
         expect(backend.connection.capabilities).toMatchObject({
-          adapterId: 'dsh-0.2.2-alpha.3',
-          protocolVersion: 'alpha223',
+          adapterId: `dsh-${version}`,
+          protocolVersion: protocols[version],
           compatibilityMode: 'exact',
         })
         const schedules = backend.schedules
@@ -249,7 +262,7 @@ describe.skipIf(
           code: 'REQUEST_CANCELLED',
         })
         console.log(
-          '[native-alpha223] create/new_once/new/RRULE/pause/history/conflict/delete/cancel passed without a model request',
+          `[native-${version}] create/new_once/new/RRULE/pause/history/conflict/delete/cancel passed without a model request`,
         )
       } finally {
         await runtime.stop()

@@ -1,4 +1,5 @@
 import {
+  Rc221VersionAdapter,
   Rc214VersionAdapter,
   Rc215VersionAdapter,
   Alpha222VersionAdapter,
@@ -48,6 +49,7 @@ import type { createAdapterOptions } from './adapter-options.js'
 
 /** Exact versions take precedence in this order; registration has one source of truth. */
 const VERSION_ADAPTER_CONSTRUCTORS = [
+  Rc221VersionAdapter,
   Alpha223VersionAdapter,
   Alpha222VersionAdapter,
   Rc215VersionAdapter,

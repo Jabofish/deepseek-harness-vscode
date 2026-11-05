@@ -8,7 +8,7 @@ import { startManagedRuntime, LIVE_TIMEOUT_MS } from './harness.js'
  */
 describe.skipIf(
   process.env.DSH_LIVE_SMOKE !== '1' ||
-    !['0.2.1-rc.3', '0.2.1-rc.4', '0.2.1-rc.5', '0.2.2-alpha.2', '0.2.2-alpha.3'].includes(
+    !['0.2.1-rc.3', '0.2.1-rc.4', '0.2.1-rc.5', '0.2.2-alpha.2', '0.2.2-alpha.3', '0.2.2-rc.1'].includes(
       process.env.DSH_LIVE_RUNTIME_VERSION ?? '',
     ),
 )('live permission changes and the displayed input queue', () => {

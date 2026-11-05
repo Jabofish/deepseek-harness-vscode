@@ -24,6 +24,8 @@
     "../apps/webview/vite.config.ts",
     "../packages/dsh-editor-bridge/src/companion-broker.ts",
     "../packages/dsh-adapter/test/fixtures/alpha223-contract.ts",
+    "../packages/dsh-adapter/test/fixtures/rc221-contract.ts",
+    "../packages/dsh-adapter/test/support/fake-web-socket.ts",
     "../packages/domain/src/**/*.ts",
     "../packages/application/src/**/*.ts",
     "../packages/dsh-adapter/src/**/*.ts",

@@ -6,6 +6,9 @@ Release entries describe behaviour at that release. `Unreleased` lists changes a
 
 ## Unreleased
 
+- Adds exact DSH `0.2.2-rc.1` support, retaining the source-verified alpha.3 batched Session projections, native scheduled tasks and scoped tool images. Keeps older release identities and the guided-install default; newer unverified versions do not inherit this contract.
+- 适配 DSH `0.2.2-rc.1`，沿用经源码核对的 alpha.3 批量会话投影、原生定时任务和受限工具图片读取。保留旧版独立身份及引导安装默认；未核对的新版本不会沿用此契约。
+
 ## 0.4.6
 
 - Adds exact DSH `0.2.2-alpha.3` support for batched Session projections and native scheduled tasks. Create one-time or recurring tasks with RRULE and workspace-scoped targets; run, pause, resume, edit and delete with revision conflict handling. Older runtimes retain their Schedule workflow and the guided-install default is unchanged.
