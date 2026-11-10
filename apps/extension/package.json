@@ -595,7 +595,8 @@
             "new-isolated"
           ],
           "default": "auto",
-          "markdownDescription": "Connection policy. `auto` validates the last successful local connection before discovering and starting DSH as needed; an explicit server URL or attachment port list restricts it to those targets without automatic startup. `custom` probes only the configured HTTP(S) endpoint (which may be remote); `attach-only` never starts DSH; `new-isolated` always starts an extension-owned instance."
+          "scope": "machine",
+          "markdownDescription": "Connection policy. Never overridable by workspace settings. `auto` validates the last successful local connection before discovering and starting DSH as needed; an explicit server URL or attachment port list restricts it to those targets without automatic startup. `custom` probes only the configured HTTP(S) endpoint (which may be remote); `attach-only` never starts DSH; `new-isolated` always starts an extension-owned instance."
         },
         "dsh.connection.managedPort": {
           "type": "integer",
@@ -607,7 +608,8 @@
         "dsh.connection.serverUrl": {
           "type": "string",
           "default": "",
-          "description": "Existing DSH HTTP(S) origin. In auto, attach-only or custom mode, connects only to this address; failure never falls back to another instance or automatic startup."
+          "scope": "machine",
+          "description": "Existing DSH HTTP(S) origin. Never overridable by workspace settings. In auto, attach-only or custom mode, connects only to this address; failure never falls back to another instance or automatic startup."
         },
         "dsh.connection.runtimeVersion": {
           "type": "string",
@@ -624,7 +626,8 @@
           "default": [
             3080
           ],
-          "description": "Explicit local attachment targets for auto and attach-only modes when no server URL is set. Setting this list disables fallback to other ports and automatic startup; reset the setting to restore automatic discovery."
+          "scope": "machine",
+          "description": "Explicit local attachment targets for auto and attach-only modes when no server URL is set. Never overridable by workspace settings. Setting this list disables fallback to other ports and automatic startup; reset the setting to restore automatic discovery."
         },
         "dsh.connection.discoveryTimeoutMs": {
           "type": "integer",
@@ -649,7 +652,8 @@
         "dsh.runtime.autoStart": {
           "type": "boolean",
           "default": true,
-          "description": "Start a local DSH only after no compatible running instance can be attached."
+          "scope": "machine",
+          "description": "Start a local DSH only after no compatible running instance can be attached. Never overridable by workspace settings."
         },
         "dsh.agent.defaultPreset": {
           "type": "string",

@@ -341,17 +341,21 @@ function runtimePathKey(value: string, os: OperatingSystem): string {
   return os === 'windows' ? normalized.toLowerCase() : normalized
 }
 
+const DSH_VERSION_LABEL_PATTERN = /\b\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\b/u
+
 function normalizeVersion(output: string): string {
   const firstLine = output.trim().split(/\r?\n/u, 1)[0]?.trim() ?? ''
-  const match = firstLine.match(/\b\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\b/u)
+  const match = firstLine.match(DSH_VERSION_LABEL_PATTERN)
   return (match?.[0] ?? firstLine).slice(0, 128)
 }
 
 function isDshVersion(output: string): boolean {
-  // Version syntax is intentionally not a gate.  Future DSH builds may use a
-  // different label; the adapter probe is the compatibility boundary and can
-  // surface a warning while retaining best-effort functionality.
-  return normalizeVersion(output) !== ''
+  // A discovered binary is trusted as the managed backend only when it reports
+  // a SemVer-like DSH version label. Arbitrary text from an unrelated
+  // executable (or a PATH-compromise) is not identity evidence; the adapter
+  // probe still bounds best-effort compatibility for unknown-but-SemVer builds.
+  const firstLine = output.trim().split(/\r?\n/u, 1)[0]?.trim() ?? ''
+  return DSH_VERSION_LABEL_PATTERN.test(firstLine)
 }
 
 async function withTimeout<T>(

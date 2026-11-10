@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process'
 import path from 'node:path'
 import { AppError, parseServerOrigin, type BackendEndpoint } from '@dsh-vscode/domain'
 import { runtimePathEntries } from '../backend/runtime-paths.js'
+import { withoutSecrets } from '../backend/child-environment.js'
 import type { SpawnedChild } from '../backend/process-supervisor.js'
 import { terminateOwnedWindowsTree } from '../backend/owned-process-tree.js'
 import { resolveWindowsShim } from '../backend/windows-shim.js'
@@ -21,7 +22,11 @@ export function endpointFromServerUrl(serverUrl: string | undefined): BackendEnd
 }
 
 export function runtimeEnvironment(overrides?: NodeJS.ProcessEnv, executable?: string): NodeJS.ProcessEnv {
-  const environment = { ...process.env, ...(overrides ?? {}) }
+  // This environment backs the DSH `npm install` and the read-only `npm prefix`
+  // / `--version` probes. Those package-manager processes must never inherit
+  // developer secrets from the Extension Host env, so start from a stripped
+  // copy and re-add only the host-controlled overrides on top.
+  const environment = { ...withoutSecrets(process.env), ...(overrides ?? {}) }
   const entries = extensionRuntimePathEntries(platform(), environment)
   const executableDirectory = executable === undefined ? undefined : path.dirname(executable)
   const prefix =
