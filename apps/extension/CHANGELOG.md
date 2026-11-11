@@ -9,6 +9,9 @@ Release entries describe behaviour at that release. `Unreleased` lists changes a
 - Hardens the extension trust boundary: connection endpoint, mode, attachment-port and auto-start settings are now machine-scoped (never overridable by workspace settings), the DSH install and version probes no longer inherit developer secrets from the environment, and runtime discovery only trusts executables that report a DSH-style version label.
 - 强化扩展信任边界：连接端点、模式、附加端口与自动启动设置改为计算机级作用域（工作区设置不可覆盖）；DSH 安装与版本探测不再继承开发环境中的密钥；运行时发现仅信任输出 DSH 版本格式标签的可执行文件。
 
+- Prepares unreleased DSH master `fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159` through explicit commit-scoped Adapter and Host-client entrypoints. Covers named subagent catalogs and direct child controls, failed-turn continuation, Team mode, Web provider discovery and MCP management contracts, with cancellation and uncertain-write handling.
+- 为未发布 DSH master `fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159` 增加显式提交身份的 Adapter 与 Host 客户端预适配入口，覆盖子代理名称与直接控制、失败回合继续执行、Team 模式、Web 提供方发现和 MCP 管理契约，并处理取消及写入结果未知状态。
+
 ## 0.4.7
 
 - Adds exact DSH `0.2.2-rc.1` support, retaining the source-verified alpha.3 batched Session projections, native scheduled tasks and scoped tool images. Keeps older release identities and the guided-install default; newer unverified versions do not inherit this contract.

@@ -1,4 +1,4 @@
-import { AppError } from '@dsh-vscode/domain'
+import { AppError, isSubagentName } from '@dsh-vscode/domain'
 import type { DshTransport } from '../../contracts.js'
 import {
   Rc6SubagentRepository,
@@ -19,7 +19,11 @@ export class Alpha211SubagentRepository extends Rc6SubagentRepository {
 
   protected override async readCatalog(sessionId: string, signal?: AbortSignal): Promise<unknown> {
     const values = await this.projections(sessionId, signal)
-    const catalog = catalogEntries(values, this.catalogOptions.externalCatalog === true)
+    const catalog = catalogEntries(
+      values,
+      this.catalogOptions.externalCatalog === true,
+      this.catalogOptions.namedCatalog === true,
+    )
     const list = recordOrUndefined(await callRpc<unknown>(this.remoteTransport, 'session.list', {}, signal))
     if (!Array.isArray(list?.items)) throw malformed()
     const sessions = new Map(
@@ -53,6 +57,7 @@ export class Alpha211SubagentRepository extends Rc6SubagentRepository {
               catalogEntries(
                 await this.projections(child.id as string, signal),
                 this.catalogOptions.externalCatalog === true,
+                this.catalogOptions.namedCatalog === true,
               ).length > 0
           } catch (error) {
             if (signal?.aborted === true || (error instanceof AppError && error.code === 'REQUEST_CANCELLED'))
@@ -71,6 +76,9 @@ export class Alpha211SubagentRepository extends Rc6SubagentRepository {
           id: child.id,
           mode: child.mode,
           ...(child.label === undefined ? {} : { label: child.label }),
+          ...(this.catalogOptions.namedCatalog === true && child.name !== undefined
+            ? { name: child.name }
+            : {}),
           hasChildren,
           activity:
             child.mode !== 'external' && sessions.get(child.id as string)?.running === true
@@ -81,7 +89,11 @@ export class Alpha211SubagentRepository extends Rc6SubagentRepository {
     }
     await Promise.all(Array.from({ length: Math.min(catalog.length, 4) }, () => worker()))
     signal?.throwIfAborted()
-    return { entries, parentAvailable: sessions.get(sessionId)?.agentAvailable === true }
+    return {
+      entries,
+      parentAvailable:
+        this.catalogOptions.directChildControls === true || sessions.get(sessionId)?.agentAvailable === true,
+    }
   }
 
   protected async projections(
@@ -103,13 +115,15 @@ export class Alpha211SubagentRepository extends Rc6SubagentRepository {
   }
 }
 
-function catalogEntries(
+export function catalogEntries(
   values: Readonly<Record<string, unknown>>,
   externalCatalog: boolean,
+  namedCatalog: boolean,
 ): readonly Record<string, unknown>[] {
   if (values.subagentCatalog === undefined) return []
   if (!Array.isArray(values.subagentCatalog) || values.subagentCatalog.length > 5_000) throw malformed()
   const seen = new Set<string>()
+  const names = new Set<string>()
   return values.subagentCatalog.map((item) => {
     const entry = recordOrUndefined(item)
     if (
@@ -126,6 +140,15 @@ function catalogEntries(
       (entry.mode === 'continuable' && typeof entry.label !== 'string')
     )
       throw malformed()
+    if (namedCatalog && entry.name !== undefined) {
+      if (
+        (entry.mode !== 'continuable' && entry.mode !== 'external') ||
+        !isSubagentName(entry.name) ||
+        names.has(entry.name)
+      )
+        throw malformed()
+      names.add(entry.name)
+    }
     seen.add(entry.id)
     return entry
   })

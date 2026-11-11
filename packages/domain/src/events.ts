@@ -57,6 +57,8 @@ export interface SubagentView {
   readonly kind: 'child'
   readonly id: string
   readonly label?: string
+  /** Runtime-assigned sibling name, independent of the task label. */
+  readonly name?: string
   readonly activity: 'running' | 'inactive'
   readonly parentSessionId: string
   /** Delegation mode; only continuable children accept follow-up prompts. */

@@ -1,5 +1,6 @@
 import {
   AppError,
+  isSubagentName,
   type SubagentCatalog,
   type SubagentDiagnosticView,
   type SubagentHistoryPage,
@@ -22,6 +23,10 @@ import { SubagentAddressRegistry } from './shared/subagent-addresses.js'
 const HISTORY_PAGE_MESSAGES = 50
 export interface SubagentRepositoryOptions {
   readonly externalCatalog?: boolean
+  /** Commit-scoped catalog v3 permits names on continuable/external children. */
+  readonly namedCatalog?: boolean
+  /** User-addressed child controls remain available without a resident parent Agent. */
+  readonly directChildControls?: boolean
   /** Alpha.3+ admits inline image parts; rc.6/alpha.1-2 accept text parts only. */
   readonly inlineImagePrompts?: boolean
   /** DSH 0.1.3-alpha.2 requires the queue/steer delivery discriminator. */
@@ -55,7 +60,12 @@ export class Rc6SubagentRepository implements SubagentRepository {
     if (!Array.isArray(value.entries) || typeof value.parentAvailable !== 'boolean')
       throw malformedSubagentResponse('catalog')
     const entries = value.entries.map((entry) =>
-      catalogEntry(entry, sessionId, this.options.externalCatalog === true),
+      catalogEntry(
+        entry,
+        sessionId,
+        this.options.externalCatalog === true,
+        this.options.namedCatalog === true,
+      ),
     )
 
     // Commit routing only after the entire catalog validates. A malformed
@@ -214,6 +224,7 @@ function catalogEntry(
   value: unknown,
   parentSessionId: string,
   externalCatalog: boolean,
+  namedCatalog: boolean,
 ): SubagentView | SubagentDiagnosticView {
   const record = requiredRecord(value)
   if (typeof record.id !== 'string' || record.id.length === 0)
@@ -232,6 +243,9 @@ function catalogEntry(
       !(externalCatalog && record.mode === 'external')) ||
     (record.mode === 'external' && (record.hasChildren !== false || record.activity !== 'inactive')) ||
     (record.label !== undefined && typeof record.label !== 'string') ||
+    (namedCatalog &&
+      record.name !== undefined &&
+      (!isSubagentName(record.name) || (record.mode !== 'continuable' && record.mode !== 'external'))) ||
     (record.mode === 'continuable' && typeof record.label !== 'string')
   )
     throw malformedSubagentResponse('child entry')
@@ -243,6 +257,7 @@ function catalogEntry(
     mode: record.mode,
     parentSessionId,
     ...(record.label === undefined ? {} : { label: record.label }),
+    ...(namedCatalog && typeof record.name === 'string' ? { name: record.name } : {}),
   }
 }
 
