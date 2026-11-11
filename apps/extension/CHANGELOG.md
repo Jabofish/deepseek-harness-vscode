@@ -6,6 +6,9 @@ Release entries describe behaviour at that release. `Unreleased` lists changes a
 
 ## Unreleased
 
+- Prepares unreleased DSH master `fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159` through explicit commit-scoped Adapter and Host-client entrypoints. Covers named subagent catalogs and direct child controls, failed-turn continuation, Team mode, Web provider discovery and MCP management contracts, with cancellation and uncertain-write handling.
+- 为未发布 DSH master `fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159` 增加显式提交身份的 Adapter 与 Host 客户端预适配入口，覆盖子代理名称与直接控制、失败回合继续执行、Team 模式、Web 提供方发现和 MCP 管理契约，并处理取消及写入结果未知状态。
+
 ## 0.4.7
 
 - Adds exact DSH `0.2.2-rc.1` support, retaining the source-verified alpha.3 batched Session projections, native scheduled tasks and scoped tool images. Keeps older release identities and the guided-install default; newer unverified versions do not inherit this contract.

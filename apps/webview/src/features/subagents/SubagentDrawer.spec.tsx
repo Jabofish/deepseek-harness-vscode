@@ -28,6 +28,21 @@ function catalog(entries: SubagentCatalog['entries'], parentAvailable = true): S
 describe('SubagentDrawer tree', () => {
   afterEach(() => cleanup())
 
+  it('shows a named child together with its authored task label', () => {
+    render(
+      <SubagentDrawer
+        parentSessionId="root"
+        catalog={catalog([
+          child({ id: 'named-child', mode: 'continuable', name: 'reviewer', label: 'Review changes' }),
+        ])}
+        onLoadChildren={vi.fn()}
+        onOpenChild={vi.fn()}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button'))
+    expect(screen.getByText('reviewer · Review changes')).toBeDefined()
+  })
+
   it('shows external executions without opening or loading a nonexistent child conversation', () => {
     const onOpenChild = vi.fn()
     const onLoadChildren = vi.fn()

@@ -5,6 +5,7 @@ import type {
   SessionProjectionSnapshot,
 } from '@dsh-vscode/domain'
 import { parseSessionProjection } from './event-values.js'
+import { isSubagentName } from '@dsh-vscode/domain'
 import { translate } from '../../i18n.js'
 import { object } from './unknown-record.js'
 import { parseTranscript } from './transcript-state.js'
@@ -44,6 +45,8 @@ export function isSubagentView(value: unknown): value is SubagentView {
     typeof item.id === 'string' &&
     item.id.length > 0 &&
     (item.label === undefined || typeof item.label === 'string') &&
+    (item.name === undefined ||
+      (isSubagentName(item.name) && (item.mode === 'continuable' || item.mode === 'external'))) &&
     (item.mode !== 'continuable' || typeof item.label === 'string') &&
     (item.activity === 'running' || item.activity === 'inactive') &&
     typeof item.parentSessionId === 'string' &&

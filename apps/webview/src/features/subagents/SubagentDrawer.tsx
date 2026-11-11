@@ -373,7 +373,7 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
             const branch = entry.hasChildren
             const isExpanded = expanded.has(entry.id)
             const loading = busy.has(entry.id)
-            const entryLabel = entry.label?.trim() || entry.id
+            const entryLabel = [entry.name, entry.label?.trim()].filter(Boolean).join(' · ') || entry.id
             const mode =
               entry.mode === 'external'
                 ? t('subagents.mode.external')

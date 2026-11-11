@@ -512,7 +512,11 @@ export class TaskCenterRegistry implements TaskRepository {
         parentTaskId: `session:${session.id}`,
         workspaceFolderId,
         kind: 'subagent',
-        title: boundedLabel(entry.label ?? entry.id),
+        title: boundedLabel(
+          entry.name === undefined
+            ? (entry.label ?? entry.id)
+            : [entry.name, entry.label].filter(Boolean).join(' · '),
+        ),
         sessionTitle: boundedLabel(session.title || session.id),
         status,
         needsUserAction: false,

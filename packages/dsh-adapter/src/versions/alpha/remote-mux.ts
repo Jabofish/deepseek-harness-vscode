@@ -39,6 +39,8 @@ export type AlphaWorkspaceWireVersion = 'archive-v1' | 'pinned-v2' | 'pinned-rep
 export type AlphaPresetWireVersion = 'legacy-v1' | 'registry-v2'
 
 export interface AlphaLoopbackApiClientOptions {
+  /** Commit-scoped subagent controls address the child directly. */
+  readonly subagentControlWire?: 'user-v2'
   readonly cordisClientBoundary?: boolean
   readonly fileUploads?: boolean
   readonly endpoint: BackendEndpoint
