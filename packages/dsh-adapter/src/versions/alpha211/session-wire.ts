@@ -1,3 +1,5 @@
+// `dsh-session-format-alpha211` is the package.json `npm:` alias for the
+// trusted `@deepseek-ai/dsh-session-format-v3-to-v4@0.2.1-alpha.1`.
 import {
   assertReleasedV4Header,
   releasedV4SessionFormatCodec,
