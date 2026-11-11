@@ -540,7 +540,7 @@ export class EditorBridgeHost {
       if (vscode.workspace.isTrusted) {
         await vscode.workspace
           .getConfiguration('dsh.connection')
-          .update('mode', 'new-isolated', vscode.ConfigurationTarget.Workspace)
+          .update('mode', 'new-isolated', vscode.ConfigurationTarget.Global)
         await this.deps.reconnect?.()
       }
     } else if (action === 'restart') {
