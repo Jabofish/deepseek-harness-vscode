@@ -137,12 +137,15 @@ describe('master fcc0ad Host-only Remote preparation', () => {
   )
 
   it('rejects overlapping continuations for the same session and releases the local admission after failure', async () => {
-    const pending = Promise.withResolvers<Response>()
+    let rejectPending!: (error: Error) => void
+    const pending = new Promise<Response>((_resolve, reject) => {
+      rejectPending = reject
+    })
     let calls = 0
     const remote = client((_url, init) => {
       calls++
       return calls === 1
-        ? pending.promise
+        ? pending
         : Promise.resolve(wrappedResponse(init, projection({ conversationContinuation: null })))
     })
     try {
@@ -151,7 +154,7 @@ describe('master fcc0ad Host-only Remote preparation', () => {
         remote.continueFailedTurn({ ...continuation, requestId: 'second-request' }),
       ).rejects.toMatchObject({ code: 'INVALID_CONFIGURATION' })
       // The deferred projection fails before mutation. Its local gate must release.
-      pending.reject(new TypeError('Fixture disconnect'))
+      rejectPending(new TypeError('Fixture disconnect'))
       await expect(first).rejects.toMatchObject({ code: 'BACKEND_UNREACHABLE' })
       await expect(remote.continueFailedTurn(continuation)).rejects.toMatchObject({
         code: 'INVALID_CONFIGURATION',
@@ -305,8 +308,12 @@ describe('master fcc0ad Host-only Remote preparation', () => {
     let requestSignal: AbortSignal | null | undefined
     const remote = client((_url, init) => {
       requestSignal = init?.signal
-      return new Promise((_resolve, reject) => {
-        requestSignal?.addEventListener('abort', () => reject(requestSignal?.reason), { once: true })
+      return new Promise<Response>((_resolve, reject) => {
+        requestSignal?.addEventListener(
+          'abort',
+          () => reject(new DOMException('Fixture request cancelled', 'AbortError')),
+          { once: true },
+        )
       })
     })
     const result = expect(remote.listWebProviders()).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })

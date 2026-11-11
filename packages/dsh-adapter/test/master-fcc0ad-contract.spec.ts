@@ -208,6 +208,7 @@ describe('commit-scoped master fcc0ad preparation', () => {
     const adapter = new Adapter(transportOptions(globalThis.fetch), MASTER_FCC0AD_COMMIT)
     expect(adapter.project({ conversationContinuation: 4, agentTeam: masterTeam })).toEqual({
       conversationContinuation: 4,
+      todoList: null,
     })
     expect(
       adapter.event({ type: 'session.projection', sessionId: 'root', key: 'agentTeam', value: masterTeam }),
@@ -344,12 +345,13 @@ describe('commit-scoped master fcc0ad preparation', () => {
             request: {
               childSessionId: 'child',
               delivery: 'queue',
-              requestId: expect.any(String),
             },
           },
         },
       })
       const prompt = requests.at(-1)!.payload.args.request as Record<string, unknown>
+      expect(prompt.requestId).toEqual(expect.any(String))
+      expect(prompt.requestId).not.toBe('')
       expect(prompt).not.toHaveProperty('parentSessionId')
       expect(prompt).not.toHaveProperty('mode')
     } finally {

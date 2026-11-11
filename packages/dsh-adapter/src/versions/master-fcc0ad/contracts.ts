@@ -6,7 +6,13 @@ export const masterIdentifier = z
   .string()
   .min(1)
   .max(1_024)
-  .refine((value) => value.trim() !== '' && !/[\u0000-\u001f\u007f]/u.test(value))
+  .refine((value) => {
+    const hasControlCharacter = Array.from(value).some((character) => {
+      const code = character.charCodeAt(0)
+      return code <= 0x1f || code === 0x7f
+    })
+    return value.trim() !== '' && !hasControlCharacter
+  })
 export const masterSequence = z
   .number()
   .int()

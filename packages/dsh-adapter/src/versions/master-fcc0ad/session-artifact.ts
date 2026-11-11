@@ -37,7 +37,9 @@ export function restoreMasterFcc0adArtifact(artifact: unknown, known: ReadonlySe
     void name
     return { ...event, data: { ...legacyFact, version: data.mode === 'external' ? 2 : 0 } }
   })
-  restoreReleasedV4Artifact({ ...source, events } as Parameters<typeof restoreReleasedV4Artifact>[0], known)
+  // The released validator owns the header and event checks at this raw JSON boundary.
+  const projectedArtifact: unknown = { ...source, events }
+  restoreReleasedV4Artifact(projectedArtifact as Parameters<typeof restoreReleasedV4Artifact>[0], known)
 }
 
 function malformedArtifact(): AppError {
