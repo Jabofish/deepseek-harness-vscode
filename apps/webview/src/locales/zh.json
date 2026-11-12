@@ -1934,6 +1934,7 @@
   "sessions.actions": "会话操作：{title}",
   "sessions.actionsTitle": "会话操作",
   "plugins.manager.failure.unsupportedPlatform": "此插件不支持 DSH 所在系统或架构。",
+  "plugins.manager.failure.unexpectedPackage": "安装包的名称或版本与已批准的目标不符，DSH 已拒绝安装。",
   "app.dismissArchivedNotice": "关闭归档提示",
   "app.sessionArchived": "已归档「{title}」",
   "app.undoArchive": "撤销归档",

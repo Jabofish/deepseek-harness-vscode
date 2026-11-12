@@ -1934,6 +1934,7 @@
   "sessions.actions": "Session actions for {title}",
   "sessions.actionsTitle": "Session actions",
   "plugins.manager.failure.unsupportedPlatform": "This plugin does not support the DSH host's operating system or architecture.",
+  "plugins.manager.failure.unexpectedPackage": "The installed package did not match the approved name or version. DSH refused the installation.",
   "app.dismissArchivedNotice": "Dismiss archive notice",
   "app.sessionArchived": "Archived “{title}”",
   "app.undoArchive": "Undo archive",

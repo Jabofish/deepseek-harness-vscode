@@ -128,6 +128,7 @@ export class PluginBundleUseCases {
     officialBundle = false,
   ): Promise<PluginBundleChangeResult> {
     let repository: NonNullable<DshBackend['pluginBundles']>
+    let expected: { readonly name: string; readonly version: string } | undefined
     try {
       repository = await this.availableRepository(signal, true)
       if (officialBundle) {
@@ -142,11 +143,21 @@ export class PluginBundleUseCases {
         )
           throw unavailable('The official bundle is no longer available to install.')
         spec = selected.installTarget.spec
+        expected = { name: selected.name, version: selected.installTarget.version }
       }
       const inspection = await repository.inspect(spec, registry, signal)
       signal.throwIfAborted()
       if (inspection.status === 'refused') throw inspectionFailure(inspection.problem)
       if (inspection.bundle === false) throw inspectionFailure('not-a-bundle')
+      if (
+        repository.supportsExpectedPackage === true &&
+        expected !== undefined &&
+        ((inspection.name !== undefined && inspection.name !== expected.name) ||
+          (inspection.version !== undefined && inspection.version !== expected.version))
+      )
+        throw unavailable('The inspected package does not match the selected official bundle.')
+      if (expected === undefined && inspection.name !== undefined && inspection.version !== undefined)
+        expected = { name: inspection.name, version: inspection.version }
       if (confirmInstall === undefined)
         throw permissionRequired('Installing a DSH bundle requires Host confirmation.')
       if (!(await confirmInstall(spec, inspection)))
@@ -190,6 +201,7 @@ export class PluginBundleUseCases {
         spec,
         {
           requestId,
+          ...(repository.supportsExpectedPackage === true && expected !== undefined ? { expected } : {}),
           ...(officialBundle ? { saveExact: true } : {}),
           ...(registry === undefined ? {} : { registry }),
           ...(approvedBuilds === undefined ? {} : { approvedBuilds }),

@@ -182,6 +182,7 @@ export function GeneralSettingsTab(input: GeneralSettingsTabProps): ReactElement
             onRetry={() => void props.onLoadAccountLifecycle?.()}
           />
           <AccountProfile
+            credentialRevision={props.accountLifecycle?.credentialRevision}
             snapshot={props.accountProfileDetails ?? null}
             signedIn={props.accountLifecycle?.status === 'credential-stored'}
             busy={props.accountProfileLoading === true}

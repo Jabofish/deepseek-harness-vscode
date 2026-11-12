@@ -4,6 +4,7 @@ import { z } from 'zod'
 export const accountLifecycleSnapshotSchema = z
   .object({
     status: z.enum(['signed-out', 'credential-stored']),
+    credentialRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
     attempt: z
       .object({
         id: z.string().uuid(),

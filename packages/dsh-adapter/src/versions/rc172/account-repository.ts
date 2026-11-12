@@ -188,7 +188,7 @@ export class Rc172AccountLifecycleRepository implements AccountLifecycleReposito
     const origin = accountOrigin(record.links, method)
     if (!Object.hasOwn(record, 'attempt')) throw malformed(method)
     const rawAttempt = record.attempt
-    if (rawAttempt === null) return { status: record.status, attempt: null }
+    if (rawAttempt === null) return this.mapSnapshot({ status: record.status, attempt: null })
     const attempt = asRecord(rawAttempt)
     if (
       attempt === undefined ||
@@ -226,7 +226,11 @@ export class Rc172AccountLifecycleRepository implements AccountLifecycleReposito
       ...(attempt.expiresAt === undefined ? {} : { expiresAt: attempt.expiresAt }),
       ...(errorCode === undefined ? {} : { errorCode: errorCode as AccountSignInErrorCode }),
     }
-    return { status: record.status, attempt: safeAttempt }
+    return this.mapSnapshot({ status: record.status, attempt: safeAttempt })
+  }
+
+  protected mapSnapshot(snapshot: AccountLifecycleSnapshot): AccountLifecycleSnapshot {
+    return snapshot
   }
 
   protected normalizeSignInErrorCode(value: unknown): unknown {

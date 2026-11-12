@@ -5,6 +5,9 @@ import type {
   AccountBalanceQuery,
   AccountBonusBatch,
   AccountClientMetadata,
+  AccountNotificationBatch,
+  AccountNotificationEvent,
+  AccountNotificationRepository,
   AccountLifecycleRepository,
   AccountLifecycleSnapshot,
   AccountPage,
@@ -18,7 +21,43 @@ const ORDER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0
 
 /** Application boundary for the exact RC2 account lifecycle; no upstream DTO escapes. */
 export class AccountLifecycleUseCases {
-  public constructor(private readonly repository: AccountLifecycleRepository) {}
+  public constructor(
+    private readonly repository: AccountLifecycleRepository & {
+      readonly notifications?: AccountNotificationRepository
+    },
+  ) {}
+
+  public get supportsNotifications(): boolean {
+    return this.repository.notifications !== undefined
+  }
+
+  public readNotifications(
+    client: AccountClientMetadata,
+    signal?: AbortSignal,
+  ): Promise<AccountNotificationBatch | null> {
+    validateClient(client)
+    return this.repository.notifications?.getNotifications(client, signal) ?? Promise.resolve(null)
+  }
+
+  public reportNotificationEvent(
+    id: string,
+    event: AccountNotificationEvent,
+    client: AccountClientMetadata,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    validateClient(client)
+    if (
+      id.length === 0 ||
+      id.length > 256 ||
+      /\p{Cc}/u.test(id) ||
+      !['displayed', 'cta_clicked', 'dismissed'].includes(event)
+    )
+      throw invalidAccountInput('notification event')
+    return (
+      this.repository.notifications?.reportNotificationEvent(id, event, client, signal) ??
+      Promise.resolve(false)
+    )
+  }
 
   public getState(signal?: AbortSignal): Promise<AccountLifecycleSnapshot> {
     return this.repository.getState(signal)

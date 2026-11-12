@@ -51,6 +51,7 @@ export const pluginBundleErrorCodeSchema = z.enum([
   'stale-approval',
   'incompatible-version',
   'unsupported-platform',
+  'unexpected-package',
   'operation-error',
 ])
 export const managedPluginEntrySchema = z

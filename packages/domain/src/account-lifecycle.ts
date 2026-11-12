@@ -24,6 +24,40 @@ export interface AccountSignInAttempt {
 export interface AccountLifecycleSnapshot {
   readonly status: 'signed-out' | 'credential-stored'
   readonly attempt: AccountSignInAttempt | null
+  /** Connection-local revision; changes even when one stored grant replaces another. */
+  readonly credentialRevision?: number
+}
+
+export interface AccountNotification {
+  readonly id: string
+  readonly title: string
+  readonly body: string
+  readonly displayUntil: string | null
+  readonly actions: readonly {
+    readonly label: string
+    readonly style: 'primary' | 'secondary'
+    readonly target: 'account' | 'dismiss'
+  }[]
+}
+
+export interface AccountNotificationBatch {
+  readonly nextPollAfterSeconds: number
+  readonly notifications: readonly AccountNotification[]
+}
+
+export type AccountNotificationEvent = 'displayed' | 'cta_clicked' | 'dismissed'
+
+export interface AccountNotificationRepository {
+  getNotifications(
+    client: AccountClientMetadata,
+    signal?: AbortSignal,
+  ): Promise<AccountNotificationBatch | null>
+  reportNotificationEvent(
+    id: string,
+    event: AccountNotificationEvent,
+    client: AccountClientMetadata,
+    signal?: AbortSignal,
+  ): Promise<boolean>
 }
 
 /** Host-derived request metadata accepted by DSH RC2 account operations. */

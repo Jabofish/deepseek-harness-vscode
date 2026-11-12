@@ -258,6 +258,7 @@ export function failureKey(result: PluginBundleChangeResult): string {
   if (result.errorCode === 'already-installed') return 'plugins.manager.failure.alreadyInstalled'
   if (result.errorCode === 'incompatible-version') return 'plugins.manager.failure.incompatible'
   if (result.errorCode === 'unsupported-platform') return 'plugins.manager.failure.unsupportedPlatform'
+  if (result.errorCode === 'unexpected-package') return 'plugins.manager.failure.unexpectedPackage'
   if (result.errorCode === 'management-required' || result.errorCode === 'unaddressable')
     return 'plugins.manager.failure.protected'
   if (

@@ -17,6 +17,7 @@ export type PluginBundleFailureCode =
   | 'stale-approval'
   | 'incompatible-version'
   | 'unsupported-platform'
+  | 'unexpected-package'
   | 'operation-error'
 
 export type PluginBundleApplication = 'applied' | 'restart-required' | 'overridden' | 'failed' | 'cancelled'
@@ -146,6 +147,7 @@ export interface PluginInstallProgressView {
 }
 
 export interface PluginInstallOptions {
+  readonly expected?: { readonly name: string; readonly version: string }
   readonly saveExact?: boolean
   readonly requestId: string
   readonly registry?: PluginRegistry
@@ -154,6 +156,7 @@ export interface PluginInstallOptions {
 
 /** Complete RC2 Plugin Manager boundary. Older DSH adapters do not expose it. */
 export interface PluginBundleRepository {
+  readonly supportsExpectedPackage?: boolean
   listBundles(signal?: AbortSignal): Promise<readonly PluginManagerBundle[]>
   listPlugins(signal?: AbortSignal): Promise<readonly ManagedPluginEntry[]>
   registries(signal?: AbortSignal): Promise<PluginRegistryCatalog>

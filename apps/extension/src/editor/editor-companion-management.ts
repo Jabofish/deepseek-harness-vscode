@@ -522,7 +522,14 @@ export class EditorCompanionManagement {
       try {
         result = await repository.installBundle(
           selected.file,
-          { requestId, saveExact: true, approvedBuilds: [] },
+          {
+            requestId,
+            saveExact: true,
+            approvedBuilds: [],
+            ...(repository.supportsExpectedPackage === true
+              ? { expected: { name: EDITOR_COMPANION_PACKAGE, version: selected.version } }
+              : {}),
+          },
           signal,
         )
       } catch (error) {

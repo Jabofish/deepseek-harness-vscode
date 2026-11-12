@@ -6,6 +6,9 @@ Release entries describe behaviour at that release. `Unreleased` lists changes a
 
 ## Unreleased
 
+- Adds exact DSH `0.2.2-rc.2` support (`ddac96760b6edf8fa0fe17cbdcf0b512f4c12b2c`): named subagent catalogs and direct controls, validated continuation/Team projections, account stream and notification migration, and expected-package installation checks. Preserves older exact adapters and the guided-install default. Authenticated account/model and independent VS Code acceptance remain partial.
+- 适配 DSH `0.2.2-rc.2`（`ddac96760b6edf8fa0fe17cbdcf0b512f4c12b2c`）：子代理命名目录与直接控制、继续执行/Team 投影校验、账号状态流与通知迁移、插件安装目标校验。保留旧版独立适配和引导安装默认；已认证账号/模型与独立 VS Code 验收仍未完成。
+
 - Hardens the extension trust boundary: connection endpoint, mode, attachment-port and auto-start settings are now machine-scoped (never overridable by workspace settings), the DSH install and version probes no longer inherit developer secrets from the environment, and runtime discovery only trusts executables that report a DSH-style version label.
 - 强化扩展信任边界：连接端点、模式、附加端口与自动启动设置改为计算机级作用域（工作区设置不可覆盖）；DSH 安装与版本探测不再继承开发环境中的密钥；运行时发现仅信任输出 DSH 版本格式标签的可执行文件。
 

@@ -13,6 +13,10 @@ import type {
   SignOutImpact,
 } from '@dsh-vscode/domain'
 import type { AccountLifecycleUseCases } from '@dsh-vscode/application'
+import {
+  AccountNotificationHost,
+  type AccountNotificationHostDependencies,
+} from './account-notification-host.js'
 
 const MAX_PENDING_AUTHORIZATIONS = 8
 const AUTHORIZATION_LIFETIME_MS = 10 * 60 * 1000
@@ -30,6 +34,7 @@ export interface AccountLifecycleHostDependencies {
   readonly reportError: (code: 'state-stream-failed' | 'expiry-stream-failed' | 'browser-open-failed') => void
   readonly confirmSignOut: (impact: SignOutImpact) => Promise<boolean>
   readonly now?: () => number
+  readonly notifications?: Pick<AccountNotificationHostDependencies, 'present' | 'openAccount'>
 }
 
 /** Extension Host owner of account subscriptions, browser launch effects and sign-out confirmation. */
@@ -53,6 +58,8 @@ export class AccountLifecycleHost {
   private accountScopeRevision = 0
   private started = false
   private disposed = false
+  private notifications: AccountNotificationHost | undefined
+  private credentialRevision: number | undefined
 
   public constructor(private readonly dependencies: AccountLifecycleHostDependencies) {
     this.now = dependencies.now ?? Date.now
@@ -253,6 +260,9 @@ export class AccountLifecycleHost {
     this.unsubscribeAuthorization?.()
     this.unsubscribeAuthorization = undefined
     this.lifetime.abort()
+    const notifications = this.notifications
+    this.notifications = undefined
+    await notifications?.dispose()
     this.pendingAuthorization.clear()
     this.launchableAttempts.clear()
     this.launchedAttempts.clear()
@@ -287,6 +297,9 @@ export class AccountLifecycleHost {
       for await (const event of this.dependencies.useCases.watchExpiry(signal)) {
         if (signal.aborted) return
         if (event === 'session-expired') {
+          const notifications = this.notifications
+          this.notifications = undefined
+          void notifications?.dispose()
           this.clearBonusScope()
           this.dependencies.publishSessionExpired()
         }
@@ -297,6 +310,30 @@ export class AccountLifecycleHost {
   }
 
   private observeSnapshot(snapshot: AccountLifecycleSnapshot): void {
+    const changed =
+      snapshot.credentialRevision !== undefined && snapshot.credentialRevision !== this.credentialRevision
+    if (changed) {
+      this.credentialRevision = snapshot.credentialRevision
+      this.clearBonusScope()
+    }
+    if (snapshot.status !== 'credential-stored' || changed) {
+      const previousNotifications = this.notifications
+      this.notifications = undefined
+      void previousNotifications?.dispose()
+    }
+    if (
+      snapshot.status === 'credential-stored' &&
+      this.notifications === undefined &&
+      this.dependencies.notifications !== undefined &&
+      this.dependencies.useCases.supportsNotifications
+    ) {
+      this.notifications = new AccountNotificationHost({
+        ...this.dependencies.notifications,
+        useCases: this.dependencies.useCases,
+        client: this.dependencies.client,
+        reportError: () => this.dependencies.reportDiagnostic?.(),
+      })
+    }
     if (snapshot.status !== 'credential-stored') this.clearBonusScope()
     const previous = this.previousSnapshot
     if (

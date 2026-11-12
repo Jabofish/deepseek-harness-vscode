@@ -165,6 +165,19 @@ export function createBackendAttach(deps: BackendAttachDependencies): BackendAtt
           timezoneOffsetSeconds: -new Date().getTimezoneOffset() * 60,
         }),
         openExternal: async (url) => await vscode.env.openExternal(vscode.Uri.parse(url)),
+        notifications: {
+          present: async (notice) => {
+            const actions = notice.actions.map((action, index) => ({ title: action.label, index }))
+            const selected = await vscode.window.showInformationMessage(
+              `${notice.title}\n${notice.body}`,
+              ...actions,
+            )
+            return selected?.index
+          },
+          openAccount: async () => {
+            await vscode.commands.executeCommand('dsh.openSettings')
+          },
+        },
         ...(backend.sessions.initializeDefaultModel === undefined
           ? {}
           : {

@@ -73,8 +73,18 @@ export function createAccountActions(host: AccountActionHost): AccountActions {
     return parsed
   }
   const commitAccountSnapshot = (snapshot: AccountLifecycleSnapshotDto): void => {
+    const currentRevision = readState().accountLifecycle?.credentialRevision
+    if (
+      snapshot.credentialRevision !== undefined &&
+      currentRevision !== undefined &&
+      snapshot.credentialRevision < currentRevision
+    )
+      return
     const clearDetails =
-      snapshot.status !== 'credential-stored' || readState().accountLifecycle?.status !== snapshot.status
+      snapshot.status !== 'credential-stored' ||
+      readState().accountLifecycle?.status !== snapshot.status ||
+      (snapshot.credentialRevision !== undefined &&
+        snapshot.credentialRevision !== readState().accountLifecycle?.credentialRevision)
     if (clearDetails) accountDetailsEpoch += 1
     setState((current) => ({
       ...current,
@@ -130,9 +140,18 @@ export function createAccountActions(host: AccountActionHost): AccountActions {
     )
       return false
     if (message.name === 'account.lifecycle.updated') {
+      const currentRevision = readState().accountLifecycle?.credentialRevision
+      if (
+        message.snapshot.credentialRevision !== undefined &&
+        currentRevision !== undefined &&
+        message.snapshot.credentialRevision < currentRevision
+      )
+        return true
       const clearDetails =
         message.snapshot.status !== 'credential-stored' ||
-        readState().accountLifecycle?.status !== message.snapshot.status
+        readState().accountLifecycle?.status !== message.snapshot.status ||
+        (message.snapshot.credentialRevision !== undefined &&
+          message.snapshot.credentialRevision !== readState().accountLifecycle?.credentialRevision)
       if (clearDetails) accountDetailsEpoch += 1
       setState((current) => ({
         ...current,

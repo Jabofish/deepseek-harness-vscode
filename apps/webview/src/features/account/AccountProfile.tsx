@@ -40,6 +40,7 @@ export interface AccountProfileLabels {
 }
 
 export interface AccountProfileProps {
+  readonly credentialRevision?: number | undefined
   readonly snapshot: AccountProfileDetailsSnapshot | null
   readonly signedIn: boolean
   readonly busy?: boolean
@@ -58,6 +59,7 @@ export interface AccountProfileProps {
 export function AccountProfile({
   snapshot,
   signedIn,
+  credentialRevision,
   busy = false,
   requestFailed = false,
   labels,
@@ -81,6 +83,7 @@ export function AccountProfile({
   const retryDelay = useRef(Math.max(1, ackRetryDelayMs))
   const initialRefreshRequested = useRef(false)
   const wasSignedIn = useRef(signedIn)
+  const previousCredentialRevision = useRef(credentialRevision)
   const bonusCard = useRef<HTMLDivElement>(null)
   const retryTimer = useRef<number | undefined>(undefined)
   const [retryDelayMs, setRetryDelayMs] = useState(Math.max(1, ackRetryDelayMs))
@@ -120,9 +123,11 @@ export function AccountProfile({
   }, [onRefresh])
 
   useEffect(() => {
-    if (signedIn && !wasSignedIn.current) onRefresh()
+    if (signedIn && (!wasSignedIn.current || credentialRevision !== previousCredentialRevision.current))
+      onRefresh()
     wasSignedIn.current = signedIn
-  }, [onRefresh, signedIn])
+    previousCredentialRevision.current = credentialRevision
+  }, [credentialRevision, onRefresh, signedIn])
 
   const acknowledge = useCallback(
     async (orderId: string): Promise<void> => {
