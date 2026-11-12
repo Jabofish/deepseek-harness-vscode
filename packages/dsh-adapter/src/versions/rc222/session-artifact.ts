@@ -1,17 +1,13 @@
 import { AppError } from '@dsh-vscode/domain'
 import { restoreReleasedV4Artifact } from '@dsh-vscode/dsh-session-codec-alpha222'
 import { recordOrUndefined } from '../../repositories/shared/guards.js'
-import { masterCatalogFactSchema, masterSequence, parseMasterContract } from './contracts.js'
+import { rc222CatalogFactSchema, rc222Sequence, parseRc222Contract } from './contracts.js'
 
-/** fcc0ad session-format-v3-to-v4/src/validation.ts: nativeCatalogFact and own-suffix names. */
-export function restoreMasterFcc0adArtifact(artifact: unknown, known: ReadonlySet<string>): void {
+/** dsh-v0.2.2-rc.2 session-format-v3-to-v4/src/validation.ts: nativeCatalogFact and own-suffix names. */
+export function restoreRc222Artifact(artifact: unknown, known: ReadonlySet<string>): void {
   const source = recordOrUndefined(artifact)
   if (source === undefined || !Array.isArray(source.events)) throw malformedArtifact()
-  const inheritedCount = parseMasterContract(
-    masterSequence,
-    source.inheritedEventCount,
-    'Session V4 artifact',
-  )
+  const inheritedCount = parseRc222Contract(rc222Sequence, source.inheritedEventCount, 'Session V4 artifact')
   const names = new Set<unknown>()
   const events = source.events.map((raw: unknown) => {
     const event = recordOrUndefined(raw)
@@ -24,7 +20,7 @@ export function restoreMasterFcc0adArtifact(artifact: unknown, known: ReadonlySe
       return raw
     const data = recordOrUndefined(event.data)
     if (data === undefined) return raw
-    if (data.version === 3) parseMasterContract(masterCatalogFactSchema, data, 'subagent/catalog')
+    if (data.version === 3) parseRc222Contract(rc222CatalogFactSchema, data, 'subagent/catalog')
     if (data.name !== undefined) {
       if (names.has(data.name)) throw malformedArtifact()
       names.add(data.name)

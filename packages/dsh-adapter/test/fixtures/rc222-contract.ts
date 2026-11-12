@@ -2,9 +2,9 @@
  * ddac96760b6edf8fa0fe17cbdcf0b512f4c12b2c:
  * credentials/deepseek-account/src/types.ts (AccountUpdate, notifications);
  * boot/plugin-manager/src/types.ts (expected package and refusal).
- * Named catalog/Team shapes match the independently audited fcc0ad snapshot.
+ * Named catalog/Team shapes are part of this released contract.
  */
-export { masterNamedChild as rc222NamedChild, masterTeam as rc222Team } from './master-fcc0ad-contract.js'
+export { rc222NamedChild, rc222Team } from './rc222-session-contract.js'
 
 export const rc222AccountState = {
   status: 'credential-stored',

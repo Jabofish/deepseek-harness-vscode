@@ -2,8 +2,8 @@ import { recordOrUndefined } from '../../repositories/shared/guards.js'
 import { alpha222SessionProfile } from '../alpha222/session-wire.js'
 import type { AlphaV4SessionProfile } from '../alpha171/session-wire.js'
 import { validCatalogFact } from '../alpha211/session-wire.js'
-import { masterCatalogFactSchema, masterTeamModeSchema } from './contracts.js'
-import { restoreMasterFcc0adArtifact } from './session-artifact.js'
+import { rc222CatalogFactSchema, rc222TeamModeSchema } from './contracts.js'
+import { restoreRc222Artifact } from './session-artifact.js'
 
 const teamAuditEvents = new Set([
   'team/mode',
@@ -13,15 +13,15 @@ const teamAuditEvents = new Set([
   'team/message/delivered',
 ])
 
-/** Commit-specific V4 vocabulary and catalog relationships over the released row codec. */
-export const masterFcc0adSessionProfile: AlphaV4SessionProfile = {
+/** Released rc.2 V4 vocabulary and catalog relationships over the row codec. */
+export const rc222SessionProfile: AlphaV4SessionProfile = {
   ...alpha222SessionProfile,
-  restoreArtifact: restoreMasterFcc0adArtifact,
+  restoreArtifact: restoreRc222Artifact,
   eventValidators: {
     ...alpha222SessionProfile.eventValidators,
     'subagent/catalog': (value) =>
-      validCatalogFact(value, true) || masterCatalogFactSchema.safeParse(value).success,
-    'team/mode': (value) => masterTeamModeSchema.safeParse(value).success,
+      validCatalogFact(value, true) || rc222CatalogFactSchema.safeParse(value).success,
+    'team/mode': (value) => rc222TeamModeSchema.safeParse(value).success,
   },
   normalizeEvent(event) {
     const data = recordOrUndefined(event.data)

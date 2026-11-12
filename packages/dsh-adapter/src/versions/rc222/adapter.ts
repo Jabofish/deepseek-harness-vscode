@@ -9,22 +9,19 @@ import type { SubagentRepositoryOptions } from '../../repositories/subagent-repo
 import { recordOrUndefined } from '../../repositories/shared/guards.js'
 import type { AlphaLoopbackApiClient, AlphaLoopbackApiClientOptions } from '../alpha/transport.js'
 import { Rc221VersionAdapter } from '../rc221/adapter.js'
-import { masterFcc0adSessionProfile } from '../master-fcc0ad/session-wire.js'
-import { MasterFcc0adSubagentRepository } from '../master-fcc0ad/subagent-repository.js'
+import { rc222SessionProfile } from './session-wire.js'
+import { Rc222SubagentRepository } from './subagent-repository.js'
 import {
-  masterIdentifier,
-  masterMcpStatusSchema,
-  parseMasterContract,
-  parseMasterContinuation,
-} from '../master-fcc0ad/contracts.js'
-import { mapMasterPublicProjection, mapMasterPublicProjectionValues } from '../master-fcc0ad/projections.js'
+  rc222Identifier,
+  rc222McpStatusSchema,
+  parseRc222Contract,
+  parseRc222Continuation,
+} from './contracts.js'
+import { mapRc222PublicProjection, mapRc222PublicProjectionValues } from './projections.js'
 import { Rc222AccountLifecycleRepository } from './account-repository.js'
 import { Rc222PluginBundleRepository } from './plugin-manager-repository.js'
 
-/** dsh-v0.2.2-rc.2 / ddac96760b6edf8fa0fe17cbdcf0b512f4c12b2c.
- * The named-catalog, continuation, Team and MCP wire matches the audited fcc0ad
- * snapshot. Reuse those parsers without adopting its commit-scoped identity.
- */
+/** dsh-v0.2.2-rc.2 / ddac96760b6edf8fa0fe17cbdcf0b512f4c12b2c. */
 export class Rc222VersionAdapter extends Rc221VersionAdapter {
   protected override readonly identity: VersionAdapterIdentity = {
     id: 'dsh-0.2.2-rc.2',
@@ -39,19 +36,19 @@ export class Rc222VersionAdapter extends Rc221VersionAdapter {
     return {
       ...options,
       subagentControlWire: 'user-v2',
-      sessionWireProfile: masterFcc0adSessionProfile,
+      sessionWireProfile: rc222SessionProfile,
       normalizeControlFrame: (value) => {
         const frames = options.normalizeControlFrame?.(value)
         for (const value of frames ?? []) {
           const frame = recordOrUndefined(value)
           if (frame?.type === 'session/projection' && frame.key === 'conversationContinuation')
-            parseMasterContinuation(frame.value, frame.seq as number)
+            parseRc222Continuation(frame.value, frame.seq as number)
           if (frame?.type === 'session/projection-baseline')
             for (const value of Object.values(recordOrUndefined(frame.projections) ?? {})) {
               const projection = recordOrUndefined(value)
               const values = recordOrUndefined(projection?.values)
               if (values !== undefined && Object.hasOwn(values, 'conversationContinuation'))
-                parseMasterContinuation(values.conversationContinuation, projection?.asOfSequence as number)
+                parseRc222Continuation(values.conversationContinuation, projection?.asOfSequence as number)
             }
         }
         return frames
@@ -74,12 +71,12 @@ export class Rc222VersionAdapter extends Rc221VersionAdapter {
   protected override createSubagentRepository(
     transport: AlphaLoopbackApiClient,
     options: SubagentRepositoryOptions,
-  ): MasterFcc0adSubagentRepository {
-    return new MasterFcc0adSubagentRepository(transport, options)
+  ): Rc222SubagentRepository {
+    return new Rc222SubagentRepository(transport, options)
   }
 
   protected override mapProjectionValues(values: Readonly<Record<string, unknown>>): SessionProjectionValues {
-    return mapMasterPublicProjectionValues(super.mapProjectionValues(values))
+    return mapRc222PublicProjectionValues(super.mapProjectionValues(values))
   }
 
   protected override mapBackendEvent(event: BackendEvent): BackendEvent {
@@ -91,23 +88,23 @@ export class Rc222VersionAdapter extends Rc221VersionAdapter {
           message: 'Invalid MCP status notification.',
           retryable: false,
         })
-      const name = parseMasterContract(masterIdentifier, mapped.args[0], 'mcp-manager/status')
-      parseMasterContract(masterMcpStatusSchema, mapped.args[1], 'mcp-manager/status')
+      const name = parseRc222Contract(rc222Identifier, mapped.args[0], 'mcp-manager/status')
+      parseRc222Contract(rc222McpStatusSchema, mapped.args[1], 'mcp-manager/status')
       return { type: 'remote.event', name: mapped.name, args: [name] }
     }
     if (mapped.type === 'session.projection') {
-      mapMasterPublicProjectionValues({ [mapped.key]: mapped.value })
+      mapRc222PublicProjectionValues({ [mapped.key]: mapped.value })
       return mapped.key === 'agentTeam' ? { type: 'session.system', sessionId: mapped.sessionId } : mapped
     }
     if (mapped.type === 'session.subscribed' && mapped.projection !== undefined)
-      return { ...mapped, projection: mapMasterPublicProjection(mapped.projection) }
+      return { ...mapped, projection: mapRc222PublicProjection(mapped.projection) }
     if (mapped.type === 'session.projection.baseline')
       return {
         ...mapped,
         projections: Object.fromEntries(
           Object.entries(mapped.projections).map(([id, projection]) => [
             id,
-            mapMasterPublicProjection(projection),
+            mapRc222PublicProjection(projection),
           ]),
         ),
       }

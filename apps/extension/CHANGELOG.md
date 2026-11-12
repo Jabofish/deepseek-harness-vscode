@@ -14,11 +14,8 @@ Release entries describe behaviour at that release. `Unreleased` lists changes a
 - Stabilizes transcript layout, history navigation and attachment lifecycles. Queued image attachments show recognizable previews and names, while attachment loading, removal and session changes preserve ownership and cancellation.
 - 修复消息布局、历史导航与附件生命周期问题；队列图片附件展示可辨识的预览和名称，加载、移除及切换会话时保留归属与取消边界。
 
-- Hardens the extension trust boundary: connection endpoint, mode, attachment-port and auto-start settings are now machine-scoped (never overridable by workspace settings), the DSH install and version probes no longer inherit developer secrets from the environment, and runtime discovery only trusts executables that report a DSH-style version label.
-- 强化扩展信任边界：连接端点、模式、附加端口与自动启动设置改为计算机级作用域（工作区设置不可覆盖）；DSH 安装与版本探测不再继承开发环境中的密钥；运行时发现仅信任输出 DSH 版本格式标签的可执行文件。
-
-- Prepares unreleased DSH master `fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159` through explicit commit-scoped Adapter and Host-client entrypoints. Covers named subagent catalogs and direct child controls, failed-turn continuation, Team mode, Web provider discovery and MCP management contracts, with cancellation and uncertain-write handling.
-- 为未发布 DSH master `fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159` 增加显式提交身份的 Adapter 与 Host 客户端预适配入口，覆盖子代理名称与直接控制、失败回合继续执行、Team 模式、Web 提供方发现和 MCP 管理契约，并处理取消及写入结果未知状态。
+- Hardens the extension trust boundary: connection endpoint, mode, attachment-port and auto-start settings are now machine-scoped (never overridable by workspace settings), the DSH install and version probes no longer inherit developer secrets from the environment, and runtime discovery only trusts executables that report a DSH-style version label. Thanks to [George Georgovassilis (@ggeorgovassilis)](https://github.com/ggeorgovassilis) for [PR #50](https://github.com/Jabofish/deepseek-harness-vscode/pull/50).
+- 强化扩展信任边界：连接端点、模式、附加端口与自动启动设置改为计算机级作用域（工作区设置不可覆盖）；DSH 安装与版本探测不再继承开发环境中的密钥；运行时发现仅信任输出 DSH 版本格式标签的可执行文件。感谢 [George Georgovassilis（@ggeorgovassilis）](https://github.com/ggeorgovassilis) 提交 [PR #50](https://github.com/Jabofish/deepseek-harness-vscode/pull/50)。
 
 ## 0.4.7
 
