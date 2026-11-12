@@ -29,14 +29,18 @@ export function RuntimeConnectionView(props: RuntimeConnectionViewProps): ReactE
   const follow = useRef(true)
   const run = useRef<number | undefined>(undefined)
   const output = props.output
-  const visibleOutput = expanded ? output : output?.slice(catalogLoading ? -3 : -4)
+  const visibleOutputStart = expanded ? 0 : Math.max(0, (output?.length ?? 0) - (catalogLoading ? 3 : 4))
   useLayoutEffect(() => {
     const first = output?.[0]
     if (first?.phase === 'connect' && first.status === 'started' && run.current !== first.id) {
       run.current = first.id
       follow.current = true
     }
-    if (follow.current && pane.current !== null) pane.current.scrollTop = pane.current.scrollHeight
+    // Keep existing collapsed log lines mounted inside the clipped scrollbox so
+    // streaming entries scroll into view instead of unmounting top lines and
+    // triggering vertical layout shifts on the remaining rows.
+    if ((!expanded || follow.current) && pane.current !== null)
+      pane.current.scrollTop = pane.current.scrollHeight
   }, [output, catalogLoading, message, expanded])
 
   return (
@@ -80,13 +84,14 @@ export function RuntimeConnectionView(props: RuntimeConnectionViewProps): ReactE
             if (expanded) follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24
           }}
         >
-          {!visibleOutput?.length ? (
+          {!output?.length ? (
             <p>{title}</p>
           ) : (
-            visibleOutput.map((entry) => (
+            output.map((entry, index) => (
               <p
                 className="dsh-runtime-connection__line"
                 key={entry.id}
+                aria-hidden={index < visibleOutputStart ? true : undefined}
                 data-status={entry.status}
                 title={connectionLine(entry, t)}
               >
@@ -114,9 +119,9 @@ export function RuntimeConnectionView(props: RuntimeConnectionViewProps): ReactE
             aria-expanded={expanded}
             aria-controls="runtime-connection-output"
             onClick={() => {
-              follow.current = expanded
-              if (pane.current !== null) pane.current.scrollTop = 0
-              setExpanded(!expanded)
+              const nextExpanded = !expanded
+              if (!nextExpanded) follow.current = true
+              setExpanded(nextExpanded)
             }}
           >
             <Icon name="chevron-down" />

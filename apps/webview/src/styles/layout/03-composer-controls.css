@@ -196,13 +196,21 @@
   display: none;
 }
 
-.dsh-composer__quick-tools .dsh-composer__context-status {
+.dsh-unified-composer .dsh-composer__quick-tools .dsh-composer__context-status {
   position: absolute;
-  inset-block-start: 100%;
+  inset-block-start: calc(100% + var(--dsh-space-1));
+  inset-inline-start: auto;
   inset-inline-end: 0;
-  padding: var(--dsh-space-1);
+  width: max-content;
+  max-width: min(18rem, calc(100vw - 2 * var(--dsh-panel-gutter)));
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  border: var(--dsh-border);
   border-radius: var(--dsh-radius-sm);
   background: var(--dsh-widget-bg);
+  box-shadow: var(--dsh-shadow);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: end;
 }
 
 .dsh-composer__quick-tools[aria-busy='true']::after {
@@ -341,6 +349,8 @@
 }
 
 .dsh-unified-composer .dsh-composer__hint {
+  flex: 0 1 10rem;
+  width: 10rem;
   min-width: 0;
   max-width: 10rem;
   overflow: hidden;

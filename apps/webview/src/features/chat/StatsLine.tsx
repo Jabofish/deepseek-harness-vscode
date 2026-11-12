@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState, type ReactElement } from 'react'
+import { memo, useLayoutEffect, useMemo, useState, type ReactElement } from 'react'
 import type { SessionStatsProjection, TokenUsage } from '@dsh-vscode/domain'
 import { billedInputTokens, cacheHitPercent } from '@dsh-vscode/timeline'
 import type { TimelineNode } from '@dsh-vscode/timeline'
@@ -72,11 +72,16 @@ const StatsLineContent = memo(function StatsLineContent(props: StatsLineProps): 
   const presentation = props.performanceUsage ?? 'detailed'
   const [element, setElement] = useState<HTMLDivElement | null>(null)
   const [narrow, setNarrow] = useState(false)
-  useEffect(() => {
-    if (element === null || typeof ResizeObserver === 'undefined') return
+  useLayoutEffect(() => {
+    if (element === null) return
+    const updateWidth = (width: number): void => {
+      if (width > 0) setNarrow(width <= 560)
+    }
+    updateWidth(element.getBoundingClientRect().width)
+    if (typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver((entries) => {
       const width = entries[0]?.contentRect.width
-      if (width !== undefined && width > 0) setNarrow(width <= 560)
+      if (width !== undefined) updateWidth(width)
     })
     observer.observe(element)
     return () => observer.disconnect()
@@ -117,11 +122,13 @@ const StatsLineContent = memo(function StatsLineContent(props: StatsLineProps): 
         aria-label={t('stats.aria')}
         data-performance-usage="compact"
       >
-        {outputSpeed === undefined ? null : <span title={t('stats.speed')}>{outputSpeed}</span>}
-        {outputSpeed !== undefined && props.usage !== undefined ? <span aria-hidden="true">·</span> : null}
-        {props.usage === undefined ? null : (
-          <span title={t('stats.cache')}>{t('stats.cacheShort', { percent: cachePercent })}</span>
-        )}
+        <span className="dsh-stats-line__metrics">
+          {outputSpeed === undefined ? null : <span title={t('stats.speed')}>{outputSpeed}</span>}
+          {outputSpeed !== undefined && props.usage !== undefined ? <span aria-hidden="true">·</span> : null}
+          {props.usage === undefined ? null : (
+            <span title={t('stats.cache')}>{t('stats.cacheShort', { percent: cachePercent })}</span>
+          )}
+        </span>
         {narrow && props.cost !== undefined ? (
           <>
             <StatsDetails stats={stats} usage={props.usage}>
@@ -172,40 +179,42 @@ const StatsLineContent = memo(function StatsLineContent(props: StatsLineProps): 
       <StatsDetails stats={stats} usage={props.usage}>
         {narrow ? props.cost?.(true) : null}
       </StatsDetails>
-      {props.sessionStats === undefined ? <span>{t('stats.loadedWindow')}</span> : null}
-      <span>{t(stats.turns === 1 ? 'stats.turns' : 'stats.turns.plural', { count: stats.turns })}</span>
-      <span aria-hidden="true">·</span>
-      <span>{t(stats.steps === 1 ? 'stats.steps' : 'stats.steps.plural', { count: stats.steps })}</span>
-      {durations.length === 0 ? null : (
-        <>
-          <span aria-hidden="true">·</span>
-          <span title={t('stats.wallTime')}>{durations.join(' · ')}</span>
-        </>
-      )}
-      {speeds.length === 0 ? null : (
-        <>
-          <span aria-hidden="true">·</span>
-          <span title={t('stats.speed')}>{speeds.join(' · ')}</span>
-        </>
-      )}
-      {props.usage === undefined ? null : (
-        <>
-          <span aria-hidden="true">·</span>
-          <span title={t('stats.input')}>↑{formatTokens(billedInputTokens(props.usage))}</span>
-          <span aria-hidden="true">·</span>
-          <span title={t('stats.output')}>↓{formatTokens(props.usage.outputTokens)}</span>
-          <span aria-hidden="true">·</span>
-          <span title={t('stats.cache')}>{t('stats.cacheShort', { percent: cachePercent })}</span>
-          {tokenTotal === undefined ? null : (
-            <>
-              <span aria-hidden="true">·</span>
-              <span title={t('stats.totalTokens')}>
-                {t('stats.totalTokensValue', { count: formatTokens(tokenTotal) })}
-              </span>
-            </>
-          )}
-        </>
-      )}
+      <span className="dsh-stats-line__metrics">
+        {props.sessionStats === undefined ? <span>{t('stats.loadedWindow')}</span> : null}
+        <span>{t(stats.turns === 1 ? 'stats.turns' : 'stats.turns.plural', { count: stats.turns })}</span>
+        <span aria-hidden="true">·</span>
+        <span>{t(stats.steps === 1 ? 'stats.steps' : 'stats.steps.plural', { count: stats.steps })}</span>
+        {props.usage === undefined ? null : (
+          <>
+            <span aria-hidden="true">·</span>
+            <span title={t('stats.input')}>↑{formatTokens(billedInputTokens(props.usage))}</span>
+            <span aria-hidden="true">·</span>
+            <span title={t('stats.output')}>↓{formatTokens(props.usage.outputTokens)}</span>
+            <span aria-hidden="true">·</span>
+            <span title={t('stats.cache')}>{t('stats.cacheShort', { percent: cachePercent })}</span>
+            {tokenTotal === undefined ? null : (
+              <>
+                <span aria-hidden="true">·</span>
+                <span title={t('stats.totalTokens')}>
+                  {t('stats.totalTokensValue', { count: formatTokens(tokenTotal) })}
+                </span>
+              </>
+            )}
+          </>
+        )}
+        {durations.length === 0 ? null : (
+          <>
+            <span aria-hidden="true">·</span>
+            <span title={t('stats.wallTime')}>{durations.join(' · ')}</span>
+          </>
+        )}
+        {speeds.length === 0 ? null : (
+          <>
+            <span aria-hidden="true">·</span>
+            <span title={t('stats.speed')}>{speeds.join(' · ')}</span>
+          </>
+        )}
+      </span>
       {narrow ? props.cost?.(false, true) : props.cost?.(false)}
     </div>
   )

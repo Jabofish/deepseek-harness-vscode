@@ -193,9 +193,11 @@ function renderNode(
           }`}
           role="status"
         >
-          {node.state === 'scheduled' ? (
-            <span className="dsh-timeline__retry-shimmer" aria-hidden="true" />
-          ) : null}
+          <span
+            className="dsh-timeline__retry-shimmer"
+            data-active={node.state === 'scheduled' ? 'true' : 'false'}
+            aria-hidden="true"
+          />
           <span>
             {node.state === 'cancelled'
               ? t('timeline.retryCancelled', { attempt: node.attempt })

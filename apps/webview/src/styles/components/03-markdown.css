@@ -213,10 +213,19 @@
   white-space: nowrap;
 }
 
+.dsh-markdown__block-toolbar .dsh-markdown__copy-mount {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--dsh-control-height);
+  min-height: var(--dsh-control-height);
+  margin-inline-start: auto;
+}
+
 .dsh-markdown__block-toolbar .dsh-markdown__copy-button {
   position: static;
   flex: 0 0 auto;
-  margin-inline-start: auto;
   background: transparent;
 }
 

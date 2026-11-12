@@ -21,6 +21,17 @@ export function useComposerHeightMotion(ref: RefObject<HTMLFormElement | null>):
       form.classList.remove('dsh-composer--resizing')
     }
     const reconcile = (): void => {
+      const width = form.getBoundingClientRect().width
+      // Hidden panels (`display: none`) collapse every rect to zero; keep
+      // intrinsic auto height instead of locking the composer to insets until
+      // a post-paint ResizeObserver pass runs on reveal.
+      if (width <= 0 || form.getClientRects().length === 0) {
+        cancel()
+        form.style.height = originalHeight
+        previousHeight = undefined
+        previousWidth = undefined
+        return
+      }
       const style = getComputedStyle(form)
       const px = (value: string): number => Number.parseFloat(value) || 0
       const insets =
@@ -43,7 +54,6 @@ export function useComposerHeightMotion(ref: RefObject<HTMLFormElement | null>):
         count++
       }
       naturalHeight += Math.max(0, count - 1) * px(style.rowGap)
-      const width = form.getBoundingClientRect().width
       const from = animation === undefined ? previousHeight : form.getBoundingClientRect().height
       const widthChanged = previousWidth !== undefined && Math.abs(width - previousWidth) > 0.5
       previousWidth = width

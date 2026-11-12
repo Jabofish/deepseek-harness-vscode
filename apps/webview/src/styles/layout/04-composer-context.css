@@ -43,7 +43,7 @@
 }
 
 .dsh-unified-composer .dsh-stats-line {
-  display: block;
+  display: flex;
   min-width: 0;
   overflow: hidden;
   color: var(--dsh-muted);

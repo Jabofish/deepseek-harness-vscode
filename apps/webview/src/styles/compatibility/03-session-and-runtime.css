@@ -20,6 +20,7 @@
 }
 
 .dsh-timeline__retry-shimmer {
+  flex: 0 0 auto;
   width: 28px;
   height: 3px;
   border-radius: 2px;
@@ -32,6 +33,12 @@
   background-size: 200% 100%;
   animation: dsh-retry-shimmer var(--dsh-motion-duration-loop-shimmer) var(--dsh-motion-ease-standard)
     infinite;
+}
+
+.dsh-timeline__retry-shimmer[data-active='false'] {
+  background: currentColor;
+  opacity: 0.45;
+  animation: none;
 }
 
 .dsh-todo-list__toggle {

@@ -146,6 +146,7 @@
   margin: 0;
   padding: var(--dsh-space-2);
   overflow: auto;
+  scrollbar-gutter: stable;
   border: 1px solid var(--dsh-border-color);
   border-radius: var(--dsh-radius-lg);
   color: var(--dsh-text);

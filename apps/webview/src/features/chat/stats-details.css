@@ -24,8 +24,12 @@
 }
 
 .dsh-stats-line--focused {
-  justify-content: center;
-  gap: 4px 12px;
+  justify-content: flex-start;
+  gap: 4px 8px;
+}
+
+.dsh-stats-line--focused > :first-child {
+  margin-inline-end: auto;
 }
 .dsh-stats-pill {
   display: inline-flex;
@@ -146,7 +150,7 @@ button.dsh-stats-pill[aria-expanded='true'] {
 
 .dsh-unified-composer .dsh-stats-line--focused {
   display: flex;
-  flex-wrap: wrap;
-  overflow: visible;
-  white-space: normal;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  white-space: nowrap;
 }

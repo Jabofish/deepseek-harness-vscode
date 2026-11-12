@@ -78,11 +78,15 @@ export function PresetCopyDialog({
             onChange={(event) => onChange({ ...copy, name: event.target.value, error: undefined })}
           />
         </label>
-        {copyMessage === undefined ? null : (
-          <p className="dsh-presets__dialog-error" role="alert">
-            {copyMessage}
-          </p>
-        )}
+        {/* Reserve the wrapping validation text before typing changes its visibility. */}
+        <p
+          className="dsh-presets__dialog-error dsh-presets__dialog-error--slot"
+          data-validation-message={t('presets.idInvalid')}
+          role={copyMessage === undefined ? undefined : 'alert'}
+          aria-hidden={copyMessage === undefined ? true : undefined}
+        >
+          <span>{copyMessage ?? ''}</span>
+        </p>
         <div className="dsh-presets__dialog-actions">
           <button
             className="dsh-button dsh-button--secondary dsh-button--compact"

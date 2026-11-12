@@ -137,6 +137,7 @@ export const QueuePanel = memo(function QueuePanel(props: QueuePanelProps): Reac
                       <MessageImages
                         images={item.images}
                         translate={t}
+                        showNames
                         {...(props.onLoadImage === undefined ? {} : { loadImage: props.onLoadImage })}
                       />
                     ) : null}

@@ -4,6 +4,29 @@ import type { FrontmatterField } from './frontmatter-fields.js'
 import { useI18n } from '../../i18n.js'
 import './document-preview.css'
 
+type FrontmatterParser = (source: string) => readonly FrontmatterField[] | undefined
+
+let loadedParser: FrontmatterParser | undefined
+let pendingParser: Promise<FrontmatterParser | undefined> | undefined
+
+/**
+ * Loads and caches the YAML frontmatter parser chunk so callers opening a
+ * markdown preview overlay can prepare `<dl>` rows before first paint.
+ */
+export function preloadFrontmatterParser(): Promise<FrontmatterParser | undefined> {
+  if (loadedParser !== undefined) return Promise.resolve(loadedParser)
+  pendingParser ??= import('./frontmatter-fields.js')
+    .then((module) => {
+      loadedParser = module.parseFrontmatterFields
+      return loadedParser
+    })
+    .catch(() => {
+      pendingParser = undefined
+      return undefined
+    })
+  return pendingParser
+}
+
 const FRONTMATTER = /^\uFEFF?---[ \t]*\r?\n(?:([\s\S]*?)\r?\n)??(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/u
 export function splitDocumentFrontmatter(
   text: string,
@@ -15,26 +38,27 @@ export function splitDocumentFrontmatter(
 export function MarkdownDocumentPreview(props: { readonly text: string }): ReactElement {
   const { t } = useI18n()
   const split = useMemo(() => splitDocumentFrontmatter(props.text), [props.text])
+  const syncParsed = useMemo(() => {
+    if (split === undefined || loadedParser === undefined) return undefined
+    return { source: split.source, fields: loadedParser(split.source) }
+  }, [split])
   const [parsed, setParsed] = useState<{
     readonly source: string
     readonly fields: readonly FrontmatterField[] | undefined
   }>()
   useEffect(() => {
-    if (split === undefined) return
+    if (split === undefined || loadedParser !== undefined) return
     let current = true
-    void import('./frontmatter-fields.js')
-      .then((module) => {
-        const fields = module.parseFrontmatterFields(split.source)
-        if (current) setParsed({ source: split.source, fields })
-      })
-      .catch(() => {
-        if (current) setParsed({ source: split.source, fields: undefined })
-      })
+    void preloadFrontmatterParser().then((parser) => {
+      if (!current) return
+      setParsed({ source: split.source, fields: parser?.(split.source) })
+    })
     return () => {
       current = false
     }
   }, [split])
-  const fields = parsed?.source === split?.source ? parsed?.fields : undefined
+  const resolved = syncParsed ?? (parsed?.source === split?.source ? parsed : undefined)
+  const fields = resolved?.fields
   return (
     <div className="dsh-document-preview">
       {split === undefined ? null : (

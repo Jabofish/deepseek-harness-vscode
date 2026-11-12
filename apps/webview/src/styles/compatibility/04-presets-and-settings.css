@@ -153,6 +153,22 @@
   margin: 0;
   color: var(--dsh-error-text, var(--dsh-danger, inherit));
   font-size: var(--dsh-font-size-xs);
+  line-height: 1.4;
+}
+
+.dsh-presets__dialog-error--slot {
+  display: grid;
+  min-height: 1.4em;
+}
+
+.dsh-presets__dialog-error--slot::before {
+  grid-area: 1 / 1;
+  content: attr(data-validation-message);
+  visibility: hidden;
+}
+
+.dsh-presets__dialog-error--slot > span {
+  grid-area: 1 / 1;
 }
 
 .dsh-settings__provider-kind,

@@ -61,6 +61,8 @@ export interface UserTextFacts {
 export interface AssistantTurnNode {
   readonly kind: 'assistant-turn'
   readonly id: string
+  /** Latest assistant-message ID carried by this turn for feedback/copy/inspector. */
+  readonly messageId?: string
   readonly modelLabel?: string
   readonly usage?: TokenUsage
   readonly turnUsage?: TurnTokenUsage | undefined
@@ -143,6 +145,7 @@ export function assistantBlocksFromAggregates(node: AssistantTurnNode): readonly
 }
 
 export function assistantMessageId(node: AssistantTurnNode): string | undefined {
+  if (node.messageId !== undefined) return node.messageId === '' ? undefined : node.messageId
   if (!node.id.startsWith('assistant-turn:')) return undefined
   let id = node.id
   while (id.startsWith('assistant-turn:')) id = id.slice('assistant-turn:'.length)

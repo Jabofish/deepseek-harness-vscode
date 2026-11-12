@@ -88,12 +88,12 @@ export function MessageActions(props: MessageActionsProps): ReactElement {
     feedbackDetailRef.current?.focus()
   }, [dialogRating])
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    aliveRef.current = true
+    return () => {
       aliveRef.current = false
-    },
-    [],
-  )
+    }
+  }, [])
 
   useEffect(() => {
     if (!feedbackRecorded) return

@@ -12,6 +12,7 @@ type TailEntranceAction = {
   readonly resetKey: string | number | undefined
   readonly tailId: string | undefined
   readonly suppress: boolean
+  readonly suppressTransition?: (previousTailId: string, nextTailId: string) => boolean
 }
 
 /**
@@ -23,6 +24,7 @@ export function useTailEntrance(
   tailId: string | undefined,
   resetKey: string | number | undefined,
   suppress = false,
+  suppressTransition?: (previousTailId: string, nextTailId: string) => boolean,
 ): string | undefined {
   const [state, dispatch] = useReducer(tailEntranceReducer, {
     resetKey,
@@ -36,8 +38,14 @@ export function useTailEntrance(
     // row. The old effect applied it after the first paint and removed it on
     // the next frame, which made a streamed update flash from visible to
     // transparent and back again before the 120/180ms CSS animation finished.
-    dispatch({ type: 'sync', resetKey, tailId, suppress })
-  }, [resetKey, suppress, tailId])
+    dispatch({
+      type: 'sync',
+      resetKey,
+      tailId,
+      suppress,
+      ...(suppressTransition === undefined ? {} : { suppressTransition }),
+    })
+  }, [resetKey, suppress, suppressTransition, tailId])
 
   return state.enteredId
 }
@@ -56,11 +64,15 @@ function tailEntranceReducer(state: TailEntranceState, action: TailEntranceActio
     return state.enteredId === undefined && state.tailId === undefined
       ? state
       : { ...state, tailId: undefined, enteredId: undefined }
-  if (action.suppress)
-    return state.tailId === action.tailId && state.enteredId === undefined
-      ? state
-      : { ...state, tailId: action.tailId, enteredId: undefined }
-  if (state.tailId === action.tailId) return state
+  if (state.tailId === action.tailId) {
+    if (action.suppress && state.enteredId !== undefined) return { ...state, enteredId: undefined }
+    return state
+  }
+  if (
+    action.suppress ||
+    (state.tailId !== undefined && action.suppressTransition?.(state.tailId, action.tailId) === true)
+  )
+    return { ...state, tailId: action.tailId, enteredId: undefined }
   // Keep the class mounted until another tail arrives. Removing it on the
   // next animation frame cancels the CSS animation and is observable as a
   // flash. The completed animation is visually inert, while the next tail

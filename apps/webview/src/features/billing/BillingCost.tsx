@@ -56,7 +56,10 @@ export function BillingCost(props: {
   const disabled = estimate?.sessionId === sessionId && !estimate.enabled
   if (failed && !disabled && estimate === undefined)
     return props.labelOnly ? (
-      <span>{t('billing.retry')}</span>
+      <span>
+        {' · '}
+        {t('billing.retry')}
+      </span>
     ) : (
       <button type="button" className="dsh-stats-pill" onClick={refresh}>
         {t('billing.retry')}

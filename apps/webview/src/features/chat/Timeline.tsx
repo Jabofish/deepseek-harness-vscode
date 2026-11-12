@@ -40,6 +40,7 @@ import {
 } from './timeline-shared.js'
 import { StreamingActivity } from './timeline-renderers.js'
 import { TurnProgressAnnouncement } from './TurnProgressAnnouncement.js'
+import { createTimelineHeightEstimator } from './timeline-height-estimate.js'
 import { TimelineRow } from './TimelineRow.js'
 import { ToolLinkErrorDialog } from './ToolLinkErrorDialog.js'
 import {
@@ -230,9 +231,26 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
     props.contentVersions,
   )
   const sourceNodes = complete.nodes
+  // An omitted node hydration cannot declare a turn completed ahead of the
+  // authoritative transcript window.
+  const cueNodes = useMemo(
+    () =>
+      sourceNodes === props.nodes
+        ? sourceNodes
+        : sourceNodes.map((node, index) => {
+            const authoritative = props.nodes[index]
+            return authoritative?.kind === 'assistant-message' &&
+              node.kind === 'assistant-message' &&
+              node.id === authoritative.id &&
+              authoritative.turnCompleted !== true
+              ? { ...node, turnCompleted: false }
+              : node
+          }),
+    [props.nodes, sourceNodes],
+  )
   useCompletionCue(
     props.onResponseRendered,
-    { sessionId: props.sessionId, nodes: sourceNodes },
+    { sessionId: props.sessionId, nodes: cueNodes },
     complete.pendingIds,
   )
   const changeStart = sourceNodes === props.nodes ? props.nodeChangeStart : undefined
@@ -383,7 +401,7 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
     isPinnedToBottom,
     showJumpToLatest,
   } = useScrollFollow({
-    contentKey: latestSignature,
+    contentKey: `${latestSignature}:${running}`,
     itemCount: displayNodes.length,
     sessionId: props.sessionId,
     layoutMeasurementsActive: virtualizeTimeline,
@@ -571,19 +589,20 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
     scrollRef,
     virtualizeTimeline,
   ])
+  const heightEstimator = useMemo(() => createTimelineHeightEstimator(), [])
   const estimateRowHeight = useCallback(
     (index: number): number => {
       const node = displayNodes[index]
-      if (node !== undefined && measuredSessionRef.current === props.sessionId) {
+      if (node === undefined) return DEFAULT_ESTIMATED_ITEM_SIZE
+      if (measuredSessionRef.current === props.sessionId) {
         const measured = measuredRowHeightsRef.current.get(node.id)
         if (measured !== undefined) return measured
       }
       // A newly appended row begins short even when earlier answers are tall.
-      // Using their average temporarily grows the canvas by hundreds of pixels
-      // and then shrinks it as soon as the new row is measured.
-      return DEFAULT_ESTIMATED_ITEM_SIZE
+      // Estimate structurally per node without extrapolating future growth.
+      return heightEstimator(node, conversationLayout)
     },
-    [displayNodes, props.sessionId],
+    [conversationLayout, displayNodes, heightEstimator, props.sessionId],
   )
   const virtualized = useVirtualizedCollection({
     items: displayNodes,
@@ -779,7 +798,19 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
   // has to cover a viewport for the measurement to be meaningful, and the
   // reader of a reopened long session is looking at the newest rows.
   const unmeasuredRowStart = Math.max(0, displayNodes.length - DEFAULT_UNMEASURED_ROW_WINDOW)
-  const enteredId = useTailEntrance(latestNode?.id, props.sessionId, props.streaming || running)
+  // Confirming or rolling back an optimistic send replaces the tail id in place;
+  // re-arming entrance here flashes the already-visible bubble again.
+  const isOptimisticTailHandoff = useCallback(
+    (previousTailId: string): boolean =>
+      previousTailId.startsWith('optimistic:user:') && !hasDisplayNodeId(displayNodes, previousTailId),
+    [displayNodes],
+  )
+  const enteredId = useTailEntrance(
+    latestNode?.id,
+    props.sessionId,
+    props.streaming || running,
+    isOptimisticTailHandoff,
+  )
   useLayoutEffect(() => {
     if (!virtualizedReady || virtualized.totalSize <= 0) return
     // Virtual rows refine the canvas height as they enter the measurement
@@ -1120,9 +1151,7 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
                   </div>
                 ))}
           </div>
-          {running &&
-          (!virtualizedReady ||
-            !virtualized.virtualItems.some((item) => item.index === displayNodes.length - 1)) ? (
+          {running && !virtualizedReady ? (
             <StreamingActivity
               id={`turn:${props.activeTurn ?? latestNode?.id ?? props.sessionId}`}
               usingTool={usingTool}
@@ -1173,4 +1202,11 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
 
 function timelineNodeKey(node: PresentedTimelineNode): string {
   return node.id
+}
+
+function hasDisplayNodeId(nodes: readonly PresentedTimelineNode[], id: string): boolean {
+  for (let index = nodes.length - 1; index >= 0; index -= 1) {
+    if (nodes[index]?.id === id) return true
+  }
+  return false
 }

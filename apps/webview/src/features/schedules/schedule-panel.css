@@ -137,9 +137,17 @@
   overflow-wrap: anywhere;
 }
 
+.dsh-schedule-panel__detail-heading > :first-child {
+  flex: 1 1 11rem;
+  min-width: 0;
+}
+
 .dsh-schedule-panel__detail-heading-actions {
   flex: 0 0 auto;
   justify-content: flex-end;
+  /* Keep actions at the trailing edge even when the heading wraps onto a second line,
+   * so the trailing-anchored overflow menu opens inward instead of clipping off-screen. */
+  margin-inline-start: auto;
 }
 
 .dsh-schedule-panel__more-actions {
@@ -150,8 +158,9 @@
   position: absolute;
   z-index: 2;
   top: calc(100% + var(--dsh-space-1));
-  right: 0;
-  min-width: 10rem;
+  inset-inline-end: 0;
+  min-width: min(10rem, calc(100vw - 2 * var(--dsh-space-4)));
+  max-width: calc(100vw - 2 * var(--dsh-space-4));
   padding: var(--dsh-space-1);
   border: var(--dsh-border);
   border-radius: var(--dsh-radius-md);

@@ -3,8 +3,8 @@ import * as katex from 'katex'
 import texmath from 'markdown-it-texmath'
 import { createPortal } from 'react-dom'
 import {
-  useEffect,
   memo,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -13,7 +13,7 @@ import {
   type MouseEvent,
   type ReactElement,
 } from 'react'
-import { useI18n } from '../../i18n.js'
+import { useI18n, type Translate } from '../../i18n.js'
 import { CopyButton } from './CopyButton.js'
 import { ContentFlow } from '../../components/common/ContentFlow.js'
 import {
@@ -153,17 +153,17 @@ export const MarkdownContent = memo(function MarkdownContent({
   // argument.
   const highlightVersion = useSyncExternalStore(subscribeCodeHighlights, codeHighlightVersion)
   const frozenHtml = useMemo(
-    () => highlightRegionHtml(projection.primaryHtml, streaming, highlightMemory.current),
+    () => prepareRegionHtml(projection.primaryHtml, streaming, highlightMemory.current, t),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [projection.primaryHtml, streaming, highlightVersion],
+    [projection.primaryHtml, streaming, highlightVersion, t],
   )
   const tailHtml = useMemo(
     () =>
       projection.tailHtml === null
         ? null
-        : highlightRegionHtml(projection.tailHtml, true, highlightMemory.current),
+        : prepareRegionHtml(projection.tailHtml, true, highlightMemory.current, t),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [projection.tailHtml, highlightVersion],
+    [projection.tailHtml, highlightVersion, t],
   )
   // Keep the frozen prefix as its own React-owned DOM region. Combining it
   // with the changing tail in one innerHTML string replaced every completed
@@ -176,64 +176,30 @@ export const MarkdownContent = memo(function MarkdownContent({
     if (container === null) return
     if (streaming) {
       setCopyRegions((current) => (current.length === 0 ? current : []))
-      return
-    }
-
-    const mounted: MountedCopyRegion[] = []
-    for (const target of Array.from(container.querySelectorAll<HTMLElement>('pre, table'))) {
-      if (target.parentElement?.classList.contains('dsh-markdown__copy-region')) continue
-
-      const region = document.createElement('div')
-      const kind = target.tagName.toLowerCase() === 'table' ? 'table' : 'code'
-      region.className = `dsh-markdown__copy-region dsh-markdown__copy-region--${kind}`
-      const mount = document.createElement('div')
-      mount.className = 'dsh-markdown__copy-mount'
-      region.append(mount)
-      const label =
-        kind === 'table' ? t('markdown.table') : (codeLanguageLabel(target) ?? t('markdown.plainText'))
-      const ariaLabel = kind === 'table' ? label : t('markdown.codeBlock', { language: label })
-      const codeAttributes =
-        kind === 'code'
-          ? ['tabindex', 'role', 'aria-label'].map((name) => ({ name, value: target.getAttribute(name) }))
-          : []
-      let details: string
-      if (kind === 'table') {
-        const columns = target.querySelector<HTMLTableRowElement>('tr')?.cells.length ?? 0
-        details = t('markdown.tableDimensions', {
-          rows: target.querySelectorAll('tbody tr').length,
-          columns,
-        })
-        const wide = columns >= 4 && target.closest('blockquote') === null
-        region.classList.add(
-          wide ? 'dsh-markdown__copy-region--table-wide' : 'dsh-markdown__copy-region--table-fill',
-        )
-        // Even a two-column table can exceed a narrow sidebar. Keep its
-        // scrollport separate so the header and copy action stay in view.
-        const scrollPort = document.createElement('div')
-        scrollPort.className = 'dsh-markdown__table-scroll'
-        scrollPort.tabIndex = 0
-        scrollPort.setAttribute('role', 'region')
-        scrollPort.setAttribute('aria-label', label)
-        target.replaceWith(region)
-        scrollPort.append(target)
-        region.append(scrollPort)
-      } else {
-        const source = (target.textContent ?? '').replace(/\n$/u, '')
-        details = t('markdown.codeLines', { count: source === '' ? 0 : source.split('\n').length })
-        target.tabIndex = 0
-        target.setAttribute('role', 'region')
-        target.setAttribute('aria-label', ariaLabel)
-        target.replaceWith(region)
-        region.append(target)
+    } else {
+      const mounted: MountedCopyRegion[] = []
+      for (const region of Array.from(
+        container.querySelectorAll<HTMLElement>('.dsh-markdown__copy-region'),
+      )) {
+        const mount = region.querySelector<HTMLDivElement>('.dsh-markdown__copy-mount')
+        const target = region.querySelector<HTMLElement>('pre, table')
+        if (mount === null || target === null) continue
+        mounted.push({ mount, target })
       }
-      mounted.push({ mount, region, target, label, ariaLabel, details, codeAttributes })
+      // Portals belong to the existing React tree. Separate roots per block made
+      // parent cleanup synchronously unmount roots during React's own commit.
+      setCopyRegions((current) =>
+        current.length === mounted.length &&
+        current.every(
+          (item, index) => item.mount === mounted[index]?.mount && item.target === mounted[index]?.target,
+        )
+          ? current
+          : mounted,
+      )
     }
-    // Portals belong to the existing React tree. Separate roots per block made
-    // parent cleanup synchronously unmount roots during React's own commit.
-    setCopyRegions(mounted)
 
     const mentions: MountedFileMention[] = []
-    if (onOpenLink !== undefined && producedFiles.length > 0) {
+    if (!streaming && onOpenLink !== undefined && producedFiles.length > 0) {
       for (const code of Array.from(container.querySelectorAll<HTMLElement>('code'))) {
         // Fenced examples stay literal; an explicit link already owns its
         // target and must not get a nested button with a different path.
@@ -259,14 +225,6 @@ export const MarkdownContent = memo(function MarkdownContent({
       for (const mention of mentions) {
         mention.button.removeEventListener('click', mention.handleClick)
         if (mention.button.parentNode !== null) mention.button.replaceWith(mention.code)
-      }
-      for (const entry of mounted) {
-        for (const { name, value } of entry.codeAttributes) {
-          if (value === null) entry.target.removeAttribute(name)
-          else entry.target.setAttribute(name, value)
-        }
-        if (entry.region.parentNode !== null && entry.region.contains(entry.target))
-          entry.region.replaceWith(entry.target)
       }
     }
   }, [markdown, onOpenLink, producedFiles, frozenHtml, tailHtml, streaming, t])
@@ -312,15 +270,11 @@ export const MarkdownContent = memo(function MarkdownContent({
       </ContentFlow>
       {copyRegions.map((entry, index) =>
         createPortal(
-          <div className="dsh-markdown__block-toolbar" role="group" aria-label={entry.ariaLabel}>
-            <span className="dsh-markdown__block-label">{entry.label}</span>
-            <span className="dsh-markdown__block-meta">{entry.details}</span>
-            <CopyButton
-              text={copyableMarkdown(entry.target)}
-              className="dsh-markdown__copy-button"
-              translate={t}
-            />
-          </div>,
+          <CopyButton
+            text={copyableMarkdown(entry.target)}
+            className="dsh-markdown__copy-button"
+            translate={t}
+          />,
           entry.mount,
           `copy-${index}`,
         ),
@@ -467,37 +421,109 @@ function stableBlockCount(markdown: string, blocks: readonly string[]): number {
 }
 
 /**
- * Replace every labeled code block in one rendered region with its Shiki HTML.
- * Missing highlights are requested and left as plaintext for this pass, which
- * keeps the pass synchronous: the next cache version re-renders the region with
- * whatever landed. A grammar the Webview does not bundle stays plaintext.
+ * Highlight labeled code blocks with Shiki and wrap every `<pre>` / `<table>`
+ * inside its `.dsh-markdown__copy-region` + 33px `.dsh-markdown__block-toolbar`
+ * shell synchronously in HTML so streaming, completion, and virtualized scroll
+ * never reflow the block after paint.
  */
-function highlightRegionHtml(html: string, streaming: boolean, memory: HighlightMemory): string {
-  if (!html.includes('language-') || typeof DOMParser === 'undefined') return html
+function prepareRegionHtml(html: string, streaming: boolean, memory: HighlightMemory, t: Translate): string {
+  const mayHighlight = html.includes('language-')
+  const mayWrap = html.includes('<pre') || html.includes('<table')
+  if ((!mayHighlight && !mayWrap) || typeof DOMParser === 'undefined') return html
   const parsed = new DOMParser().parseFromString(`<body>${html}</body>`, 'text/html')
-  const codeBlocks = Array.from(parsed.body.querySelectorAll<HTMLElement>('pre > code[class*="language-"]'))
-  if (codeBlocks.length === 0) return html
   let changed = false
-  for (const [index, code] of codeBlocks.entries()) {
-    const languageClass = Array.from(code.classList).find((value) => value.startsWith('language-'))
-    const language = languageClass === undefined ? undefined : resolveBundledLanguage(languageClass.slice(9))
-    if (language === undefined) continue
-    const highlighted = highlightedBlockHtml(
-      language,
-      code.textContent ?? '',
-      streaming,
-      memory,
-      streaming ? undefined : `completed:${index}:${language}`,
-    )
-    if (highlighted === undefined) continue
-    const template = parsed.createElement('template')
-    template.innerHTML = highlighted
-    const replacement = template.content.firstElementChild
-    if (replacement === null || code.parentElement === null) continue
-    replacement.setAttribute('data-code-language', language)
-    code.parentElement.replaceWith(replacement)
-    changed = true
+
+  if (mayHighlight) {
+    const codeBlocks = Array.from(parsed.body.querySelectorAll<HTMLElement>('pre > code[class*="language-"]'))
+    for (const [index, code] of codeBlocks.entries()) {
+      const languageClass = Array.from(code.classList).find((value) => value.startsWith('language-'))
+      const language =
+        languageClass === undefined ? undefined : resolveBundledLanguage(languageClass.slice(9))
+      if (language === undefined) continue
+      const highlighted = highlightedBlockHtml(
+        language,
+        code.textContent ?? '',
+        streaming,
+        memory,
+        streaming ? undefined : `completed:${index}:${language}`,
+      )
+      if (highlighted === undefined) continue
+      const template = parsed.createElement('template')
+      template.innerHTML = highlighted
+      const replacement = template.content.firstElementChild
+      if (replacement === null || code.parentElement === null) continue
+      replacement.setAttribute('data-code-language', language)
+      code.parentElement.replaceWith(replacement)
+      changed = true
+    }
   }
+
+  if (mayWrap) {
+    for (const target of Array.from(parsed.body.querySelectorAll<HTMLElement>('pre, table'))) {
+      if (target.parentElement?.classList.contains('dsh-markdown__copy-region')) continue
+      const region = parsed.createElement('div')
+      const kind = target.tagName.toLowerCase() === 'table' ? 'table' : 'code'
+      region.className = `dsh-markdown__copy-region dsh-markdown__copy-region--${kind}`
+
+      const label =
+        kind === 'table' ? t('markdown.table') : (codeLanguageLabel(target) ?? t('markdown.plainText'))
+      const ariaLabel = kind === 'table' ? label : t('markdown.codeBlock', { language: label })
+      let details: string
+      if (kind === 'table') {
+        const columns = target.querySelector<HTMLTableRowElement>('tr')?.cells.length ?? 0
+        details = t('markdown.tableDimensions', {
+          rows: target.querySelectorAll('tbody tr').length,
+          columns,
+        })
+      } else {
+        const source = (target.textContent ?? '').replace(/\n$/u, '')
+        details = t('markdown.codeLines', { count: source === '' ? 0 : source.split('\n').length })
+      }
+
+      const toolbar = parsed.createElement('div')
+      toolbar.className = 'dsh-markdown__block-toolbar'
+      toolbar.setAttribute('role', 'group')
+      toolbar.setAttribute('aria-label', ariaLabel)
+
+      const labelSpan = parsed.createElement('span')
+      labelSpan.className = 'dsh-markdown__block-label'
+      labelSpan.textContent = label
+
+      const metaSpan = parsed.createElement('span')
+      metaSpan.className = 'dsh-markdown__block-meta'
+      metaSpan.textContent = details
+
+      const mount = parsed.createElement('div')
+      mount.className = 'dsh-markdown__copy-mount'
+
+      toolbar.append(labelSpan, metaSpan, mount)
+      region.append(toolbar)
+
+      if (kind === 'table') {
+        const columns = target.querySelector<HTMLTableRowElement>('tr')?.cells.length ?? 0
+        const wide = columns >= 4 && target.closest('blockquote') === null
+        region.classList.add(
+          wide ? 'dsh-markdown__copy-region--table-wide' : 'dsh-markdown__copy-region--table-fill',
+        )
+        const scrollPort = parsed.createElement('div')
+        scrollPort.className = 'dsh-markdown__table-scroll'
+        scrollPort.setAttribute('tabindex', '0')
+        scrollPort.setAttribute('role', 'region')
+        scrollPort.setAttribute('aria-label', label)
+        target.replaceWith(region)
+        scrollPort.append(target)
+        region.append(scrollPort)
+      } else {
+        target.setAttribute('tabindex', '0')
+        target.setAttribute('role', 'region')
+        target.setAttribute('aria-label', ariaLabel)
+        target.replaceWith(region)
+        region.append(target)
+      }
+      changed = true
+    }
+  }
+
   return changed ? parsed.body.innerHTML : html
 }
 
@@ -567,12 +593,7 @@ function withPlainRemainder(html: string, remainder: string): string | undefined
 
 interface MountedCopyRegion {
   readonly mount: HTMLDivElement
-  readonly region: HTMLDivElement
   readonly target: HTMLElement
-  readonly label: string
-  readonly ariaLabel: string
-  readonly details: string
-  readonly codeAttributes: readonly { readonly name: string; readonly value: string | null }[]
 }
 
 /** Language is content metadata, never executable HTML or an unbounded label. */

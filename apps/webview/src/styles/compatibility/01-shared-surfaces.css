@@ -417,6 +417,37 @@
   border-radius: var(--dsh-radius-sm);
 }
 
+.dsh-message-images--grid
+  .dsh-message-images__placeholder:where(:not(.dsh-message-images__placeholder--error)) {
+  width: 64px;
+  height: 64px;
+  aspect-ratio: 1;
+  padding: var(--dsh-space-1);
+  overflow: hidden;
+  align-content: center;
+  border: var(--dsh-border);
+  border-radius: var(--dsh-radius-sm);
+  background: var(--dsh-surface-soft);
+  font-size: var(--dsh-font-size-2xs);
+}
+
+.dsh-message-images--grid .dsh-message-images__placeholder > span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-message-images--grid .dsh-message-images__placeholder--error {
+  width: auto;
+  max-width: 100%;
+  min-height: 64px;
+  aspect-ratio: auto;
+  border: var(--dsh-border);
+  border-radius: var(--dsh-radius-sm);
+  background: var(--dsh-surface-soft);
+}
+
 .dsh-message-images--grid .dsh-message-images__thumb > img {
   width: 100%;
   height: 100%;

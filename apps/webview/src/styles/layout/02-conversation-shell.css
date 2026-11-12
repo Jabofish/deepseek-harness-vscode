@@ -128,7 +128,8 @@
 
 .dsh-timeline__canvas--virtualized-ready > .dsh-timeline__row {
   position: absolute;
-  inset-inline: 0;
+  inset-inline: var(--dsh-timeline-canvas-gutter, var(--dsh-space-1));
+  width: auto;
   top: 0;
 }
 

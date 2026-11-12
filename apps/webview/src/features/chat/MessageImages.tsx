@@ -5,11 +5,6 @@ import { Icon } from '../../ui/Icon.js'
 import type { Translate } from '../../i18n.js'
 import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 
-interface LoadedImage {
-  readonly image: MessageImageReference
-  readonly dataUri: string
-}
-
 /**
  * A read can fail for reasons that outlive nothing: the connection dropped, the
  * host was still writing the image, or the session was reopened underneath the
@@ -23,17 +18,19 @@ export interface MessageImagesProps {
   readonly images: readonly MessageImageReference[]
   readonly loadImage?: (image: MessageImageReference) => Promise<string | undefined>
   readonly translate: Translate
+  readonly showNames?: boolean
 }
 
 /** Historical DSH images: bounded thumbnails with an explicit lightbox. */
 export const MessageImages = memo(function MessageImages(props: MessageImagesProps): ReactElement | null {
-  const [loaded, setLoaded] = useState<Readonly<Record<string, LoadedImage>>>({})
+  const [loaded, setLoaded] = useState<Readonly<Record<string, string>>>({})
   const [loading, setLoading] = useState<ReadonlySet<string>>(new Set())
   const [failed, setFailed] = useState<ReadonlySet<string>>(new Set())
   const [retry, setRetry] = useState(0)
-  const [lightbox, setLightbox] = useState<LoadedImage | undefined>(undefined)
-  const requested = useRef(new Set<string>())
+  const [lightboxId, setLightboxId] = useState<string | undefined>(undefined)
+  const requested = useRef(new Map<string, { readonly reader: MessageImagesProps['loadImage'] }>())
   const attempts = useRef(new Map<string, number>())
+  const mounted = useRef(false)
   const closeRef = useRef<HTMLButtonElement>(null)
   const lightboxDialogRef = useRef<HTMLElement>(null)
   /**
@@ -51,77 +48,116 @@ export const MessageImages = memo(function MessageImages(props: MessageImagesPro
   imagesRef.current = images
   const loadedRef = useRef(loaded)
   loadedRef.current = loaded
+  const readerRef = useRef(loadImage)
+  readerRef.current = loadImage
+  const lightboxImage = images.find((image) => image.attachmentId === lightboxId)
+  const lightboxData = lightboxId === undefined ? undefined : loaded[lightboxId]
+  const lightboxOpen = lightboxImage !== undefined && lightboxData !== undefined
 
   useEffect(() => {
-    if (loadImage === undefined) return
-    const pendingImages: MessageImageReference[] = []
-    for (const image of imagesRef.current) {
-      if (requested.current.has(image.attachmentId)) continue
-      if (loadedRef.current[image.attachmentId] !== undefined) continue
-      const attempt = attempts.current.get(image.attachmentId) ?? 0
-      if (attempt >= MAX_LOAD_ATTEMPTS) continue
-      attempts.current.set(image.attachmentId, attempt + 1)
-      requested.current.add(image.attachmentId)
-      pendingImages.push(image)
+    mounted.current = true
+    const pending = requested.current
+    const reads = attempts.current
+    return () => {
+      mounted.current = false
+      pending.clear()
+      reads.clear()
     }
-    if (pendingImages.length === 0) return
-    setLoading((current) => {
-      const next = new Set(current)
-      for (const image of pendingImages) next.add(image.attachmentId)
-      return next
-    })
-    for (const image of pendingImages) {
-      void loadImage(image).then(
-        (dataUri) => {
-          setLoading((current) => without(current, image.attachmentId))
-          if (dataUri === undefined) {
-            // Release the in-flight marker: the next publication of this row may
-            // be answered by a host that can read the image after all.
-            requested.current.delete(image.attachmentId)
-            setFailed((current) => new Set(current).add(image.attachmentId))
-            return
-          }
-          setFailed((current) => without(current, image.attachmentId))
-          setLoaded((current) => ({ ...current, [image.attachmentId]: { image, dataUri } }))
-        },
-        () => {
-          setLoading((current) => without(current, image.attachmentId))
-          requested.current.delete(image.attachmentId)
-          setFailed((current) => new Set(current).add(image.attachmentId))
-        },
-      )
+  }, [])
+
+  useEffect(() => {
+    const activeIds = new Set(imagesRef.current.map((image) => image.attachmentId))
+    for (const id of requested.current.keys()) if (!activeIds.has(id)) requested.current.delete(id)
+    for (const id of attempts.current.keys()) if (!activeIds.has(id)) attempts.current.delete(id)
+    setLoaded((current) => retainImages(current, activeIds))
+    setLoading((current) => retainImageIds(current, activeIds))
+    setFailed((current) => retainImageIds(current, activeIds))
+  }, [imageKey])
+
+  if (lightboxId !== undefined && lightboxImage === undefined) setLightboxId(undefined)
+
+  useEffect(() => {
+    if (loadImage === undefined) {
+      for (const id of requested.current.keys()) {
+        attempts.current.set(id, Math.max(0, (attempts.current.get(id) ?? 1) - 1))
+      }
+      requested.current.clear()
+      setLoading((current) => (current.size === 0 ? current : new Set()))
+      return
+    }
+    for (const image of imagesRef.current) {
+      const id = image.attachmentId
+      const pending = requested.current.get(id)
+      if (pending?.reader === loadImage) continue
+      if (pending !== undefined) {
+        requested.current.delete(id)
+        attempts.current.set(id, Math.max(0, (attempts.current.get(id) ?? 1) - 1))
+      }
+      if (loadedRef.current[id] !== undefined) continue
+      const attempt = attempts.current.get(id) ?? 0
+      if (attempt >= MAX_LOAD_ATTEMPTS) continue
+      attempts.current.set(id, attempt + 1)
+      const request = { reader: loadImage }
+      requested.current.set(id, request)
+      setLoading((current) => new Set(current).add(id))
+      const isCurrent = (): boolean =>
+        mounted.current &&
+        requested.current.get(id) === request &&
+        readerRef.current === loadImage &&
+        imagesRef.current.some((current) => current.attachmentId === id)
+      const settle = (dataUri: string | undefined): void => {
+        if (!isCurrent()) return
+        requested.current.delete(id)
+        setLoading((current) => without(current, id))
+        if (dataUri === undefined) setFailed((current) => new Set(current).add(id))
+        else {
+          setFailed((current) => without(current, id))
+          setLoaded((current) => ({ ...current, [id]: dataUri }))
+        }
+      }
+      try {
+        void loadImage(image).then(settle, () => settle(undefined))
+      } catch {
+        settle(undefined)
+      }
     }
   }, [imageKey, loadImage, images, retry])
 
   useEffect(() => {
-    if (lightbox === undefined) return
+    if (!lightboxOpen) return
     closeRef.current?.focus()
-  }, [lightbox])
+  }, [lightboxOpen])
 
   // The lightbox is `aria-modal`: Tab cycles inside it, the rest of the page
   // goes inert, and Escape dismisses it through the shared layer.
   useDismissibleLayer({
-    open: lightbox !== undefined,
+    open: lightboxOpen,
     refs: [lightboxDialogRef],
     trapFocus: true,
-    onDismiss: () => setLightbox(undefined),
+    onDismiss: () => setLightboxId(undefined),
   })
 
   useEffect(() => {
-    if (lightboxWasOpen.current && lightbox === undefined) {
+    if (lightboxWasOpen.current && !lightboxOpen) {
       const target = lightboxTriggerRef.current
       lightboxTriggerRef.current = null
       // The window may scroll the thumbnail out of the rendered list; body
       // focus beats a detached node.
       if (target !== null && target.isConnected) target.focus()
     }
-    lightboxWasOpen.current = lightbox !== undefined
-  }, [lightbox])
+    lightboxWasOpen.current = lightboxOpen
+  }, [lightboxOpen])
 
-  useEffect(() => {
-    const activeIds = new Set(props.images.map((image) => image.attachmentId))
-    for (const id of requested.current) if (!activeIds.has(id)) requested.current.delete(id)
-  }, [imageKey, props.images])
+  const imageDecodeFailed = (id: string, dataUri: string): void => {
+    if (!mounted.current || loadedRef.current[id] !== dataUri) return
+    setLoaded((current) => {
+      const next = { ...current }
+      delete next[id]
+      return next
+    })
+    setFailed((current) => new Set(current).add(id))
+    if (lightboxId === id) setLightboxId(undefined)
+  }
 
   if (props.images.length === 0) return null
   const single = props.images.length === 1
@@ -129,12 +165,12 @@ export const MessageImages = memo(function MessageImages(props: MessageImagesPro
     <>
       <div
         role="group"
-        className={`dsh-message-images${single ? ' dsh-message-images--single' : ' dsh-message-images--grid'}`}
+        className={`dsh-message-images${single ? ' dsh-message-images--single' : ' dsh-message-images--grid'}${props.showNames === true ? ' dsh-message-images--named' : ''}`}
         aria-label={props.translate('timeline.attachedImages')}
       >
         {props.images.map((image) => {
           const entry = loaded[image.attachmentId]
-          const name = image.name ?? props.translate('timeline.imageUnnamed')
+          const name = image.name?.trim() || props.translate('timeline.imageUnnamed')
           const busy = loading.has(image.attachmentId)
           const error = failed.has(image.attachmentId)
           if (entry !== undefined)
@@ -143,21 +179,48 @@ export const MessageImages = memo(function MessageImages(props: MessageImagesPro
                 key={image.attachmentId}
                 type="button"
                 className="dsh-message-images__thumb"
-                style={single ? imageRatioStyle(image) : undefined}
+                style={single && props.showNames !== true ? imageRatioStyle(image) : undefined}
                 aria-label={props.translate('timeline.openImage', { name })}
                 title={props.translate('timeline.openImage', { name })}
                 onClick={(event) => {
                   lightboxTriggerRef.current = event.currentTarget
-                  setLightbox(entry)
+                  setLightboxId(image.attachmentId)
                 }}
               >
-                <img src={entry.dataUri} alt={name} loading="lazy" />
+                {props.showNames === true ? (
+                  <>
+                    <span className="dsh-message-images__preview">
+                      <img
+                        src={entry}
+                        alt=""
+                        loading="lazy"
+                        onError={() => imageDecodeFailed(image.attachmentId, entry)}
+                      />
+                    </span>
+                    <span className="dsh-message-images__name" title={name}>
+                      {name}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <img
+                      src={entry}
+                      alt={name}
+                      loading="lazy"
+                      onError={() => imageDecodeFailed(image.attachmentId, entry)}
+                    />
+                    <span className="dsh-message-images__caption" title={name}>
+                      {name}
+                    </span>
+                  </>
+                )}
               </button>
             )
           return (
             <span
               key={image.attachmentId}
               className={`dsh-message-images__placeholder${error ? ' dsh-message-images__placeholder--error' : ''}`}
+              style={single && !error ? placeholderRatioStyle(image) : undefined}
               role={error ? 'alert' : undefined}
             >
               <Icon name={error ? 'alert' : 'image'} />
@@ -189,14 +252,14 @@ export const MessageImages = memo(function MessageImages(props: MessageImagesPro
           )
         })}
       </div>
-      {lightbox === undefined
+      {!lightboxOpen
         ? null
         : createPortal(
             <div
               className="dsh-message-image-lightbox"
               role="presentation"
               onClick={(event) => {
-                if (event.target === event.currentTarget) setLightbox(undefined)
+                if (event.target === event.currentTarget) setLightboxId(undefined)
               }}
             >
               <section
@@ -205,23 +268,29 @@ export const MessageImages = memo(function MessageImages(props: MessageImagesPro
                 role="dialog"
                 aria-modal="true"
                 aria-label={props.translate('timeline.openImage', {
-                  name: lightbox.image.name ?? props.translate('timeline.imageUnnamed'),
+                  name: lightboxImage.name?.trim() || props.translate('timeline.imageUnnamed'),
                 })}
               >
-                <button
-                  ref={closeRef}
-                  type="button"
-                  className="dsh-message-image-lightbox__close"
-                  aria-label={props.translate('timeline.closeImage')}
-                  title={props.translate('timeline.closeImage')}
-                  onClick={() => setLightbox(undefined)}
-                >
-                  <Icon name="close" />
-                </button>
+                <div className="dsh-message-image-lightbox__header">
+                  <span className="dsh-message-image-lightbox__name" title={lightboxImage.name}>
+                    {lightboxImage.name?.trim() || props.translate('timeline.imageUnnamed')}
+                  </span>
+                  <button
+                    ref={closeRef}
+                    type="button"
+                    className="dsh-message-image-lightbox__close"
+                    aria-label={props.translate('timeline.closeImage')}
+                    title={props.translate('timeline.closeImage')}
+                    onClick={() => setLightboxId(undefined)}
+                  >
+                    <Icon name="close" />
+                  </button>
+                </div>
                 <img
                   className="dsh-message-image-lightbox__image"
-                  src={lightbox.dataUri}
-                  alt={lightbox.image.name ?? props.translate('timeline.imageUnnamed')}
+                  src={lightboxData}
+                  alt={lightboxImage.name?.trim() || props.translate('timeline.imageUnnamed')}
+                  onError={() => imageDecodeFailed(lightboxImage.attachmentId, lightboxData)}
                 />
               </section>
             </div>,
@@ -233,6 +302,7 @@ export const MessageImages = memo(function MessageImages(props: MessageImagesPro
 
 function areMessageImagesEqual(previous: MessageImagesProps, next: MessageImagesProps): boolean {
   if (previous.loadImage !== next.loadImage || previous.translate !== next.translate) return false
+  if (previous.showNames !== next.showNames) return false
   if (previous.images === next.images) return true
   if (previous.images.length !== next.images.length) return false
   for (let index = 0; index < previous.images.length; index += 1) {
@@ -241,11 +311,23 @@ function areMessageImagesEqual(previous: MessageImagesProps, next: MessageImages
   return true
 }
 
+function clampedImageRatio(image: MessageImageReference): number {
+  if (!(image.width > 0) || !(image.height > 0)) return 4 / 3
+  return Math.max(0.25, Math.min(4, image.width / image.height))
+}
+
 function imageRatioStyle(image: MessageImageReference): CSSProperties {
-  const ratio = Math.max(0.25, Math.min(4, image.width / image.height))
+  const ratio = clampedImageRatio(image)
   const style: CSSProperties & { readonly '--dsh-image-ratio': number } = {
     aspectRatio: `${ratio}`,
     '--dsh-image-ratio': ratio,
+  }
+  return style
+}
+
+function placeholderRatioStyle(image: MessageImageReference): CSSProperties {
+  const style: CSSProperties & { readonly '--dsh-image-ratio': number } = {
+    '--dsh-image-ratio': clampedImageRatio(image),
   }
   return style
 }
@@ -255,4 +337,18 @@ function without(values: ReadonlySet<string>, value: string): ReadonlySet<string
   const next = new Set(values)
   next.delete(value)
   return next
+}
+
+function retainImages(
+  values: Readonly<Record<string, string>>,
+  active: ReadonlySet<string>,
+): Readonly<Record<string, string>> {
+  if (Object.keys(values).every((id) => active.has(id))) return values
+  return Object.fromEntries(Object.entries(values).filter(([id]) => active.has(id)))
+}
+
+function retainImageIds(values: ReadonlySet<string>, active: ReadonlySet<string>): ReadonlySet<string> {
+  return [...values].every((id) => active.has(id))
+    ? values
+    : new Set([...values].filter((id) => active.has(id)))
 }

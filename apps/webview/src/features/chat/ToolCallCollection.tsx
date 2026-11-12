@@ -71,18 +71,6 @@ export const ToolCallCollection = memo(function ToolCallCollection(
 
 const ToolCallRows = memo(function ToolCallRows(props: ToolCallCollectionProps): ReactElement | null {
   if (props.tools.length === 0) return null
-  const preparing = props.tools.filter((node) => node.tool.preparation !== undefined)
-  if (preparing.length > 0)
-    return (
-      <>
-        <ToolCallRows {...props} tools={props.tools.filter((node) => node.tool.preparation === undefined)} />
-        {projectToolCallTree(preparing).map((root) => (
-          <div className="dsh-timeline__tool-collection" key={root.node.id}>
-            {renderToolCard(root, props)}
-          </div>
-        ))}
-      </>
-    )
   const roots = projectToolCallTree(props.tools)
 
   if (props.grouped === false)
@@ -103,7 +91,13 @@ const ToolCallRows = memo(function ToolCallRows(props: ToolCallCollectionProps):
     )
   }
 
-  const latest = props.tools[props.tools.length - 1]
+  const latest =
+    props.tools.findLast(
+      (node) =>
+        node.tool.preparation !== undefined ||
+        node.tool.status === 'queued' ||
+        node.tool.status === 'running',
+    ) ?? props.tools[props.tools.length - 1]
   if (latest === undefined) return null
   // The collapsed summary is the only surface a reader sees before expanding;
   // a failed call inside the batch must stay visible there, not only on rows.
@@ -298,13 +292,18 @@ function toolSummary(tool: ToolTimelineNode['tool'], translate: Translate): stri
   const name = tool.name.trim()
   const normalizedTitle = title.toLowerCase()
   const normalizedName = name.toLowerCase()
-  const label =
+  const baseLabel =
     title !== '' && normalizedTitle !== 'tool' && normalizedTitle !== normalizedName
       ? title
       : (toolNameLabel(name, translate) ?? (name || title || translate('timeline.toolFallback')))
+  if (tool.preparation !== undefined) {
+    const target = tool.preparation.filePath?.trim() || tool.preparation.description?.trim()
+    const prefix = target ? `${baseLabel} · ${target}` : baseLabel
+    return `${prefix} · ${translate('toolrow.preparing')}`
+  }
   const status = toolStatusLabel(
     terminalPresentationFailed(tool.presentation) ? 'failed' : tool.status,
     translate,
   )
-  return label === '' ? status : `${label} · ${status}`
+  return baseLabel === '' ? status : `${baseLabel} · ${status}`
 }

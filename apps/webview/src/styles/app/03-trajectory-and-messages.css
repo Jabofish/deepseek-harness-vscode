@@ -320,10 +320,11 @@
 }
 
 .dsh-timeline__canvas {
+  --dsh-timeline-canvas-gutter: var(--dsh-space-1);
   width: min(100%, var(--dsh-timeline-content-max-width));
   min-width: 0;
   margin: 0 auto;
-  padding: 0 var(--dsh-space-1) var(--dsh-space-2);
+  padding: 0 var(--dsh-timeline-canvas-gutter) var(--dsh-space-2);
 }
 
 /* The empty placeholder already fills the viewport. An empty canvas's bottom
@@ -349,8 +350,9 @@
   min-width: 0;
 }
 
+/* Opacity-only entrance keeps newly settled rows from shifting text vertically. */
 .dsh-timeline__row--enter > * {
-  animation: dsh-rise-in var(--dsh-motion-duration-standard) var(--dsh-motion-ease-enter) backwards;
+  animation: dsh-overlay-fade-in var(--dsh-motion-duration-standard) var(--dsh-motion-ease-enter) backwards;
 }
 
 .dsh-timeline__message-stack {
@@ -484,12 +486,26 @@ button.dsh-user-reference {
 .dsh-timeline__event-group-summary,
 .dsh-timeline__event-group-heading,
 .dsh-timeline__event-group-meta,
-.dsh-timeline__card-heading,
-.dsh-timeline__assistant-metrics {
+.dsh-timeline__card-heading {
   display: flex;
   align-items: center;
   min-width: 0;
   gap: var(--dsh-space-2);
+}
+
+.dsh-timeline__card--assistant > .dsh-timeline__card-header > strong,
+.dsh-timeline__assistant-metrics {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-timeline__card--assistant
+  > .dsh-timeline__card-header:has(.dsh-timeline__card-meta, .dsh-timeline__assistant-metrics)
+  > strong {
+  flex: 0 0 auto;
+  max-width: 65%;
 }
 
 .dsh-timeline__card-header,

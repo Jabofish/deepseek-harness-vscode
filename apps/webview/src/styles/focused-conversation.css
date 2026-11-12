@@ -31,7 +31,8 @@
 /* The canvas already follows the timeline's inset; keep its own tail padding
  * out of the transcript→composer gap. */
 .dsh-timeline[data-conversation-layout='focused'] .dsh-timeline__canvas {
-  padding-inline: 0;
+  --dsh-timeline-canvas-gutter: 0px;
+  padding-inline: var(--dsh-timeline-canvas-gutter);
   padding-block-end: 0;
 }
 
@@ -112,7 +113,7 @@
 }
 
 .dsh-focused-turn__summary {
-  margin-bottom: var(--dsh-space-2);
+  margin-bottom: var(--dsh-space-3);
   padding-bottom: var(--dsh-space-2);
   border-bottom: var(--dsh-border);
 }
@@ -144,6 +145,7 @@
 
 .dsh-focused-tools__summary > span {
   min-width: 0;
+  margin-inline-end: auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

@@ -446,6 +446,46 @@
   object-fit: cover;
 }
 
+.dsh-queue .dsh-message-images--named {
+  width: 100%;
+  max-width: none;
+  flex-wrap: wrap;
+}
+
+.dsh-queue .dsh-message-images--named .dsh-message-images__thumb {
+  display: grid;
+  grid-template-columns: var(--dsh-control-height-compact) minmax(0, 1fr);
+  align-items: center;
+  flex: 0 1 auto;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  aspect-ratio: auto;
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  font-size: var(--dsh-font-size-xs);
+  text-align: start;
+}
+
+.dsh-queue .dsh-message-images__preview {
+  display: block;
+  width: var(--dsh-control-height-compact);
+  height: var(--dsh-control-height-compact);
+  overflow: hidden;
+  border-radius: var(--dsh-radius-sm);
+}
+
+.dsh-queue .dsh-message-images__preview > img {
+  width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
+  object-fit: contain;
+}
+
+.dsh-queue .dsh-message-images--named .dsh-message-images__name {
+  min-width: 0;
+}
+
 /* Failed/pending images keep their explanation and Retry in a small scrollport. */
 .dsh-queue .dsh-message-images:has(.dsh-message-images__placeholder) {
   width: 100%;
@@ -458,6 +498,7 @@
   place-items: start;
   flex: 1 1 auto;
   width: 100%;
+  height: auto;
   min-height: 0;
   max-height: min(6rem, var(--dsh-dock-content-max-height));
   padding: var(--dsh-space-1);

@@ -6,12 +6,55 @@
 }
 
 .dsh-message-images__thumb {
+  position: relative;
   min-width: 0;
   padding: 0;
   overflow: hidden;
   border: var(--dsh-border);
   border-radius: var(--dsh-radius-md);
   background: var(--dsh-surface-soft);
+}
+
+.dsh-message-images__caption {
+  position: absolute;
+  inset-inline: var(--dsh-space-1);
+  inset-block-end: var(--dsh-space-1);
+  min-width: 0;
+  padding: 2px var(--dsh-space-1);
+  overflow: hidden;
+  border-radius: var(--dsh-radius-sm);
+  background: color-mix(in srgb, var(--dsh-widget-bg) 90%, transparent);
+  color: var(--dsh-text);
+  font-size: var(--dsh-font-size-2xs);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: start;
+}
+
+.dsh-message-image-lightbox__header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--dsh-space-2);
+  min-width: 0;
+  padding: var(--dsh-space-2);
+}
+
+.dsh-message-image-lightbox__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-message-image-lightbox__header > .dsh-message-image-lightbox__close {
+  position: static;
+  flex: 0 0 auto;
+}
+
+.dsh-message-image-lightbox__dialog > .dsh-message-image-lightbox__image {
+  min-height: 0;
 }
 
 .dsh-message-images__thumb img,
@@ -24,11 +67,25 @@
 
 /* A single image reserves its Host-provided ratio on the button. Fill that box
  * instead of cropping a 4:3 image into the middle of a tall empty container. */
-.dsh-message-images--single .dsh-message-images__thumb {
+.dsh-message-images--single .dsh-message-images__thumb,
+.dsh-message-images--single
+  > .dsh-message-images__placeholder:where(:not(.dsh-message-images__placeholder--error)) {
   position: relative;
   display: block;
   width: min(100%, calc(min(60vh, 32rem) * var(--dsh-image-ratio, 1.333333)));
   max-height: min(60vh, 32rem);
+}
+
+.dsh-message-images--single
+  > .dsh-message-images__placeholder:where(:not(.dsh-message-images__placeholder--error)) {
+  display: grid;
+  min-height: 0;
+  aspect-ratio: var(--dsh-image-ratio, 4 / 3);
+  align-content: center;
+  overflow: hidden;
+  border: var(--dsh-border);
+  border-radius: var(--dsh-radius-md);
+  background: var(--dsh-surface-soft);
 }
 
 .dsh-message-images--single .dsh-message-images__thumb > img {

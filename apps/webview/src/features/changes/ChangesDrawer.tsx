@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactElement } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
 import type { ChangeDetail, ChangeReviewState, ChangeSetFile } from '@dsh-vscode/domain'
 
 import { useI18n } from '../../i18n.js'
+import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 import { useViewportMenuPosition } from '../../components/common/useViewportMenuPosition.js'
 import { Icon } from '../../ui/Icon.js'
 import { CopyButton } from '../chat/CopyButton.js'
@@ -55,14 +56,33 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
     setOpen(false)
   }, [])
 
-  useEffect(() => {
-    if (!open) return
-    const closeOutside = (event: PointerEvent): void => {
-      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) closePopover()
-    }
-    document.addEventListener('pointerdown', closeOutside)
-    return () => document.removeEventListener('pointerdown', closeOutside)
-  }, [closePopover, open])
+  const closeDetail = useCallback((): void => {
+    // The generation bump keeps a late in-flight detail response from
+    // repopulating a preview the user has already dismissed.
+    detailRequestGeneration.current += 1
+    setDetail(undefined)
+    setDetailLoading(false)
+  }, [])
+
+  useDismissibleLayer({
+    open,
+    refs: [rootRef, menuRef],
+    onDismiss: closePopover,
+    onEscape: () => {
+      // The diff detail is the inner layer: the first Escape returns to the
+      // list with its scroll position intact, and only the next one dismisses
+      // the popover itself without collapsing a parent ConversationActionsMenu.
+      if (detail !== undefined || detailLoading) {
+        const target = detailTriggerRef.current
+        detailTriggerRef.current = null
+        closeDetail()
+        if (target !== null && target.isConnected) target.focus()
+        return
+      }
+      closePopover()
+      triggerRef.current?.focus()
+    },
+  })
 
   useEffect(() => {
     if (detailWasOpen.current && detail === undefined) {
@@ -77,6 +97,7 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
     if (refreshing) return
     setRefreshing(true)
     setRefreshError(false)
+    menuRef.current?.focus({ preventScroll: true })
     void props
       .onRefresh()
       .catch(() => setRefreshError(true))
@@ -110,6 +131,7 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
     if (detail === undefined || reviewing !== undefined) return
     setReviewing(reviewState)
     setReviewError(false)
+    menuRef.current?.focus({ preventScroll: true })
     void props
       .onMarkReviewed(detail.changeId, reviewState)
       .then((next) => {
@@ -120,31 +142,10 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
       .catch(() => setReviewError(true))
       .finally(() => setReviewing(undefined))
   }
-  const closeDetail = (): void => {
-    // The generation bump keeps a late in-flight detail response from
-    // repopulating a preview the user has already dismissed.
-    detailRequestGeneration.current += 1
-    setDetail(undefined)
-    setDetailLoading(false)
-  }
-  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
-    if (event.key !== 'Escape' || !open) return
-    event.preventDefault()
-    // The diff detail is the inner layer: the first Escape returns to the
-    // list with its scroll position intact, and only the next one dismisses
-    // the popover itself.
-    if (detail !== undefined || detailLoading) {
-      closeDetail()
-      return
-    }
-    closePopover()
-    triggerRef.current?.focus()
-  }
-
   if (props.changes.length === 0 && !props.loading && !props.refreshFailed) return null
   const countLabel = t('changes.count', { count: props.changes.length })
   return (
-    <div ref={rootRef} className="dsh-changes-popover" onKeyDown={onKeyDown}>
+    <div ref={rootRef} className="dsh-changes-popover">
       <button
         ref={triggerRef}
         type="button"
@@ -173,6 +174,7 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
           style={menuPosition}
           role="dialog"
           aria-label={t('changes.list.aria')}
+          tabIndex={-1}
         >
           <div className="dsh-changes-popover__header">
             <strong>{t('changes.title')}</strong>

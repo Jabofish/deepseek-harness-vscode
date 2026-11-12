@@ -455,10 +455,50 @@ occupancy so the overflow is visible without opening the details. */
   display: flex;
   align-items: center;
   min-width: 0;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: var(--dsh-space-1);
   color: var(--dsh-muted);
   font-size: var(--dsh-font-size-2xs);
+  line-height: 1.35;
+  font-variant-numeric: tabular-nums;
+}
+
+.dsh-stats-line:has(.dsh-stats-details[open]) {
+  flex-wrap: wrap;
+}
+
+.dsh-stats-line__metrics {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-stats-line__metrics > span + span {
+  margin-inline-start: var(--dsh-space-1);
+}
+
+.dsh-stats-line:not(.dsh-stats-line--focused) > .dsh-stats-details {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.dsh-stats-line:has(.dsh-stats-details[open]) > .dsh-stats-details {
+  flex: 1 0 100%;
+  white-space: normal;
+}
+
+.dsh-stats-line:not(.dsh-stats-line--focused) > .dsh-stats-pill,
+.dsh-stats-line:not(.dsh-stats-line--focused) > span:not(.dsh-stats-line__metrics) {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.dsh-stats-line:not(.dsh-stats-line--focused) .dsh-stats-pill {
+  min-height: 0;
+  padding: 0 var(--dsh-space-2);
   line-height: 1.35;
 }
 
@@ -549,12 +589,17 @@ occupancy so the overflow is visible without opening the details. */
   resize: vertical;
 }
 
+/* Anchor the connection panel near the top of .dsh-app__empty instead of
+ * vertical-centering it, so toggling logs or showing an error never bounces
+ * the header and action buttons vertically by half the delta. */
 .dsh-runtime-connection {
   display: grid;
+  align-self: start;
   gap: var(--dsh-space-3);
   width: 100%;
   max-width: 32rem;
   min-width: 0;
+  margin-block: clamp(var(--dsh-space-3), 8dvh, 5rem) var(--dsh-space-4);
   padding: var(--dsh-space-3);
 }
 
@@ -631,6 +676,11 @@ occupancy so the overflow is visible without opening the details. */
   text-overflow: ellipsis;
 }
 
+/* Retain row geometry without exposing older text inside the scrolled padding. */
+.dsh-runtime-connection__output .dsh-runtime-connection__line[aria-hidden='true'] {
+  visibility: hidden;
+}
+
 .dsh-runtime-connection__output[data-expanded='true'] {
   height: auto;
   max-height: min(24rem, 45dvh);
@@ -694,6 +744,13 @@ occupancy so the overflow is visible without opening the details. */
   border: var(--dsh-border);
   border-radius: var(--dsh-radius-lg);
   background: var(--dsh-surface-raised);
+}
+
+/* Anchor .dsh-runtime-missing near the top of .dsh-app__empty so expanding
+ * searched-paths details does not bounce the header and buttons vertically. */
+.dsh-runtime-missing {
+  align-self: start;
+  margin-block: clamp(var(--dsh-space-3), 8dvh, 5rem) var(--dsh-space-4);
 }
 
 .dsh-runtime-missing__intro,

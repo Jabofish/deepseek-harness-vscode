@@ -5,7 +5,11 @@ import { useDismissibleLayer } from '../../components/common/useDismissibleLayer
 import { formatByteSize } from '../../app/attachment-reader.js'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
-import { MarkdownDocumentPreview } from '../documents/MarkdownDocumentPreview.js'
+import {
+  MarkdownDocumentPreview,
+  preloadFrontmatterParser,
+  splitDocumentFrontmatter,
+} from '../documents/MarkdownDocumentPreview.js'
 
 export interface EditorContextChipsProps {
   readonly items: readonly EditorContextItem[]
@@ -49,7 +53,15 @@ export function EditorContextChips(props: EditorContextChipsProps): ReactElement
     setPreviewError(false)
     void Promise.resolve()
       .then(() => props.onPreview(item.ref.contextRef))
-      .then((result) => setPreview(result))
+      .then(async (result) => {
+        // Resolve the YAML frontmatter parser while the loading state is still active
+        // so opening the bottom-anchored dialog renders `<dl>` on its first paint
+        // instead of swapping from `<pre>` and jumping vertically.
+        if (result !== undefined && splitDocumentFrontmatter(result.text) !== undefined) {
+          await preloadFrontmatterParser().catch(() => undefined)
+        }
+        setPreview(result)
+      })
       .catch(() => {
         setPreview(undefined)
         setPreviewError(true)

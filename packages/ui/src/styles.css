@@ -656,9 +656,12 @@
   font-size: var(--dsh-font-size-2xs);
 }
 
-.dsh-tool-card__status {
+.dsh-tool-card__status,
+.dsh-tool-row__status {
   display: inline-flex;
   align-items: center;
+  justify-content: flex-end;
+  min-width: 6.25em;
   gap: var(--dsh-space-1);
   flex: 0 0 auto;
   white-space: nowrap;

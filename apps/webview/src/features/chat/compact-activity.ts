@@ -5,10 +5,11 @@ import type { TimelineNode } from '@dsh-vscode/timeline'
 type ActivityNode = DisplayTimelineNode | TimelineNode
 
 function trace(node: ActivityNode): boolean {
-  if (node.kind === 'reasoning') return true
+  if (node.kind === 'reasoning') return !node.streaming
   if (node.kind === 'tool')
     return node.tool.submittedPlan === undefined && (node.tool.images?.length ?? 0) === 0
   if (node.kind !== 'assistant-message' && node.kind !== 'assistant-turn') return false
+  if (node.streaming || node.reasoning?.streaming === true) return false
   return (
     node.markdown.trim() === '' &&
     (node.images?.length ?? 0) === 0 &&

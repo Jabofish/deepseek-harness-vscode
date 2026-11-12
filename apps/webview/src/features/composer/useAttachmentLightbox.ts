@@ -32,6 +32,7 @@ export function useAttachmentLightbox(attachments: readonly PromptAttachment[]):
     () => (previewUri === undefined ? undefined : attachments.find((item) => item.uri === previewUri)),
     [previewUri, attachments],
   )
+  if (previewUri !== undefined && previewedAttachment === undefined) setPreviewUri(undefined)
   const openPreview = (uri: string, trigger: HTMLButtonElement): void => {
     previewTriggerRef.current = trigger
     setPreviewUri(uri)

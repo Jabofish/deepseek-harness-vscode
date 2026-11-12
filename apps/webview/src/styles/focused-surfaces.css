@@ -183,6 +183,7 @@
   ) {
   position: absolute;
   width: 1px;
+  min-width: 0;
   height: 1px;
   padding: 0;
   overflow: hidden;

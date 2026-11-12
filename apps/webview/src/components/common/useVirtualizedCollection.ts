@@ -1,5 +1,13 @@
 import { useCallback, useMemo, useRef, type RefObject } from 'react'
-import { defaultRangeExtractor, useVirtualizer, type Range, type VirtualItem } from '@tanstack/react-virtual'
+import {
+  defaultRangeExtractor,
+  observeElementOffset,
+  observeElementRect,
+  useVirtualizer,
+  type Range,
+  type VirtualItem,
+  type Virtualizer,
+} from '@tanstack/react-virtual'
 
 /**
  * Keep the small-session DOM simple while bounding the expensive render tree
@@ -21,6 +29,43 @@ export const DEFAULT_UNMEASURED_ROW_WINDOW = 32
 export const DEFAULT_ESTIMATED_ITEM_SIZE = 96
 function defaultEstimateSize(): number {
   return DEFAULT_ESTIMATED_ITEM_SIZE
+}
+
+/**
+ * Keep the last visible viewport rect while the Webview container is hidden
+ * (`display: none`), so revealing it never drops back into the unmeasured
+ * normal-flow window. Cold mounts before layout still deliver `{0, 0}` so the
+ * initial fallback frame behaves identically.
+ */
+function observeVisibleElementRect<TItemElement extends Element>(
+  instance: Virtualizer<HTMLDivElement, TItemElement>,
+  cb: (rect: { width: number; height: number }) => void,
+): (() => void) | undefined {
+  let hasVisibleRect = false
+  return observeElementRect(instance, (rect) => {
+    if (rect.width > 0 && rect.height > 0) {
+      hasVisibleRect = true
+      cb(rect)
+      return
+    }
+    if (!hasVisibleRect) cb(rect)
+  })
+}
+
+function observeVisibleElementOffset<TItemElement extends Element>(
+  instance: Virtualizer<HTMLDivElement, TItemElement>,
+  cb: (offset: number, isScrolling: boolean) => void,
+): (() => void) | undefined {
+  return observeElementOffset(instance, (offset, isScrolling) => {
+    const element = instance.scrollElement
+    if (
+      element !== null &&
+      (element.clientHeight === 0 || element.clientWidth === 0) &&
+      (instance.scrollRect?.height ?? 0) > 0
+    )
+      return
+    cb(offset, isScrolling)
+  })
 }
 
 export interface VirtualizedCollectionOptions<T> {
@@ -134,6 +179,8 @@ export function useVirtualizedCollection<T>(
     },
     getItemKey,
     initialOffset,
+    observeElementOffset: observeVisibleElementOffset,
+    observeElementRect: observeVisibleElementRect,
     overscan,
     rangeExtractor,
     scrollToFn,

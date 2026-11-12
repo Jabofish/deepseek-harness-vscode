@@ -119,6 +119,33 @@ export function createFocusedTimelineProjector(): (
     const start = previous?.starts[stableRows] ?? 0
     const rows: PresentedTimelineNode[] = previous?.rows.slice(0, stableRows) ?? []
     const starts: number[] = previous?.starts.slice(0, stableRows) ?? []
+    const turnRuns = new Map<number, Set<string>>()
+    const previousRunBySource = new Map<string, string>()
+    const previousRunsByTurn = new Map<number, Set<string>>()
+    const previousProcessIds = new Set<string>()
+    for (const row of previous?.rows ?? []) {
+      if (row.kind !== 'focused-turn') continue
+      const key = row.processId ?? row.id
+      previousProcessIds.add(key)
+      let previousRuns = previousRunsByTurn.get(row.turn)
+      if (previousRuns === undefined) {
+        previousRuns = new Set()
+        previousRunsByTurn.set(row.turn, previousRuns)
+      }
+      previousRuns.add(key)
+      for (const member of row.nodes) previousRunBySource.set(member.id, key)
+      for (const id of row.sourceIds) previousRunBySource.set(id, key)
+    }
+    for (const row of rows) {
+      if (row.kind !== 'focused-turn') continue
+      const key = row.processId ?? row.id
+      let set = turnRuns.get(row.turn)
+      if (set === undefined) {
+        set = new Set()
+        turnRuns.set(row.turn, set)
+      }
+      set.add(key)
+    }
     for (let index = start; index < nodes.length;) {
       const node = nodes[index]!
       if (!groupable(node)) {
@@ -158,8 +185,42 @@ export function createFocusedTimelineProjector(): (
         state.healthy &&
         uninterrupted &&
         (finalReply?.turnCompleted === true || runLast.kind === 'tool')
-      const processId = `focused-turn:${nodes[runStart]!.id}`
+      // Reuse a run's identity across compaction, partial rebuilds and history
+      // prepends. Newly discovered earlier runs must not claim an existing
+      // later run's disclosure state merely because its ordinal changed.
+      let seen = turnRuns.get(turn)
+      if (seen === undefined) {
+        seen = new Set()
+        turnRuns.set(turn, seen)
+      }
+      const previousRow = rows.at(-1)
+      let processId =
+        index > runStart && previousRow?.kind === 'focused-turn'
+          ? (previousRow.processId ?? previousRow.id)
+          : undefined
+      for (let cursor = runStart; processId === undefined && cursor < runEnd; cursor++) {
+        const member = nodes[cursor]!
+        for (const id of [member.id, ...timelineSourceNodeIds(member)]) {
+          const prior = previousRunBySource.get(id)
+          if (prior !== undefined && !seen.has(prior)) {
+            processId = prior
+            break
+          }
+        }
+      }
+      const priorRuns = previousRunsByTurn.get(turn)
+      if (processId === undefined && uninterrupted && seen.size === 0 && priorRuns?.size === 1)
+        processId = priorRuns.values().next().value
+      let runOrdinal = 0
+      while (processId === undefined) {
+        const candidate =
+          runOrdinal === 0 ? `focused-turn:turn-${turn}` : `focused-turn:turn-${turn}:${runOrdinal + 1}`
+        if (!seen.has(candidate) && !previousProcessIds.has(candidate)) processId = candidate
+        runOrdinal++
+      }
+      seen.add(processId)
       const processCount = runEnd - runStart - (foldable && finalReply !== undefined ? 1 : 0)
+      let segment = Math.floor((index - runStart) / FOCUSED_PROCESS_SEGMENT_SIZE)
       while (index < runEnd) {
         const continuation = index !== runStart
         starts.push(index)
@@ -167,12 +228,11 @@ export function createFocusedTimelineProjector(): (
           .slice(index, Math.min(runEnd, index + FOCUSED_PROCESS_SEGMENT_SIZE))
           .filter(groupable)
         index += members.length
-        const first = members[0]!
         // DSH's final reply is the latest finalized step with no tool calls.
         const answer = foldable && index === runEnd ? finalReply : undefined
         rows.push({
           kind: 'focused-turn',
-          id: `focused-turn:${first.id}`,
+          id: segment === 0 ? processId : `${processId}#${segment}`,
           turn,
           nodes: members,
           sourceIds: members.flatMap(timelineSourceNodeIds),
@@ -182,6 +242,7 @@ export function createFocusedTimelineProjector(): (
           processCount,
           continuation,
         })
+        segment++
       }
     }
     previous = { source: nodes, rows, starts, turns }

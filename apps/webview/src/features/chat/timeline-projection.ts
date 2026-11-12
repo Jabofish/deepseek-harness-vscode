@@ -342,10 +342,19 @@ function latestDisplayBoundary(nodes: readonly TimelineNode[], start: number): n
   return start
 }
 
+/** Keep direct user turns and persisted late question replies visible in chat. */
+function isVisibleUserMessage(node: Extract<TimelineNode, { readonly kind: 'user-message' }>): boolean {
+  return (
+    !isInjectedUserTimelineNode(node) ||
+    node.questionReply !== undefined ||
+    node.source?.trim().toLowerCase() === 'user-question-reply'
+  )
+}
+
 function isDisplayBoundary(node: TimelineNode): boolean {
   if (node.kind === 'event' || isAssistantWorkNode(node)) return false
   if (node.kind !== 'user-message') return true
-  return !isInjectedUserTimelineNode(node)
+  return isVisibleUserMessage(node)
 }
 
 function prepareVisibleNodes(
@@ -356,7 +365,7 @@ function prepareVisibleNodes(
   let activeEventGroup: (DshEventGroupNode & { events: DshEventNode[]; textSize: number }) | undefined
 
   for (const node of nodes) {
-    if (node.kind === 'user-message' && isInjectedUserTimelineNode(node)) continue
+    if (node.kind === 'user-message' && !isVisibleUserMessage(node)) continue
     if (node.kind !== 'event') {
       activeEventGroup = undefined
       display.push(reasoningDisplayNode(node))
@@ -386,6 +395,7 @@ function prepareVisibleNodes(
 
 interface PendingAssistantWork {
   readonly id: string
+  messageId?: string
   modelLabel?: string
   timing?: AssistantTiming
   usage?: TokenUsage
@@ -415,30 +425,12 @@ function collapseAssistantTurns(
     // Only reuse arrays created in this call. Cached prefix nodes remain
     // immutable, and a different turn still gets its own work arrays.
     reusableTurn?.node === node
-      ? { ...reusableTurn.work, id: node.id, streaming: node.streaming }
+      ? { ...reusableTurn.work, id: turnBaseId(node.id), streaming: node.streaming }
       : pendingFromAssistantTurn(node)
 
   const flush = (): void => {
     if (pending === undefined) return
-    collapsed.push({
-      kind: 'assistant-turn',
-      id: `assistant-turn:${pending.id}`,
-      ...(pending.modelLabel === undefined ? {} : { modelLabel: pending.modelLabel }),
-      ...(pending.timing === undefined ? {} : { timing: pending.timing }),
-      ...(pending.usage === undefined ? {} : { usage: pending.usage }),
-      ...(pending.turnUsage === undefined ? {} : { turnUsage: pending.turnUsage }),
-      ...(pending.images === undefined ? {} : { images: pending.images }),
-      ...(pending.reasoning === undefined ? {} : { reasoning: pending.reasoning }),
-      tools: pending.tools,
-      blocks: pending.blocks,
-      markdown: pending.markdown,
-      streaming: pending.streaming || pending.reasoning?.streaming === true,
-      ...(pending.sequence === undefined ? {} : { sequence: pending.sequence }),
-      ...(pending.turn === undefined ? {} : { turn: pending.turn }),
-      ...(pending.step === undefined ? {} : { step: pending.step }),
-      ...(pending.turnCompleted === undefined ? {} : { turnCompleted: pending.turnCompleted }),
-      ...(pending.interrupted === undefined ? {} : { interrupted: pending.interrupted }),
-    })
+    collapsed.push(toAssistantTurn(pending))
     pending = undefined
   }
 
@@ -492,11 +484,12 @@ function collapseAssistantTurns(
         pending.reasoning = appendReasoning(pending.reasoning, node.reasoning)
         if (node.reasoning !== undefined) appendReasoningContent(pending.blocks, node.id, node.reasoning)
         if (hasVisibleOutput) appendMessageContent(pending.blocks, node)
+        pending.messageId = node.id
         pending.markdown = joinAssistantMarkdown(pending.markdown, node.markdown)
         pending.streaming = node.streaming
         if (!hasVisibleOutput) continue
 
-        const turn = toAssistantTurn(pending, node.id)
+        const turn = toAssistantTurn(pending)
         collapsed.push(turn)
         reusableTurn = { node: turn, work: pending }
         pending = undefined
@@ -504,7 +497,7 @@ function collapseAssistantTurns(
       }
       if (node.reasoning !== undefined) {
         if (hasVisibleOutput) {
-          collapsed.push(toAssistantTurn(pendingFromAssistantMessage(node), node.id))
+          collapsed.push(toAssistantTurn(pendingFromAssistantMessage(node)))
         } else {
           pending = pendingFromAssistantMessage(node)
         }
@@ -566,7 +559,8 @@ function pendingFromAssistantMessage(
   node: Extract<DisplayTimelineNode, { readonly kind: 'assistant-message' }>,
 ): PendingAssistantWork {
   return {
-    id: node.id,
+    id: turnBaseId(node.id),
+    messageId: node.id,
     ...(node.modelLabel === undefined ? {} : { modelLabel: node.modelLabel }),
     ...(node.timing === undefined ? {} : { timing: node.timing }),
     ...(node.usage === undefined ? {} : { usage: node.usage }),
@@ -587,7 +581,8 @@ function pendingFromAssistantMessage(
 
 function pendingFromAssistantTurn(node: AssistantTurnNode): PendingAssistantWork {
   return {
-    id: node.id,
+    id: turnBaseId(node.id),
+    ...(node.messageId === undefined ? {} : { messageId: node.messageId }),
     ...(node.modelLabel === undefined ? {} : { modelLabel: node.modelLabel }),
     ...(node.timing === undefined ? {} : { timing: node.timing }),
     ...(node.usage === undefined ? {} : { usage: node.usage }),
@@ -670,10 +665,17 @@ function appendMessageContent(
   })
 }
 
-function toAssistantTurn(pending: PendingAssistantWork, id: string): AssistantTurnNode {
+function turnBaseId(id: string): string {
+  let base = id
+  while (base.startsWith('assistant-turn:')) base = base.slice('assistant-turn:'.length)
+  return base
+}
+
+function toAssistantTurn(pending: PendingAssistantWork): AssistantTurnNode {
   return {
     kind: 'assistant-turn',
-    id: `assistant-turn:${id}`,
+    id: `assistant-turn:${pending.id}`,
+    ...(pending.messageId === undefined ? {} : { messageId: pending.messageId }),
     ...(pending.modelLabel === undefined ? {} : { modelLabel: pending.modelLabel }),
     ...(pending.timing === undefined ? {} : { timing: pending.timing }),
     ...(pending.usage === undefined ? {} : { usage: pending.usage }),

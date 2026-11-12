@@ -29,6 +29,7 @@ interface ClientCache {
   lastChange?: FeatureHostEvent
 }
 const clients = new WeakMap<BillingClient, ClientCache>()
+let settleOrder = 0
 
 /** Labels and transient details share one bounded cache, isolated by connection and session. */
 export function useBillingEstimate(
@@ -85,7 +86,7 @@ function entryFor(
   for (const candidate of cache.entries.values()) {
     if (
       candidate.group === group &&
-      candidate.snapshot.estimate !== undefined &&
+      (candidate.snapshot.estimate !== undefined || candidate.snapshot.failed) &&
       (previous === undefined || candidate.settledAt > previous.settledAt)
     )
       previous = candidate
@@ -101,8 +102,8 @@ function entryFor(
       previous === undefined
         ? { failed: false, refreshing: false }
         : {
-            estimate: previous.snapshot.estimate!,
-            failed: false,
+            ...(previous.snapshot.estimate === undefined ? {} : { estimate: previous.snapshot.estimate }),
+            failed: previous.snapshot.failed,
             refreshing: true,
           },
     getSnapshot: () => entry.snapshot,
@@ -145,7 +146,7 @@ function entryFor(
       (!force && entry.expires > Date.now())
     )
       return
-    publish({ ...entry.snapshot, failed: false, refreshing: true })
+    publish({ ...entry.snapshot, failed: force ? false : entry.snapshot.failed, refreshing: true })
     timer = window.setTimeout(() => {
       timer = undefined
       const id = requestId()
@@ -155,12 +156,13 @@ function entryFor(
           if (pending !== id) return
           const result = billingEstimateResponseSchema.parse(value)
           if (result.estimate.sessionId !== sessionId) throw new Error('Invalid billing response')
-          entry.settledAt = Date.now()
-          entry.expires = entry.settledAt + 5 * 60_000
+          entry.settledAt = ++settleOrder
+          entry.expires = Date.now() + 5 * 60_000
           publish({ estimate: result.estimate, failed: false, refreshing: false })
         })
         .catch(() => {
           if (pending !== id) return
+          entry.settledAt = ++settleOrder
           entry.expires = Date.now() + 30_000
           publish({ ...entry.snapshot, failed: true, refreshing: false })
         })

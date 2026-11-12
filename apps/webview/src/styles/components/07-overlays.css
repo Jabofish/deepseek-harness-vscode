@@ -9,7 +9,10 @@
   background: var(--dsh-widget-bg);
   box-shadow: var(--dsh-shadow);
   transform-origin: top left;
-  animation: dsh-pop-in var(--dsh-motion-duration-standard) var(--dsh-motion-ease-enter) backwards;
+  /* Opacity-only entrance: animating `transform` turns the popover card into a
+   * containing block for nested `position: fixed` overlays (`SelectMenu`,
+   * feature popovers), offsetting them from this card while opening. */
+  animation: dsh-overlay-fade-in var(--dsh-motion-duration-standard) var(--dsh-motion-ease-enter) backwards;
 }
 
 .dsh-popover-card[data-flip-x='true'],
