@@ -45,6 +45,9 @@ beforeEach(() => {
   native.warning.mockResolvedValue('Install')
 })
 interface Fixture {
+  backend: DshBackend
+  selectBackend: (backend: DshBackend | undefined) => void
+  requestTimeoutMs: Mock<() => number>
   manager: EditorCompanionManagement
   repository: PluginBundleRepository
   listBundles: Mock<PluginBundleRepository['listBundles']>
@@ -55,7 +58,7 @@ interface Fixture {
   setBundleEnabled: Mock<PluginBundleRepository['setBundleEnabled']>
   stop: Mock<() => Promise<void>>
   enable: Mock<() => Promise<boolean>>
-  checkPackageManager: Mock<() => Promise<'ready' | 'missing' | 'broken'>>
+  checkPackageManager: Mock<(signal?: AbortSignal) => Promise<'ready' | 'missing' | 'broken'>>
   reconnect: Mock<() => Promise<void>>
 }
 function fixture(ownership: 'managed' | 'external' = 'managed'): Fixture {
@@ -83,12 +86,18 @@ function fixture(ownership: 'managed' | 'external' = 'managed'): Fixture {
   const stop = vi.fn().mockResolvedValue(undefined)
   const enable = vi.fn().mockResolvedValue(true)
   const checkPackageManager = vi
-    .fn<() => Promise<'ready' | 'missing' | 'broken'>>()
+    .fn<(signal?: AbortSignal) => Promise<'ready' | 'missing' | 'broken'>>()
     .mockResolvedValue('ready')
   const reconnect = vi.fn<() => Promise<void>>().mockResolvedValue(undefined)
+  let selected: DshBackend | undefined = backend
+  const requestTimeoutMs = vi.fn(() => 30_000)
   const manager = new EditorCompanionManagement({
-    backend: () => backend,
-    current: (candidate) => candidate === backend,
+    backend: () => {
+      if (selected === undefined) throw new Error('Fixture disconnected')
+      return selected
+    },
+    current: (candidate) => candidate === selected,
+    requestTimeoutMs,
     extensionUri: FixtureUri.file(path.resolve('extension-fixture')) as unknown as vscode.Uri,
     storageUri: FixtureUri.file(path.resolve('storage-fixture')) as unknown as vscode.Uri,
     reconnect,
@@ -100,6 +109,11 @@ function fixture(ownership: 'managed' | 'external' = 'managed'): Fixture {
     checkPackageManager,
   })
   return {
+    backend,
+    selectBackend: (next) => {
+      selected = next
+    },
+    requestTimeoutMs,
     manager,
     repository,
     listBundles,
@@ -115,6 +129,182 @@ function fixture(ownership: 'managed' | 'external' = 'managed'): Fixture {
   }
 }
 describe('native editor companion installation and recovery', () => {
+  it('coalesces simultaneous catalog reads for the same connection', async () => {
+    const { manager, listBundles } = fixture()
+    let finish!: (value: readonly (typeof old)[]) => void
+    listBundles.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        }),
+    )
+    const first = manager.refreshStatus(true)
+    const second = manager.refreshStatus(true)
+    await Promise.resolve()
+    expect(listBundles).toHaveBeenCalledOnce()
+    finish([old])
+    await Promise.all([first, second])
+    expect(manager.installationStatus).toEqual({ installed: true, packageManager: 'ready' })
+  })
+
+  it('starts a fresh post-install read while an older catalog read is still pending', async () => {
+    const { manager, listBundles } = fixture()
+    let finishOld!: (value: readonly (typeof old)[]) => void
+    listBundles
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishOld = resolve
+          }),
+      )
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([old])
+    const previous = manager.refreshStatus(true)
+    await Promise.resolve()
+    try {
+      expect(await manager.installBundled({ silent: true })).toBe(true)
+      const current = manager.refreshStatus(true)
+      await Promise.resolve()
+      expect(listBundles).toHaveBeenCalledTimes(3)
+      await current
+      expect(manager.installationStatus).toEqual({ installed: true, packageManager: 'ready' })
+    } finally {
+      finishOld([])
+      await previous
+    }
+  })
+
+  it.each(['resolve', 'reject'] as const)(
+    'refreshes a replacement connection immediately while the old catalog later %ss',
+    async (outcome) => {
+      const { manager, backend, repository, listBundles, selectBackend } = fixture()
+      let resolveOld!: (value: readonly (typeof old)[]) => void
+      let rejectOld!: (reason: Error) => void
+      listBundles.mockImplementationOnce(
+        () =>
+          new Promise((resolve, reject) => {
+            resolveOld = resolve
+            rejectOld = reject
+          }),
+      )
+      const prior = manager.refreshStatus(true)
+      await Promise.resolve()
+      const priorSignal = listBundles.mock.calls[0]?.[0]
+      const listNew = vi.fn<PluginBundleRepository['listBundles']>().mockResolvedValue([old])
+      selectBackend({ ...backend, pluginBundles: { ...repository, listBundles: listNew } })
+      const current = manager.refreshStatus(true)
+      await Promise.resolve()
+      expect(listNew).toHaveBeenCalledOnce()
+      expect(priorSignal?.aborted).toBe(true)
+      await current
+      expect(manager.installationStatus).toEqual({ installed: true, packageManager: 'ready' })
+      if (outcome === 'resolve') resolveOld([])
+      else rejectOld(new Error('Old connection failed'))
+      await prior
+      expect(manager.installationStatus).toEqual({ installed: true, packageManager: 'ready' })
+    },
+  )
+
+  it('cancels an obsolete catalog when the backend disconnects', async () => {
+    const { manager, listBundles, selectBackend } = fixture()
+    listBundles.mockImplementationOnce(
+      (signal) =>
+        new Promise((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(new Error('Disconnected')), { once: true })
+        }),
+    )
+    const pending = manager.refreshStatus(true)
+    await Promise.resolve()
+    selectBackend(undefined)
+    await manager.refreshStatus(true)
+    expect(listBundles.mock.calls[0]?.[0]?.aborted).toBe(true)
+    await pending
+    expect(manager.installationStatus).toEqual({})
+  })
+
+  it('aborts the package-manager probe and retires status refreshes on disposal', async () => {
+    const { manager, listBundles, checkPackageManager } = fixture()
+    let probeStarted!: () => void
+    const started = new Promise<void>((resolve) => {
+      probeStarted = resolve
+    })
+    checkPackageManager.mockImplementationOnce(
+      (signal) =>
+        new Promise((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(new Error('Disposed')), { once: true })
+          probeStarted()
+        }),
+    )
+    const pending = manager.refreshStatus(true)
+    await started
+    await manager.dispose()
+    expect(checkPackageManager.mock.calls[0]?.[0]?.aborted).toBe(true)
+    await pending
+    await manager.refreshStatus(true)
+    expect(listBundles).toHaveBeenCalledOnce()
+    expect(manager.installationStatus).toEqual({})
+  })
+
+  it('uses a configured catalog budget longer than the default', async () => {
+    vi.useFakeTimers()
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation((milliseconds) => {
+      const controller = new AbortController()
+      setTimeout(() => controller.abort(new DOMException('Timed out', 'TimeoutError')), milliseconds)
+      return controller.signal
+    })
+    try {
+      const { manager, listBundles, requestTimeoutMs } = fixture()
+      requestTimeoutMs.mockReturnValue(60_000)
+      listBundles.mockImplementationOnce(
+        (signal) =>
+          new Promise((resolve, reject) => {
+            setTimeout(() => resolve([old]), 45_000)
+            signal?.addEventListener('abort', () => reject(new Error('Timed out')), { once: true })
+          }),
+      )
+      const pending = manager.refreshStatus(true)
+      await vi.advanceTimersByTimeAsync(45_000)
+      await pending
+      expect(manager.installationStatus).toEqual({ installed: true, packageManager: 'ready' })
+    } finally {
+      timeout.mockRestore()
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    }
+  })
+
+  it('gives the package-manager probe its own budget after a slow catalog succeeds', async () => {
+    vi.useFakeTimers()
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation((milliseconds) => {
+      const controller = new AbortController()
+      setTimeout(() => controller.abort(new DOMException('Timed out', 'TimeoutError')), milliseconds)
+      return controller.signal
+    })
+    try {
+      const { manager, listBundles, checkPackageManager } = fixture()
+      listBundles.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            setTimeout(() => resolve([old]), 25_000)
+          }),
+      )
+      checkPackageManager.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            setTimeout(() => resolve('ready'), 8_000)
+          }),
+      )
+      const pending = manager.refreshStatus(true)
+      await vi.advanceTimersByTimeAsync(33_000)
+      await pending
+      expect(manager.installationStatus).toEqual({ installed: true, packageManager: 'ready' })
+    } finally {
+      timeout.mockRestore()
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    }
+  })
+
   it('honors native progress cancellation before mutation and retains the final receipt after it starts', async () => {
     const { manager, installBundle, cancelInstall } = fixture()
     expect(await manager.installBundled({ silent: true, signal: AbortSignal.abort() })).toBe(false)
@@ -171,6 +361,49 @@ describe('native editor companion installation and recovery', () => {
     )
     expect(native.warning).toHaveBeenCalledOnce()
     expect(installBundle).toHaveBeenCalledWith(oldFile, expect.anything(), expect.any(AbortSignal))
+  })
+
+  it('accepts a slow package catalog and still bounds an unresponsive status read', async () => {
+    vi.useFakeTimers()
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation((milliseconds) => {
+      const controller = new AbortController()
+      setTimeout(() => controller.abort(new DOMException('Timed out', 'TimeoutError')), milliseconds)
+      return controller.signal
+    })
+    try {
+      const { manager, listBundles } = fixture()
+      listBundles.mockImplementationOnce(
+        (signal) =>
+          new Promise((resolve, reject) => {
+            setTimeout(() => resolve([]), 15_000)
+            signal?.addEventListener('abort', () => reject(new DOMException('Timed out', 'TimeoutError')), {
+              once: true,
+            })
+          }),
+      )
+      const slow = manager.refreshStatus(true)
+      await vi.advanceTimersByTimeAsync(15_000)
+      await slow
+      expect(manager.installationStatus).toEqual({ installed: false, packageManager: 'ready' })
+
+      listBundles.mockImplementationOnce(
+        (signal) =>
+          new Promise((_resolve, reject) => {
+            signal?.addEventListener('abort', () => reject(new DOMException('Timed out', 'TimeoutError')), {
+              once: true,
+            })
+          }),
+      )
+      const unresponsive = manager.refreshStatus(true)
+      await vi.advanceTimersByTimeAsync(30_000)
+      await unresponsive
+      expect(listBundles.mock.calls.at(-1)?.[0]?.aborted).toBe(true)
+      expect(manager.installationStatus).toEqual({})
+    } finally {
+      timeout.mockRestore()
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    }
   })
 
   it('reads native installed state independently from consent and blocks missing prerequisites before mutation', async () => {

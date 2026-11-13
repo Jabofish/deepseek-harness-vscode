@@ -6,6 +6,11 @@ Release entries describe behaviour at that release. `Unreleased` lists changes a
 
 ## Unreleased
 
+- Adds exact DSH `0.2.2-rc.3` support (`38a6a5c965aa99ab525161efb7cc5cf1fe62fced`) using the source-checked rc.2 Remote and Session V4 contracts. Discovers the optional DeepSeek chat importer from the Host; imported sessions use the existing history and export paths. ZIP exports retain the runtime's missing-attachment receipt. See the compatibility contract for validation scope.
+- 适配 DSH `0.2.2-rc.3`（`38a6a5c965aa99ab525161efb7cc5cf1fe62fced`），沿用经源码逐项核对的 rc.2 Remote 与 Session V4 契约。由 Host 发现可选的 DeepSeek 会话导入插件，导入的会话通过现有历史和导出路径读取，ZIP 导出保留运行时提供的缺失附件清单。验证范围见兼容契约。
+- Companion catalogue reads follow the configured RPC timeout (30 seconds by default), with a separate package-manager probe budget. Status reads coalesce only within the current connection and installation revision; disconnect/disposal cancels pending discovery and stale replies cannot replace current status. Client status/configuration requests allow the corresponding Host work to finish.
+- companion 目录读取遵循配置的 RPC 超时（默认 30 秒），包管理器探测使用独立预算。状态查询只在同一连接及安装状态代次内合并；断开或销毁时取消待处理发现，过期响应不能覆盖当前状态，客户端状态及配置请求的等待预算覆盖对应 Host 操作。
+
 ## 0.4.8
 
 - Adds exact DSH `0.2.2-rc.2` support (`ddac96760b6edf8fa0fe17cbdcf0b512f4c12b2c`): named subagent catalogs and direct controls, validated continuation/Team projections, account stream and notification migration, and expected-package installation checks. Preserves older exact adapters and the guided-install default. Authenticated account/model and independent VS Code acceptance remain partial.

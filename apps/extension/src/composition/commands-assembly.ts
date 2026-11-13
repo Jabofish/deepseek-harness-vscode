@@ -97,7 +97,10 @@ export interface CommandsAssembly {
  * it tears the Webview down before the adapters and the process supervisor.
  */
 export function createCommandsAssembly(deps: CommandsAssemblyDependencies): CommandsAssembly {
-  const editorBridge = new EditorBridgeHost(deps)
+  const editorBridge = new EditorBridgeHost({
+    ...deps,
+    requestTimeoutMs: () => deps.configuration.read().connection.requestTimeoutMs,
+  })
   const {
     context,
     configuration,

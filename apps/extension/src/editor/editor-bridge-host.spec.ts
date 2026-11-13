@@ -130,6 +130,7 @@ function harness(
   connectionReady: () => void
   replaceBackend: () => void
   backendService: BackendService
+  requestTimeoutMs: ReturnType<typeof vi.fn<() => number>>
   reconnect: ReturnType<typeof vi.fn<(signal?: AbortSignal) => Promise<unknown>>>
 } {
   ui.errors.mockClear()
@@ -246,11 +247,13 @@ function harness(
     },
   }
   const reconnect = vi.fn<(signal?: AbortSignal) => Promise<unknown>>().mockResolvedValue(undefined)
+  const requestTimeoutMs = vi.fn(() => 30_000)
   const dependencies = {
     ...(withSetup
       ? { context: { extensionUri: { fsPath: path.resolve('extension-fixture') } }, reconnect }
       : {}),
     backendService,
+    requestTimeoutMs,
     coordinator: {
       getState: () => ({ kind: 'connected', backend: backend.connection }),
       subscribe: (callback: typeof listener) => {
@@ -262,6 +265,7 @@ function harness(
   } as unknown as ConstructorParameters<typeof EditorBridgeHost>[0]
   return {
     host: new EditorBridgeHost(dependencies),
+    requestTimeoutMs,
     reconnect,
     attach,
     detach,
@@ -278,6 +282,49 @@ function harness(
   }
 }
 describe('automatic editor sharing', () => {
+  it('cancels pending metadata discovery on disconnect without requiring another status read', async () => {
+    const { host, backendService, disconnect } = harness('external')
+    const repository = backendService.requireBackend().pluginBundles
+    if (repository === undefined) throw new Error('The fixture has no plugin repository.')
+    let pendingSignal: AbortSignal | undefined
+    let finish: (() => void) | undefined
+    vi.spyOn(repository, 'listBundles').mockImplementation(
+      (signal) =>
+        new Promise((resolve, reject) => {
+          pendingSignal = signal
+          finish = () => resolve([])
+          signal?.addEventListener('abort', () => reject(new DOMException('Cancelled', 'AbortError')), {
+            once: true,
+          })
+        }),
+    )
+    const reading = host.readStatus()
+    try {
+      await vi.waitFor(() => expect(pendingSignal).toBeDefined())
+      disconnect()
+      expect(pendingSignal?.aborted).toBe(true)
+      await reading
+      expect(host.snapshot()).not.toHaveProperty('installed')
+    } finally {
+      finish?.()
+      await reading
+      await host.dispose()
+    }
+  })
+
+  it('uses the configured metadata deadline through the Host status entry point', async () => {
+    const { host, requestTimeoutMs } = harness('external')
+    requestTimeoutMs.mockReturnValue(60_000)
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => new AbortController().signal)
+    try {
+      expect(await host.readStatus()).toMatchObject({ installed: false })
+      expect(timeout).toHaveBeenCalledWith(60_000)
+    } finally {
+      timeout.mockRestore()
+      await host.dispose()
+    }
+  })
+
   it.each([
     { workspaceOpen: false, workspaceFile: false, target: 1 },
     { workspaceOpen: true, workspaceFile: false, target: 2 },

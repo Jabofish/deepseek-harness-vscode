@@ -17,9 +17,12 @@ import {
   type CompanionArchive,
 } from './companion-archive.js'
 
+const DEFAULT_PLUGIN_CATALOG_TIMEOUT_MS = 30_000
+
 interface Dependencies {
   readonly backend: () => DshBackend
   readonly current: (backend: DshBackend) => boolean
+  readonly requestTimeoutMs?: (() => number) | undefined
   readonly extensionUri: vscode.Uri | undefined
   readonly storageUri: vscode.Uri | undefined
   readonly reconnect: ((signal?: AbortSignal) => Promise<unknown>) | undefined
@@ -47,56 +50,116 @@ export class EditorCompanionManagement {
   private observedBackend: DshBackend | undefined
   private observedAt = 0
   private statusRevision = 0
-  private refreshing: Promise<void> | undefined
+  private readonly closed = new AbortController()
+  private refreshing:
+    | {
+        readonly backend: DshBackend
+        readonly revision: number
+        readonly controller: AbortController
+        readonly operation: Promise<void>
+      }
+    | undefined
   public get installationStatus(): typeof this.observed {
-    return this.observedBackend !== undefined && this.deps.current(this.observedBackend) ? this.observed : {}
+    return !this.closed.signal.aborted &&
+      this.observedBackend !== undefined &&
+      this.deps.current(this.observedBackend)
+      ? this.observed
+      : {}
+  }
+  public resetStatus(): void {
+    this.refreshing?.controller.abort()
+    this.refreshing = undefined
+    this.statusRevision += 1
+    this.observed = {}
+    this.observedBackend = undefined
+    this.observedAt = 0
   }
   public async refreshStatus(force = false): Promise<void> {
-    if (this.refreshing !== undefined) return this.refreshing
+    if (this.closed.signal.aborted) return
+    let backend: DshBackend
+    try {
+      backend = this.deps.backend()
+    } catch {
+      this.resetStatus()
+      return
+    }
+    if (
+      this.refreshing?.backend === backend &&
+      this.refreshing.revision === this.statusRevision &&
+      this.deps.current(backend)
+    )
+      return this.refreshing.operation
+    this.refreshing?.controller.abort()
+    this.refreshing = undefined
+    const repository = backend.pluginBundles
     if (
       this.busy ||
-      (!force &&
-        this.observedBackend !== undefined &&
-        this.deps.current(this.observedBackend) &&
-        Date.now() - this.observedAt < 30_000)
+      !this.deps.current(backend) ||
+      typeof repository?.listBundles !== 'function' ||
+      (!force && this.observedBackend === backend && Date.now() - this.observedAt < 30_000)
     )
       return
     const revision = this.statusRevision
-    const refresh = (async (): Promise<void> => {
-      try {
-        const backend = this.deps.backend()
-        if (!this.deps.current(backend) || typeof backend.pluginBundles?.listBundles !== 'function') return
-        const bundles = await backend.pluginBundles.listBundles(AbortSignal.timeout(10_000))
-        if (!this.deps.current(backend)) return
-        const installed = bundles.some(
-          (bundle) => bundle.name === EDITOR_COMPANION_PACKAGE && bundle.installed,
-        )
-        const packageManager =
-          backend.connection.ownership === 'managed' && vscode.workspace.isTrusted
-            ? await this.deps.checkPackageManager?.(AbortSignal.timeout(10_000))
-            : undefined
-        if (!this.deps.current(backend) || this.busy || revision !== this.statusRevision) return
-        this.observedBackend = backend
-        this.observedAt = Date.now()
-        this.observed = { installed, ...(packageManager === undefined ? {} : { packageManager }) }
-        if (
-          packageManager === 'ready' &&
-          this.failure.installationFailureKind === 'pnpm-missing' &&
-          this.installPhase === 'failed'
-        ) {
-          this.failure = {}
-          this.installPhase = undefined
+    const controller = new AbortController()
+    const lifecycleSignal = AbortSignal.any([this.closed.signal, controller.signal])
+    const refresh = {
+      backend,
+      revision,
+      controller,
+      operation: Promise.resolve().then(async (): Promise<void> => {
+        try {
+          const signal = AbortSignal.any([
+            lifecycleSignal,
+            AbortSignal.timeout(this.deps.requestTimeoutMs?.() ?? DEFAULT_PLUGIN_CATALOG_TIMEOUT_MS),
+          ])
+          signal.throwIfAborted()
+          if (!this.deps.current(backend)) return
+          const bundles = await repository.listBundles(signal)
+          if (signal.aborted || !this.deps.current(backend)) return
+          const installed = bundles.some(
+            (bundle) => bundle.name === EDITOR_COMPANION_PACKAGE && bundle.installed,
+          )
+          const packageManager =
+            backend.connection.ownership === 'managed' && vscode.workspace.isTrusted
+              ? await this.deps.checkPackageManager?.(
+                  AbortSignal.any([lifecycleSignal, AbortSignal.timeout(10_000)]),
+                )
+              : undefined
+          if (
+            lifecycleSignal.aborted ||
+            !this.deps.current(backend) ||
+            this.busy ||
+            revision !== this.statusRevision
+          )
+            return
+          this.observedBackend = backend
+          this.observedAt = Date.now()
+          this.observed = { installed, ...(packageManager === undefined ? {} : { packageManager }) }
+          if (
+            packageManager === 'ready' &&
+            this.failure.installationFailureKind === 'pnpm-missing' &&
+            this.installPhase === 'failed'
+          ) {
+            this.failure = {}
+            this.installPhase = undefined
+          }
+        } catch {
+          if (
+            !this.closed.signal.aborted &&
+            !controller.signal.aborted &&
+            this.deps.current(backend) &&
+            revision === this.statusRevision &&
+            !this.busy
+          ) {
+            this.observedAt = 0
+            this.observed = {}
+          }
         }
-      } catch {
-        if (revision === this.statusRevision && !this.busy) {
-          this.observedAt = 0
-          this.observed = {}
-        }
-      }
-    })()
+      }),
+    }
     this.refreshing = refresh
     try {
-      await refresh
+      await refresh.operation
     } finally {
       if (this.refreshing === refresh) this.refreshing = undefined
     }
@@ -161,8 +224,13 @@ export class EditorCompanionManagement {
       const repository = backend.pluginBundles
       if (repository === undefined) throw new Error('Unavailable')
       await this.recover(backend)
-      const bundles = await repository.listBundles(AbortSignal.timeout(10_000))
-      if (!this.deps.current(backend)) return
+      const bundles = await repository.listBundles(
+        AbortSignal.any([
+          this.closed.signal,
+          AbortSignal.timeout(this.deps.requestTimeoutMs?.() ?? DEFAULT_PLUGIN_CATALOG_TIMEOUT_MS),
+        ]),
+      )
+      if (this.closed.signal.aborted || !this.deps.current(backend)) return
       const bundle = bundles.find((item) => item.name === EDITOR_COMPANION_PACKAGE)
       let status = bundle?.installed
         ? `Installed ${bundle.version ?? ''}; ${bundle.enabled ? 'enabled' : 'disabled'}`
@@ -260,6 +328,7 @@ export class EditorCompanionManagement {
           return
       }
     } catch {
+      if (this.closed.signal.aborted) return
       void vscode.window.showErrorMessage(
         'The editor companion manager is unavailable. Connect a local DSH with a compatible plugin manager and try again.',
       )
@@ -337,8 +406,11 @@ export class EditorCompanionManagement {
     return undefined
   }
   public async dispose(): Promise<void> {
+    const refreshing = this.refreshing?.operation
+    this.closed.abort()
+    this.resetStatus()
     this.cancel()
-    await this.operation
+    await Promise.all([refreshing, this.operation])
   }
   private async install(
     file: string,
@@ -780,6 +852,7 @@ export class EditorCompanionManagement {
   private available(expected?: DshBackend, mutation = true): DshBackend {
     const backend = this.deps.backend()
     if (
+      this.closed.signal.aborted ||
       (expected !== undefined && backend !== expected) ||
       !this.deps.current(backend) ||
       !vscode.workspace.isTrusted ||

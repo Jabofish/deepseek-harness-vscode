@@ -12,7 +12,9 @@ import type { BackendEvent } from '../../packages/domain/src/index.js'
 
 const enabled =
   process.env.DSH_LIVE_SMOKE === '1' &&
-  ['0.2.2-alpha.2', '0.2.2-alpha.3', '0.2.2-rc.1'].includes(process.env.DSH_LIVE_RUNTIME_VERSION ?? '')
+  ['0.2.2-alpha.2', '0.2.2-alpha.3', '0.2.2-rc.1', '0.2.2-rc.2', '0.2.2-rc.3'].includes(
+    process.env.DSH_LIVE_RUNTIME_VERSION ?? '',
+  )
 
 /** Test-only producer: the native store and Session.append own bytes and log authority. */
 function probeSource(moduleUrl: (name: string) => string): string {
@@ -84,7 +86,11 @@ describe.skipIf(!enabled)('native alpha222 tool-result image ownership', () => {
       const other = await backend.sessions.create(input)
       expect(other.id).not.toBe(owner.id)
       const events: BackendEvent[] = []
-      if (['0.2.2-alpha.3', '0.2.2-rc.1'].includes(process.env.DSH_LIVE_RUNTIME_VERSION ?? '')) {
+      if (
+        ['0.2.2-alpha.3', '0.2.2-rc.1', '0.2.2-rc.2', '0.2.2-rc.3'].includes(
+          process.env.DSH_LIVE_RUNTIME_VERSION ?? '',
+        )
+      ) {
         unsubscribe = backend.events.subscribe((event) => events.push(event))
         backend.events.watchSession?.(owner.id)
         await vi.waitFor(
@@ -114,7 +120,11 @@ describe.skipIf(!enabled)('native alpha222 tool-result image ownership', () => {
         await transport.remoteRequest('toolImageProbe/seed', { request: { sessionId: owner.id } }),
         'tool image fixture',
       )
-      if (['0.2.2-alpha.3', '0.2.2-rc.1'].includes(process.env.DSH_LIVE_RUNTIME_VERSION ?? ''))
+      if (
+        ['0.2.2-alpha.3', '0.2.2-rc.1', '0.2.2-rc.2', '0.2.2-rc.3'].includes(
+          process.env.DSH_LIVE_RUNTIME_VERSION ?? '',
+        )
+      )
         await vi.waitFor(
           () =>
             expect(

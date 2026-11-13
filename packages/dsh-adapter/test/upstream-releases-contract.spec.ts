@@ -5,6 +5,8 @@ import { Alpha223VersionAdapter } from '../src/versions/alpha223/adapter.js'
 import { Rc214VersionAdapter } from '../src/versions/rc214/adapter.js'
 import { Rc215VersionAdapter } from '../src/versions/rc215/adapter.js'
 import { Rc221VersionAdapter } from '../src/versions/rc221/adapter.js'
+import { Rc222VersionAdapter } from '../src/versions/rc222/adapter.js'
+import { Rc223VersionAdapter } from '../src/versions/rc223/adapter.js'
 import {
   candidate,
   endpoint,
@@ -17,6 +19,8 @@ import { callRpc } from '../src/versions/rc6/rpc.js'
 import { namedBlank } from './fixtures/rc215-contract.js'
 
 describe.each([
+  { AdapterBase: Rc223VersionAdapter, version: '0.2.2-rc.3', protocol: 'rc223' },
+  { AdapterBase: Rc222VersionAdapter, version: '0.2.2-rc.2', protocol: 'rc222' },
   { AdapterBase: Rc221VersionAdapter, version: '0.2.2-rc.1', protocol: 'rc221' },
   { AdapterBase: Alpha223VersionAdapter, version: '0.2.2-alpha.3', protocol: 'alpha223' },
   { AdapterBase: Rc214VersionAdapter, version: '0.2.1-rc.4', protocol: 'rc214' },
@@ -47,8 +51,11 @@ describe.each([
         '0.2.2-alpha.3',
         '0.2.2-rc.1',
         '0.2.2-rc.2',
+        '0.2.2-rc.3',
+        '0.2.2-rc.4',
       ].filter((v) => v !== release),
       `${release}+unverified`,
+      '',
     ])
       expect(await adapter.probe(candidate(version))).toBeUndefined()
     expect(await adapter.probeCompatibility()).toBeUndefined()

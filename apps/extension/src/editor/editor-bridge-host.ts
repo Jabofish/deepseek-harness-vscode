@@ -39,6 +39,7 @@ import { cleanupLegacyCompanion } from './legacy-companion-cleanup.js'
 
 interface Dependencies {
   readonly backendService: BackendService
+  readonly requestTimeoutMs?: (() => number) | undefined
   readonly coordinator: DshConnectionCoordinator
   readonly sessionNavigation: RequestGateway['sessionNavigation']
   readonly context?: Pick<vscode.ExtensionContext, 'extensionUri' | 'globalStorageUri'>
@@ -101,6 +102,7 @@ export class EditorBridgeHost {
     this.management = new EditorCompanionManagement({
       backend: () => deps.backendService.requireBackend(),
       current: (backend) => this.currentBackend(backend),
+      requestTimeoutMs: deps.requestTimeoutMs,
       extensionUri: deps.context?.extensionUri,
       storageUri: deps.context?.globalStorageUri,
       reconnect: deps.reconnect,
@@ -118,6 +120,7 @@ export class EditorBridgeHost {
         dispose: deps.coordinator.subscribe((state) => {
           if (state.kind !== 'connected') {
             if (this.preparing !== this.reconnectingPrerequisites) this.preparing?.abort()
+            this.management.resetStatus()
             this.management.cancel()
             void this.stop()
             this.phase = 'waiting'

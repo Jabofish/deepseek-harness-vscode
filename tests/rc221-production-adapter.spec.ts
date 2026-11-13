@@ -18,9 +18,13 @@ const exportFileSystem = {
   writeFile: () => Promise.reject(new Error('unused')),
 }
 
-describe('rc221 production Adapter assembly', () => {
+describe.each([
+  { version: '0.2.2-rc.1', protocol: 'rc221' },
+  { version: '0.2.2-rc.2', protocol: 'rc222' },
+  { version: '0.2.2-rc.3', protocol: 'rc223' },
+])('$protocol production Adapter assembly', ({ version, protocol }) => {
   it.each(['create', 'edit', 'run'] as const)(
-    'selects rc221 through the production registry and never replays Schedule %s after a lost receipt',
+    'selects the exact release through the production registry and never replays Schedule %s after a lost receipt',
     async (operation) => {
       const methods: string[] = []
       let catalogReads = 0
@@ -64,14 +68,14 @@ describe('rc221 production Adapter assembly', () => {
           webSocket: WorkspaceSocket,
         }),
       )
-      const connected = await new VersionedBackendProbe(adapters).probe(candidate('0.2.2-rc.1'))
+      const connected = await new VersionedBackendProbe(adapters).probe(candidate(version))
       expect(connected?.capabilities).toMatchObject({
-        dshVersion: '0.2.2-rc.1',
-        adapterId: 'dsh-0.2.2-rc.1',
-        protocolVersion: 'rc221',
+        dshVersion: version,
+        adapterId: `dsh-${version}`,
+        protocolVersion: protocol,
         compatibilityMode: 'exact',
       })
-      if (connected === undefined) throw new Error('The production registry did not select rc221.')
+      if (connected === undefined) throw new Error(`The production registry did not select ${protocol}.`)
       const backend = await new VersionedBackendFactory(adapters).connect(connected)
       try {
         const schedules = backend.schedules

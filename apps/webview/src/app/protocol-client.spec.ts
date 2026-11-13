@@ -61,6 +61,11 @@ describe('ProtocolClient', () => {
 
   it.each([
     {
+      type: 'editor.companion.configure',
+      requestId: 'companion-configure',
+      payload: { enabled: true },
+    },
+    {
       type: 'editor.companion.action',
       requestId: 'companion',
       payload: { action: 'setup' },
@@ -93,6 +98,16 @@ describe('ProtocolClient', () => {
       await completeSlowRequest({ request, feature: true }, 120_001)
     },
   )
+
+  it('accepts companion status after the full configured RPC and package-manager budgets', async () => {
+    await completeSlowRequest(
+      {
+        request: { type: 'editor.companion.status', requestId: 'companion-status', payload: {} },
+        feature: true,
+      },
+      310_001,
+    )
+  })
 
   it('cancels only the requested Host operation and ignores its late response', async () => {
     const posted: ProtocolEnvelope[] = []
