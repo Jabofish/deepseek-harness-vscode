@@ -161,13 +161,14 @@ export function installTranscript(state: AppState, window: TranscriptWindow): Ap
     state.transcript !== undefined && !transcriptPositions.has(window.nodes)
       ? reconcileFullWindow(state.transcript, window)
       : window
+  // Keep in-flight pagination ownership in historyLoading intact across
+  // concurrent transcript/patch updates until the active history request settles.
   return withCurrentTodos({
     ...state,
     transcript: reconciled,
     timeline: transcriptTimeline(reconciled, state.timeline),
     historyHasMore: reconciled.hasMore,
     historyBeforeSequence: reconciled.beforeSequence,
-    historyLoading: false,
   })
 }
 

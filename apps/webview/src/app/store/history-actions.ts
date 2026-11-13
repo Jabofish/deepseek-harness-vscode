@@ -25,11 +25,18 @@ export function createHistoryActions(deps: {
             payload: { sessionId: window.sessionId, revision: window.revision, direction: 'older' },
           }),
         )
-        deps.setState((current) => installTranscript(current, next))
+        deps.setState((current) => {
+          const installed = installTranscript(current, next)
+          return requestGeneration === generation && current.activeSessionId === window.sessionId
+            ? { ...installed, historyLoading: false }
+            : installed
+        })
       } finally {
         if (requestGeneration === generation)
           deps.setState((current) =>
-            current.activeSessionId === window.sessionId ? { ...current, historyLoading: false } : current,
+            current.activeSessionId === window.sessionId && current.historyLoading
+              ? { ...current, historyLoading: false }
+              : current,
           )
       }
     },

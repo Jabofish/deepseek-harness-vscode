@@ -748,7 +748,7 @@
   text-transform: uppercase;
 }
 
-.dsh-session-switcher__archived-toggle:hover {
+.dsh-session-switcher__archived-toggle:hover:not(:disabled) {
   color: var(--dsh-text);
   background: var(--dsh-surface-hover);
 }
@@ -861,7 +861,7 @@
   cursor: pointer;
 }
 
-.dsh-goals-tasks__toggle:hover {
+.dsh-goals-tasks__toggle:hover:not(:disabled) {
   background: var(--dsh-surface-hover);
 }
 

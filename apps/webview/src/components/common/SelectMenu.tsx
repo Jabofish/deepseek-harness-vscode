@@ -205,6 +205,14 @@ export const SelectMenu = memo(function SelectMenu(props: SelectMenuProps): Reac
           role="listbox"
           aria-label={props.ariaLabel}
           style={menuMode === 'overlay' ? menuPosition : undefined}
+          onClick={(event) => {
+            // Form fields often wrap SelectMenu in a <label>. Canceling clicks
+            // that miss an enabled option stops the enclosing label from
+            // retargeting them to the trigger and collapsing the open listbox.
+            if (!(event.target instanceof Element && event.target.closest('button:not(:disabled)'))) {
+              event.preventDefault()
+            }
+          }}
           onKeyDown={onMenuKeyDown}
         >
           {props.options.map((option, index) => (

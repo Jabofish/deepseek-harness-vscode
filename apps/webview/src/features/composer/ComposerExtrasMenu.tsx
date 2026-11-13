@@ -21,6 +21,7 @@ export interface ComposerExtrasMenuProps {
 export function ComposerExtrasMenu(props: ComposerExtrasMenuProps): ReactElement {
   const dialogId = useId()
   const rootRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const menuPosition = useViewportMenuPosition({
     open: props.open,
@@ -34,11 +35,16 @@ export function ComposerExtrasMenu(props: ComposerExtrasMenuProps): ReactElement
     open: props.open,
     refs: [rootRef, menuRef],
     onDismiss: () => props.onOpenChange(false),
+    onEscape: () => {
+      props.onOpenChange(false)
+      triggerRef.current?.focus()
+    },
   })
 
   return (
     <div ref={rootRef} className="dsh-composer__extras">
       <button
+        ref={triggerRef}
         className={`dsh-icon-button dsh-composer__extras-trigger${props.open ? ' dsh-composer__extras-trigger--open' : ''}`}
         type="button"
         aria-label={props.label}

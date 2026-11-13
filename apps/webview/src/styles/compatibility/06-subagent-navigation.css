@@ -40,7 +40,7 @@
   text-align: center;
 }
 
-.dsh-subagent-tree__trigger:hover {
+.dsh-subagent-tree__trigger:hover:not(:disabled) {
   background: var(--dsh-surface-hover, color-mix(in srgb, var(--dsh-muted) 10%, transparent));
 }
 
@@ -76,17 +76,19 @@
   cursor: pointer;
 }
 
-.dsh-subagent-tree__row:hover,
+.dsh-subagent-tree__row:hover:not(.dsh-subagent-tree__row--disabled):not([aria-disabled='true']),
 .dsh-subagent-tree__row:focus-visible {
   background: var(--dsh-surface-hover, color-mix(in srgb, var(--dsh-muted) 10%, transparent));
 }
 
-.dsh-subagent-tree__row--disabled {
+.dsh-subagent-tree__row--disabled,
+.dsh-subagent-tree__row[aria-disabled='true'] {
   cursor: default;
   opacity: 0.76;
 }
 
-.dsh-subagent-tree__row--disabled:hover {
+.dsh-subagent-tree__row--disabled:hover,
+.dsh-subagent-tree__row[aria-disabled='true']:hover {
   background: transparent;
 }
 
@@ -197,7 +199,7 @@
   cursor: pointer;
 }
 
-.dsh-workflow-runs__run-header:hover {
+.dsh-workflow-runs__run-header:hover:not(:disabled) {
   background: var(--dsh-surface-hover, color-mix(in srgb, var(--dsh-muted) 10%, transparent));
 }
 
@@ -262,7 +264,7 @@
   cursor: pointer;
 }
 
-.dsh-workflow-runs__phase-header:hover {
+.dsh-workflow-runs__phase-header:hover:not(:disabled) {
   background: var(--dsh-surface-hover, color-mix(in srgb, var(--dsh-muted) 10%, transparent));
 }
 
@@ -322,7 +324,7 @@
   cursor: pointer;
 }
 
-.dsh-workflow-runs__member:is(button):hover {
+.dsh-workflow-runs__member:is(button):hover:not(:disabled) {
   background: var(--dsh-surface-hover, color-mix(in srgb, var(--dsh-muted) 10%, transparent));
 }
 

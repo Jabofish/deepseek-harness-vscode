@@ -24,7 +24,14 @@ export const TimelineRow = memo(
           renderTimelineNode(props.node, props.context)
         )}
         {props.contentStatus === undefined ? null : (
-          <p role={props.contentStatus === 'retrying' ? 'alert' : 'status'}>
+          <p
+            className={
+              props.contentStatus === 'retrying'
+                ? 'dsh-timeline__sync-status dsh-timeline__sync-status--retrying'
+                : 'dsh-timeline__sync-status'
+            }
+            role={props.contentStatus === 'retrying' ? 'alert' : 'status'}
+          >
             {props.context.t(
               props.contentStatus === 'retrying' ? 'transcript.syncRetrying' : 'transcript.syncLoading',
             )}

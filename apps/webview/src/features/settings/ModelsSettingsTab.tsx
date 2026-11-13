@@ -383,35 +383,37 @@ export function ModelsSettingsTab(input: ModelsSettingsTabProps): ReactElement {
         </>
       )}
       {pendingProvider === undefined ? null : (
-        <div
-          ref={removeDialogRef}
-          className="dsh-settings__provider-remove-dialog"
-          role="alertdialog"
-          aria-modal="true"
-          aria-label={t('settings.removeProvider')}
-        >
-          <h3>{t('settings.removeProviderHeading')}</h3>
-          <p>{t('settings.removeProviderPrompt', { provider: pendingProvider.name })}</p>
-          <div className="dsh-settings__risk-actions">
-            <button
-              className="dsh-button dsh-button--secondary dsh-button--compact"
-              type="button"
-              disabled={busyField !== undefined}
-              autoFocus
-              onClick={() => setRemovingProviderId(undefined)}
-            >
-              {t('settings.cancel')}
-            </button>
-            <button
-              className="dsh-button dsh-button--danger dsh-button--compact"
-              type="button"
-              disabled={busyField !== undefined}
-              onClick={() => void removeProvider(pendingProvider)}
-            >
-              {busyField === `remove-provider:${pendingProvider.id}`
-                ? t('settings.removingProvider')
-                : t('settings.removeProviderConfirm')}
-            </button>
+        <div className="dsh-presets__modal-backdrop" role="presentation">
+          <div
+            ref={removeDialogRef}
+            className="dsh-presets__dialog dsh-settings__provider-remove-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-label={t('settings.removeProvider')}
+          >
+            <h3>{t('settings.removeProviderHeading')}</h3>
+            <p>{t('settings.removeProviderPrompt', { provider: pendingProvider.name })}</p>
+            <div className="dsh-settings__risk-actions">
+              <button
+                className="dsh-button dsh-button--secondary dsh-button--compact"
+                type="button"
+                disabled={busyField !== undefined}
+                autoFocus
+                onClick={() => setRemovingProviderId(undefined)}
+              >
+                {t('settings.cancel')}
+              </button>
+              <button
+                className="dsh-button dsh-button--danger dsh-button--compact"
+                type="button"
+                disabled={busyField !== undefined}
+                onClick={() => void removeProvider(pendingProvider)}
+              >
+                {busyField === `remove-provider:${pendingProvider.id}`
+                  ? t('settings.removingProvider')
+                  : t('settings.removeProviderConfirm')}
+              </button>
+            </div>
           </div>
         </div>
       )}

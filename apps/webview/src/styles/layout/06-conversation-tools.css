@@ -43,31 +43,30 @@
   cursor: pointer;
 }
 
-.dsh-changes-popover__trigger:hover,
+.dsh-changes-popover__trigger:hover:not(:disabled),
 .dsh-changes-popover__trigger:focus-visible,
 .dsh-changes-popover__trigger[aria-expanded='true'],
-.dsh-tasks-popover__trigger:hover,
+.dsh-tasks-popover__trigger:hover:not(:disabled),
 .dsh-tasks-popover__trigger:focus-visible,
 .dsh-tasks-popover__trigger[aria-expanded='true'],
-.dsh-checkpoints-popover__trigger:hover,
+.dsh-checkpoints-popover__trigger:hover:not(:disabled),
 .dsh-checkpoints-popover__trigger:focus-visible,
 .dsh-checkpoints-popover__trigger[aria-expanded='true'],
-.dsh-prompt-templates-popover__trigger:hover,
+.dsh-prompt-templates-popover__trigger:hover:not(:disabled),
 .dsh-prompt-templates-popover__trigger:focus-visible,
 .dsh-prompt-templates-popover__trigger[aria-expanded='true'],
-.dsh-diagnostics-popover__trigger:hover,
+.dsh-diagnostics-popover__trigger:hover:not(:disabled),
 .dsh-diagnostics-popover__trigger:focus-visible,
 .dsh-diagnostics-popover__trigger[aria-expanded='true'],
-.dsh-jobs-popover__trigger:hover,
+.dsh-jobs-popover__trigger:hover:not(:disabled),
 .dsh-jobs-popover__trigger:focus-visible,
 .dsh-jobs-popover__trigger[aria-expanded='true'],
-.dsh-subagent-tree__trigger:hover,
+.dsh-subagent-tree__trigger:hover:not(:disabled),
 .dsh-subagent-tree__trigger:focus-visible,
 .dsh-subagent-tree__trigger[aria-expanded='true'] {
   border-color: var(--dsh-border-color);
   color: var(--dsh-text);
   background: var(--dsh-surface-hover);
-  outline: none;
 }
 
 .dsh-changes-popover__trigger > span,
@@ -245,7 +244,6 @@
   border-color: var(--dsh-border-color);
   color: var(--dsh-text);
   background: var(--dsh-surface-hover);
-  outline: none;
 }
 
 .dsh-tasks-popover__scope-button:disabled {
@@ -341,6 +339,7 @@
   align-items: center;
   flex: 1 1 auto;
   min-width: 0;
+  min-height: 0;
   gap: var(--dsh-space-2);
   padding: 0;
   border: 0;
@@ -350,13 +349,14 @@
   cursor: pointer;
 }
 
-.dsh-changes-popover__row-main:hover,
+.dsh-changes-popover__row-main:hover:not(:disabled),
 .dsh-changes-popover__row-main:focus-visible,
-.dsh-tasks-popover__main:hover,
+.dsh-tasks-popover__main:hover:not(:disabled),
 .dsh-tasks-popover__main:focus-visible,
-.dsh-prompt-templates-popover__row-main:hover,
+.dsh-prompt-templates-popover__row-main:hover:not(:disabled),
 .dsh-prompt-templates-popover__row-main:focus-visible {
   color: var(--dsh-text);
+  background: transparent;
   outline: none;
 }
 

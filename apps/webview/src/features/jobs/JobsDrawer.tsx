@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactElement } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import type { JobView } from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
+import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 import { useViewportMenuPosition } from '../../components/common/useViewportMenuPosition.js'
 import { Icon } from '../../ui/Icon.js'
 import type { JobFollowState } from '../../app/store.js'
@@ -115,19 +116,33 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
   const { running: runningCount, stopping: stoppingCount } = liveCounts
   const liveCount = runningCount + stoppingCount
 
+  const close = (): void => {
+    actionGeneration.current += 1
+    setOpen(false)
+  }
+
+  useDismissibleLayer({
+    open,
+    refs: [rootRef, menuRef],
+    onDismiss: close,
+    onEscape: () => {
+      close()
+      triggerRef.current?.focus()
+    },
+  })
+
   useEffect(() => {
-    if (!open) return
-    const closeOutside = (event: PointerEvent): void => {
-      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) {
-        actionGeneration.current += 1
-        setOpen(false)
-      }
+    if (!open || pending.size === 0) return
+    const active = document.activeElement
+    if (
+      active === null ||
+      active === document.body ||
+      active === document.documentElement ||
+      (active instanceof HTMLButtonElement && active.disabled && menuRef.current?.contains(active))
+    ) {
+      menuRef.current?.focus()
     }
-    document.addEventListener('pointerdown', closeOutside)
-    return () => {
-      document.removeEventListener('pointerdown', closeOutside)
-    }
-  }, [open])
+  }, [open, pending])
 
   // The clock only runs while an open list is showing something that moves.
   useEffect(() => {
@@ -152,13 +167,6 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
           ? t('jobs.count.stopping', { count: stoppingCount })
           : t('jobs.count', { count })
 
-  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
-    if (event.key !== 'Escape' || !open) return
-    event.preventDefault()
-    actionGeneration.current += 1
-    setOpen(false)
-    triggerRef.current?.focus()
-  }
   const runAction = (key: string, action: () => Promise<unknown>): void => {
     if (pendingActions.current.has(key)) return
     pendingActions.current.add(key)
@@ -176,7 +184,7 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
   }
 
   return (
-    <div ref={rootRef} className="dsh-jobs-popover" onKeyDown={onKeyDown}>
+    <div ref={rootRef} className="dsh-jobs-popover">
       <button
         ref={triggerRef}
         type="button"
@@ -199,6 +207,7 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
       {open ? (
         <ul
           ref={menuRef}
+          tabIndex={-1}
           style={menuPosition}
           className="dsh-jobs-popover__menu"
           aria-label={t('jobs.list.aria')}

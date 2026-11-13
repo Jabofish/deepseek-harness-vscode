@@ -42,8 +42,16 @@ function splitAnswerThinking(candidate: FocusedAnswerNode): {
   }
 }
 
-/** Only a synthetic thinking half shares its metrics with a separately rendered answer. */
+/** Keep step metrics off pure-reasoning and synthetic thinking cards so headers never pop in or vanish before the answer arrives. */
 function stripReasoningStepMetadata(node: FocusedAnswerNode): FocusedAnswerNode {
+  if (
+    node.turn === undefined &&
+    node.step === undefined &&
+    node.timing === undefined &&
+    node.usage === undefined &&
+    node.turnUsage === undefined
+  )
+    return node
   const { turn, step, timing, usage, turnUsage, ...plain } = node
   void turn
   void step
@@ -92,7 +100,13 @@ export function FocusedTurn(props: {
       }
     }
   }
-  const work = rawWork
+  const work = rawWork.map((member) =>
+    member.kind !== 'tool' &&
+    (member.kind !== 'assistant-turn' || member.tools.length === 0) &&
+    !hasAnswerBody(member)
+      ? stripReasoningStepMetadata(member)
+      : member,
+  )
   const revealDismissedId = `${processId}:reveal-dismissed:${context.revealRequestId ?? context.revealSourceNodeId}`
   const revealed =
     context.revealSourceNodeId !== undefined &&

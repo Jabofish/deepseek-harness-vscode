@@ -68,6 +68,7 @@
   justify-content: center;
   width: var(--dsh-control-height-compact);
   height: var(--dsh-control-height-compact);
+  min-height: 0;
   margin-inline-start: auto;
   padding: var(--dsh-space-1);
   border: var(--dsh-border);
@@ -78,7 +79,7 @@
   cursor: pointer;
 }
 
-.dsh-tool-web-preview__copy:hover,
+.dsh-tool-web-preview__copy:hover:not(:disabled),
 .dsh-tool-web-preview__copy:focus-visible {
   border-color: var(--dsh-control-border);
   color: var(--dsh-text);
@@ -116,6 +117,7 @@
 .dsh-tool-web-preview__link {
   display: inline;
   max-width: 100%;
+  min-height: 0;
   padding: 0;
   border: 0;
   color: var(--dsh-link);
@@ -132,8 +134,9 @@
   cursor: pointer;
 }
 
-.dsh-tool-web-preview__link--interactive:hover,
+.dsh-tool-web-preview__link--interactive:hover:not(:disabled),
 .dsh-tool-web-preview__link--interactive:focus-visible {
+  background: transparent;
   text-decoration: underline dotted;
   text-underline-offset: 0.2em;
   outline: none;

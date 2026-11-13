@@ -884,7 +884,7 @@
   cursor: pointer;
 }
 
-.dsh-conversation__navigation-trigger:hover,
+.dsh-conversation__navigation-trigger:hover:not(:disabled),
 .dsh-conversation__navigation-trigger:focus-visible {
   color: var(--dsh-text);
   background: var(--dsh-surface-hover);

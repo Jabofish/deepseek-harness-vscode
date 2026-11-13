@@ -139,9 +139,10 @@
 }
 .dsh-billing__search > input:not([type='checkbox']) {
   flex: 1;
+  min-height: 0;
   border: 0;
   background: transparent;
-  padding-inline: 0;
+  padding: 0;
   outline: none;
 }
 .dsh-billing button {
@@ -161,21 +162,26 @@
   cursor: pointer;
 }
 .dsh-billing button:hover:not(:disabled) {
-  background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground));
+  background: var(
+    --vscode-button-secondaryHoverBackground,
+    var(--vscode-list-hoverBackground, var(--dsh-surface-hover))
+  );
 }
 .dsh-billing button.dsh-billing__primary {
   background: var(--vscode-button-background);
   color: var(--vscode-button-foreground);
 }
 .dsh-billing button.dsh-billing__primary:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground, var(--vscode-button-background));
+  background: var(--vscode-button-hoverBackground, var(--dsh-primary-hover, var(--vscode-button-background)));
 }
 .dsh-billing button.dsh-billing__icon-button {
   flex-shrink: 0;
+  min-height: 0;
   padding: 0.375rem;
   background: transparent;
 }
 .dsh-billing button.dsh-billing__text-button {
+  min-height: 0;
   padding: 0.25rem 0;
   background: transparent;
   color: var(--vscode-textLink-foreground, var(--vscode-foreground));

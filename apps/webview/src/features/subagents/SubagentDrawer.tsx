@@ -9,6 +9,7 @@ import {
 } from 'react'
 import type { SessionSummary, SubagentCatalog, SubagentView } from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
+import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 import { Icon } from '../../ui/Icon.js'
 
 export interface SubagentCatalogProps {
@@ -172,6 +173,7 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
   const [activeRowId, setActiveRowId] = useState<string | undefined>(undefined)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const children = useMemo(() => childEntries(props.catalog), [props.catalog])
   const summaries = props.summaries ?? EMPTY_SUMMARIES
   const summariesById = useMemo(() => {
@@ -187,14 +189,15 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
   const runningCount = loadedAggregate.running
   const diagnosticCount = props.catalog.entries.length - children.length
 
-  useEffect(() => {
-    if (!open) return
-    const closeOutside = (event: PointerEvent): void => {
-      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) setOpen(false)
-    }
-    document.addEventListener('pointerdown', closeOutside)
-    return () => document.removeEventListener('pointerdown', closeOutside)
-  }, [open])
+  useDismissibleLayer({
+    open,
+    refs: [rootRef, menuRef],
+    onDismiss: () => setOpen(false),
+    onEscape: () => {
+      setOpen(false)
+      triggerRef.current?.focus()
+    },
+  })
 
   useEffect(() => {
     if (!open || runningCount === 0) return
@@ -262,11 +265,7 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
   const navigate = (event: KeyboardEvent<HTMLDivElement>): void => {
     const items = treeitems()
     const index = items.indexOf(document.activeElement as HTMLElement)
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      setOpen(false)
-      triggerRef.current?.focus()
-    } else if (event.key === 'Home') {
+    if (event.key === 'Home') {
       event.preventDefault()
       focusAt(0)
     } else if (event.key === 'End') {
@@ -344,6 +343,7 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
       </button>
       {open ? (
         <div
+          ref={menuRef}
           className="dsh-subagent-tree__menu"
           role="tree"
           aria-label={t('subagents.tree.aria')}
@@ -410,7 +410,7 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
                 aria-label={label}
                 aria-disabled={entry.mode === 'external' || undefined}
                 aria-busy={loading || undefined}
-                className="dsh-subagent-tree__row"
+                className={`dsh-subagent-tree__row${entry.mode === 'external' ? ' dsh-subagent-tree__row--disabled' : ''}`}
                 onFocus={() => setActiveRowId(entry.id)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' || event.key === ' ') {

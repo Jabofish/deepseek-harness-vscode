@@ -36,6 +36,7 @@
   align-items: center;
   gap: 6px;
   min-width: 0;
+  min-height: 0;
   max-width: 100%;
   padding: 2px 8px;
   border: 0;
@@ -57,8 +58,11 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-button.dsh-stats-pill {
+button.dsh-stats-pill:not(:disabled) {
   cursor: pointer;
+}
+button.dsh-stats-pill:disabled {
+  cursor: default;
 }
 .dsh-stats-pill > .dsh-stats-pill__suffix {
   flex: none;
@@ -66,7 +70,7 @@ button.dsh-stats-pill {
 .dsh-stats-pill > .dsh-stats-pill__suffix:empty {
   display: none;
 }
-button.dsh-stats-pill:hover,
+button.dsh-stats-pill:hover:not(:disabled),
 button.dsh-stats-pill[aria-expanded='true'] {
   color: var(--dsh-text);
   background: var(--dsh-surface-hover);

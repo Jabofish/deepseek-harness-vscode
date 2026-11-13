@@ -14,6 +14,7 @@ export interface DiagnosticsDrawerProps {
   readonly onRead: () => Promise<DiagnosticsSnapshot | undefined>
   readonly onReconnect: () => Promise<void>
   readonly onShowOutput: () => Promise<void>
+  readonly placement?: 'above' | 'below'
   readonly className?: string
 }
 
@@ -38,7 +39,7 @@ export function DiagnosticsDrawer(props: DiagnosticsDrawerProps): ReactElement {
     open,
     anchorRef: triggerRef,
     menuRef: panelRef,
-    placement: 'above',
+    placement: props.placement ?? 'above',
     align: 'end',
   })
 

@@ -468,7 +468,7 @@
 
 .dsh-app[data-conversation-layout='focused']
   .dsh-session-switcher__panel-actions
-  > :is(.dsh-icon-button, .dsh-button):is(:hover, :focus-visible) {
+  > :is(.dsh-icon-button, .dsh-button):is(:hover:not(:disabled):not([aria-disabled='true']), :focus-visible) {
   color: var(--dsh-text);
   background: var(--dsh-surface-hover);
 }
@@ -509,8 +509,13 @@
   background: transparent;
 }
 
-.dsh-app[data-conversation-layout='focused'] .dsh-conversation__actions-grid > button:hover,
-.dsh-app[data-conversation-layout='focused'] .dsh-conversation__actions-grid > * > button:hover {
+.dsh-app[data-conversation-layout='focused']
+  .dsh-conversation__actions-grid
+  > button:hover:not(:disabled):not([aria-disabled='true']),
+.dsh-app[data-conversation-layout='focused']
+  .dsh-conversation__actions-grid
+  > *
+  > button:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--dsh-surface-hover);
 }
 

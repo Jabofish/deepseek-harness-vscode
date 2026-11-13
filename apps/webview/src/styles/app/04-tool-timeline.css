@@ -217,7 +217,7 @@
   cursor: pointer;
 }
 
-.dsh-timeline__reasoning-toggle:hover,
+.dsh-timeline__reasoning-toggle:hover:not(:disabled),
 .dsh-timeline__reasoning-toggle:focus-visible {
   color: var(--dsh-text);
   background: var(--dsh-surface-hover);
@@ -281,7 +281,7 @@
   color: var(--dsh-muted);
 }
 
-.dsh-timeline__reasoning-copy:hover,
+.dsh-timeline__reasoning-copy:hover:not(:disabled),
 .dsh-timeline__reasoning-copy:focus-visible {
   color: var(--dsh-text);
 }

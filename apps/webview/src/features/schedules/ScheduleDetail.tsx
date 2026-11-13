@@ -1,6 +1,15 @@
-import type { Dispatch, FormEvent, KeyboardEvent, ReactElement, RefObject, SetStateAction } from 'react'
+import {
+  useRef,
+  type Dispatch,
+  type FormEvent,
+  type KeyboardEvent,
+  type ReactElement,
+  type RefObject,
+  type SetStateAction,
+} from 'react'
 import type { ScheduleCatalogEntry } from '@dsh-vscode/domain'
 import { SelectMenu } from '../../components/common/SelectMenu.js'
+import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 import type { Locale, Translate } from '../../i18n.js'
 import {
   EDIT_TIMINGS,
@@ -106,6 +115,16 @@ export function ScheduleDetail(input: ScheduleDetailProps): ReactElement {
     showRetentionDetails,
     setShowRetentionDetails,
   } = input
+  const moreActionsContainerRef = useRef<HTMLDivElement>(null)
+  useDismissibleLayer({
+    open: moreActionsOpen,
+    refs: [moreActionsContainerRef],
+    onDismiss: () => setMoreActionsOpen(false),
+    onEscape: () => {
+      setMoreActionsOpen(false)
+      moreActionsTriggerRef.current?.focus()
+    },
+  })
   return (
     <aside
       className="dsh-schedule-panel__detail"
@@ -153,7 +172,7 @@ export function ScheduleDetail(input: ScheduleDetailProps): ReactElement {
           <h2>{selected.title}</h2>
         </div>
         <div className="dsh-schedule-panel__detail-heading-actions">
-          <div className="dsh-schedule-panel__more-actions">
+          <div ref={moreActionsContainerRef} className="dsh-schedule-panel__more-actions">
             <button
               ref={moreActionsTriggerRef}
               type="button"

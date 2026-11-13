@@ -944,6 +944,24 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
     ],
   )
 
+  const alignPrependAnchor = useCallback(
+    (anchor: ScrollAnchor): boolean => {
+      const element = scrollRef.current
+      if (element === null || prependAnchorRef.current !== anchor || !isScrollAnchorCurrent(anchor))
+        return false
+      if (anchor.nodeId === undefined || anchor.nodeOffset === undefined) return true
+      const row = [...element.querySelectorAll<HTMLElement>('.dsh-timeline__row[data-node-id]')].find(
+        (item) => item.dataset.nodeId === anchor.nodeId,
+      )
+      if (row !== undefined)
+        applyScrollAdjustment(
+          row.getBoundingClientRect().top - element.getBoundingClientRect().top - anchor.nodeOffset,
+        )
+      return true
+    },
+    [applyScrollAdjustment, isScrollAnchorCurrent, scrollRef],
+  )
+
   useLayoutEffect(() => {
     const anchor = prependAnchorRef.current
     const element = scrollRef.current
@@ -974,18 +992,10 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
     // after the first restoration. Keep the same visible row in place while
     // that bounded measurement pass settles; any new reader gesture wins.
     const correct = (): boolean => {
-      if (prependAnchorRef.current !== anchor || !isScrollAnchorCurrent(anchor)) {
+      if (!alignPrependAnchor(anchor)) {
         release()
         return false
       }
-      if (anchor.nodeId === undefined || anchor.nodeOffset === undefined) return true
-      const row = [...element.querySelectorAll<HTMLElement>('.dsh-timeline__row[data-node-id]')].find(
-        (item) => item.dataset.nodeId === anchor.nodeId,
-      )
-      if (row !== undefined)
-        applyScrollAdjustment(
-          row.getBoundingClientRect().top - element.getBoundingClientRect().top - anchor.nodeOffset,
-        )
       return true
     }
     if (!correct()) return
@@ -1006,14 +1016,33 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
       element.removeEventListener('keydown', release)
     }
   }, [
-    applyScrollAdjustment,
-    isScrollAnchorCurrent,
+    alignPrependAnchor,
     props.loadingOlderHistory,
     props.nodes.length,
     restoreScrollAnchor,
     scrollRef,
     virtualized.enabled,
     virtualized.ready,
+  ])
+
+  // Compensate synchronous virtualizer size-refinement commits immediately so no
+  // post-measurement frame exposes uncompensated row shifts before rAF settle.
+  useLayoutEffect(() => {
+    const anchor = prependAnchorRef.current
+    if (
+      anchor === undefined ||
+      props.loadingOlderHistory === true ||
+      (virtualized.enabled && !virtualized.ready) ||
+      restoredPrependAnchorRef.current !== anchor
+    )
+      return
+    alignPrependAnchor(anchor)
+  }, [
+    alignPrependAnchor,
+    props.loadingOlderHistory,
+    virtualized.enabled,
+    virtualized.ready,
+    virtualized.totalSize,
   ])
 
   return (

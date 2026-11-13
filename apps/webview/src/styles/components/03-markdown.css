@@ -352,6 +352,7 @@
   justify-content: center;
   width: var(--dsh-control-height-compact);
   height: var(--dsh-control-height-compact);
+  min-height: 0;
   margin-inline-start: auto;
   padding: var(--dsh-space-1);
   border: var(--dsh-border);
@@ -362,7 +363,7 @@
   cursor: pointer;
 }
 
-.dsh-tool-code-preview__copy:hover,
+.dsh-tool-code-preview__copy:hover:not(:disabled),
 .dsh-tool-code-preview__copy:focus-visible {
   border-color: var(--dsh-control-border);
   color: var(--dsh-text);

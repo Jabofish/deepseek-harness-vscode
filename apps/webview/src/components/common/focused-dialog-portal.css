@@ -101,6 +101,18 @@
   background: color-mix(in srgb, var(--dsh-danger) 10%, var(--dsh-widget-bg));
 }
 .dsh-feature-dialog-error {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  margin: 0;
   color: var(--dsh-danger);
   overflow-wrap: anywhere;
+  scroll-margin-bottom: 3.5rem;
+}
+.dsh-feature-dialog-error::before {
+  grid-area: 1 / 1;
+  content: '\00a0';
+  visibility: hidden;
+}
+.dsh-feature-dialog-error > span {
+  grid-area: 1 / 1;
 }

@@ -355,6 +355,19 @@
   animation: dsh-overlay-fade-in var(--dsh-motion-duration-standard) var(--dsh-motion-ease-enter) backwards;
 }
 
+/* Keep omitted-content loading/retry notices compact so default `<p>` vertical
+ * margins do not inflate and collapse row height around background hydration. */
+.dsh-timeline__sync-status {
+  margin: var(--dsh-space-1) 0 0;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+  line-height: 1.35;
+}
+
+.dsh-timeline__sync-status--retrying {
+  color: var(--dsh-warning);
+}
+
 .dsh-timeline__message-stack {
   display: flex;
   flex-direction: column;

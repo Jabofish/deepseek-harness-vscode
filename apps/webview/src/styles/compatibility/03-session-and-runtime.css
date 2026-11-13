@@ -41,6 +41,12 @@
   animation: none;
 }
 
+.dsh-timeline__retry-message {
+  flex: 1 1 0%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .dsh-todo-list__toggle {
   width: 100%;
   min-width: 0;

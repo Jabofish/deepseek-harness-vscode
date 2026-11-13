@@ -17,13 +17,17 @@
   background: color-mix(in srgb, var(--dsh-chart-red, var(--dsh-danger)) 18%, transparent);
 }
 
-.dsh-message-actions__button--feedback-positive[aria-pressed='true']:hover,
+.dsh-message-actions__button--feedback-positive[aria-pressed='true']:hover:not(:disabled):not(
+    [aria-disabled='true']
+  ),
 .dsh-message-actions__button--feedback-positive[aria-pressed='true']:focus-visible {
   color: var(--dsh-chart-green, var(--dsh-success));
   background: color-mix(in srgb, var(--dsh-chart-green, var(--dsh-success)) 28%, transparent);
 }
 
-.dsh-message-actions__button--feedback-negative[aria-pressed='true']:hover,
+.dsh-message-actions__button--feedback-negative[aria-pressed='true']:hover:not(:disabled):not(
+    [aria-disabled='true']
+  ),
 .dsh-message-actions__button--feedback-negative[aria-pressed='true']:focus-visible {
   color: var(--dsh-chart-red, var(--dsh-danger));
   background: color-mix(in srgb, var(--dsh-chart-red, var(--dsh-danger)) 28%, transparent);
@@ -303,19 +307,18 @@
   cursor: pointer;
 }
 
-.dsh-message-actions__button:hover,
+.dsh-message-actions__button:hover:not(:disabled):not([aria-disabled='true']),
 .dsh-message-actions__button:focus-visible {
   color: var(--dsh-text);
   background: var(--dsh-surface-hover);
 }
 
-.dsh-message-actions__button[aria-disabled='true'] {
+.dsh-message-actions__button:is(:disabled, [aria-disabled='true']) {
   opacity: 0.45;
   cursor: default;
 }
 
-.dsh-message-actions__button[aria-disabled='true']:hover {
-  color: inherit;
+.dsh-message-actions__button:is(:disabled, [aria-disabled='true']):not([aria-pressed='true']):hover {
   background: transparent;
 }
 
@@ -353,11 +356,15 @@
   word-break: normal;
 }
 
+/* Anchor .dsh-empty-session near the top of .dsh-app__empty so opening its
+ * flow pickers or showing preset warnings never bounces the header vertically. */
 .dsh-empty-session {
   display: grid;
+  align-self: start;
   justify-items: center;
   gap: var(--dsh-space-2);
   width: min(100%, 440px);
+  margin-block: clamp(var(--dsh-space-3), 8dvh, 5rem) var(--dsh-space-4);
   padding: var(--dsh-space-5) var(--dsh-space-4);
   border: 1px dashed color-mix(in srgb, var(--dsh-accent-line) 55%, var(--dsh-border-color));
   border-radius: var(--dsh-radius-lg);
@@ -439,6 +446,7 @@
   place-items: center;
   width: 22px;
   height: 30px;
+  min-height: 0;
   padding: 0;
   border: 1px solid var(--dsh-border-color);
   border-radius: 4px;
@@ -447,9 +455,11 @@
   cursor: pointer;
 }
 
-.dsh-composer__attachment-page:hover,
+.dsh-composer__attachment-page:hover:not(:disabled),
 .dsh-composer__attachment-page:focus-visible {
+  border-color: var(--dsh-border-color);
   color: var(--dsh-accent-line);
+  background: var(--dsh-surface-raised);
   outline: none;
 }
 

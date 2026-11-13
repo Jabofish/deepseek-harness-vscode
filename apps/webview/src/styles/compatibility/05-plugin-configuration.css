@@ -211,6 +211,7 @@
 
 .dsh-plugin-configuration__reset {
   justify-self: start;
+  min-height: 0;
   padding: 0;
   background: transparent;
   border: none;
@@ -218,6 +219,15 @@
   font: inherit;
   font-size: var(--dsh-font-size-xs);
   cursor: pointer;
+}
+
+.dsh-plugin-configuration__reset:hover:not(:disabled) {
+  background: transparent;
+  text-decoration: underline;
+}
+
+.dsh-plugin-configuration__reset:focus-visible {
+  text-decoration: underline;
 }
 
 .dsh-plugin-configuration__reset:disabled {

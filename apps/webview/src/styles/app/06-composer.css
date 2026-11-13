@@ -373,7 +373,7 @@ occupancy so the overflow is visible without opening the details. */
   white-space: nowrap;
 }
 
-.dsh-context-meter__trigger:hover,
+.dsh-context-meter__trigger:hover:not(:disabled),
 .dsh-context-meter__trigger:focus-visible {
   color: var(--dsh-text);
   background: var(--dsh-surface-hover);
@@ -552,8 +552,17 @@ occupancy so the overflow is visible without opening the details. */
   text-align: start;
 }
 
-.dsh-question__choice:hover {
+.dsh-question__choice:has(> input:not(:disabled)) {
+  cursor: pointer;
+}
+
+.dsh-question__choice:has(> input:not(:disabled)):hover {
   background: var(--dsh-surface-hover);
+}
+
+.dsh-question__choice:has(> input:disabled) {
+  opacity: 0.65;
+  cursor: default;
 }
 
 .dsh-question__choice--custom {

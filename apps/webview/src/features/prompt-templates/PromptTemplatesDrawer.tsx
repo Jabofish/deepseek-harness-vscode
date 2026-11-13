@@ -1,12 +1,4 @@
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type FormEvent,
-  type KeyboardEvent,
-  type ReactElement,
-} from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactElement } from 'react'
 import {
   PROMPT_TEMPLATE_VARIABLES,
   type PromptTemplate,
@@ -128,14 +120,22 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
     )
   }, [props.templates, query])
 
-  useEffect(() => {
-    if (!open || dialogOpen) return
-    const closeOutside = (event: PointerEvent): void => {
-      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) setOpen(false)
-    }
-    document.addEventListener('pointerdown', closeOutside)
-    return () => document.removeEventListener('pointerdown', closeOutside)
-  }, [dialogOpen, open])
+  const closePopover = (): void => {
+    readGeneration.current += 1
+    setSelectedLoading(false)
+    setOpen(false)
+  }
+
+  useDismissibleLayer({
+    open,
+    refs: [rootRef, menuRef],
+    onDismiss: closePopover,
+    onEscape: () => {
+      if (searchComposingRef.current) return
+      closePopover()
+      triggerRef.current?.focus()
+    },
+  })
 
   const closeEditor = (): void => {
     if (busy) return
@@ -289,24 +289,9 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
       .finally(() => setBusy(false))
   }
 
-  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
-    // An inner layer (for example the scope SelectMenu) already consumed this
-    // Escape; closing the editor here would discard the in-progress form.
-    if (event.key !== 'Escape' || event.defaultPrevented) return
-    if (searchComposingRef.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229)
-      return
-    event.preventDefault()
-    if (dialogOpen) dismissDialog()
-    else {
-      readGeneration.current += 1
-      setOpen(false)
-      triggerRef.current?.focus()
-    }
-  }
-
   const countLabel = t('promptTemplates.count', { count: props.templates.length })
   return (
-    <div ref={rootRef} className="dsh-prompt-templates-popover" onKeyDown={onKeyDown}>
+    <div ref={rootRef} className="dsh-prompt-templates-popover">
       <button
         ref={triggerRef}
         type="button"
@@ -315,7 +300,8 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
         aria-label={countLabel}
         onClick={() => {
           setNotice(undefined)
-          setOpen((current) => !current)
+          if (open) closePopover()
+          else setOpen(true)
         }}
       >
         <Icon name="sparkles" />

@@ -125,6 +125,16 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
   const tabButtonsRef = useRef<Record<DetailTab, HTMLButtonElement | null>>({ rule: null, history: null })
   const rowTriggerRef = useRef<HTMLButtonElement | null>(null)
   const listHeadingRef = useRef<HTMLHeadingElement>(null)
+  const createWasOpen = useRef(false)
+  useEffect(() => {
+    if (createWasOpen.current && !createOpen) {
+      const active = document.activeElement
+      if (active === null || active === document.body || active === document.documentElement) {
+        listHeadingRef.current?.focus()
+      }
+    }
+    createWasOpen.current = createOpen
+  }, [createOpen])
   const observedConnectionEpoch = useRef(props.connectionEpoch)
   const mounted = useRef(false)
   const previousSelectedKey = useRef(selectedKey)

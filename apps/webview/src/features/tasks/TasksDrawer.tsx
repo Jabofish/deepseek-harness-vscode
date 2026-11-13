@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactElement } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import type { TaskListScope, TaskSummary } from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
+import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 import { useViewportMenuPosition } from '../../components/common/useViewportMenuPosition.js'
 import { Icon } from '../../ui/Icon.js'
 
@@ -86,30 +87,24 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
     }
   }
 
-  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
-    if (event.key !== 'Escape' || !open || event.defaultPrevented) return
-    event.preventDefault()
-    if (answering !== undefined) {
-      // The inline form is the innermost layer: the first Escape discards the
-      // draft and returns focus to the row it belongs to.
-      const row = answeringRowRef.current
-      setAnswering(undefined)
-      setAnswer('')
-      row?.querySelector<HTMLButtonElement>('button')?.focus()
-      return
-    }
-    close()
-    triggerRef.current?.focus()
-  }
-
-  useEffect(() => {
-    if (!open) return
-    const closeOutside = (event: PointerEvent): void => {
-      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) close()
-    }
-    document.addEventListener('pointerdown', closeOutside)
-    return () => document.removeEventListener('pointerdown', closeOutside)
-  }, [open])
+  useDismissibleLayer({
+    open,
+    refs: [rootRef, menuRef],
+    onDismiss: close,
+    onEscape: () => {
+      if (answering !== undefined) {
+        // The inline form is the innermost layer: the first Escape discards the
+        // draft and returns focus to the row it belongs to.
+        const row = answeringRowRef.current
+        setAnswering(undefined)
+        setAnswer('')
+        row?.querySelector<HTMLButtonElement>('button')?.focus()
+        return
+      }
+      close()
+      triggerRef.current?.focus()
+    },
+  })
 
   const visibleTasks = props.tasks
   const taskCounts = useMemo(() => {
@@ -149,7 +144,7 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
   }
 
   return (
-    <div ref={rootRef} className="dsh-tasks-popover" onKeyDown={onKeyDown}>
+    <div ref={rootRef} className="dsh-tasks-popover">
       <button
         ref={triggerRef}
         type="button"

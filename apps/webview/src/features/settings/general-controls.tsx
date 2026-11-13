@@ -1,4 +1,4 @@
-import { useState, type ReactElement } from 'react'
+import { useLayoutEffect, useRef, useState, type ReactElement } from 'react'
 import type { DshSettingsSchema } from '@dsh-vscode/domain'
 import type { DshSettingsSnapshot } from '../../app/store.js'
 import {
@@ -133,7 +133,6 @@ export function renderFontSizeControl(
   if (dshState.status === 'ready' && field?.type === 'number') {
     return (
       <FontSizeSettingControl
-        key={`${hostFontSize ?? DEFAULT_CONVERSATION_FONT_SIZE_PX}:${error ?? ''}:${savingPath === DSH_UI_SETTING_PATHS.fontSize ? 'saving' : 'idle'}`}
         value={hostFontSize ?? DEFAULT_CONVERSATION_FONT_SIZE_PX}
         disabled={!dshState.snapshot.schema.writable || savingPath !== undefined || !snapshotFresh}
         saving={savingPath === DSH_UI_SETTING_PATHS.fontSize}
@@ -174,12 +173,47 @@ interface FontSizeSettingControlProps {
 }
 
 function FontSizeSettingControl(props: FontSizeSettingControlProps): ReactElement {
+  const inputRef = useRef<HTMLInputElement>(null)
   const [draft, setDraft] = useState(String(props.value))
+  const previousValueRef = useRef(props.value)
+  const wasSavingRef = useRef(props.saving)
+  const valueUpdatedDuringSaveRef = useRef(false)
+  const lastErrorRef = useRef(props.error)
+
+  useLayoutEffect(() => {
+    const previousValue = previousValueRef.current
+    const valueChanged = previousValue !== props.value
+    const saveStarted = !wasSavingRef.current && props.saving
+    const saveFinished = wasSavingRef.current && !props.saving
+    if (saveStarted) {
+      valueUpdatedDuringSaveRef.current = valueChanged
+    } else if (props.saving && valueChanged) {
+      valueUpdatedDuringSaveRef.current = true
+    } else if (saveFinished && valueChanged) {
+      valueUpdatedDuringSaveRef.current = true
+    }
+    const failedSave = props.error !== undefined && (props.error !== lastErrorRef.current || saveFinished)
+    const finishedWithoutValueUpdate = saveFinished && !valueUpdatedDuringSaveRef.current
+    if (failedSave || finishedWithoutValueUpdate) {
+      setDraft(String(props.value))
+    } else if (valueChanged) {
+      setDraft((current) =>
+        document.activeElement !== inputRef.current || current === String(previousValue)
+          ? String(props.value)
+          : current,
+      )
+    }
+    previousValueRef.current = props.value
+    wasSavingRef.current = props.saving
+    lastErrorRef.current = props.error
+    if (!props.saving) valueUpdatedDuringSaveRef.current = false
+  }, [props.error, props.saving, props.value])
 
   const commit = (): void => {
     const value = Number(draft)
     if (isConversationFontSizePx(value)) {
       if (value !== props.value) props.onCommit(value)
+      else setDraft(String(props.value))
       return
     }
     setDraft(String(props.value))
@@ -188,6 +222,7 @@ function FontSizeSettingControl(props: FontSizeSettingControlProps): ReactElemen
   return (
     <div className="dsh-settings__number-control">
       <input
+        ref={inputRef}
         className="dsh-settings__number-input"
         type="number"
         min={MIN_CONVERSATION_FONT_SIZE_PX}

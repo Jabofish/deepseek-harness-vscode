@@ -1,12 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type FormEvent,
-  type KeyboardEvent,
-  type ReactElement,
-} from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactElement } from 'react'
 import type {
   CheckpointConflictPolicy,
   CheckpointFilePreview,
@@ -128,14 +120,15 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
   // trigger lives inside `rootRef`, so pressing it again toggles instead of
   // closing on the pointerdown and reopening on the click. A confirmation is
   // `aria-modal`: while one is up, a press elsewhere is not a dismissal.
-  useEffect(() => {
-    if (!open || dialogOpen) return
-    const closeOutside = (event: PointerEvent): void => {
-      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) closePopover()
-    }
-    document.addEventListener('pointerdown', closeOutside)
-    return () => document.removeEventListener('pointerdown', closeOutside)
-  }, [closePopover, dialogOpen, open])
+  useDismissibleLayer({
+    open,
+    refs: [rootRef, menuRef],
+    onDismiss: closePopover,
+    onEscape: () => {
+      closePopover()
+      triggerRef.current?.focus()
+    },
+  })
 
   const resetDialog = (): void => {
     setDialog(undefined)
@@ -251,19 +244,9 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
       .finally(() => setBusy(false))
   }
 
-  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
-    if (event.key !== 'Escape') return
-    event.preventDefault()
-    if (dialog !== undefined) closeDialog()
-    else {
-      closePopover()
-      triggerRef.current?.focus()
-    }
-  }
-
   const countLabel = t('checkpoints.count', { count: props.checkpoints.length })
   return (
-    <div ref={rootRef} className="dsh-checkpoints-popover" onKeyDown={onKeyDown}>
+    <div ref={rootRef} className="dsh-checkpoints-popover">
       <button
         ref={triggerRef}
         type="button"

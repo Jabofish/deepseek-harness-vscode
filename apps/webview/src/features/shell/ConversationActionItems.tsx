@@ -194,6 +194,7 @@ export function ConversationActionItems({
       />
       <DiagnosticsDrawer
         key={`diagnostics-${state.connectionEpoch}:${activeId}`}
+        placement="below"
         onRead={readDiagnostics}
         onReconnect={() => store.reconnect()}
         onShowOutput={() => store.showDiagnostics()}

@@ -500,7 +500,7 @@
   gap: 4px;
 }
 
-.dsh-app[data-conversation-layout='focused'] .dsh-message-actions__button {
+:where(.dsh-app[data-conversation-layout='focused']) .dsh-message-actions__button {
   border-radius: 8px;
   color: var(--dsh-muted);
 }

@@ -415,7 +415,7 @@
   cursor: pointer;
 }
 
-.dsh-drawer__header button:hover,
+.dsh-drawer__header button:hover:not(:disabled),
 .dsh-drawer__header button:focus-visible {
   color: var(--dsh-text);
   background: var(--dsh-surface-hover);
@@ -487,6 +487,7 @@
   grid-column: 1 / -1;
   align-self: stretch;
   min-width: 0;
+  min-height: 0;
   padding: 0;
   border: 0;
   border-radius: 4px;
@@ -503,6 +504,7 @@
   z-index: 2;
   justify-self: start;
   min-width: 0;
+  min-height: 0;
   max-width: 100%;
   padding: 0;
   overflow: hidden;
@@ -517,6 +519,10 @@
   text-underline-offset: 3px;
   white-space: nowrap;
   cursor: pointer;
+}
+
+:is(.dsh-tool-row__toggle, .dsh-tool-row__inline-target):hover:not(:disabled) {
+  background: transparent;
 }
 
 :is(.dsh-tool-row__toggle, .dsh-tool-row__inline-target):focus-visible {
@@ -571,6 +577,7 @@
 .dsh-tool-row__collapsed-link {
   display: block;
   max-width: calc(100% - 2 * var(--dsh-space-3));
+  min-height: 0;
   margin: 0 var(--dsh-space-3) var(--dsh-space-2);
   padding: 0;
   overflow: hidden;
@@ -585,8 +592,9 @@
   cursor: pointer;
 }
 
-.dsh-tool-row__collapsed-link:hover,
+.dsh-tool-row__collapsed-link:hover:not(:disabled),
 .dsh-tool-row__collapsed-link:focus-visible {
+  background: transparent;
   text-decoration: underline;
 }
 
@@ -785,6 +793,7 @@
 .dsh-tool-card__target,
 .dsh-tool-row__target {
   min-width: 0;
+  min-height: 0;
   overflow: hidden;
   color: var(--dsh-link);
   background: transparent;
@@ -793,8 +802,8 @@
   white-space: nowrap;
 }
 
-.dsh-tool-card__target:hover,
-.dsh-tool-row__target:hover,
+.dsh-tool-card__target:hover:not(:disabled),
+.dsh-tool-row__target:hover:not(:disabled),
 .dsh-tool-card__target:focus-visible,
 .dsh-tool-row__target:focus-visible {
   background: var(--dsh-surface-hover);
@@ -831,7 +840,7 @@
     border-color var(--dsh-motion-duration-fast) var(--dsh-motion-ease-standard);
 }
 
-.dsh-tool-row__source--interactive:hover,
+.dsh-tool-row__source--interactive:hover:not(:disabled),
 .dsh-tool-row__source--interactive:focus-visible {
   background: var(--dsh-surface-hover);
 }

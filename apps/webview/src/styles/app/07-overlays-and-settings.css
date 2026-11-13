@@ -123,7 +123,7 @@
   text-align: start;
 }
 
-.dsh-settings__tab:hover,
+.dsh-settings__tab:hover:not(:disabled),
 .dsh-settings__tab--active {
   color: var(--dsh-text);
   background: var(--dsh-surface-hover);
