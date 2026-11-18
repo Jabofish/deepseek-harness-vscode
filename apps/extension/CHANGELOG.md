@@ -6,6 +6,9 @@ Release entries describe behaviour at that release. `Unreleased` lists changes a
 
 ## Unreleased
 
+- Adds exact DSH `0.2.2-rc.4` support (`3f321d32bfe382212a8ed8785c1d47a5a300aa23`), preserving the checked rc.3 Remote and Session V4 contracts alongside `CONTENT_REFUSED` attempt usage accounting, draft withdrawal and `turn/end` error presentation. Preserves older exact adapters and the guided-install default.
+- 适配 DSH `0.2.2-rc.4`（`3f321d32bfe382212a8ed8785c1d47a5a300aa23`），沿用经核对的 rc.3 Remote 与 Session V4 契约，并覆盖 `CONTENT_REFUSED` 的 attempt 用量计费、流式草稿撤回及 `turn/end` 错误展示；保留旧版独立适配与引导安装默认。
+
 ## 0.4.9
 
 - Adds exact DSH `0.2.2-rc.3` support (`38a6a5c965aa99ab525161efb7cc5cf1fe62fced`) using the source-checked rc.2 Remote and Session V4 contracts. Discovers the optional DeepSeek chat importer from the Host; imported sessions use the existing history and export paths. ZIP exports retain the runtime's missing-attachment receipt. See the compatibility contract for validation scope.

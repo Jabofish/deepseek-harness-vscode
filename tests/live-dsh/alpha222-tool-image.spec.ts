@@ -12,7 +12,7 @@ import type { BackendEvent } from '../../packages/domain/src/index.js'
 
 const enabled =
   process.env.DSH_LIVE_SMOKE === '1' &&
-  ['0.2.2-alpha.2', '0.2.2-alpha.3', '0.2.2-rc.1', '0.2.2-rc.2', '0.2.2-rc.3'].includes(
+  ['0.2.2-alpha.2', '0.2.2-alpha.3', '0.2.2-rc.1', '0.2.2-rc.2', '0.2.2-rc.3', '0.2.2-rc.4'].includes(
     process.env.DSH_LIVE_RUNTIME_VERSION ?? '',
   )
 
@@ -87,7 +87,7 @@ describe.skipIf(!enabled)('native alpha222 tool-result image ownership', () => {
       expect(other.id).not.toBe(owner.id)
       const events: BackendEvent[] = []
       if (
-        ['0.2.2-alpha.3', '0.2.2-rc.1', '0.2.2-rc.2', '0.2.2-rc.3'].includes(
+        ['0.2.2-alpha.3', '0.2.2-rc.1', '0.2.2-rc.2', '0.2.2-rc.3', '0.2.2-rc.4'].includes(
           process.env.DSH_LIVE_RUNTIME_VERSION ?? '',
         )
       ) {
@@ -121,7 +121,7 @@ describe.skipIf(!enabled)('native alpha222 tool-result image ownership', () => {
         'tool image fixture',
       )
       if (
-        ['0.2.2-alpha.3', '0.2.2-rc.1', '0.2.2-rc.2', '0.2.2-rc.3'].includes(
+        ['0.2.2-alpha.3', '0.2.2-rc.1', '0.2.2-rc.2', '0.2.2-rc.3', '0.2.2-rc.4'].includes(
           process.env.DSH_LIVE_RUNTIME_VERSION ?? '',
         )
       )

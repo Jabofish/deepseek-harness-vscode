@@ -5,7 +5,12 @@ import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { canConnect, LIVE_TIMEOUT_MS, startManagedRuntime } from './harness.js'
 
-const enabled = process.env.DSH_LIVE_SMOKE === '1' && process.env.DSH_LIVE_RUNTIME_VERSION === '0.2.2-rc.3'
+const version = process.env.DSH_LIVE_RUNTIME_VERSION ?? ''
+const protocols: Readonly<Record<string, string>> = {
+  '0.2.2-rc.3': 'rc223',
+  '0.2.2-rc.4': 'rc224',
+}
+const enabled = process.env.DSH_LIVE_SMOKE === '1' && protocols[version] !== undefined
 
 /** Source-pinned format-3 archive with invented content and a deliberately absent original file. */
 const conversation = {
@@ -70,8 +75,8 @@ describe.skipIf(!enabled)('native rc223 imported history and export', () => {
         })
         const { backend } = runtime
         expect(backend.connection.capabilities).toMatchObject({
-          adapterId: 'dsh-0.2.2-rc.3',
-          protocolVersion: 'rc223',
+          adapterId: `dsh-${version}`,
+          protocolVersion: protocols[version],
           compatibilityMode: 'exact',
         })
         const account = backend.account

@@ -49,6 +49,7 @@ const protocols: Readonly<Record<string, string>> = {
   '0.2.2-rc.1': 'rc221',
   '0.2.2-rc.2': 'rc222',
   '0.2.2-rc.3': 'rc223',
+  '0.2.2-rc.4': 'rc224',
 }
 
 const enabled = process.env.DSH_LIVE_SMOKE === '1' && protocols[version] !== undefined
