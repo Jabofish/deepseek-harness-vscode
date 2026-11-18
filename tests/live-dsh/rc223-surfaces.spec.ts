@@ -9,6 +9,7 @@ const version = process.env.DSH_LIVE_RUNTIME_VERSION ?? ''
 const protocols: Readonly<Record<string, string>> = {
   '0.2.2-rc.3': 'rc223',
   '0.2.2-rc.4': 'rc224',
+  '0.2.2-rc.5': 'rc225',
 }
 const enabled = process.env.DSH_LIVE_SMOKE === '1' && protocols[version] !== undefined
 

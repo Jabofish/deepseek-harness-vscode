@@ -8,6 +8,7 @@ import { Rc221VersionAdapter } from '../src/versions/rc221/adapter.js'
 import { Rc222VersionAdapter } from '../src/versions/rc222/adapter.js'
 import { Rc223VersionAdapter } from '../src/versions/rc223/adapter.js'
 import { Rc224VersionAdapter } from '../src/versions/rc224/adapter.js'
+import { Rc225VersionAdapter } from '../src/versions/rc225/adapter.js'
 import {
   candidate,
   endpoint,
@@ -20,6 +21,7 @@ import { callRpc } from '../src/versions/rc6/rpc.js'
 import { namedBlank } from './fixtures/rc215-contract.js'
 
 describe.each([
+  { AdapterBase: Rc225VersionAdapter, version: '0.2.2-rc.5', protocol: 'rc225' },
   { AdapterBase: Rc224VersionAdapter, version: '0.2.2-rc.4', protocol: 'rc224' },
   { AdapterBase: Rc223VersionAdapter, version: '0.2.2-rc.3', protocol: 'rc223' },
   { AdapterBase: Rc222VersionAdapter, version: '0.2.2-rc.2', protocol: 'rc222' },
@@ -56,6 +58,7 @@ describe.each([
         '0.2.2-rc.3',
         '0.2.2-rc.4',
         '0.2.2-rc.5',
+        '0.2.2-rc.6',
       ].filter((v) => v !== release),
       `${release}+unverified`,
       '',

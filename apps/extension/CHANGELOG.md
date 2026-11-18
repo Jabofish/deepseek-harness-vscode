@@ -6,6 +6,8 @@ Release entries describe behaviour at that release. `Unreleased` lists changes a
 
 ## Unreleased
 
+- Adds exact DSH `0.2.2-rc.5` support (`9c2670d3bce5275e0d1610272958121af87787bb`), preserving the checked rc.4 contracts alongside route-default `web.searchProvider` settings round-trips and redacted/export-safe `web/deepseek-search-llm-request` log records. Preserves older exact adapters and the guided-install default.
+- 适配 DSH `0.2.2-rc.5`（`9c2670d3bce5275e0d1610272958121af87787bb`），沿用经核对的 rc.4 契约，并支持缺省 `web.searchProvider` 按模型路由配置往返与 `web/deepseek-search-llm-request` 日志记录的脱敏及导出处理；保留旧版独立适配与引导安装默认。
 - Adds exact DSH `0.2.2-rc.4` support (`3f321d32bfe382212a8ed8785c1d47a5a300aa23`), preserving the checked rc.3 Remote and Session V4 contracts alongside `CONTENT_REFUSED` attempt usage accounting, draft withdrawal and `turn/end` error presentation. Preserves older exact adapters and the guided-install default.
 - 适配 DSH `0.2.2-rc.4`（`3f321d32bfe382212a8ed8785c1d47a5a300aa23`），沿用经核对的 rc.3 Remote 与 Session V4 契约，并覆盖 `CONTENT_REFUSED` 的 attempt 用量计费、流式草稿撤回及 `turn/end` 错误展示；保留旧版独立适配与引导安装默认。
 

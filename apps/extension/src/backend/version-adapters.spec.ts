@@ -27,8 +27,8 @@ describe('production version adapter registry', () => {
       [...SUPPORTED_DSH_VERSIONS].sort(),
     )
     expect(adapters[0]).toMatchObject({
-      id: 'dsh-0.2.2-rc.4',
-      protocolVersion: 'rc224',
+      id: 'dsh-0.2.2-rc.5',
+      protocolVersion: 'rc225',
       fallback: false,
     })
   })

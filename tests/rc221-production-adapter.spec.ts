@@ -23,6 +23,7 @@ describe.each([
   { version: '0.2.2-rc.2', protocol: 'rc222' },
   { version: '0.2.2-rc.3', protocol: 'rc223' },
   { version: '0.2.2-rc.4', protocol: 'rc224' },
+  { version: '0.2.2-rc.5', protocol: 'rc225' },
 ])('$protocol production Adapter assembly', ({ version, protocol }) => {
   it.each(['create', 'edit', 'run'] as const)(
     'selects the exact release through the production registry and never replays Schedule %s after a lost receipt',
