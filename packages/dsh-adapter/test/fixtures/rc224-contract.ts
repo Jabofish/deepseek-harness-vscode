@@ -24,7 +24,7 @@ export const rc224RefusalAttemptEvent = {
     step: 1,
     stream: [
       { type: 'chunk', time: 1_001, chunk: { type: 'block-start', index: 0, blockType: 'text' } },
-      { type: 'text-chunks', time0: 1_002, index: 0, dt: [0], texts: ['Draft before refusal.'] },
+      { type: 'text-chunks', time0: 1_002, index: 0, dt: [], texts: ['Draft before refusal.'] },
       {
         type: 'chunk',
         time: 1_003,
@@ -106,7 +106,7 @@ export const rc224RefusalSnapshot = {
         seq: 3,
         time: 1_000,
         data: {
-          header: { config: { provider: 'deepseek-official', model: 'deepseek-v4-flash' }, tools: [] },
+          header: { config: { provider: 'deepseek-official', model: 'deepseek-v4-flash' } },
           reason: 'initial',
         },
       },
