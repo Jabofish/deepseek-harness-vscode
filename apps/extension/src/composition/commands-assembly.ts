@@ -32,7 +32,11 @@ import type { PostFeatureEvent } from './host-event-pipeline.js'
 import { SESSION_DROP_EDITOR_VIEW_TYPE } from '@dsh-vscode/webview-protocol'
 import { createSessionDropEditorProvider } from '../view/session-drop-editor.js'
 import type { RequestGateway } from './request-handler.js'
-import { registerNativeSessionList, SESSION_LIST_VIEW_ID } from '../view/native-session-list.js'
+import {
+  promptSessionTitle,
+  registerNativeSessionList,
+  SESSION_LIST_VIEW_ID,
+} from '../view/native-session-list.js'
 import { EditorBridgeHost } from '../editor/editor-bridge-host.js'
 
 const TRANSPORT_CONFIGURATION_KEYS = [
@@ -263,6 +267,40 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
         'dsh.moveChatToSidebar': async () => {
           await deps.moveChatToSidebar()
           return true
+        },
+        'dsh.renameEditorSession': async () => {
+          const surface = editorSurfaces.surfacesById.find((candidate) => candidate.panel.active)
+          const sessionId = surface?.sessionId
+          if (surface === undefined || sessionId === undefined || !deps.sessionNavigation.connected) return
+          const operation = new AbortController()
+          const panelClosed = surface.panel.onDidDispose(() => operation.abort())
+          const unsubscribe = coordinator.subscribe((state) => {
+            if (state.kind !== 'connected') operation.abort()
+          })
+          try {
+            const backend = backendService.requireBackend()
+            const title = await promptSessionTitle(surface.panel.title)
+            if (
+              title === undefined ||
+              operation.signal.aborted ||
+              editorSurfaces.forSession(sessionId) !== surface ||
+              backendService.requireBackend() !== backend
+            )
+              return
+            await deps.sessionNavigation.rename(sessionId, title, operation.signal)
+          } catch (error) {
+            if (!operation.signal.aborted)
+              void vscode.window.showErrorMessage(
+                error instanceof AppError
+                  ? error.message
+                  : vscode.env.language.toLowerCase().startsWith('zh')
+                    ? '无法重命名此会话。'
+                    : 'Unable to rename this session.',
+              )
+          } finally {
+            unsubscribe()
+            panelClosed.dispose()
+          }
         },
         'dsh.showDiagnostics': () => diagnostics.show(),
         'dsh.addSelectionContext': () => captureEditorContextFromCommand('selection'),

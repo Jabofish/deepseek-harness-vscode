@@ -184,6 +184,10 @@
         "icon": "$(layout-sidebar-right)"
       },
       {
+        "command": "dsh.renameEditorSession",
+        "title": "JaboDSH: Rename Session…"
+      },
+      {
         "command": "dsh.showDiagnostics",
         "title": "JaboDSH: Show Redacted Diagnostics"
       },
@@ -356,6 +360,11 @@
           "command": "dsh.moveChatToSidebar",
           "when": "activeWebviewPanelId == dsh.chatPanel",
           "group": "navigation@1"
+        },
+        {
+          "command": "dsh.renameEditorSession",
+          "when": "activeWebviewPanelId == dsh.chatPanel",
+          "group": "dsh@1"
         }
       ],
       "editor/context": [
@@ -463,6 +472,10 @@
         },
         {
           "command": "dsh.moveChatToSidebar"
+        },
+        {
+          "command": "dsh.renameEditorSession",
+          "when": "activeWebviewPanelId == dsh.chatPanel"
         },
         {
           "command": "dsh.showDiagnostics"

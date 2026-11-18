@@ -85,6 +85,12 @@
   background: var(--dsh-surface-soft);
 }
 
+.dsh-conversation[data-conversation-surface='editor']
+  .dsh-timeline[data-conversation-layout='focused']
+  .dsh-timeline__card--user {
+  max-width: 90%;
+}
+
 .dsh-timeline[data-conversation-layout='focused'] .dsh-markdown {
   line-height: 1.75;
 }
