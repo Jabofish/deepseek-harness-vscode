@@ -42,6 +42,7 @@ Send another question in the current conversation and follow the reply beside yo
 - Choose the models, providers, permissions, and agent options exposed by the connected DSH runtime.
 - Use local prompt templates, checkpoints, a Changes view, and a task center when their prerequisites are available.
 - Use the DSH-style focused layout with collapsible process details and a compact composer. Choose the focused or classic layout in **Settings → General → Conversation layout**; the choice is saved locally.
+- To hide **Trajectory**, turn off **Developer Tools** and set **Performance and usage** to **Compact** in JaboDSH's General settings.
 - Open sessions in editor tabs alongside the side bar, with independent navigation and restored sessions after a window reload.
 - In compact transcript view, keep recent and ongoing/error activity visible and use **Show all activity** to expand earlier traces.
 - Enable optional session cost estimates in **Settings → Models → Model billing**. Inspect input, output and cache costs, choose a reference model, or enter custom rates. Chinese uses CNY and English uses USD; saved exchange quotes remain available when a refresh fails.

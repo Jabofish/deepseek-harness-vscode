@@ -160,7 +160,7 @@ const useAppControllerImpl = () => {
   const [dismissedConnection, setDismissedConnection] = useState<string | undefined>()
   const [modelPickerOpenRequest, setModelPickerOpenRequest] = useState(0)
   const conversationActionsTriggerRef = useRef<HTMLButtonElement>(null)
-  const [conversationView, setConversationView] = useState<'chat' | 'trajectory'>('chat')
+  const [selectedConversationView, setConversationView] = useState<'chat' | 'trajectory'>('chat')
   const [dshEventVisibility, setDshEventVisibility] = useState<{
     readonly sessionId: string | undefined
     readonly visible: boolean
@@ -184,6 +184,7 @@ const useAppControllerImpl = () => {
     newSessionPresetSelectionEnabled,
     transcriptView,
     performanceUsage,
+    trajectoryAvailable,
     hostConversationFontSizePx,
     conversationFontStyle,
   } = useDshSettings({
@@ -195,24 +196,50 @@ const useAppControllerImpl = () => {
     setError,
     t,
   })
-  const onConversationTabKeyDown = useCallback((event: ReactKeyboardEvent<HTMLButtonElement>): void => {
-    const current = event.currentTarget.dataset.conversationView
-    if (current !== 'chat' && current !== 'trajectory') return
-    const views: readonly ('chat' | 'trajectory')[] = ['chat', 'trajectory']
-    const currentIndex = views.indexOf(current)
-    let nextIndex: number | undefined
-    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') nextIndex = (currentIndex + 1) % views.length
-    else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp')
-      nextIndex = (currentIndex - 1 + views.length) % views.length
-    else if (event.key === 'Home') nextIndex = 0
-    else if (event.key === 'End') nextIndex = views.length - 1
-    if (nextIndex === undefined) return
-    event.preventDefault()
-    const next = views[nextIndex]
-    if (next === undefined) return
-    setConversationView(next)
-    document.getElementById(CONVERSATION_VIEW_IDS[next].tab)?.focus()
+  const conversationView = trajectoryAvailable ? selectedConversationView : 'chat'
+  if (conversationView !== selectedConversationView) setConversationView(conversationView)
+  const trajectoryHadFocus = useRef(false)
+  useLayoutEffect(() => {
+    const trackFocus = (event: FocusEvent): void => {
+      const target = event.target
+      trajectoryHadFocus.current =
+        target instanceof Element &&
+        target.closest(
+          `#${CONVERSATION_VIEW_IDS.trajectory.tab}, #${CONVERSATION_VIEW_IDS.trajectory.panel}`,
+        ) !== null
+    }
+    document.addEventListener('focusin', trackFocus)
+    return () => document.removeEventListener('focusin', trackFocus)
   }, [])
+  useLayoutEffect(() => {
+    if (trajectoryAvailable) return
+    if (trajectoryHadFocus.current && document.activeElement === document.body)
+      document.getElementById(CONVERSATION_VIEW_IDS.chat.tab)?.focus()
+    trajectoryHadFocus.current = false
+  }, [trajectoryAvailable])
+  const onConversationTabKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLButtonElement>): void => {
+      if (!trajectoryAvailable) return
+      const current = event.currentTarget.dataset.conversationView
+      if (current !== 'chat' && current !== 'trajectory') return
+      const views: readonly ('chat' | 'trajectory')[] = ['chat', 'trajectory']
+      const currentIndex = views.indexOf(current)
+      let nextIndex: number | undefined
+      if (event.key === 'ArrowRight' || event.key === 'ArrowDown')
+        nextIndex = (currentIndex + 1) % views.length
+      else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp')
+        nextIndex = (currentIndex - 1 + views.length) % views.length
+      else if (event.key === 'Home') nextIndex = 0
+      else if (event.key === 'End') nextIndex = views.length - 1
+      if (nextIndex === undefined) return
+      event.preventDefault()
+      const next = views[nextIndex]
+      if (next === undefined) return
+      setConversationView(next)
+      document.getElementById(CONVERSATION_VIEW_IDS[next].tab)?.focus()
+    },
+    [trajectoryAvailable],
+  )
 
   const setConversationFontSize = useCallback((next: ConversationFontSize): void => {
     setConversationFontSizeState(next)
@@ -1053,6 +1080,7 @@ const useAppControllerImpl = () => {
     conversationFontSize,
     conversationFontStyle,
     conversationView,
+    trajectoryAvailable,
     discardAttachmentDrafts,
     dismissedConnection,
     error,
