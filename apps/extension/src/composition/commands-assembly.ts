@@ -279,14 +279,14 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
           })
           try {
             const backend = backendService.requireBackend()
-            const title = await promptSessionTitle(surface.panel.title)
-            if (
-              title === undefined ||
-              operation.signal.aborted ||
-              editorSurfaces.forSession(sessionId) !== surface ||
-              backendService.requireBackend() !== backend
-            )
-              return
+            const current = (): boolean =>
+              !operation.signal.aborted &&
+              editorSurfaces.forSession(sessionId) === surface &&
+              backendService.requireBackend() === backend
+            const currentTitle = await deps.sessionNavigation.readTitle(sessionId, operation.signal)
+            if (!current()) return
+            const title = await promptSessionTitle(currentTitle)
+            if (title === undefined || title === currentTitle.trim() || !current()) return
             await deps.sessionNavigation.rename(sessionId, title, operation.signal)
           } catch (error) {
             if (!operation.signal.aborted)

@@ -35,6 +35,7 @@ export interface SessionNavigation {
     listener: (change: 'selection' | 'directory' | 'connection') => void,
   ): vscode.Disposable
   read(this: void, signal: AbortSignal): Promise<SessionDirectoryView>
+  readTitle(this: void, sessionId: string, signal: AbortSignal): Promise<string>
   open(this: void, sessionId: string, editor: boolean, signal: AbortSignal): Promise<void>
   rename(this: void, sessionId: string, title: string, signal: AbortSignal): Promise<void>
   archive(this: void, sessionId: string, signal: AbortSignal): Promise<void>
@@ -123,6 +124,15 @@ export function createSessionNavigation(
           .filter(({ origin }) => origin !== 'subagent')
           .map(({ id, workspaceId, title, blank }) => ({ id, workspaceId, title, blank })),
       }
+    },
+    readTitle: async (sessionId: string, signal: AbortSignal): Promise<string> => {
+      signal.throwIfAborted()
+      requireConnected()
+      const page = await listScopedSessions(deps, {}, signal)
+      const session = page.items.find((item) => item.id === sessionId)
+      // An editor can also host a child or a session that has not reached the
+      // directory yet. Its session detail still goes through the ownership check.
+      return (session ?? (await deps.requireCurrentWorkspaceSession(sessionId, signal))).title
     },
     open: async (sessionId: string, editor: boolean, signal: AbortSignal): Promise<void> => {
       if (editor) return openInEditor(sessionId, undefined, signal)
