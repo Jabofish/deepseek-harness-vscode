@@ -65,6 +65,7 @@ describe('fork ownership without migration', () => {
 function scopeWith(overrides: {
   readonly archivedSessionIds?: readonly string[]
   readonly get?: ReturnType<typeof vi.fn>
+  readonly open?: ReturnType<typeof vi.fn>
   readonly interactionOwner?: string
   readonly questionOwner?: (id: string, identity?: QuestionRequestIdentity) => string | undefined
 }): {
@@ -86,7 +87,7 @@ function scopeWith(overrides: {
         workspaces: {
           listArchivedSessionIds: () => Promise.resolve(overrides.archivedSessionIds ?? ['s1']),
         },
-        sessions: { get },
+        sessions: { get, open: overrides.open },
         interactions: {
           sessionForPermission: () => overrides.interactionOwner,
           sessionForQuestion: overrides.questionOwner ?? (() => overrides.interactionOwner),
@@ -103,6 +104,25 @@ function scopeWith(overrides: {
 }
 
 describe('session scope pending-load reuse', () => {
+  it('reads uncached session details without opening the session or disturbing the shared baseline', async () => {
+    const get = vi.fn()
+    const open = vi.fn()
+    get.mockResolvedValueOnce({ id: 's1', title: 'Old title' })
+    get.mockResolvedValueOnce({ id: 's1', title: 'New title' })
+    const { scope } = scopeWith({ archivedSessionIds: [], get, open })
+    const signal = new AbortController().signal
+    await expect(scope.requireCurrentWorkspaceSession('s1', signal)).resolves.toMatchObject({
+      title: 'Old title',
+    })
+    await expect(
+      scope.requireCurrentWorkspaceSession('s1', signal, { refresh: 'detail' }),
+    ).resolves.toMatchObject({ title: 'New title' })
+    await expect(scope.requireCurrentWorkspaceSession('s1', signal)).resolves.toMatchObject({
+      title: 'Old title',
+    })
+    expect(get).toHaveBeenCalledTimes(2)
+    expect(open).not.toHaveBeenCalled()
+  })
   it('resolves an exact question identity through the repository before applying workspace ownership', async () => {
     const questionOwner = vi.fn((id: string, identity?: QuestionRequestIdentity) =>
       id === 'same' && identity?.sessionId === 's1' && identity.rpcId === 'owned' ? 's1' : undefined,

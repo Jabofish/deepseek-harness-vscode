@@ -78,6 +78,7 @@ function fixture(count = 1, connected = false): Fixture {
   const navigation = {
     connected,
     read: vi.fn<SessionNavigation['read']>().mockResolvedValue(directory),
+    readTitle: vi.fn(),
     activeSessionId: 's0',
     select: vi.fn(),
     invalidate: vi.fn(),

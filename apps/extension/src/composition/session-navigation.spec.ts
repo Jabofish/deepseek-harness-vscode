@@ -117,6 +117,69 @@ describe('shared Host session navigation', () => {
     expect(deps.postEventTo).toHaveBeenCalledOnce()
   })
 
+  it('reads the full title from the scoped directory, and checks ownership for uncatalogued sessions', async () => {
+    const { navigation, deps, signal } = fixture()
+    const title = 'Project plan with a long title '.repeat(8).trim()
+    const current = await deps.sessionUseCases.list({}, signal)
+    vi.mocked(deps.sessionUseCases.list).mockResolvedValue({
+      items: current.items.map((item) => (item.id === 's1' ? { ...item, title } : item)),
+    })
+    await expect(navigation.readTitle('s1', signal)).resolves.toBe(title)
+    expect(deps.requireCurrentWorkspaceSession).not.toHaveBeenCalled()
+
+    const summary = current.items.find((item) => item.id === 's1')!
+    deps.requireCurrentWorkspaceSession.mockResolvedValueOnce({
+      ...summary,
+      id: 'uncatalogued',
+      title: 'Uncatalogued session',
+      configuration: {
+        preset: '',
+        permissionPreset: '',
+        toolMode: 'native',
+        planMode: false,
+        model: { providerId: '', modelId: '' },
+      },
+    })
+    const detail = await navigation.readTitle('uncatalogued', signal)
+    expect(detail).toBe('Uncatalogued session')
+    expect(deps.requireCurrentWorkspaceSession).toHaveBeenCalledWith('uncatalogued', signal, {
+      refresh: 'detail',
+    })
+    deps.requireCurrentWorkspaceSession.mockRejectedValueOnce(new Error('foreign session'))
+    await expect(navigation.readTitle('foreign', signal)).rejects.toThrow('foreign session')
+    expect(deps.requireCurrentWorkspaceSession).toHaveBeenCalledWith('foreign', signal, { refresh: 'detail' })
+  })
+
+  it('uses a durable title event newer than the detail projection for uncatalogued sessions', async () => {
+    const { navigation, deps, signal } = fixture()
+    const title = 'Renamed ' + 'full title '.repeat(20).trim()
+    deps.requireCurrentWorkspaceSession.mockResolvedValue({
+      id: 'uncatalogued',
+      workspaceId: 'w1',
+      title: 'Old title',
+      blank: false,
+      status: 'idle',
+      createdAt: '2026-11-19T00:00:00.000Z',
+      updatedAt: '2026-11-19T00:00:00.000Z',
+      configuration: {
+        preset: '',
+        permissionPreset: '',
+        toolMode: 'native',
+        planMode: false,
+        model: { providerId: '', modelId: '' },
+      },
+      projection: { asOfSequence: 6, values: { title: 'Old title' } },
+      history: [
+        {
+          sequence: 7,
+          time: '2026-11-19T00:00:00.000Z',
+          event: { type: 'session.title', sessionId: 'uncatalogued', title },
+        },
+      ],
+    })
+    await expect(navigation.readTitle('uncatalogued', signal)).resolves.toBe(title)
+  })
+
   it.each([
     ['session.projection', { sessionId: 's1', key: 'title', value: 'Projected title' }],
     [

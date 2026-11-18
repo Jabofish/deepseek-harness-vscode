@@ -36,6 +36,12 @@ interface SharedSessionLoad {
   settled: boolean
 }
 
+interface SessionReadOptions {
+  readonly refresh?: 'open' | 'detail'
+  readonly allowArchived?: boolean
+  readonly controlOnly?: boolean
+}
+
 /** Fork ownership must never open history: opening an old Session may migrate it. */
 export async function requireCatalogOwnedSession(
   backend: DshBackend,
@@ -84,7 +90,7 @@ export interface SessionScope {
     this: void,
     sessionId: string,
     signal: AbortSignal,
-    options?: { readonly fresh?: boolean; readonly allowArchived?: boolean; readonly controlOnly?: boolean },
+    options?: SessionReadOptions,
   ): Promise<SessionDetail>
   requireCurrentWorkspaceId(this: void, workspaceId: string, signal: AbortSignal): Promise<void>
   requireOwnedQueuedInput(this: void, inputId: string, signal: AbortSignal): Promise<void>
@@ -216,11 +222,7 @@ export function createSessionScope(deps: SessionScopeDependencies): SessionScope
   const requireCurrentWorkspaceSession = async (
     sessionId: string,
     signal: AbortSignal,
-    options: {
-      readonly fresh?: boolean
-      readonly allowArchived?: boolean
-      readonly controlOnly?: boolean
-    } = {},
+    options: SessionReadOptions = {},
   ): Promise<SessionDetail> => {
     signal.throwIfAborted()
     if (options.controlOnly === true) {
@@ -230,7 +232,9 @@ export function createSessionScope(deps: SessionScopeDependencies): SessionScope
       controlSessions.delete(sessionId)
       currentWorkspaceSessionDetails.delete(sessionId)
     }
-    if (options.fresh !== true && options.allowArchived !== true) {
+    const canReuse = options.refresh === undefined && options.allowArchived !== true
+    const canShare = options.refresh !== 'detail' && options.allowArchived !== true
+    if (canReuse) {
       const cached = currentWorkspaceSessionDetails.get(sessionId)
       if (cached?.generation === currentWorkspaceSessionGeneration) return cached.detail
     }
@@ -241,12 +245,7 @@ export function createSessionScope(deps: SessionScopeDependencies): SessionScope
     // ordinary load would fail a restore or delete with the archived refusal,
     // and letting an ordinary route adopt a recovery load would hand it an
     // archived session the route's own contract must refuse.
-    if (
-      pending !== undefined &&
-      !pending.controller.signal.aborted &&
-      options.fresh !== true &&
-      options.allowArchived !== true
-    )
+    if (pending !== undefined && !pending.controller.signal.aborted && canReuse)
       return joinSessionLoad(pending, signal)
 
     const generation = currentWorkspaceSessionGeneration
@@ -284,7 +283,7 @@ export function createSessionScope(deps: SessionScopeDependencies): SessionScope
       try {
         const sessions = backendService.requireBackend().sessions
         detail =
-          options.fresh === true && sessions.open !== undefined
+          options.refresh === 'open' && sessions.open !== undefined
             ? await sessions.open(sessionId, loadSignal)
             : await sessions.get(sessionId, loadSignal)
       } catch (error) {
@@ -300,7 +299,7 @@ export function createSessionScope(deps: SessionScopeDependencies): SessionScope
           }),
         )
       loadSignal.throwIfAborted()
-      if (generation === currentWorkspaceSessionGeneration && options.allowArchived !== true) {
+      if (generation === currentWorkspaceSessionGeneration && canShare) {
         // Ownership/advisory reads need metadata, never a retained transcript body.
         const { history: _history, ...metadata } = detail
         void _history
@@ -326,12 +325,10 @@ export function createSessionScope(deps: SessionScopeDependencies): SessionScope
       }
       return detail
     })()
-    // Recovery reads stay out of the shared in-flight map, mirroring the cache
-    // policy documented above: an ordinary route must never adopt one, and two
-    // overlapping recovery reads are rare, idempotent, and cheaper to reason
-    // about than a variant-aware dedup key.
+    // Archive recovery and fresh detail reads stay outside the shared cache
+    // and in-flight map. Explicit opens still publish a reusable baseline.
     const shared: SharedSessionLoad = { promise: load, controller, callers: 0, settled: false }
-    if (options.allowArchived !== true) currentWorkspaceSessionLoads.set(sessionId, shared)
+    if (canShare) currentWorkspaceSessionLoads.set(sessionId, shared)
     const finish = (): void => {
       shared.settled = true
       if (currentWorkspaceSessionLoads.get(sessionId) === shared)
