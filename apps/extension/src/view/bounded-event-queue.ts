@@ -1,8 +1,4 @@
-interface PendingPost {
-  readonly chars: number
-  readonly finish: (delivered: boolean) => void
-  readonly priority: boolean
-}
+const POST_RECEIPT_TIMEOUT_MS = 5_000
 
 interface LatestPost {
   run: () => Promise<boolean>
@@ -24,7 +20,7 @@ export interface BoundedQueueRecoveryInfo {
 
 /** Bound IPC receipts and latest-state snapshots; lifecycle frames preserve source order. */
 export class BoundedEventQueue {
-  private readonly active = new Set<PendingPost>()
+  private readonly active = new Set<(delivered: boolean) => void>()
   private readonly counts = [0, 0]
   private readonly chars = [0, 0]
   private readonly latest = new Map<string, LatestPost>()
@@ -158,16 +154,19 @@ export class BoundedEventQueue {
       return Promise.resolve(false)
     }
     return new Promise((resolve) => {
-      const entry: PendingPost = { chars, finish: resolve, priority }
-      this.active.add(entry)
-      this.counts[lane]! += 1
-      this.chars[lane]! += chars
       const finish = (delivered: boolean): void => {
-        if (!this.active.delete(entry)) return
+        if (!this.active.delete(finish)) return
+        clearTimeout(timer)
         this.counts[lane]! -= 1
         this.chars[lane]! -= chars
         resolve(delivered)
       }
+      // A missing IPC receipt must release capacity for the next full window.
+      const timer = setTimeout(() => finish(false), POST_RECEIPT_TIMEOUT_MS)
+      timer.unref?.()
+      this.active.add(finish)
+      this.counts[lane]! += 1
+      this.chars[lane]! += chars
       try {
         void run().then(finish, () => finish(false))
       } catch {
@@ -192,7 +191,7 @@ export class BoundedEventQueue {
     this.latestDeliveries.clear()
     this.waitingCounts.fill(0)
     this.waitingChars.fill(0)
-    for (const entry of this.active) entry.finish(false)
+    for (const finish of this.active) finish(false)
     this.active.clear()
     this.counts.fill(0)
     this.chars.fill(0)

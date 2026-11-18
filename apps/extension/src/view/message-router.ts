@@ -15,6 +15,10 @@ import {
   type WebviewRequest,
 } from '@dsh-vscode/webview-protocol'
 
+// Completion retries fit within the Webview's ordinary 30s request budget.
+const RESPONSE_ACK_RETRY_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000, 8_000] as const
+const MAX_PENDING_WRITE_RESPONSES = 64
+
 export interface UnexpectedErrorEntry {
   readonly requestType: string
   readonly name: string
@@ -53,6 +57,7 @@ interface InFlightRequest {
   /** The surface that sent this request; its terminal response goes back here. */
   readonly surfaceId: string | undefined
   phase: 'running' | 'responding'
+  responseTimer?: ReturnType<typeof setTimeout>
 }
 
 interface QuestionWaitRoute {
@@ -67,6 +72,7 @@ interface QuestionWaitRoute {
 
 export class WebviewMessageRouter {
   private readonly inFlight = new Map<string, InFlightRequest>()
+  private readonly pendingWriteResponses = new Set<string>()
   private readonly questionWaits = new Map<string, Set<QuestionWaitRoute>>()
 
   public constructor(private readonly dependencies: MessageRouterDependencies) {}
@@ -90,6 +96,11 @@ export class WebviewMessageRouter {
     // independently: both responses would target the same Webview promise.
     // Ignore the duplicate and preserve the original operation's ownership.
     const operationKey = requestKey(surfaceId, request.requestId)
+    if (request.type === 'ui.response.ack') {
+      const pending = this.inFlight.get(operationKey)
+      if (pending?.responseTimer !== undefined) this.finishOperation(operationKey, pending)
+      return
+    }
     if (this.inFlight.has(operationKey)) return
     const operation: InFlightRequest = {
       controller: new AbortController(),
@@ -187,9 +198,10 @@ export class WebviewMessageRouter {
   }
 
   public cancelAll(): void {
-    for (const operation of this.inFlight.values())
+    for (const [key, operation] of this.inFlight) {
       if (operation.kind === 'request' && operation.phase === 'running') operation.controller.abort()
-    this.inFlight.clear()
+      this.finishOperation(key, operation)
+    }
     for (const routes of this.questionWaits.values()) for (const route of [...routes]) route.lifetime.abort()
     this.questionWaits.clear()
   }
@@ -203,7 +215,7 @@ export class WebviewMessageRouter {
     for (const [requestId, operation] of [...this.inFlight]) {
       if (operation.surfaceId !== surfaceId) continue
       if (operation.kind === 'request' && operation.phase === 'running') operation.controller.abort()
-      this.inFlight.delete(requestId)
+      this.finishOperation(requestId, operation)
     }
     this.cancelSurfaceQuestionWaits(surfaceId)
   }
@@ -282,6 +294,16 @@ export class WebviewMessageRouter {
   ): Promise<boolean> {
     if (this.inFlight.get(operationKey) !== operation) return false
     operation.phase = 'responding'
+    if (
+      message.type === 'response' &&
+      operation.surfaceId !== undefined &&
+      (requestType === 'session.sendPrompt' || requestType === 'session.queue.steer') &&
+      this.pendingWriteResponses.size < MAX_PENDING_WRITE_RESPONSES
+    ) {
+      this.pendingWriteResponses.add(operationKey)
+      this.deliverWriteResponse(operationKey, operation, requestType, { ...message, requiresAck: true })
+      return true
+    }
     try {
       // Route the terminal answer back to the surface that asked for it.
       const delivered = await this.dependencies.postMessage(message, operation.surfaceId)
@@ -293,8 +315,46 @@ export class WebviewMessageRouter {
       this.reportUnexpectedError(unexpectedErrorEntry(requestType, error))
       return false
     } finally {
-      if (this.inFlight.get(operationKey) === operation) this.inFlight.delete(operationKey)
+      this.finishOperation(operationKey, operation)
     }
+  }
+
+  private deliverWriteResponse(
+    key: string,
+    operation: InFlightRequest,
+    requestType: string,
+    message: Extract<HostMessage, { type: 'response' }>,
+    attempt = 0,
+  ): void {
+    if (this.inFlight.get(key) !== operation) return
+    const delay = RESPONSE_ACK_RETRY_DELAYS_MS[attempt]
+    if (delay === undefined) {
+      this.finishOperation(key, operation)
+      this.reportUnexpectedError(
+        unexpectedErrorEntry(requestType, new Error('The Webview did not acknowledge the response.')),
+      )
+      return
+    }
+    // Repost the same result. A missing renderer receipt says nothing about
+    // whether DSH accepted the mutation, so the request handler never runs twice.
+    operation.responseTimer = setTimeout(
+      () => this.deliverWriteResponse(key, operation, requestType, message, attempt + 1),
+      delay,
+    )
+    operation.responseTimer.unref?.()
+    void Promise.resolve()
+      .then(() => {
+        if (this.inFlight.get(key) !== operation) return undefined
+        return this.dependencies.postMessage(message, operation.surfaceId)
+      })
+      .catch(() => undefined)
+  }
+
+  private finishOperation(key: string, operation: InFlightRequest): void {
+    if (this.inFlight.get(key) !== operation) return
+    if (operation.responseTimer !== undefined) clearTimeout(operation.responseTimer)
+    this.pendingWriteResponses.delete(key)
+    this.inFlight.delete(key)
   }
 
   private reportUnexpectedError(entry: UnexpectedErrorEntry): void {

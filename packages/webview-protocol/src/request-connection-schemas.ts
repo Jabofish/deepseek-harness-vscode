@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { requestBase } from './request-common.js'
 
 export const connectionRequestSchemas = [
+  z.object({ type: z.literal('ui.response.ack'), ...requestBase }).strict(),
   z
     .object({
       type: z.literal('ui.events.ack'),

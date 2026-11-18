@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { WebviewMessageRouter } from './message-router.js'
 
 const request = (requestId: string): unknown => ({
@@ -77,6 +77,36 @@ describe('WebviewMessageRouter surface routing', () => {
     releases.forEach((release) => release())
     await Promise.all([first, second])
     expect(delivered).toEqual(['sidebar', 'editor:s1'])
+  })
+
+  it('retries an unacknowledged write response only on the original surface', async () => {
+    vi.useFakeTimers()
+    const handleRequest = vi.fn(() => Promise.resolve(undefined))
+    const postMessage = vi.fn(() => Promise.resolve(true))
+    const router = new WebviewMessageRouter({ handleRequest, postMessage })
+    const original = {
+      protocolVersion: 1,
+      message: { type: 'session.queue.steer', requestId: 'steer', payload: { inputId: 'queued' } },
+    }
+    const ack = { protocolVersion: 1, message: { type: 'ui.response.ack', requestId: 'steer' } }
+    try {
+      await router.handle(original, 'sidebar')
+      await router.handle(ack, 'editor:s1')
+      await router.handle(original, 'sidebar')
+      await vi.advanceTimersByTimeAsync(500)
+      const response = { type: 'response', requestId: 'steer', ok: true, requiresAck: true }
+      expect(postMessage.mock.calls).toEqual([
+        [response, 'sidebar'],
+        [response, 'sidebar'],
+      ])
+      await router.handle(ack, 'sidebar')
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(postMessage).toHaveBeenCalledTimes(2)
+      expect(handleRequest).toHaveBeenCalledTimes(1)
+    } finally {
+      router.cancelAll()
+      vi.useRealTimers()
+    }
   })
 })
 

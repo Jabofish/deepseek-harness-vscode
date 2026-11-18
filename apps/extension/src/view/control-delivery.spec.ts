@@ -102,4 +102,65 @@ describe('surface control consumption', () => {
     await expect(abandoned).resolves.toBe(false)
     delivery.dispose()
   })
+
+  it('recovers the last control frame after four refusals with no further traffic', async () => {
+    vi.useFakeTimers()
+    let available = false
+    let sequence = 0
+    const post = vi.fn((surfaceId: string, frame: Event) => {
+      if (available) delivery.acknowledge(surfaceId, frame.sequence)
+      return Promise.resolve(available)
+    })
+    const delivery = new ControlDelivery(
+      post,
+      () => ++sequence,
+      () => true,
+    )
+    try {
+      await expect(delivery.enqueue('s', event('session.status'))).resolves.toBe(false)
+      await vi.advanceTimersByTimeAsync(850)
+      expect(post).toHaveBeenCalledTimes(4)
+      available = true
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(post).toHaveBeenCalledTimes(5)
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(post).toHaveBeenCalledTimes(5)
+    } finally {
+      delivery.dispose()
+      vi.useRealTimers()
+    }
+  })
+
+  it('retains the sequence when a native receipt stalls and unblocks following controls on ACK', async () => {
+    vi.useFakeTimers()
+    let sequence = 0
+    const attempts: number[] = []
+    let finishStalled!: (delivered: boolean) => void
+    const stalled = new Promise<boolean>((resolve) => {
+      finishStalled = resolve
+    })
+    const delivery = new ControlDelivery(
+      (surfaceId, frame) => {
+        attempts.push(frame.sequence)
+        if (attempts.length === 1) return stalled
+        delivery.acknowledge(surfaceId, frame.sequence)
+        return Promise.resolve(true)
+      },
+      () => ++sequence,
+      () => true,
+    )
+    try {
+      const first = delivery.enqueue('s', event('question.requested'))
+      const second = delivery.enqueue('s', event('question.resolved'))
+      await vi.advanceTimersByTimeAsync(5_000)
+      await expect(first).resolves.toBe(true)
+      await expect(second).resolves.toBe(true)
+      finishStalled(false)
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(attempts).toEqual([1, 1, 2])
+    } finally {
+      delivery.dispose()
+      vi.useRealTimers()
+    }
+  })
 })
