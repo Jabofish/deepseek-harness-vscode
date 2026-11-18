@@ -42,6 +42,7 @@ Send another question in the current conversation and follow the reply beside yo
 - Choose the models, providers, permissions, and agent options exposed by the connected DSH runtime.
 - Use local prompt templates, checkpoints, a Changes view, and a task center when their prerequisites are available.
 - Use the DSH-style focused layout with collapsible process details and a compact composer. Choose the focused or classic layout in **Settings → General → Conversation layout**; the choice is saved locally.
+- To hide **Trajectory**, turn off **Developer Tools** and set **Performance and usage** to **Compact** in JaboDSH's General settings.
 - Open sessions in editor tabs alongside the side bar, with independent navigation and restored sessions after a window reload.
 - In compact transcript view, keep recent and ongoing/error activity visible and use **Show all activity** to expand earlier traces.
 - Enable optional session cost estimates in **Settings → Models → Model billing**. Inspect input, output and cache costs, choose a reference model, or enter custom rates. Chinese uses CNY and English uses USD; saved exchange quotes remain available when a refresh fails.
@@ -81,6 +82,8 @@ Set `dsh.completionCue` in VS Code Settings to `notification` or `bell` for a cu
 To open an editor tab, choose **Open in Editor Area** or run **JaboDSH: Open Chat in Editor Area** (`/moveto:editor`); `/moveto:sidebar` returns the chat. You can drag an opened editor tab to split. In a manually sorted session list, drop onto a lower row to move after it, or an upper row to move before it. DSH saves the order; the current blank session stays first.
 
 Click the conversation title to choose another session. In the sidebar this switches the current conversation; in an editor it opens or reveals that session's own tab. Arrow keys, Enter and Escape work in the dropdown. Opening a conversation or starting a new one places the keyboard in its message box, so you can type immediately.
+
+To rename a session in the editor, select its tab and choose **Rename Session** in the editor title bar's **More Actions** menu.
 
 Opening the floating **Sessions** list focuses search; type a keyword and press Enter when only one conversation matches. Reopening selects the previous query so you can replace it by typing.
 

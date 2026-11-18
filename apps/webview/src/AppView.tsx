@@ -85,6 +85,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
     conversationFontSize,
     conversationFontStyle,
     conversationView,
+    trajectoryAvailable,
     dismissedConnection,
     error,
     estimatedContextTokens,
@@ -490,22 +491,24 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                       >
                         {t('app.chat')}
                       </button>
-                      <button
-                        id={CONVERSATION_VIEW_IDS.trajectory.tab}
-                        data-conversation-view="trajectory"
-                        className={`dsh-conversation__view-tab${
-                          conversationView === 'trajectory' ? ' dsh-conversation__view-tab--active' : ''
-                        }`}
-                        type="button"
-                        role="tab"
-                        aria-selected={conversationView === 'trajectory'}
-                        aria-controls={CONVERSATION_VIEW_IDS.trajectory.panel}
-                        tabIndex={conversationView === 'trajectory' ? 0 : -1}
-                        onKeyDown={onConversationTabKeyDown}
-                        onClick={() => setConversationView('trajectory')}
-                      >
-                        {t('app.trajectory')}
-                      </button>
+                      {trajectoryAvailable ? (
+                        <button
+                          id={CONVERSATION_VIEW_IDS.trajectory.tab}
+                          data-conversation-view="trajectory"
+                          className={`dsh-conversation__view-tab${
+                            conversationView === 'trajectory' ? ' dsh-conversation__view-tab--active' : ''
+                          }`}
+                          type="button"
+                          role="tab"
+                          aria-selected={conversationView === 'trajectory'}
+                          aria-controls={CONVERSATION_VIEW_IDS.trajectory.panel}
+                          tabIndex={conversationView === 'trajectory' ? 0 : -1}
+                          onKeyDown={onConversationTabKeyDown}
+                          onClick={() => setConversationView('trajectory')}
+                        >
+                          {t('app.trajectory')}
+                        </button>
+                      ) : null}
                     </div>
                     <SessionTitlePicker active={active} sessions={state.sessions} onOpen={sessionOnOpen} />
                     <GoalsTasksStrip

@@ -35,6 +35,7 @@ interface DshSettingsUi {
   readonly newSessionPresetSelectionEnabled: boolean | undefined
   readonly transcriptView: TranscriptViewMode
   readonly performanceUsage: PerformanceUsageMode
+  readonly trajectoryAvailable: boolean
   readonly hostConversationFontSizePx: number | undefined
   readonly conversationFontStyle: CSSProperties | undefined
 }
@@ -402,6 +403,16 @@ export function useDshSettings(input: {
   const newSessionPresetSelectionEnabled = state.presetSelectionEnabled
   const transcriptView = readyDshUiPreferences?.transcriptView ?? 'standard'
   const performanceUsage = readyDshUiPreferences?.performanceUsage ?? 'detailed'
+  const trajectoryPreferences =
+    settingsSnapshotMatchesConnection && dshSettingsSnapshot !== undefined
+      ? (readyDshUiPreferences ?? dshUiPreferences(dshSettingsSnapshot))
+      : undefined
+  const trajectoryAvailable =
+    trajectoryPreferences === undefined ||
+    trajectoryPreferences.codingToolsEnabled === true ||
+    trajectoryPreferences.performanceUsage === 'detailed' ||
+    (trajectoryPreferences.codingToolsEnabled === undefined &&
+      trajectoryPreferences.performanceUsage === undefined)
   const hostConversationFontSizePx = readyDshUiPreferences?.fontSize
   const conversationFontStyle =
     hostConversationFontSizePx === undefined
@@ -449,6 +460,7 @@ export function useDshSettings(input: {
     newSessionPresetSelectionEnabled,
     transcriptView,
     performanceUsage,
+    trajectoryAvailable,
     hostConversationFontSizePx,
     conversationFontStyle,
   }
