@@ -362,6 +362,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                 <section
                   className="dsh-conversation"
                   data-conversation-font-size={conversationFontSize}
+                  data-conversation-surface={state.surface?.kind}
                   aria-label={t('app.createSession')}
                 >
                   <div className="dsh-conversation__topbar">
