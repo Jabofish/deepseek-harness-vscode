@@ -30,4 +30,18 @@ describe('bounded Host event posting', () => {
     await expect(queue.enqueue(() => Promise.resolve(true), 1)).resolves.toBe(true)
     queue.dispose()
   })
+
+  it('returns bulk capacity when the native post never settles', async () => {
+    vi.useFakeTimers()
+    const queue = new BoundedEventQueue(() => Promise.resolve(), 1, 20)
+    try {
+      const abandoned = queue.enqueue(() => new Promise<boolean>(() => undefined), 1)
+      await vi.advanceTimersByTimeAsync(5_000)
+      await expect(abandoned).resolves.toBe(false)
+      await expect(queue.enqueue(() => Promise.resolve(true), 1)).resolves.toBe(true)
+    } finally {
+      queue.dispose()
+      vi.useRealTimers()
+    }
+  })
 })

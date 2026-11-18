@@ -22,6 +22,7 @@ export const hostResponseSchema = z.discriminatedUnion('ok', [
       type: z.literal('response'),
       requestId: id,
       ok: z.literal(true),
+      requiresAck: z.literal(true).optional(),
       payload: boundedUnknown.optional(),
     })
     .strict(),
@@ -30,6 +31,7 @@ export const hostResponseSchema = z.discriminatedUnion('ok', [
       type: z.literal('response'),
       requestId: id,
       ok: z.literal(false),
+      requiresAck: z.literal(true).optional(),
       error: hostError,
     })
     .strict(),

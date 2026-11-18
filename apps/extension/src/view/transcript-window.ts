@@ -44,6 +44,8 @@ const DELIVERY_RETRY_LIMIT = 3
 /** A transiently unavailable visible renderer may also miss the invalidation. */
 const DELIVERY_RECOVERY_DELAYS = [250, 1_000, 3_000] as const
 const DELIVERY_RECOVERY_MAX_DELAY = 10_000
+const TRANSCRIPT_ACK_RETRY_DELAY_MS = 5_000
+const TRANSCRIPT_REBASE_RETRY_DELAY_MS = 5_000
 interface PendingOpen {
   readonly sessionId: string
   readonly generation: number
@@ -127,6 +129,8 @@ export class TranscriptWindowService {
   private retryAttempt = 0
   private recoveryAttempt = 0
   private recoveryTimer: ReturnType<typeof setTimeout> | undefined
+  private rebaseTimer: ReturnType<typeof setTimeout> | undefined
+  private ackTimer: ReturnType<typeof setTimeout> | undefined
   private deliverySuspended = false
   private deliveryEpoch = 0
   private readonly recentEvents = new Map<string, true>()
@@ -162,7 +166,9 @@ export class TranscriptWindowService {
   ) {}
 
   public begin(sessionId: string, child = false, recovery = false): number {
+    this.cancelAckRecovery()
     this.cancelRecovery()
+    this.cancelRebaseRetry()
     if (this.activeSessionId() !== sessionId || !recovery) {
       this.clearRetry()
     }
@@ -269,15 +275,15 @@ export class TranscriptWindowService {
     if (previousResident !== undefined) this.reconcileResidentNodes(resident, previousResident)
     this.revision++
     this.published = undefined
-    this.pendingAcks.clear()
-    this.pendingChars = 0
-    this.budgetBlocked = false
+    this.clearPendingAcks()
     this.deps.onCapacity?.(this.previewCanResume())
     return this.snapshot()
   }
 
   public cancel(generation: number): void {
-    if (this.pending?.generation === generation) this.pending = undefined
+    if (this.pending?.generation !== generation) return
+    this.pending = undefined
+    this.waitForAck()
   }
 
   /** Content is never queued for the renderer; only the latest bounded window is published. */
@@ -545,7 +551,11 @@ export class TranscriptWindowService {
   public setVisible(visible: boolean): void {
     const becameVisible = visible && !this.visible
     this.visible = visible
-    if (!visible) this.cancelRecovery()
+    if (!visible) {
+      this.cancelAckRecovery()
+      this.cancelRecovery()
+      this.cancelRebaseRetry()
+    }
     if (becameVisible) {
       this.deliverySuspended = false
       this.clearRetry()
@@ -563,9 +573,7 @@ export class TranscriptWindowService {
       this.deliveryEpoch++
       this.published = undefined
       this.revision++
-      this.pendingAcks.clear()
-      this.pendingChars = 0
-      this.budgetBlocked = false
+      this.clearPendingAcks()
       this.schedule()
     }
   }
@@ -573,12 +581,17 @@ export class TranscriptWindowService {
   public acknowledge(sessionId: string, revision: number): void {
     if (this.displayed?.sessionId !== sessionId || revision > this.revision) return
     if (this.overloadBudget.count > 0 && this.previewCanResume()) this.deps.onCapacity?.(true)
+    const previousPending = this.pendingAcks.size
     for (const [sent, chars] of this.pendingAcks)
       if (sent <= revision) {
         this.pendingAcks.delete(sent)
         this.pendingChars -= chars
         this.budgetBlocked = false
       }
+    if (this.pendingAcks.size < previousPending) {
+      this.cancelAckRecovery()
+      this.waitForAck()
+    }
     if (this.visible && !this.needsRebase) this.flushIngress()
     if (this.dirty) this.schedule()
   }
@@ -600,6 +613,7 @@ export class TranscriptWindowService {
 
   public dispose(): void {
     ++this.generation
+    this.cancelRebaseRetry()
     this.ingress.clear()
     this.needsRebase = false
     this.pending = undefined
@@ -608,9 +622,7 @@ export class TranscriptWindowService {
     this.forward.length = 0
     this.sameSequence.clear()
     this.dirty = false
-    this.pendingAcks.clear()
-    this.pendingChars = 0
-    this.budgetBlocked = false
+    this.clearPendingAcks()
     this.published = undefined
     this.invalidated = false
     this.deliverySuspended = false
@@ -813,9 +825,31 @@ export class TranscriptWindowService {
   }
 
   private invalidateIngress(): void {
-    if (!this.visible || this.invalidated || this.tail === undefined) return
+    if (!this.visible || this.invalidated || this.rebaseTimer !== undefined || this.tail === undefined) return
     this.invalidated = true
     this.deps.invalidate?.(this.tail.sessionId)
+  }
+
+  private cancelRebaseRetry(): void {
+    if (this.rebaseTimer !== undefined) clearTimeout(this.rebaseTimer)
+    this.rebaseTimer = undefined
+  }
+
+  private retryRebase(generation: number): void {
+    if (!this.visible || this.deps.invalidate === undefined) {
+      this.invalidated = false
+      return
+    }
+    this.invalidated = true
+    // A failed history read can be the last activity of a turn. Give the
+    // Webview another chance to recover even after its fast retries end.
+    this.rebaseTimer = setTimeout(() => {
+      this.rebaseTimer = undefined
+      if (this.generation !== generation || !this.needsRebase) return
+      this.invalidated = false
+      this.invalidateIngress()
+    }, TRANSCRIPT_REBASE_RETRY_DELAY_MS)
+    this.rebaseTimer.unref?.()
   }
 
   private noteOverload(): void {
@@ -841,12 +875,17 @@ export class TranscriptWindowService {
         signal.throwIfAborted()
         const page = await this.deps.read(sessionId, undefined, signal, child)
         signal.throwIfAborted()
-        return this.installPage(sessionId, page, generation, cwd)
+        const window = this.installPage(sessionId, page, generation, cwd)
+        // The RPC response carries the new baseline. If it is lost, the
+        // normal window watchdog publishes the recovered state from memory.
+        this.pendingAcks.set(window.revision, 0)
+        this.waitForAck()
+        return window
       } catch (error) {
         if (this.generation === generation) {
           this.needsRebase = true
           this.deps.onCapacity?.(false)
-          this.invalidated = false
+          this.retryRebase(generation)
         }
         throw error
       } finally {
@@ -859,9 +898,7 @@ export class TranscriptWindowService {
     this.cancelRecovery()
     this.invalidated = false
     this.published = undefined
-    this.pendingAcks.clear()
-    this.pendingChars = 0
-    this.budgetBlocked = false
+    this.clearPendingAcks()
     this.revision++
     return this.snapshot()
   }
@@ -1304,6 +1341,36 @@ export class TranscriptWindowService {
     this.recoveryTimer = undefined
   }
 
+  private cancelAckRecovery(): void {
+    if (this.ackTimer !== undefined) clearTimeout(this.ackTimer)
+    this.ackTimer = undefined
+  }
+
+  private clearPendingAcks(): void {
+    this.cancelAckRecovery()
+    this.pendingAcks.clear()
+    this.pendingChars = 0
+    this.budgetBlocked = false
+  }
+
+  private waitForAck(): void {
+    if (!this.visible || this.pendingAcks.size === 0 || this.ackTimer !== undefined) return
+    const epoch = this.deliveryEpoch
+    this.ackTimer = setTimeout(() => {
+      this.ackTimer = undefined
+      if (!this.visible || this.deliveryEpoch !== epoch || this.pendingAcks.size === 0) return
+      // A successful post only confirms IPC acceptance. Recover even when the
+      // final frame or its ACK was lost and no later patch can expose a gap.
+      this.deliveryEpoch++
+      this.published = undefined
+      this.revision++
+      this.clearPendingAcks()
+      if (this.needsRebase) this.invalidateIngress()
+      else this.schedule()
+    }, TRANSCRIPT_ACK_RETRY_DELAY_MS)
+    this.ackTimer.unref?.()
+  }
+
   private scheduleDeliveryRecovery(): void {
     const delay = DELIVERY_RECOVERY_DELAYS[this.recoveryAttempt] ?? DELIVERY_RECOVERY_MAX_DELAY
     if (!this.visible || this.displayed === undefined || this.recoveryTimer !== undefined) return
@@ -1442,6 +1509,7 @@ export class TranscriptWindowService {
       }
       this.pendingAcks.set(sentRevision, chars)
       this.pendingChars += chars
+      this.waitForAck()
       // VS Code preserves invocation order on a Webview. Reserve this baseline
       // before awaiting its receipt, so the next delta can enter IPC immediately.
       this.published = {
@@ -1465,9 +1533,7 @@ export class TranscriptWindowService {
         return
       if (!delivered) {
         this.deliveryEpoch++
-        this.pendingAcks.clear()
-        this.pendingChars = 0
-        this.budgetBlocked = false
+        this.clearPendingAcks()
         this.published = undefined
         this.retryDelivery()
       } else {
@@ -1484,9 +1550,7 @@ export class TranscriptWindowService {
       )
         return
       this.deliveryEpoch++
-      this.pendingAcks.clear()
-      this.pendingChars = 0
-      this.budgetBlocked = false
+      this.clearPendingAcks()
       this.published = undefined
       this.posting = false
       this.retryDelivery()

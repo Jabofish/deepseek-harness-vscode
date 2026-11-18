@@ -345,6 +345,75 @@ describe('Host transcript windows', () => {
     },
   )
 
+  it('recovers a final window that IPC accepted without a renderer ACK', async () => {
+    vi.useFakeTimers()
+    const read = vi.fn(() => Promise.resolve({ events: [], hasMore: false }))
+    const delivered: TranscriptWindow[] = []
+    const service = new TranscriptWindowService({
+      read,
+      publicValue: (value) => value,
+      post: (window) => {
+        if (delivered.length > 0) service.acknowledge(window.sessionId, window.revision)
+        delivered.push(window)
+        return Promise.resolve(true)
+      },
+    })
+    try {
+      service.installPage(sessionId, { events: [], hasMore: false }, service.begin(sessionId))
+      service.accept(message(1).event)
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(delivered).toHaveLength(2)
+      expect(delivered[1]?.nodes.at(-1)).toMatchObject({ markdown: 'Answer 1' })
+      expect(delivered[1]!.revision).toBeGreaterThan(delivered[0]!.revision)
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(delivered).toHaveLength(2)
+      expect(read).not.toHaveBeenCalled()
+    } finally {
+      service.dispose()
+    }
+  })
+
+  it('retries failed durable recovery even after the last event', async () => {
+    vi.useFakeTimers()
+    const page = { events: [message(1), message(2), message(3)], hasMore: false }
+    const read = vi.fn(() => Promise.resolve(page))
+    read.mockRejectedValueOnce(new Error('History temporarily unavailable'))
+    const invalidate = vi.fn()
+    const delivered: TranscriptWindow[] = []
+    const service = new TranscriptWindowService({
+      read,
+      publicValue: (value) => value,
+      invalidate,
+      post: (window) => {
+        delivered.push(window)
+        service.acknowledge(window.sessionId, window.revision)
+        return Promise.resolve(true)
+      },
+    })
+    try {
+      service.installPage(sessionId, { events: [], hasMore: false }, service.begin(sessionId))
+      service.accept(message(2).event)
+      service.accept(message(1).event)
+      const signal = new AbortController().signal
+      await expect(service.resync(sessionId, signal)).rejects.toThrow('History temporarily unavailable')
+      expect(invalidate).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(invalidate).toHaveBeenCalledTimes(2)
+      await service.resync(sessionId, signal)
+      // Drop the successful RPC response as well. Delivery uses the resident
+      // state and the renderer ACK must stop retries.
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(delivered.at(-1)?.nodes.at(-1)).toMatchObject({ markdown: 'Answer 3' })
+      expect(read).toHaveBeenCalledTimes(2)
+      const deliveredCount = delivered.length
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(delivered).toHaveLength(deliveredCount)
+      expect(invalidate).toHaveBeenCalledTimes(2)
+    } finally {
+      service.dispose()
+    }
+  })
+
   it('notifies a later delivery outage again after successful recovery', async () => {
     vi.useFakeTimers()
     let available = false

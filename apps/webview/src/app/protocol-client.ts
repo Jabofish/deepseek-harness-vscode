@@ -214,6 +214,17 @@ export class ProtocolClient {
 
   private handleLegacyMessage(message: HostMessage): void {
     if (message.type === 'response') {
+      if (message.requiresAck === true) {
+        // ACK duplicate and late receipts too. Neither can settle a waiter twice.
+        try {
+          this.api.postMessage({
+            protocolVersion: PROTOCOL_VERSION,
+            message: { type: 'ui.response.ack', requestId: message.requestId },
+          })
+        } catch {
+          // A retried receipt provides another opportunity to ACK.
+        }
+      }
       const pending = this.takePending(message.requestId, message.type)
       if (pending === undefined) return
       if (message.ok) pending.resolve(message.payload)

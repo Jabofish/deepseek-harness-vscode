@@ -45,6 +45,7 @@ const routesAllowedWhileUntrusted = [
   'surface.titlebarLayout',
   'surface.responseRendered',
   'ui.events.ack',
+  'ui.response.ack',
   'view.openLink',
   'view.showInFolder',
   'workspace.addFolder',

@@ -2,6 +2,9 @@ import type { HostMessage } from '@dsh-vscode/webview-protocol'
 import { eventPayloadCharacters } from './bounded-event-queue.js'
 
 type Event = Extract<HostMessage, { type: 'event' }>
+const CONTROL_ACK_RETRY_DELAY_MS = 5_000
+const CONTROL_POST_RETRY_DELAYS_MS = [100, 250, 500]
+const CONTROL_POST_MAX_RETRY_DELAY_MS = 10_000
 interface Pending {
   event: Event
   chars: number
@@ -16,9 +19,9 @@ interface Surface {
   readonly sourceSequences: Map<string, number>
   chars: number
   retryAttempt: number
-  retryAfter: number
   retryTimer?: ReturnType<typeof setTimeout>
-  active?: { readonly entry: Pending; readonly sequence: number; posted: boolean; acknowledged: boolean }
+  ackTimer?: ReturnType<typeof setTimeout>
+  active?: { readonly entry: Pending; readonly sequence: number; mayHaveDelivered: boolean }
 }
 
 /** Each surface consumes one control frame at a time, with a bounded ordered mailbox. */
@@ -44,7 +47,6 @@ export class ControlDelivery {
         sourceSequences: new Map(),
         chars: 0,
         retryAttempt: 0,
-        retryAfter: 0,
       }
       this.surfaces.set(surfaceId, surface)
     }
@@ -105,7 +107,7 @@ export class ControlDelivery {
 
   private pump(surfaceId: string, surface: Surface): void {
     if (this.disposed || this.surfaces.get(surfaceId) !== surface || surface.active !== undefined) return
-    if (surface.retryTimer !== undefined || performance.now() < surface.retryAfter) return
+    if (surface.retryTimer !== undefined) return
     if (!this.current(surfaceId)) {
       this.forget(surfaceId)
       return
@@ -119,16 +121,22 @@ export class ControlDelivery {
       this.pump(surfaceId, surface)
       return
     }
-    const active = { entry, sequence: this.nextSequence(), posted: false, acknowledged: false }
+    const active = { entry, sequence: this.nextSequence(), mayHaveDelivered: false }
     surface.active = active
+    this.transmit(surfaceId, surface, active)
+  }
+
+  private transmit(surfaceId: string, surface: Surface, active: NonNullable<Surface['active']>): void {
+    const { entry } = active
     void Promise.resolve()
       .then(() => {
         if (this.disposed || this.surfaces.get(surfaceId) !== surface || surface.active !== active)
           return false
         if (entry.isCurrent?.() === false) {
-          active.acknowledged = true
-          return true
+          this.complete(surfaceId, surface, active)
+          return false
         }
+        this.waitForAck(surfaceId, surface, active)
         return this.post(surfaceId, {
           ...entry.event,
           sequence: active.sequence,
@@ -138,10 +146,8 @@ export class ControlDelivery {
       .then(
         (posted) => {
           if (this.surfaces.get(surfaceId) !== surface || surface.active !== active) return
-          if (posted) {
-            active.posted = true
-            this.complete(surfaceId, surface)
-          } else this.failed(surfaceId, surface, active)
+          if (posted) active.mayHaveDelivered = true
+          else this.failed(surfaceId, surface, active)
         },
         () => {
           if (this.surfaces.get(surfaceId) === surface && surface.active === active)
@@ -150,41 +156,54 @@ export class ControlDelivery {
       )
   }
 
+  private waitForAck(surfaceId: string, surface: Surface, active: NonNullable<Surface['active']>): void {
+    if (surface.active !== active) return
+    surface.ackTimer = setTimeout(() => {
+      delete surface.ackTimer
+      if (surface.active !== active) return
+      if (!this.current(surfaceId)) {
+        this.forget(surfaceId)
+        return
+      }
+      // Once IPC outcome is uncertain, reuse this sequence to deduplicate
+      // late and retried delivery. A missing native receipt cannot block ACKs.
+      active.mayHaveDelivered = true
+      this.transmit(surfaceId, surface, active)
+    }, CONTROL_ACK_RETRY_DELAY_MS)
+    surface.ackTimer.unref?.()
+  }
+
   private failed(surfaceId: string, surface: Surface, active: NonNullable<Surface['active']>): void {
+    if (active.mayHaveDelivered) return
+    if (surface.ackTimer !== undefined) clearTimeout(surface.ackTimer)
+    delete surface.ackTimer
     delete surface.active
-    // Retry the original fact finitely, including a lost final interaction.
-    // Sustained failures wait for later traffic/ready rather than polling forever.
+    // Preserve the last interaction even if there is no subsequent traffic.
+    // After the fast attempts, probe only this surface on a slower cadence.
     surface.pending.unshift(active.entry)
     surface.chars += active.entry.chars
     active.entry.finish(false)
-    surface.retryAttempt++
-    if (surface.retryAttempt <= 3)
-      surface.retryTimer = setTimeout(
-        () => {
-          delete surface.retryTimer
-          this.pump(surfaceId, surface)
-        },
-        [100, 250, 500][surface.retryAttempt - 1],
-      )
-    else {
-      surface.retryAfter = performance.now() + 1000
-      surface.retryAttempt = 0
-    }
+    const delay = CONTROL_POST_RETRY_DELAYS_MS[surface.retryAttempt] ?? CONTROL_POST_MAX_RETRY_DELAY_MS
+    surface.retryAttempt = Math.min(surface.retryAttempt + 1, CONTROL_POST_RETRY_DELAYS_MS.length)
+    surface.retryTimer = setTimeout(() => {
+      delete surface.retryTimer
+      this.pump(surfaceId, surface)
+    }, delay)
+    surface.retryTimer.unref?.()
   }
 
   public acknowledge(surfaceId: string, sequence: number): void {
     const surface = this.surfaces.get(surfaceId)
-    if (surface?.active?.sequence !== sequence) return
-    surface.active.acknowledged = true
-    this.complete(surfaceId, surface)
+    const active = surface?.active
+    if (surface === undefined || active?.sequence !== sequence) return
+    this.complete(surfaceId, surface, active)
   }
 
-  private complete(surfaceId: string, surface: Surface): void {
-    const active = surface.active
-    if (active === undefined || !active.posted || !active.acknowledged) return
+  private complete(surfaceId: string, surface: Surface, active: NonNullable<Surface['active']>): void {
+    if (surface.ackTimer !== undefined) clearTimeout(surface.ackTimer)
+    delete surface.ackTimer
     delete surface.active
     surface.retryAttempt = 0
-    surface.retryAfter = 0
     active.entry.finish(true)
     this.pump(surfaceId, surface)
   }
@@ -193,6 +212,7 @@ export class ControlDelivery {
     const surface = this.surfaces.get(surfaceId)
     this.surfaces.delete(surfaceId)
     if (surface?.retryTimer !== undefined) clearTimeout(surface.retryTimer)
+    if (surface?.ackTimer !== undefined) clearTimeout(surface.ackTimer)
     surface?.active?.entry.finish(false)
     for (const entry of surface?.pending ?? []) entry.finish(false)
   }
