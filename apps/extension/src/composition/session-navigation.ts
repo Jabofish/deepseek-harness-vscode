@@ -132,7 +132,15 @@ export function createSessionNavigation(
       const session = page.items.find((item) => item.id === sessionId)
       // An editor can also host a child or a session that has not reached the
       // directory yet. Its session detail still goes through the ownership check.
-      return (session ?? (await deps.requireCurrentWorkspaceSession(sessionId, signal))).title
+      if (session !== undefined) return session.title
+      const detail = await deps.requireCurrentWorkspaceSession(sessionId, signal, { refresh: 'detail' })
+      const titleEvent = detail.history?.findLast(({ event }) => event.type === 'session.title')
+      if (
+        titleEvent?.event.type === 'session.title' &&
+        titleEvent.sequence > (detail.projection?.asOfSequence ?? -1)
+      )
+        return titleEvent.event.title
+      return detail.title
     },
     open: async (sessionId: string, editor: boolean, signal: AbortSignal): Promise<void> => {
       if (editor) return openInEditor(sessionId, undefined, signal)

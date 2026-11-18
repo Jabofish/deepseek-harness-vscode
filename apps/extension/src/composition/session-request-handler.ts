@@ -104,10 +104,14 @@ export function createSessionRequestHandler(
     if (request.type === 'session.open') {
       const generation = deps.transcript.begin(request.payload.sessionId)
       try {
-        let detail = await requireCurrentWorkspaceSession(request.payload.sessionId, signal, { fresh: true })
+        let detail = await requireCurrentWorkspaceSession(request.payload.sessionId, signal, {
+          refresh: 'open',
+        })
         for (let retry = 0; retry < 3 && deps.transcript.needsRefresh(generation); retry++) {
           deps.transcript.restart(generation)
-          detail = await requireCurrentWorkspaceSession(request.payload.sessionId, signal, { fresh: true })
+          detail = await requireCurrentWorkspaceSession(request.payload.sessionId, signal, {
+            refresh: 'open',
+          })
         }
         const transcript = deps.transcript.install(detail, generation)
         return publicValue(

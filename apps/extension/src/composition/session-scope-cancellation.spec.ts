@@ -156,7 +156,7 @@ describe('session scope cancellation through real ownership guards', () => {
   it('keeps fresh session opens available to ordinary siblings after their original caller cancels', async () => {
     const { scope, reads } = fixture()
     const first = new AbortController()
-    const opening = scope.requireCurrentWorkspaceSession('s', first.signal, { fresh: true })
+    const opening = scope.requireCurrentWorkspaceSession('s', first.signal, { refresh: 'open' })
     const sibling = scope.requireCurrentWorkspaceSession('s', new AbortController().signal)
     first.abort()
     await expect(opening).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })

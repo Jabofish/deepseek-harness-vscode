@@ -140,10 +140,44 @@ describe('shared Host session navigation', () => {
         model: { providerId: '', modelId: '' },
       },
     })
-    await expect(navigation.readTitle('uncatalogued', signal)).resolves.toBe('Uncatalogued session')
+    const detail = await navigation.readTitle('uncatalogued', signal)
+    expect(detail).toBe('Uncatalogued session')
+    expect(deps.requireCurrentWorkspaceSession).toHaveBeenCalledWith('uncatalogued', signal, {
+      refresh: 'detail',
+    })
     deps.requireCurrentWorkspaceSession.mockRejectedValueOnce(new Error('foreign session'))
     await expect(navigation.readTitle('foreign', signal)).rejects.toThrow('foreign session')
-    expect(deps.requireCurrentWorkspaceSession).toHaveBeenCalledWith('foreign', signal)
+    expect(deps.requireCurrentWorkspaceSession).toHaveBeenCalledWith('foreign', signal, { refresh: 'detail' })
+  })
+
+  it('uses a durable title event newer than the detail projection for uncatalogued sessions', async () => {
+    const { navigation, deps, signal } = fixture()
+    const title = 'Renamed ' + 'full title '.repeat(20).trim()
+    deps.requireCurrentWorkspaceSession.mockResolvedValue({
+      id: 'uncatalogued',
+      workspaceId: 'w1',
+      title: 'Old title',
+      blank: false,
+      status: 'idle',
+      createdAt: '2026-11-19T00:00:00.000Z',
+      updatedAt: '2026-11-19T00:00:00.000Z',
+      configuration: {
+        preset: '',
+        permissionPreset: '',
+        toolMode: 'native',
+        planMode: false,
+        model: { providerId: '', modelId: '' },
+      },
+      projection: { asOfSequence: 6, values: { title: 'Old title' } },
+      history: [
+        {
+          sequence: 7,
+          time: '2026-11-19T00:00:00.000Z',
+          event: { type: 'session.title', sessionId: 'uncatalogued', title },
+        },
+      ],
+    })
+    await expect(navigation.readTitle('uncatalogued', signal)).resolves.toBe(title)
   })
 
   it.each([
