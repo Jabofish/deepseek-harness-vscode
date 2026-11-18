@@ -31,6 +31,7 @@ export const COMMANDS = [
   'dsh.openInSecondarySidebar',
   'dsh.openChatInEditor',
   'dsh.moveChatToSidebar',
+  'dsh.renameEditorSession',
   'dsh.showDiagnostics',
   'dsh.addSelectionContext',
   'dsh.addFileContext',

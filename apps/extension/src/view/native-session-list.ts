@@ -292,12 +292,7 @@ export function registerNativeSessionList(navigation: SessionNavigation): vscode
           const session = provider.session(node)
           if (session === undefined) return
           if (action === 'rename') {
-            const title = await vscode.window.showInputBox({
-              title: label('Rename Session', '重命名会话'),
-              value: session.title,
-              validateInput: (value) =>
-                value.trim() === '' ? label('Enter a name', '请输入名称') : undefined,
-            })
+            const title = await promptSessionTitle(session.title)
             if (title !== undefined && !lifetime.signal.aborted)
               await navigation.rename(session.id, title, lifetime.signal)
           } else if (action === 'archive') await navigation.archive(session.id, lifetime.signal)
@@ -313,6 +308,19 @@ export function registerNativeSessionList(navigation: SessionNavigation): vscode
       for (const subscription of subscriptions) subscription.dispose()
     },
   }
+}
+
+export async function promptSessionTitle(current: string): Promise<string | undefined> {
+  const title = await vscode.window.showInputBox({
+    title: label('Rename Session', '重命名会话'),
+    value: current,
+    validateInput: (value) => {
+      const trimmed = value.trim()
+      if (trimmed === '') return label('Enter a name', '请输入名称')
+      return trimmed.length > 512 ? label('Use at most 512 characters', '名称最多 512 个字符') : undefined
+    },
+  })
+  return title?.trim()
 }
 
 function label(english: string, chinese: string): string {

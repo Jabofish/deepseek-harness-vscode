@@ -83,6 +83,8 @@ To open an editor tab, choose **Open in Editor Area** or run **JaboDSH: Open Cha
 
 Click the conversation title to choose another session. In the sidebar this switches the current conversation; in an editor it opens or reveals that session's own tab. Arrow keys, Enter and Escape work in the dropdown. Opening a conversation or starting a new one places the keyboard in its message box, so you can type immediately.
 
+To rename a session in the editor, select its tab and choose **Rename Session** in the editor title bar's **More Actions** menu.
+
 Opening the floating **Sessions** list focuses search; type a keyword and press Enter when only one conversation matches. Reopening selects the previous query so you can replace it by typing.
 
 To drag a session directly into a split, run **JaboDSH: Open Drag Sessions** to open **JaboDSH Sessions** in Explorer, then drag a session row to an editor edge. The Explorer list is hidden until you run that command.
