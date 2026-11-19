@@ -48,12 +48,17 @@ export function waitForFixtureOutput(child: ChildProcess): Promise<void> {
     const finish = (cause?: Error): void => {
       clearTimeout(timer)
       child.stdout?.off('data', onData)
+      // Keep stdout/stderr draining after the readiness check so a paused
+      // stream cannot delay Node's child `close` event during tree shutdown.
+      child.stdout?.resume()
+      child.stderr?.resume()
       child.off('error', finish)
       child.off('exit', onExit)
       if (cause === undefined) resolve()
       else reject(cause)
     }
     child.stdout?.on('data', onData)
+    child.stderr?.resume()
     child.once('error', finish)
     child.once('exit', onExit)
   })

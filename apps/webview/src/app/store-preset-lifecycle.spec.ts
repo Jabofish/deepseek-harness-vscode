@@ -1,5 +1,3 @@
-// @vitest-environment jsdom
-
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentConfiguration } from '@dsh-vscode/domain'
 import type { ProtocolClient } from './protocol-client.js'

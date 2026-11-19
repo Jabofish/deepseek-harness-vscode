@@ -1,10 +1,13 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { TimelineNode } from '@dsh-vscode/timeline'
 import { Timeline } from './Timeline.js'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.useRealTimers()
+})
 
 const answer = (id: string, markdown: string): Extract<TimelineNode, { kind: 'assistant-message' }> => ({
   kind: 'assistant-message',
@@ -16,6 +19,7 @@ const answer = (id: string, markdown: string): Extract<TimelineNode, { kind: 'as
 })
 
 it('acknowledges only after every omitted answer block has loaded and committed', async () => {
+  vi.useFakeTimers()
   let finish!: (node: TimelineNode) => void
   const loadFullNode = vi.fn(
     () =>
@@ -38,16 +42,19 @@ it('acknowledges only after every omitted answer block has loaded and committed'
       onResponseRendered={responseRendered}
     />,
   )
-  await waitFor(() => expect(loadFullNode).toHaveBeenCalledTimes(1))
-  await act(async () => {
-    await new Promise((done) => setTimeout(done, 20))
-  })
+  await act(() => vi.advanceTimersByTimeAsync(20))
+  expect(loadFullNode).toHaveBeenCalledTimes(1)
   expect(responseRendered).not.toHaveBeenCalled()
-  act(() => finish(answer('first', 'Complete first block')))
-  await waitFor(() => expect(responseRendered).toHaveBeenCalledExactlyOnceWith('s', 1))
+  await act(async () => {
+    finish(answer('first', 'Complete first block'))
+    await Promise.resolve()
+  })
+  await act(() => vi.advanceTimersByTimeAsync(0))
+  expect(responseRendered).toHaveBeenCalledExactlyOnceWith('s', 1)
 })
 
 it('does not acknowledge failed hydration or the previous content version', async () => {
+  vi.useFakeTimers()
   let finish!: (node: TimelineNode) => void
   const loadFullNode = vi
     .fn()
@@ -77,12 +84,18 @@ it('does not acknowledge failed hydration or the previous content version', asyn
       contentVersions={{ answer: 'old' }}
     />,
   )
-  await screen.findByText('Previous complete body')
+  await act(() => vi.advanceTimersByTimeAsync(0))
+  expect(screen.getByText('Previous complete body')).toBeTruthy()
   view.rerender(
     <Timeline {...props} nodes={[answer('answer', 'Prefix')]} contentVersions={{ answer: 'new' }} />,
   )
-  await waitFor(() => expect(loadFullNode).toHaveBeenCalledTimes(3))
+  await act(() => vi.advanceTimersByTimeAsync(500))
+  expect(loadFullNode).toHaveBeenCalledTimes(3)
   expect(responseRendered).not.toHaveBeenCalled()
-  act(() => finish(answer('answer', 'Current complete body')))
-  await waitFor(() => expect(responseRendered).toHaveBeenCalledExactlyOnceWith('s', 1))
+  await act(async () => {
+    finish(answer('answer', 'Current complete body'))
+    await Promise.resolve()
+  })
+  await act(() => vi.advanceTimersByTimeAsync(0))
+  expect(responseRendered).toHaveBeenCalledExactlyOnceWith('s', 1)
 })

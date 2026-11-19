@@ -1,5 +1,3 @@
-// @vitest-environment jsdom
-
 import { describe, expect, it } from 'vitest'
 import type { FeatureHostEvent, FeatureRequest, HostMessage } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
@@ -185,7 +183,7 @@ class HostClient {
 }
 
 function settle(milliseconds = 0): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, milliseconds))
+  return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
 
 function open(): { readonly client: HostClient; readonly store: ReturnType<typeof createAppStore> } {

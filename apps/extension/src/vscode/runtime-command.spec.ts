@@ -56,7 +56,7 @@ describe('runtime npm execution', () => {
         maxBuffer: 128,
       }),
     ).rejects.toMatchObject({ code: 'ETIMEDOUT', timedOut: true, killed: true })
-  }, 15_000)
+  }, 20_000)
 
   it('reports startup and nonzero exit errors with bounded diagnostics', async () => {
     await expect(

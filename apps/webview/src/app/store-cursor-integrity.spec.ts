@@ -1,5 +1,3 @@
-// @vitest-environment jsdom
-
 import { describe, expect, it } from 'vitest'
 import type { HostMessage } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
@@ -73,7 +71,7 @@ function event(sequence: number, name: string, payload: unknown): HostMessage {
 }
 
 function settle(milliseconds = 0): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, milliseconds))
+  return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
 
 function open(): { readonly client: StreamClient; readonly store: ReturnType<typeof createAppStore> } {

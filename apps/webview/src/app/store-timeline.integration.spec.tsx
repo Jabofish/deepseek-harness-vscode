@@ -102,10 +102,9 @@ function event(sequence: number, name: string, payload: unknown): HostMessage {
 describe('Store to Timeline streamed rendering', () => {
   afterEach(() => cleanup())
 
-  it('automatically completes a large structured tool result inside its conversation disclosure', async () => {
+  async function expectCompleteTerminalOutput(output: string): Promise<void> {
     const client = new StreamClient()
     const store = createAppStore(client as unknown as ProtocolClient)
-    const output = 'HEAD '.repeat(2_000) + '\nCRITICAL_MIDDLE_OUTPUT\n' + 'TAIL '.repeat(2_000)
     try {
       await store.openSession('session-stream')
       client.emit(
@@ -147,6 +146,18 @@ describe('Store to Timeline streamed rendering', () => {
     } finally {
       store.dispose()
     }
+  }
+
+  it('automatically completes a large structured tool result inside its conversation disclosure', async () => {
+    await expectCompleteTerminalOutput(
+      'HEAD '.repeat(2_000) + '\nCRITICAL_MIDDLE_OUTPUT\n' + 'TAIL '.repeat(2_000),
+    )
+  })
+
+  it('renders the complete terminal result across 4,001 lines', { tags: ['stress'] }, async () => {
+    await expectCompleteTerminalOutput(
+      'HEAD\n'.repeat(2_000) + 'CRITICAL_MIDDLE_OUTPUT\n' + 'TAIL\n'.repeat(2_000),
+    )
   })
 
   it('rejects raw arguments, absolute/traversing paths and unsafe preparation counters at protocol admission', () => {

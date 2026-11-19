@@ -2,6 +2,8 @@ import { configDefaults, defineConfig } from 'vitest/config'
 import { availableParallelism } from 'node:os'
 
 const live = process.env.DSH_LIVE_SMOKE === '1'
+const liveInstallation = process.env.DSH_LIVE_INSTALLATION === '1'
+const liveRun = live || liveInstallation
 const exclude = [
   ...configDefaults.exclude,
   '**/*.stress.spec.ts?(x)',
@@ -11,12 +13,24 @@ const exclude = [
 const nativeBuildTest = 'apps/webview/src/styles/deferred-assets.spec.ts'
 const nodeRealmAdapterTest = 'packages/dsh-adapter/test/loopback-api-client.spec.ts'
 const vscodeMockRootTest = 'tests/alpha223-schedule-projection.spec.ts'
+const offlineLiveHarnessTests = [
+  'tests/live-dsh/harness.spec.ts',
+  'tests/live-dsh/managed-lock.spec.ts',
+  'tests/live-dsh/paging.spec.ts',
+  'tests/live-dsh/runtime-scope.spec.ts',
+  'tests/live-dsh/runtime.spec.ts',
+]
+const liveDshTests = live
+  ? ['tests/live-dsh/**/*.spec.ts']
+  : liveInstallation
+    ? [...offlineLiveHarnessTests, 'tests/live-dsh/windows-runtime-installation.spec.ts']
+    : offlineLiveHarnessTests
 
 export default defineConfig({
   test: {
     environment: 'node',
     maxWorkers: Math.min(8, availableParallelism()),
-    ...(live ? { fileParallelism: false } : {}),
+    ...(liveRun ? { fileParallelism: false } : {}),
     exclude,
     tags: [{ name: 'stress', skip: true }],
     projects: [
@@ -46,13 +60,13 @@ export default defineConfig({
         extends: true,
         test: {
           name: 'node',
-          pool: live ? 'forks' : 'threads',
+          pool: liveRun ? 'forks' : 'threads',
           sequence: { groupOrder: 2 },
           include: [
             'apps/extension/**/*.spec.ts?(x)',
             nodeRealmAdapterTest,
             vscodeMockRootTest,
-            'tests/live-dsh/**/*.spec.ts',
+            ...liveDshTests,
             'tests/vscode-e2e/**/*.spec.ts',
             nativeBuildTest,
           ],

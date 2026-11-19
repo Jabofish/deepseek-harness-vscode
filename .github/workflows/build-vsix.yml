@@ -56,11 +56,9 @@ jobs:
 
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          path: |
-            node_modules/.cache/vitest
-            node_modules/.cache/node-compile
-          key: tests-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'vitest*.ts', 'config/vitest*.ts') }}-${{ github.sha }}
-          restore-keys: tests-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'vitest*.ts', 'config/vitest*.ts') }}-
+          path: node_modules/.cache/node-compile
+          key: node-compile-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'vitest*.ts', 'config/vitest*.ts') }}-${{ github.sha }}
+          restore-keys: node-compile-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'vitest*.ts', 'config/vitest*.ts') }}-
       - name: Run checks
         run: pnpm check
 

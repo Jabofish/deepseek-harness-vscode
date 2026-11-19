@@ -6,6 +6,7 @@ import { Timeline } from './Timeline.js'
 
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
   vi.unstubAllGlobals()
 })
 
@@ -156,6 +157,7 @@ it.each([false, true])(
 )
 
 it('retries a failed automatic read and refreshes an advancing live body', async () => {
+  vi.useFakeTimers()
   const first = { ...message('live', 'Prefix'), streaming: true }
   const loadFullNode = vi
     .fn()
@@ -171,7 +173,8 @@ it('retries a failed automatic read and refreshes an advancing live body', async
       loadFullNode={loadFullNode}
     />,
   )
-  await screen.findByText('Complete live output')
+  await act(() => vi.advanceTimersByTimeAsync(500))
+  expect(screen.getByText('Complete live output')).toBeDefined()
   view.rerender(
     <Timeline
       sessionId="s"
@@ -181,7 +184,8 @@ it('retries a failed automatic read and refreshes an advancing live body', async
       loadFullNode={loadFullNode}
     />,
   )
-  await screen.findByText('Complete live output with later tokens')
+  await act(() => vi.advanceTimersByTimeAsync(0))
+  expect(screen.getByText('Complete live output with later tokens')).toBeDefined()
   expect(screen.queryByRole('alert')).toBeNull()
 })
 

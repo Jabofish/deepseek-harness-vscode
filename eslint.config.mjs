@@ -64,7 +64,11 @@ export default tseslint.config(
     },
   },
   {
-    files: ['scripts/read-stylesheet.mjs', 'apps/extension/esbuild-import-meta-url.mjs'],
+    files: [
+      'scripts/changed-test-selection.mjs',
+      'scripts/read-stylesheet.mjs',
+      'apps/extension/esbuild-import-meta-url.mjs',
+    ],
     languageOptions: {
       parserOptions: {
         // Explicit implementation roots prevent sibling .d.mts declarations

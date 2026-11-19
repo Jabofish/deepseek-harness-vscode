@@ -1,5 +1,3 @@
-// @vitest-environment jsdom
-
 import { describe, expect, it } from 'vitest'
 import type { HostMessage } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
@@ -133,7 +131,7 @@ async function openJobStore(): Promise<{
   const store = createAppStore(client as unknown as ProtocolClient)
   client.emit('connection.snapshot', { kind: 'connected', jobController: true })
   await store.openSession(SESSION_ID)
-  await new Promise((resolve) => window.setTimeout(resolve, 0))
+  await new Promise((resolve) => setTimeout(resolve, 0))
   client.emit('jobs.updated', { sessionId: SESSION_ID, jobs: [job] })
   return { client, store }
 }

@@ -93,6 +93,7 @@ it('edits independent local prices, preserves drafts on failure, and refuses uns
 })
 
 it('keeps a confirmed disabled estimate hidden if a later refresh fails', async () => {
+  vi.useFakeTimers()
   let attempts = 0
   const request: BillingClient = <T,>(input: FeatureRequest): Promise<T> => {
     if (input.type === 'feature.request.cancel') return Promise.resolve({ kind: 'empty' } as T)
@@ -120,9 +121,11 @@ it('keeps a confirmed disabled estimate hidden if a later refresh fails', async 
   }
   const subscribe = () => () => {}
   const view = render(<BillingCost request={request} subscribe={subscribe} sessionId="s" usageKey="one" />)
-  await waitFor(() => expect(attempts).toBe(1))
+  await act(() => vi.advanceTimersByTimeAsync(200))
+  expect(attempts).toBe(1)
   view.rerender(<BillingCost request={request} subscribe={subscribe} sessionId="s" usageKey="two" />)
-  await waitFor(() => expect(attempts).toBe(2))
+  await act(() => vi.advanceTimersByTimeAsync(200))
+  expect(attempts).toBe(2)
   expect(view.container.textContent).toBe('')
   expect(screen.queryByRole('button', { name: 'Retry cost estimate' })).toBeNull()
 })

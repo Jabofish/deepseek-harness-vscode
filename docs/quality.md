@@ -46,6 +46,8 @@ For documentation-only work, the local documentation checks are sufficient. PR C
 
 Run the applicable stress, native DSH and VS Code checks separately. Inspect `git status --short` alongside `git diff --check` so unrelated or generated files do not enter the PR.
 
+Run `pnpm test:stress` for 4,001-line terminal output, prompt admission beyond the 128 KiB preview, and a package update blocked by an owned process holding a file open on Windows. The default suite exercises the same recovery paths with smaller fixtures.
+
 `pnpm test:ui-stability` first runs the functional UI suites selected in `scripts/ui-behavior-suites.mjs`, including input, queue admission, ownership, interactions, focus and scroll regressions. It then uses an installed Chrome, Chromium or Edge to exercise production App/Timeline behavior. Set `DSH_UI_BROWSER` to its executable when automatic discovery does not find it. The runner creates a temporary browser profile and a loopback fixture server, then releases both. Browser cases cover common delivery, session, attachment, model, keyboard and narrow-window flows alongside output, history insertion, nested details, visibility recovery, delayed images and navigation. Set `DSH_UI_SCENARIO` to a reported scenario name to reproduce it separately, or `DSH_UI_GROUP=daily` for full-App browser cases only. Filtered runs omit the functional suites. Unknown names fail instead of reporting success with no coverage. Functional results, browser observations and failure screenshots remain under the run's `artifacts/ui-stability-browser/` directory.
 
 Keep browser stability cases tied to reader behaviour:

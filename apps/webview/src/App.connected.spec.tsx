@@ -703,88 +703,110 @@ describe('App connected rendering', () => {
 
   afterEach(() => {
     cleanup()
+    vi.useRealTimers()
     window.localStorage.clear()
     document.documentElement.lang = 'en'
   })
 
-  it.each([
+  const admittedPromptCases = [
     { cancelled: false, receipt: 'matching' },
     { cancelled: true, receipt: 'matching' },
     { cancelled: false, receipt: 'different' },
     { cancelled: false, receipt: 'failed' },
     { cancelled: false, receipt: 'recovered' },
     { cancelled: true, receipt: 'recovered' },
-  ])(
-    'checks a long admitted prompt against full content: $receipt, cancelled=$cancelled',
-    async ({ cancelled, receipt }) => {
-      let state = connectedState(true)
-      const listeners = new Set<() => void>()
-      const publish = (next: AppState): void => {
-        state = next
-        for (const listener of listeners) listener()
-      }
-      const text = 'Long prompt '.repeat(12_000)
-      const loadTranscriptContent =
-        receipt === 'recovered'
-          ? vi.fn().mockRejectedValueOnce(new Error('Transient history failure')).mockResolvedValue(text)
-          : receipt === 'failed'
-            ? vi.fn().mockRejectedValue(new Error('History unavailable'))
-            : vi.fn().mockResolvedValue(receipt === 'matching' ? text : `${text}different suffix`)
-      currentStore = {
-        ...storeFor(state),
-        getState: () => state,
-        subscribe: (listener) => {
-          listeners.add(listener)
-          return () => listeners.delete(listener)
-        },
-        sendPrompt: vi.fn((_id, _text, _attachments, _mode, signal?: AbortSignal) => {
-          publish({ ...state, directPromptRequestIds: ['request'] })
-          if (cancelled)
-            return new Promise<void>((_resolve, reject) => {
-              signal?.addEventListener('abort', () => reject(new DOMException('Cancelled', 'AbortError')), {
-                once: true,
-              })
+  ] as const
+
+  async function expectAdmittedPrompt(
+    { cancelled, receipt }: (typeof admittedPromptCases)[number],
+    text: string,
+    clippedLength: number,
+  ): Promise<void> {
+    if (receipt === 'recovered') vi.useFakeTimers()
+    let state = connectedState(true)
+    const listeners = new Set<() => void>()
+    const publish = (next: AppState): void => {
+      state = next
+      for (const listener of listeners) listener()
+    }
+    const loadTranscriptContent =
+      receipt === 'recovered'
+        ? vi.fn().mockRejectedValueOnce(new Error('Transient history failure')).mockResolvedValue(text)
+        : receipt === 'failed'
+          ? vi.fn().mockRejectedValue(new Error('History unavailable'))
+          : vi.fn().mockResolvedValue(receipt === 'matching' ? text : `${text}different suffix`)
+    currentStore = {
+      ...storeFor(state),
+      getState: () => state,
+      subscribe: (listener) => {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
+      sendPrompt: vi.fn((_id, _text, _attachments, _mode, signal?: AbortSignal) => {
+        publish({ ...state, directPromptRequestIds: ['request'] })
+        if (cancelled)
+          return new Promise<void>((_resolve, reject) => {
+            signal?.addEventListener('abort', () => reject(new DOMException('Cancelled', 'AbortError')), {
+              once: true,
             })
-          return Promise.resolve()
-        }),
-        loadTranscriptContent,
-      }
-      render(<App />)
-      const input = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
-      fireEvent.change(input, { target: { value: text } })
+          })
+        return Promise.resolve()
+      }),
+      loadTranscriptContent,
+    }
+    render(<App />)
+    const input = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+    fireEvent.change(input, { target: { value: text } })
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Enter' })
+      await Promise.resolve()
+    })
+    if (cancelled)
       await act(async () => {
-        fireEvent.keyDown(input, { key: 'Enter' })
+        fireEvent.click(screen.getByRole('button', { name: 'Cancel sending' }))
         await Promise.resolve()
       })
-      if (cancelled)
-        await act(async () => {
-          fireEvent.click(screen.getByRole('button', { name: 'Cancel sending' }))
-          await Promise.resolve()
-        })
-      const nodes: AppState['timeline']['nodes'] = [
-        { kind: 'user-message', id: 'admitted', markdown: text.slice(0, 128 * 1024) },
-      ]
-      act(() =>
-        publish({
-          ...state,
-          timeline: { ...state.timeline, nodes },
-          transcript: {
-            sessionId: 's1',
-            revision: 1,
-            nodes,
-            lastSequence: 1,
-            hasMore: false,
-            historical: false,
-            omittedNodeIds: ['admitted'],
-            eventFacts: [],
-          },
-        }),
-      )
+    const nodes: AppState['timeline']['nodes'] = [
+      { kind: 'user-message', id: 'admitted', markdown: text.slice(0, clippedLength) },
+    ]
+    act(() =>
+      publish({
+        ...state,
+        timeline: { ...state.timeline, nodes },
+        transcript: {
+          sessionId: 's1',
+          revision: 1,
+          nodes,
+          lastSequence: 1,
+          hasMore: false,
+          historical: false,
+          omittedNodeIds: ['admitted'],
+          eventFacts: [],
+        },
+      }),
+    )
+    if (receipt === 'recovered') {
+      await act(() => vi.advanceTimersByTimeAsync(500))
+      expect(loadTranscriptContent).toHaveBeenCalledWith('admitted')
+      expect(input.value.length).toBe(0)
+    } else {
       await waitFor(() => expect(loadTranscriptContent).toHaveBeenCalledWith('admitted'))
-      if (!cancelled || receipt === 'matching' || receipt === 'recovered')
-        await waitFor(() => expect(input.value.length).toBe(0))
+      if (!cancelled || receipt === 'matching') await waitFor(() => expect(input.value.length).toBe(0))
       else expect(input.value).toBe(text)
-    },
+    }
+  }
+
+  it.each(admittedPromptCases)(
+    'checks a clipped admitted prompt against full content: $receipt, cancelled=$cancelled',
+    (testCase) => expectAdmittedPrompt(testCase, 'Long prompt with omitted suffix', 11),
+  )
+
+  it('recovers a cancelled long draft after confirming the full admitted prompt', { tags: ['stress'] }, () =>
+    expectAdmittedPrompt(
+      { cancelled: true, receipt: 'recovered' },
+      'Long prompt '.repeat(12_000) + 'final admitted suffix',
+      128 * 1024,
+    ),
   )
 
   it('renders a local draft and routes its first message through deferred creation', async () => {

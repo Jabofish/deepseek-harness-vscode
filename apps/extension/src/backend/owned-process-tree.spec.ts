@@ -8,7 +8,7 @@ import { terminateOwnedWindowsTree } from './owned-process-tree.js'
 
 describe('owned Windows process tree shutdown', () => {
   it.skipIf(process.platform !== 'win32')(
-    'releases a descendant file lock without terminating an unrelated process',
+    'releases a descendant directory lock without terminating an unrelated process',
     async () => {
       const root = await fs.mkdtemp(path.join(tmpdir(), 'dsh-owned-lock-'))
       const directory = path.join(root, 'package')
@@ -47,7 +47,7 @@ describe('owned Windows process tree shutdown', () => {
         expect(external.exitCode).toBeNull()
         expect(await fs.readFile(path.join(root, 'retired', 'locked.js'), 'utf8')).toBe('old runtime')
         console.info(
-          `Windows owned-tree shutdown and file-lock release: ${Date.now() - started}ms; unrelated process preserved`,
+          `Windows owned-tree shutdown and directory-lock release: ${Date.now() - started}ms; unrelated process preserved`,
         )
       } finally {
         await terminateOwnedWindowsTree(owner).catch(() => undefined)

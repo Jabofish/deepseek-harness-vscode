@@ -1,5 +1,3 @@
-// @vitest-environment jsdom
-
 import { describe, expect, it } from 'vitest'
 import type { HostMessage } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
@@ -132,7 +130,7 @@ function hostOnlyNotice(sessionId: string, hostSequence: number, text: string): 
 }
 
 function settle(milliseconds = 30): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, milliseconds))
+  return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
 
 function open(): {

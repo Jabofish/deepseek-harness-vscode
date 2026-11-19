@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, beforeEach, expect, it } from 'vitest'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import {
   billingCurrencyDisplay,
   estimateBillingEntry,
@@ -18,6 +18,7 @@ beforeEach(() => {
 })
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
   localStorage.clear()
   document.documentElement.lang = 'en'
 })
@@ -57,6 +58,7 @@ function Languages(): React.JSX.Element {
   )
 }
 it('switches totals and charge rates with the UI language and ignores delayed responses for the previous language', async () => {
+  vi.useFakeTimers()
   const pending: (() => void)[] = []
   const calls: FeatureRequest[] = []
   const request: BillingClient = <T,>(input: FeatureRequest): Promise<T> => {
@@ -80,12 +82,15 @@ it('switches totals and charge rates with the UI language and ignores delayed re
       <BillingCost request={request} subscribe={() => () => {}} sessionId="s" usageKey="one" />
     </I18nProvider>,
   )
-  await screen.findByText('Cost ≈ USD 1')
+  await act(() => vi.advanceTimersByTimeAsync(200))
+  expect(screen.getByText('Cost ≈ USD 1')).toBeDefined()
   fireEvent.click(screen.getByText('Chinese'))
   expect(screen.queryByText('费用 ≈ USD 1')).toBeNull()
-  await waitFor(() => expect(pending).toHaveLength(1))
+  await act(() => vi.advanceTimersByTimeAsync(200))
+  expect(pending).toHaveLength(1)
   fireEvent.click(screen.getByText('English'))
-  await screen.findByText('Cost ≈ USD 1')
+  await act(() => vi.advanceTimersByTimeAsync(200))
+  expect(screen.getByText('Cost ≈ USD 1')).toBeDefined()
   await act(async () => {
     pending[0]!()
     await Promise.resolve()
@@ -93,12 +98,13 @@ it('switches totals and charge rates with the UI language and ignores delayed re
   expect(screen.queryByText('费用 ≈ CNY 7')).toBeNull()
   expect(screen.getByText('Cost ≈ USD 1')).toBeDefined()
   fireEvent.click(screen.getByText('Chinese'))
-  await waitFor(() => expect(pending).toHaveLength(2))
+  await act(() => vi.advanceTimersByTimeAsync(200))
+  expect(pending).toHaveLength(2)
   await act(async () => {
     pending[1]!()
     await Promise.resolve()
   })
-  fireEvent.click(await screen.findByRole('button', { name: '统计详情: 费用 ≈ CNY 7' }))
+  fireEvent.click(screen.getByRole('button', { name: '统计详情: 费用 ≈ CNY 7' }))
   expect(screen.getByRole('dialog').textContent).toContain('未缓存输入')
   expect(screen.getByRole('dialog').textContent).toContain('CNY 7')
   expect(screen.getByRole('dialog').textContent).not.toContain('tokens ×')
@@ -108,6 +114,7 @@ it('switches totals and charge rates with the UI language and ignores delayed re
 })
 
 it('uses the default 6.8 rate when a live quote is unavailable', async () => {
+  vi.useFakeTimers()
   document.documentElement.lang = 'zh-CN'
   const request: BillingClient = <T,>(): Promise<T> =>
     Promise.resolve({
@@ -119,7 +126,8 @@ it('uses the default 6.8 rate when a live quote is unavailable', async () => {
       <BillingCost request={request} subscribe={() => () => {}} sessionId="s" usageKey="one" />
     </I18nProvider>,
   )
-  fireEvent.click(await screen.findByRole('button', { name: '统计详情: 费用 ≈ CNY 6.8' }))
+  await act(() => vi.advanceTimersByTimeAsync(200))
+  fireEvent.click(screen.getByRole('button', { name: '统计详情: 费用 ≈ CNY 6.8' }))
   expect(screen.getByText('默认汇率：1 USD = 6.8 CNY')).toBeDefined()
   expect(screen.queryByText('费用 ≈ CNY 1')).toBeNull()
 })

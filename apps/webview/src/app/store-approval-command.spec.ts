@@ -1,5 +1,3 @@
-// @vitest-environment jsdom
-
 import { describe, expect, it } from 'vitest'
 import type { HostMessage } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
@@ -69,7 +67,7 @@ class StreamClient {
 }
 
 function settle(milliseconds = 24): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, milliseconds))
+  return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
 
 function toolCallEvent(sequence: number, presentation: unknown, title: string): HostMessage {

@@ -1,5 +1,3 @@
-// @vitest-environment jsdom
-
 import { describe, expect, it } from 'vitest'
 import { featureResponseSchema } from '@dsh-vscode/webview-protocol'
 import type { FeatureRequest, HostMessage } from '@dsh-vscode/webview-protocol'

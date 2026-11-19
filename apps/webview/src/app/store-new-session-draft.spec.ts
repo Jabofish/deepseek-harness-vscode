@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentConfiguration } from '@dsh-vscode/domain'
 import { activateDraftOwner, readDraft, resetDraft, setDraft } from './draft-store.js'

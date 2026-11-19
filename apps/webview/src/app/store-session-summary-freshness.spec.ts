@@ -1,5 +1,3 @@
-// @vitest-environment jsdom
-
 import { describe, expect, it } from 'vitest'
 import type { SessionDetail, SessionSummary } from '@dsh-vscode/domain'
 import type { HostMessage } from '@dsh-vscode/webview-protocol'

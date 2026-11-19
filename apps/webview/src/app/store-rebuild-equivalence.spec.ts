@@ -1,5 +1,3 @@
-// @vitest-environment jsdom
-
 import { describe, expect, it } from 'vitest'
 import type { HostMessage } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
@@ -299,7 +297,7 @@ async function replay(messages: readonly HostMessage[]): Promise<{
     client.emit(message)
     await Promise.resolve()
   }
-  await new Promise((resolve) => window.setTimeout(resolve, 0))
+  await new Promise((resolve) => setTimeout(resolve, 0))
   return { store, client }
 }
 
@@ -324,7 +322,7 @@ describe('Host recovery reread equivalence', () => {
         sequence: 1,
       },
     })
-    await new Promise((resolve) => window.setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
 
     // Guard against a vacuous pass: every node family in the fixture has to be
     // present in the reference transcript before the rebuild is compared.
@@ -411,7 +409,7 @@ describe('Host recovery reread equivalence', () => {
         sequence: 1,
       },
     })
-    await new Promise((resolve) => window.setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(expected.some((line) => line.startsWith('tool:call-interrupted:failed:shell:'))).toBe(true)
     expect(expected.indexOf('turn-terminal:turn-terminal:1')).toBeGreaterThan(

@@ -1,5 +1,3 @@
-// @vitest-environment jsdom
-
 import { describe, expect, it } from 'vitest'
 import type { ToolCallView } from '@dsh-vscode/domain'
 import type { HostMessage } from '@dsh-vscode/webview-protocol'
@@ -68,7 +66,7 @@ class StreamClient {
 }
 
 function settle(milliseconds = 0): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, milliseconds))
+  return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
 
 function toolOf(store: ReturnType<typeof createAppStore>, callId: string): ToolCallView | undefined {

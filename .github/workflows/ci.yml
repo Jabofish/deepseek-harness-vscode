@@ -99,11 +99,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
-          path: |
-            node_modules/.cache/vitest
-            node_modules/.cache/node-compile
-          key: tests-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'vitest*.ts', 'config/vitest*.ts') }}-${{ github.sha }}
-          restore-keys: tests-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'vitest*.ts', 'config/vitest*.ts') }}-
+          path: node_modules/.cache/node-compile
+          key: node-compile-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'vitest*.ts', 'config/vitest*.ts') }}-${{ github.sha }}
+          restore-keys: node-compile-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'vitest*.ts', 'config/vitest*.ts') }}-
       - name: Run affected tests and filesystem contracts once
         env:
           BASE_REF: ${{ github.base_ref }}
@@ -129,11 +127,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
-          path: |
-            node_modules/.cache/vitest
-            node_modules/.cache/node-compile
-          key: tests-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'vitest*.ts', 'config/vitest*.ts') }}-${{ github.sha }}
-          restore-keys: tests-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'vitest*.ts', 'config/vitest*.ts') }}-
+          path: node_modules/.cache/node-compile
+          key: node-compile-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'vitest*.ts', 'config/vitest*.ts') }}-${{ github.sha }}
+          restore-keys: node-compile-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'vitest*.ts', 'config/vitest*.ts') }}-
       - run: pnpm exec vitest run --passWithNoTests --shard=${{ matrix.shard }}/3
 
   build:

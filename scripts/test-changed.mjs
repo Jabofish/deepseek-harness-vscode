@@ -1,9 +1,12 @@
-import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { relative, resolve } from 'node:path'
+import {
+  discoverCandidateTestFiles,
+  listGitChangedFiles,
+  selectAffectedTests,
+} from './changed-test-selection.mjs'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
-const vitest = fileURLToPath(new URL('../node_modules/vitest/vitest.mjs', import.meta.url))
 const contracts = [
   'tests/marketplace-retry.spec.ts',
   'tests/publish-marketplace.spec.ts',
@@ -35,31 +38,19 @@ const contracts = [
 const argument = process.argv.slice(2).find((value) => value !== '--list')
 let files = contracts
 if (argument !== '--contracts') {
-  const selection = spawnSync(
-    process.execPath,
-    [vitest, 'list', '--filesOnly', '--json', '--changed', ...(argument ? [argument] : [])],
-    {
-      cwd: root,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'inherit'],
-    },
-  )
-  if (selection.error) throw selection.error
-  if (selection.status !== 0) process.exit(selection.status ?? 1)
-  const changed = JSON.parse(selection.stdout)
-  if (!Array.isArray(changed) || !changed.every((entry) => entry && typeof entry.file === 'string'))
-    throw new Error('Invalid Vitest file selection')
-  files = [
-    ...new Set([...changed.map((entry) => entry.file), ...contracts].map((file) => resolve(root, file))),
-  ]
+  const changed = selectAffectedTests({
+    root,
+    changedFiles: listGitChangedFiles(root, argument),
+    candidateTests: discoverCandidateTestFiles(root, process.env),
+  })
+  files = [...new Set([...changed, ...contracts].map((file) => resolve(root, file)))]
 }
 if (process.argv.includes('--list')) {
   console.log(JSON.stringify(files))
   process.exit(0)
 }
 const filters = files.map((file) => relative(root, resolve(root, file)).replaceAll('\\', '/'))
-// A large changed set must also fit Windows' command-line limit.
-const args = filters.join(' ').length > 24_000 ? [] : filters
-const run = spawnSync(process.execPath, [vitest, 'run', ...args], { cwd: root, stdio: 'inherit' })
-if (run.error) throw run.error
-process.exitCode = run.status ?? 1
+// Keep the selection in memory so it never has to fit the OS command line.
+const { startVitest } = await import('vitest/node')
+process.chdir(root)
+await startVitest('test', filters, { root, run: true })

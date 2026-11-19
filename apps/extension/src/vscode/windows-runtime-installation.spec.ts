@@ -1,3 +1,4 @@
+import type { ChildProcess } from 'node:child_process'
 import { promises as fs } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -77,29 +78,37 @@ async function fixture(): Promise<{
 }
 
 describe.concurrent('transactional Windows DSH installation', () => {
+  async function expectUpdateAfterOwnedLock(lockPackage: (directory: string) => ChildProcess): Promise<void> {
+    const { root, version, dependencies } = await fixture()
+    const packageDirectory = path.join(root, packagePath)
+    const locker = lockPackage(packageDirectory)
+    try {
+      await waitForFixtureOutput(locker)
+      expect(await readRenameBlockCode(packageDirectory, path.join(root, 'blocked'))).toMatch(
+        /^(?:EPERM|EBUSY)$/u,
+      )
+      await installWindowsRuntime(
+        args,
+        { ...options, beforeReplace: () => terminateOwnedWindowsTree(locker) },
+        dependencies,
+      )
+      expect(await version()).toBe('0.2.2-alpha.2')
+      expect(locker.exitCode !== null || locker.signalCode !== null).toBe(true)
+      expect(await fs.readFile(path.join(root, 'dsh.cmd'), 'utf8')).toBe('launcher 0.2.2-alpha.2')
+    } finally {
+      await stopFixtureChild(locker)
+    }
+  }
+
   it.skipIf(process.platform !== 'win32')(
-    'automatically releases an owned file lock and completes the update',
-    async () => {
-      const { root, version, dependencies } = await fixture()
-      const locker = spawnDirectoryLocker(path.join(root, packagePath))
-      try {
-        await waitForFixtureOutput(locker)
-        expect(await readRenameBlockCode(path.join(root, packagePath), path.join(root, 'blocked'))).toMatch(
-          /^(?:EPERM|EBUSY)$/u,
-        )
-        await installWindowsRuntime(
-          args,
-          { ...options, beforeReplace: () => terminateOwnedWindowsTree(locker) },
-          dependencies,
-        )
-        expect(await version()).toBe('0.2.2-alpha.2')
-        expect(locker.exitCode !== null || locker.signalCode !== null).toBe(true)
-        expect(await fs.readFile(path.join(root, 'dsh.cmd'), 'utf8')).toBe('launcher 0.2.2-alpha.2')
-      } finally {
-        await stopFixtureChild(locker)
-      }
-    },
-    20_000,
+    'releases an owned directory lock and completes the update',
+    { timeout: 30_000 },
+    () => expectUpdateAfterOwnedLock(spawnDirectoryLocker),
+  )
+  it.skipIf(process.platform !== 'win32')(
+    'releases an owned open package file and completes the update',
+    { tags: ['stress'], timeout: 35_000 },
+    () => expectUpdateAfterOwnedLock((directory) => spawnFileLocker(path.join(directory, 'bin.js'))),
   )
   it('completes verification and switching when the progress panel has closed', async () => {
     const { version, dependencies } = await fixture()

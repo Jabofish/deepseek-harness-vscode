@@ -246,7 +246,7 @@ function visibleOrder(): readonly string[] {
 }
 
 async function waitForOrder(expected: readonly (string | undefined)[]): Promise<void> {
-  await waitFor(() => expect(visibleOrder()).toEqual(expected), { interval: 5 })
+  await waitFor(() => expect(visibleOrder()).toEqual(expected))
 }
 
 it.each([false, true])(
@@ -341,14 +341,12 @@ it('keeps workspace order unchanged while a session move is pending', async () =
   const release = f.holdMove()
   try {
     drag(titles[0]!, titles[1])
-    await waitFor(
-      () =>
-        expect(
-          screen.getByRole<HTMLButtonElement>('button', {
-            name: /^(?!Session actions).*Beta conversation/u,
-          }).disabled,
-        ).toBe(true),
-      { interval: 5 },
+    await waitFor(() =>
+      expect(
+        screen.getByRole<HTMLButtonElement>('button', {
+          name: /^(?!Session actions).*Beta conversation/u,
+        }).disabled,
+      ).toBe(true),
     )
     const source = screen.getByRole('button', { name: 'Two1' }).closest('.dsh-session-switcher__workspace')!
     const target = screen.getByRole('button', { name: 'One3' }).closest('.dsh-session-switcher__workspace')!
