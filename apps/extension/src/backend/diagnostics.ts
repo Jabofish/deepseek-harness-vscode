@@ -1,5 +1,5 @@
 import type * as vscode from 'vscode'
-import { redactText } from '@dsh-vscode/dsh-adapter'
+import { redactText } from '@dsh-vscode/dsh-adapter/redaction'
 import type { ConnectionLogEntry, ConnectionProgress } from '@dsh-vscode/domain'
 import { connectionLogEntrySchema } from '@dsh-vscode/webview-protocol'
 

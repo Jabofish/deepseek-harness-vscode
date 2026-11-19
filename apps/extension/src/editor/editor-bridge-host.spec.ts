@@ -450,6 +450,7 @@ describe('automatic editor sharing', () => {
     }
   })
   it('prompts on the first actual tool request and resumes after trust, without silent not-bound errors', async () => {
+    vi.useFakeTimers()
     const broker = new EditorCompanionBroker()
     const { host } = harness('managed', true, path.resolve('some-other-project'), broker)
     ui.trusted = false
@@ -465,13 +466,14 @@ describe('automatic editor sharing', () => {
       )
       expect(ui.execute).not.toHaveBeenCalled()
       ui.trusted = true
-      await expect(
-        broker.read('new-session', { kind: 'selection' }, new AbortController().signal),
-      ).resolves.toMatchObject({ text: 'selected' })
+      const resumed = broker.read('new-session', { kind: 'selection' }, new AbortController().signal)
+      await vi.advanceTimersByTimeAsync(2_000)
+      await expect(resumed).resolves.toMatchObject({ text: 'selected' })
       expect(host.snapshot()).toMatchObject({ phase: 'ready' })
     } finally {
       await host.dispose()
       broker.dispose()
+      vi.useRealTimers()
     }
   })
 

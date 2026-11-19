@@ -1,5 +1,6 @@
 import type { ProcessSupervisor } from '@dsh-vscode/application'
-import { isKnownDshAlphaVersion, managedWebArguments } from '@dsh-vscode/dsh-adapter'
+import { isKnownDshAlphaVersion } from '@dsh-vscode/dsh-adapter/contracts'
+import { managedWebArguments } from '@dsh-vscode/dsh-adapter/launch-contract'
 import {
   AppError,
   type BackendEndpoint,

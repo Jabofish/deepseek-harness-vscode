@@ -72,7 +72,7 @@ function event(sequence: number, name: string, payload: unknown): HostMessage {
   return { type: 'event', name, sequence, payload }
 }
 
-function settle(milliseconds = 24): Promise<void> {
+function settle(milliseconds = 0): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds))
 }
 

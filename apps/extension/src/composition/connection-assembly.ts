@@ -19,7 +19,9 @@ import {
   RuntimeUseCases,
   type ConnectionRequest,
 } from '@dsh-vscode/application'
-import { VersionedBackendFactory, VersionedBackendProbe, redactText } from '@dsh-vscode/dsh-adapter'
+import { VersionedBackendFactory } from '@dsh-vscode/dsh-adapter/backend-factory'
+import { VersionedBackendProbe } from '@dsh-vscode/dsh-adapter/probe'
+import { redactText } from '@dsh-vscode/dsh-adapter/redaction'
 import { runtimeNpmEnvironment, streamRuntimeCommand } from '../vscode/runtime-command.js'
 import { installWindowsRuntime, verifyWindowsRuntime } from '../vscode/windows-runtime-installation.js'
 import { createAdapterOptions } from '../backend/adapter-options.js'

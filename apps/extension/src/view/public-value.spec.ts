@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import path from 'node:path'
-import { rc6Mapper } from '@dsh-vscode/dsh-adapter'
+import { rc6Mapper } from '@dsh-vscode/dsh-adapter/versions/rc6/mapper'
 
 import { publicWorkspaceRelativePath, publicWorkspaceSummary, sanitizePublicValue } from './public-value.js'
 

@@ -188,7 +188,7 @@ const userMessageNodes = (state: {
   state.timeline.nodes.filter((node) => node.kind === 'user-message')
 
 const flushAsync = async (): Promise<void> => {
-  await new Promise((resolve) => setTimeout(resolve, 60))
+  await new Promise((resolve) => setTimeout(resolve, 0))
 }
 
 describe('AppStore session gap healing', () => {

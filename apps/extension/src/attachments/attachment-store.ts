@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { AppError, type PromptAttachment } from '@dsh-vscode/domain'
-import { decodeCanonicalBase64 as decodeAttachmentBase64 } from '@dsh-vscode/dsh-adapter'
+import { decodeCanonicalBase64 as decodeAttachmentBase64 } from '@dsh-vscode/dsh-adapter/attachment-codec'
 
 export const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024
 /** rc.2 raises DSH's per-image admission limit to 20 MiB. */

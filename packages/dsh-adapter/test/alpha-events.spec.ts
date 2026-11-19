@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BackendEvent } from '@dsh-vscode/domain'
 
 import type { DshTransport } from '../src/contracts.js'
@@ -77,10 +77,13 @@ function fakeAlphaTransport(
 }
 
 async function waitForAtMost(predicate: () => boolean, timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline && !predicate()) await new Promise((resolve) => setTimeout(resolve, 25))
+  for (let elapsed = 0; elapsed <= timeoutMs && !predicate(); elapsed += 25)
+    await vi.advanceTimersByTimeAsync(25)
   expect(predicate()).toBe(true)
 }
+
+beforeEach(() => vi.useFakeTimers())
+afterEach(() => vi.useRealTimers())
 
 describe('AlphaEventSource session lifecycle', () => {
   it('changes preview demand by rebaselining only that session and retains its durable subscription', async () => {
@@ -100,15 +103,15 @@ describe('AlphaEventSource session lifecycle', () => {
     const unsubscribe = source.subscribe((event) => received.push(event))
     try {
       source.watchSession('s1')
-      await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1))
+      await waitForAtMost(() => open.mock.calls.length === 1, 1_000)
       source.setSessionPreview('s1', false)
-      await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(2))
+      await waitForAtMost(() => open.mock.calls.length === 2, 1_000)
       expect(open.mock.calls[1]?.[2]).toBe(false)
       source.setSessionPreview('s1', false)
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(0)
       expect(open).toHaveBeenCalledTimes(2)
       source.setSessionPreview('s1', true)
-      await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(3))
+      await waitForAtMost(() => open.mock.calls.length === 3, 1_000)
       expect(open.mock.calls[2]?.[2]).toBe(true)
       expect(received.some((event) => event.type === 'connection.lost')).toBe(false)
     } finally {
@@ -127,7 +130,7 @@ describe('AlphaEventSource session lifecycle', () => {
     await waitForAtMost(() => received.some((event) => event.type === 'session.removed'), 1_000)
     // A removed session's follow stream cannot come back: the controller must
     // not reconnect against a session the host no longer has.
-    await new Promise((resolve) => setTimeout(resolve, 700))
+    await vi.advanceTimersByTimeAsync(700)
     expect(transport.sessionStreamOpens.get('s1')).toBe(1)
 
     unsubscribe()
@@ -153,6 +156,21 @@ function hangingAlphaTransport(): HangingAlphaTransport {
   const liveSessionStreams = new Set<string>()
   const liveJobStreams = new Set<string>()
   const hostFrames: unknown[] = []
+  let wakeHostFrames: (() => void) | undefined
+  const waitHostFrame = (signal: AbortSignal): Promise<void> =>
+    new Promise((resolve) => {
+      if (signal.aborted || hostFrames.length > 0) {
+        resolve()
+        return
+      }
+      const wake = (): void => {
+        signal.removeEventListener('abort', wake)
+        if (wakeHostFrames === wake) wakeHostFrames = undefined
+        resolve()
+      }
+      wakeHostFrames = wake
+      signal.addEventListener('abort', wake, { once: true })
+    })
   const hang = (signal: AbortSignal): Promise<void> =>
     new Promise((resolve) => {
       if (signal.aborted) {
@@ -185,7 +203,7 @@ function hangingAlphaTransport(): HangingAlphaTransport {
         while (!signal.aborted) {
           const frame = hostFrames.shift()
           if (frame === undefined) {
-            await new Promise((resolve) => setTimeout(resolve, 10))
+            await waitHostFrame(signal)
             continue
           }
           yield { payload: frame }
@@ -221,6 +239,7 @@ function hangingAlphaTransport(): HangingAlphaTransport {
     liveJobStreams,
     announce: (frame) => {
       hostFrames.push(frame)
+      wakeHostFrames?.()
     },
   }
 }
@@ -305,7 +324,7 @@ describe('AlphaEventSource follow policy', () => {
         fail(new Error('Fixture stream interruption'))
         await waitForAtMost(() => interrupted, 1000)
         // Let the controller's observer and listener delivery both finish.
-        await new Promise((resolve) => setTimeout(resolve, 0))
+        await vi.advanceTimersByTimeAsync(0)
         if (scope === 'host') {
           expect(observed.some((event) => event.type === 'connection.lost')).toBe(true)
           expect(received.some((event) => event.type === 'connection.lost')).toBe(true)
@@ -355,7 +374,7 @@ describe('AlphaEventSource follow policy', () => {
     // one for the same session.
     source.watchSession('s1')
     await waitForAtMost(() => transport.liveSessionStreams.has('s1'), 1_000)
-    await new Promise((resolve) => setTimeout(resolve, 100))
+    await vi.advanceTimersByTimeAsync(100)
     expect(transport.jobStreamOpens.get('s1')).toBe(1)
 
     // A full unwatch closes both streams.

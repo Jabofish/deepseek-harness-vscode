@@ -1,4 +1,4 @@
-import { DEFAULT_INSTALL_DSH_VERSION, DSH_PACKAGE_NAME } from '@dsh-vscode/dsh-adapter'
+import { DEFAULT_INSTALL_DSH_VERSION, DSH_PACKAGE_NAME } from '@dsh-vscode/dsh-adapter/contracts'
 
 export const EXTENSION_ID = 'Jabofish.jabodsh'
 export const VIEW_ID = 'dsh.chatView'

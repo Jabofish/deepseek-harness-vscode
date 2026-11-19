@@ -1,5 +1,5 @@
 import type { BackendCandidate } from '@dsh-vscode/domain'
-import { DEFAULT_DSH_WEB_PORT } from '@dsh-vscode/dsh-adapter'
+import { DEFAULT_DSH_WEB_PORT } from '@dsh-vscode/dsh-adapter/launch-contract'
 
 import { discoveryCancelled, type DiscoveryProvider } from './provider.js'
 

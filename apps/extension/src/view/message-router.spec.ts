@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { AppError } from '@dsh-vscode/domain'
-import { Rc6CredentialRepository, type DshTransport } from '@dsh-vscode/dsh-adapter'
+import type { DshTransport } from '@dsh-vscode/dsh-adapter/contracts'
+import { Rc6CredentialRepository } from '@dsh-vscode/dsh-adapter/repositories/credential-repository'
 import { hostEnvelopeSchema } from '@dsh-vscode/webview-protocol'
 
 import { WebviewMessageRouter } from './message-router.js'

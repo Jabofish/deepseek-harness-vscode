@@ -1,6 +1,6 @@
 import { AppError } from '@dsh-vscode/domain'
 import type { WebviewRequest } from '@dsh-vscode/webview-protocol'
-import { DSH_PACKAGE_NAME } from '@dsh-vscode/dsh-adapter'
+import { DSH_PACKAGE_NAME } from '@dsh-vscode/dsh-adapter/contracts'
 import * as vscode from 'vscode'
 import { openSkillDocument, publicSkills } from '../backend/skill-documents.js'
 import { resolveLinkTarget } from '../navigation/link-target.js'

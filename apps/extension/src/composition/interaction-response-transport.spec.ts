@@ -4,7 +4,8 @@ import { WebSocketServer } from 'ws'
 import { describe, expect, it, vi } from 'vitest'
 import { BackendService, InteractionUseCases } from '@dsh-vscode/application'
 import type { BackendEvent, DshBackend } from '@dsh-vscode/domain'
-import { Alpha212VersionAdapter, Rc213VersionAdapter } from '@dsh-vscode/dsh-adapter'
+import { Alpha212VersionAdapter } from '@dsh-vscode/dsh-adapter/versions/alpha212/adapter'
+import { Rc213VersionAdapter } from '@dsh-vscode/dsh-adapter/versions/rc213/adapter'
 
 vi.mock('vscode', () => ({ workspace: { isTrusted: true } }))
 

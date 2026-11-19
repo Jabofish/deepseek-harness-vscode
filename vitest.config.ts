@@ -2,13 +2,19 @@ import { configDefaults, defineConfig } from 'vitest/config'
 import { availableParallelism } from 'node:os'
 
 const live = process.env.DSH_LIVE_SMOKE === '1'
-const exclude = [...configDefaults.exclude, '**/*.stress.spec.ts?(x)']
+const exclude = [
+  ...configDefaults.exclude,
+  '**/*.stress.spec.ts?(x)',
+  '**/artifacts/**',
+  '**/.test-workspace/**',
+]
 const nativeBuildTest = 'apps/webview/src/styles/deferred-assets.spec.ts'
+const nodeRealmAdapterTest = 'packages/dsh-adapter/test/loopback-api-client.spec.ts'
+const vscodeMockRootTest = 'tests/alpha223-schedule-projection.spec.ts'
 
 export default defineConfig({
   test: {
     environment: 'node',
-    pool: live ? 'forks' : 'threads',
     maxWorkers: Math.min(8, availableParallelism()),
     ...(live ? { fileParallelism: false } : {}),
     exclude,
@@ -17,27 +23,42 @@ export default defineConfig({
       {
         extends: true,
         test: {
-          name: 'node',
-          include: [
-            'packages/**/*.spec.ts',
-            'tests/**/*.spec.ts',
-            'apps/extension/**/*.spec.ts?(x)',
-            nativeBuildTest,
-          ],
+          name: 'webview',
+          pool: 'vmThreads',
+          vmMemoryLimit: '512MB',
+          sequence: { groupOrder: 0 },
+          include: ['apps/webview/**/*.spec.ts?(x)', 'packages/ui/**/*.spec.ts?(x)'],
+          exclude: [...exclude, nativeBuildTest],
         },
       },
       {
         extends: true,
         test: {
-          name: 'webview',
-          pool: 'vmThreads',
-          vmMemoryLimit: '512MB',
-          include: ['apps/webview/**/*.spec.ts?(x)'],
-          exclude: [...exclude, nativeBuildTest],
+          name: 'packages',
+          pool: 'threads',
+          isolate: false,
+          sequence: { groupOrder: 1 },
+          include: ['packages/**/*.spec.ts?(x)', 'tests/*.spec.ts'],
+          exclude: [...exclude, 'packages/ui/**', nodeRealmAdapterTest, vscodeMockRootTest],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'node',
+          pool: live ? 'forks' : 'threads',
+          sequence: { groupOrder: 2 },
+          include: [
+            'apps/extension/**/*.spec.ts?(x)',
+            nodeRealmAdapterTest,
+            vscodeMockRootTest,
+            'tests/live-dsh/**/*.spec.ts',
+            'tests/vscode-e2e/**/*.spec.ts',
+            nativeBuildTest,
+          ],
         },
       },
     ],
-    experimental: { fsModuleCache: true, fsModuleCachePath: 'node_modules/.cache/vitest' },
     coverage: {
       reporter: ['text', 'html', 'lcov'],
       reportsDirectory: 'coverage',

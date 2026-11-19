@@ -1,6 +1,6 @@
 import { AppError } from '@dsh-vscode/domain'
 import { RUNTIME_INSTALL_FAILURE_MESSAGES } from '../vscode/runtime-installation.js'
-import { redactText } from '@dsh-vscode/dsh-adapter'
+import { redactText } from '@dsh-vscode/dsh-adapter/redaction'
 import {
   MAX_HOST_ERROR_MESSAGE_CHARS,
   hostMessageSchema,

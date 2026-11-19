@@ -615,5 +615,7 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 
 /** Waits long enough for a reconnect backoff to elapse before asserting. */
 async function waitForAtMost(predicate: () => boolean, timeoutMs: number): Promise<void> {
-  await vi.waitFor(() => expect(predicate()).toBe(true), { timeout: timeoutMs, interval: 25 })
+  for (let elapsed = 0; elapsed <= timeoutMs && !predicate(); elapsed += 50)
+    await vi.advanceTimersByTimeAsync(50)
+  expect(predicate()).toBe(true)
 }

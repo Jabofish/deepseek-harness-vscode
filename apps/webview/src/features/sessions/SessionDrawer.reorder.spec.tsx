@@ -233,7 +233,8 @@ function drag(source: string, target?: string): void {
   const sourceRow = row(source)
   if (!fireEvent.dragStart(sourceRow, { dataTransfer })) return
   if (target !== undefined) {
-    if (!fireEvent.dragOver(row(target), { dataTransfer })) fireEvent.drop(row(target), { dataTransfer })
+    const targetRow = row(target)
+    if (!fireEvent.dragOver(targetRow, { dataTransfer })) fireEvent.drop(targetRow, { dataTransfer })
   }
   fireEvent.dragEnd(sourceRow, { dataTransfer })
 }
@@ -244,6 +245,10 @@ function visibleOrder(): readonly string[] {
     .map((button) => titles.find((title) => button.textContent?.includes(title))!)
 }
 
+async function waitForOrder(expected: readonly (string | undefined)[]): Promise<void> {
+  await waitFor(() => expect(visibleOrder()).toEqual(expected), { interval: 5 })
+}
+
 it.each([false, true])(
   'saves downward and upward row drops, including the end, grouped=%s',
   async (grouped) => {
@@ -252,16 +257,16 @@ it.each([false, true])(
     if (grouped) fireEvent.click(screen.getByRole('button', { name: 'Show grouped workspaces' }))
     const other = grouped ? [titles[3]] : []
     drag(titles[0]!, titles[1])
-    await waitFor(() => expect(visibleOrder()).toEqual([titles[1], titles[0], titles[2], ...other]))
+    await waitForOrder([titles[1], titles[0], titles[2], ...other])
     drag(titles[0]!, titles[2])
-    await waitFor(() => expect(visibleOrder()).toEqual([titles[1], titles[2], titles[0], ...other]))
+    await waitForOrder([titles[1], titles[2], titles[0], ...other])
     await act(() => f.store.refreshSessions())
     expect(visibleOrder()).toEqual([titles[1], titles[2], titles[0], ...other])
     view.unmount()
     f.mount()
     expect(visibleOrder()).toEqual([titles[1], titles[2], titles[0], ...other])
     drag(titles[0]!, titles[1])
-    await waitFor(() => expect(visibleOrder()).toEqual([...titles.slice(0, 3), ...other]))
+    await waitForOrder([...titles.slice(0, 3), ...other])
   },
 )
 
@@ -283,7 +288,7 @@ it('reports a refused move, preserves the order and allows retry', async () => {
   expect((await screen.findByRole('alert')).textContent).toContain('The operation is not permitted.')
   expect(visibleOrder()).toEqual(titles.slice(0, 3))
   drag(titles[0]!, titles[1])
-  await waitFor(() => expect(visibleOrder()).toEqual([titles[1], titles[0], titles[2]]))
+  await waitForOrder([titles[1], titles[0], titles[2]])
   expect(screen.queryByRole('alert')).toBeNull()
 })
 
@@ -291,7 +296,7 @@ it('keeps the current blank session first while rearranging completed conversati
   const f = await fixture({ blank: true })
   f.mount()
   drag(titles[1]!, titles[2])
-  await waitFor(() => expect(visibleOrder()).toEqual([titles[0], titles[2], titles[1]]))
+  await waitForOrder([titles[0], titles[2], titles[1]])
   drag(titles[0]!, titles[1])
   drag(titles[1]!, titles[0])
   await act(() => f.store.refreshSessions())
@@ -304,7 +309,7 @@ it('preserves hidden conversations when rearranging a filtered list', async () =
   fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'match' } })
   expect(visibleOrder()).toEqual([titles[0], titles[2]])
   drag(titles[0]!, titles[2])
-  await waitFor(() => expect(visibleOrder()).toEqual([titles[2], titles[0]]))
+  await waitForOrder([titles[2], titles[0]])
   fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } })
   expect(visibleOrder()).toEqual([titles[1], titles[2], titles[0]])
 })
@@ -325,7 +330,7 @@ it('places a downward drop before the following member even when that member has
   f.mount()
   expect(visibleOrder()).toEqual(titles.slice(0, 2))
   drag(titles[0]!, titles[1])
-  await waitFor(() => expect(visibleOrder()).toEqual([titles[1], titles[0]]))
+  await waitForOrder([titles[1], titles[0]])
   await act(() => f.loadAll())
   expect(visibleOrder()).toEqual([titles[1], titles[0], titles[2]])
 })
@@ -336,12 +341,14 @@ it('keeps workspace order unchanged while a session move is pending', async () =
   const release = f.holdMove()
   try {
     drag(titles[0]!, titles[1])
-    await waitFor(() =>
-      expect(
-        screen.getByRole<HTMLButtonElement>('button', {
-          name: /^(?!Session actions).*Beta conversation/u,
-        }).disabled,
-      ).toBe(true),
+    await waitFor(
+      () =>
+        expect(
+          screen.getByRole<HTMLButtonElement>('button', {
+            name: /^(?!Session actions).*Beta conversation/u,
+          }).disabled,
+        ).toBe(true),
+      { interval: 5 },
     )
     const source = screen.getByRole('button', { name: 'Two1' }).closest('.dsh-session-switcher__workspace')!
     const target = screen.getByRole('button', { name: 'One3' }).closest('.dsh-session-switcher__workspace')!
@@ -358,7 +365,7 @@ it('keeps workspace order unchanged while a session move is pending', async () =
   } finally {
     release()
   }
-  await waitFor(() => expect(visibleOrder()).toEqual([titles[1], titles[0], titles[2]]))
+  await waitForOrder([titles[1], titles[0], titles[2]])
   expect(
     screen.getAllByRole('button', { name: /^(One|Two)\d$/u }).map((button) => button.textContent),
   ).toEqual(['One3', 'Two1'])

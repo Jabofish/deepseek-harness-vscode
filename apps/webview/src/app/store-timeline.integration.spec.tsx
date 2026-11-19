@@ -105,7 +105,7 @@ describe('Store to Timeline streamed rendering', () => {
   it('automatically completes a large structured tool result inside its conversation disclosure', async () => {
     const client = new StreamClient()
     const store = createAppStore(client as unknown as ProtocolClient)
-    const output = 'HEAD\n'.repeat(2_000) + 'CRITICAL_MIDDLE_OUTPUT\n' + 'TAIL\n'.repeat(2_000)
+    const output = 'HEAD '.repeat(2_000) + '\nCRITICAL_MIDDLE_OUTPUT\n' + 'TAIL '.repeat(2_000)
     try {
       await store.openSession('session-stream')
       client.emit(
@@ -135,10 +135,12 @@ describe('Store to Timeline streamed rendering', () => {
         />,
       )
       fireEvent.click(screen.getByRole('button', { name: 'Expand Bash details' }))
-      await waitFor(() =>
-        expect(view.container.querySelector('.dsh-tool-terminal-preview__body')?.textContent).toContain(
-          'CRITICAL_MIDDLE_OUTPUT',
-        ),
+      await waitFor(
+        () =>
+          expect(view.container.querySelector('.dsh-tool-terminal-preview__body')?.textContent).toContain(
+            'CRITICAL_MIDDLE_OUTPUT',
+          ),
+        { interval: 5 },
       )
       expect(view.container.textContent).toContain(output.trimEnd().replaceAll('\n', ''))
       expect(screen.queryByRole('button', { name: 'Open full content' })).toBeNull()
@@ -196,7 +198,7 @@ describe('Store to Timeline streamed rendering', () => {
     const unsubscribe = store.subscribe(renderCurrentState)
     const push = async (message: HostMessage): Promise<void> => {
       client.emit(message)
-      await new Promise((resolve) => window.setTimeout(resolve, 24))
+      await new Promise((resolve) => window.setTimeout(resolve, 0))
     }
 
     await push(
@@ -321,7 +323,7 @@ describe('Store to Timeline streamed rendering', () => {
     const push = async (name: string, payload: Record<string, unknown>): Promise<void> => {
       const sequence = typeof payload.sequence === 'number' ? payload.sequence : undefined
       client.emit(event(sequence ?? 0, name, payload))
-      await new Promise((resolve) => window.setTimeout(resolve, 24))
+      await new Promise((resolve) => window.setTimeout(resolve, 0))
     }
     const tool = (
       id: string,
@@ -469,7 +471,7 @@ describe('Store to Timeline streamed rendering', () => {
     let hostSequence = 100
     const push = async (name: string, payload: Record<string, unknown>): Promise<void> => {
       client.emit(event(hostSequence++, name, payload))
-      await new Promise((resolve) => window.setTimeout(resolve, 24))
+      await new Promise((resolve) => window.setTimeout(resolve, 0))
     }
     const tool = (
       id: string,
@@ -570,7 +572,7 @@ describe('Store to Timeline streamed rendering', () => {
         ),
       ).toBe(true)
 
-      await new Promise((resolve) => window.setTimeout(resolve, 60))
+      await new Promise((resolve) => window.setTimeout(resolve, 0))
       expect(store.timeline.nodes).toContainEqual(
         expect.objectContaining({
           kind: 'assistant-message',
@@ -630,7 +632,7 @@ describe('Store to Timeline streamed rendering', () => {
       // durable events carry the DSH sequence inside the sanitized payload;
       // assistant stream frames deliberately do not.
       client.emit(event(hostSequence++, name, payload))
-      await new Promise((resolve) => window.setTimeout(resolve, 24))
+      await new Promise((resolve) => window.setTimeout(resolve, 0))
     }
     const tool = (
       id: string,
@@ -767,7 +769,7 @@ describe('Store to Timeline streamed rendering', () => {
 
     const push = async (message: HostMessage): Promise<void> => {
       client.emit(message)
-      await new Promise((resolve) => window.setTimeout(resolve, 24))
+      await new Promise((resolve) => window.setTimeout(resolve, 0))
     }
 
     await push(
@@ -874,7 +876,7 @@ describe('Store to Timeline streamed rendering', () => {
         delta: 'should not enter the assistant stream',
       }),
     )
-    await new Promise((resolve) => window.setTimeout(resolve, 24))
+    await new Promise((resolve) => window.setTimeout(resolve, 0))
 
     expect(store.timeline.nodes.find((node) => node.id === 'user-invalid-attachment')).toBeUndefined()
     expect(store.timeline.nodes.find((node) => node.id === 'assistant-invalid-image')).toBeUndefined()
@@ -921,7 +923,7 @@ describe('Store to Timeline streamed rendering', () => {
         toSequence: 2,
       }),
     )
-    await new Promise((resolve) => window.setTimeout(resolve, 24))
+    await new Promise((resolve) => window.setTimeout(resolve, 0))
 
     expect(store.timeline.nodes).toEqual([]) // Malformed control facts do not become transcript rows.
     expect(store.timeline.nodes.some((node) => node.kind === 'user-message')).toBe(false)
@@ -986,7 +988,7 @@ describe('Store to Timeline streamed rendering', () => {
           },
         }),
       )
-      await new Promise((resolve) => window.setTimeout(resolve, 24))
+      await new Promise((resolve) => window.setTimeout(resolve, 0))
 
       const node = store.timeline.nodes.find(
         (entry) => entry.kind === 'tool' && entry.tool.id === 'call-glob-capped',
@@ -1071,7 +1073,7 @@ describe('Store to Timeline streamed rendering', () => {
           },
         }),
       )
-      await new Promise((resolve) => window.setTimeout(resolve, 24))
+      await new Promise((resolve) => window.setTimeout(resolve, 0))
 
       const cards = store.timeline.nodes.filter((entry) => entry.kind === 'team')
       expect(cards).toHaveLength(1)

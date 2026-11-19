@@ -15,8 +15,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AppError } from '@dsh-vscode/domain'
 import { type SessionExportOptions } from '@dsh-vscode/domain'
 
-import type { DshTransport, ExportFileSystem } from '../src/index.js'
-import { Rc6ExportRepository } from '../src/index.js'
+import type { DshTransport } from '../src/contracts.js'
+import { Rc6ExportRepository, type ExportFileSystem } from '../src/repositories/export-repository.js'
 
 const temporaryRoots: string[] = []
 

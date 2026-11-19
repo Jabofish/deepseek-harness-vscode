@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { VersionedBackendFactory } from '../packages/dsh-adapter/src/backend-factory.js'
 import { VersionedBackendProbe } from '../packages/dsh-adapter/src/probe.js'
 import { createAdapterOptions } from '../apps/extension/src/backend/adapter-options.js'
@@ -25,6 +25,9 @@ describe.each([
   { version: '0.2.2-rc.4', protocol: 'rc224' },
   { version: '0.2.2-rc.5', protocol: 'rc225' },
 ])('$protocol production Adapter assembly', ({ version, protocol }) => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
   it.each(['create', 'edit', 'run'] as const)(
     'selects the exact release through the production registry and never replays Schedule %s after a lost receipt',
     async (operation) => {
@@ -86,7 +89,9 @@ describe.each([
         expect(schedules.management).toBe('host')
         // Prove production retry settings are active for reads, then retain
         // exactly one write attempt when its response could have been lost.
-        expect(await schedules.catalog()).toMatchObject([{ id: rc221Task.id }])
+        const catalogPromise = schedules.catalog()
+        await vi.advanceTimersByTimeAsync(1_000)
+        expect(await catalogPromise).toMatchObject([{ id: rc221Task.id }])
         expect(catalogReads).toBe(2)
         const write =
           operation === 'create'

@@ -1,11 +1,13 @@
 import { promises as fs } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it } from 'vitest'
 import { installWindowsRuntime } from './windows-runtime-installation.js'
 import type { RuntimeCommandOptions } from './update-runtime.js'
 import { terminateOwnedWindowsTree } from '../backend/owned-process-tree.js'
 import {
+  readRenameBlockCode,
+  spawnDirectoryLocker,
   spawnFileLocker,
   stopFixtureChild,
   waitForFixtureOutput,
@@ -17,9 +19,12 @@ const args = ['install', '--global', '@deepseek-ai/dsh@0.2.2-alpha.2', '--ignore
 const options = { timeout: 10_000, maxBuffer: 1024 }
 const shims = ['dsh', 'dsh.cmd', 'dsh.ps1']
 
-afterEach(async () => {
-  for (const root of roots.splice(0))
-    await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+afterAll(async () => {
+  await Promise.all(
+    roots
+      .splice(0)
+      .map((root) => fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })),
+  )
 })
 
 async function writePackage(prefix: string, version: string): Promise<void> {
@@ -71,17 +76,17 @@ async function fixture(): Promise<{
   return { root, version, dependencies }
 }
 
-describe('transactional Windows DSH installation', () => {
+describe.concurrent('transactional Windows DSH installation', () => {
   it.skipIf(process.platform !== 'win32')(
     'automatically releases an owned file lock and completes the update',
     async () => {
       const { root, version, dependencies } = await fixture()
-      const locker = spawnFileLocker(path.join(root, packagePath, 'bin.js'))
+      const locker = spawnDirectoryLocker(path.join(root, packagePath))
       try {
         await waitForFixtureOutput(locker)
-        await expect(
-          fs.rename(path.join(root, packagePath), path.join(root, 'blocked')),
-        ).rejects.toMatchObject({ code: 'EPERM' })
+        expect(await readRenameBlockCode(path.join(root, packagePath), path.join(root, 'blocked'))).toMatch(
+          /^(?:EPERM|EBUSY)$/u,
+        )
         await installWindowsRuntime(
           args,
           { ...options, beforeReplace: () => terminateOwnedWindowsTree(locker) },

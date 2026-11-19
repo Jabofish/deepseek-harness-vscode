@@ -3,7 +3,7 @@ import { open } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { isLoopbackEndpoint, type BackendCandidate, type BackendEndpoint } from '@dsh-vscode/domain'
-import { DSH_PACKAGE_NAME, isDshPackageVersion } from '@dsh-vscode/dsh-adapter'
+import { DSH_PACKAGE_NAME, isDshPackageVersion } from '@dsh-vscode/dsh-adapter/contracts'
 
 const execFileAsync = promisify(execFile)
 const PROCESS_TIMEOUT_MS = 1_500

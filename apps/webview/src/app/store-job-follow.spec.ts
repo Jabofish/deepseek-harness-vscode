@@ -133,7 +133,7 @@ async function openJobStore(): Promise<{
   const store = createAppStore(client as unknown as ProtocolClient)
   client.emit('connection.snapshot', { kind: 'connected', jobController: true })
   await store.openSession(SESSION_ID)
-  await new Promise((resolve) => window.setTimeout(resolve, 32))
+  await new Promise((resolve) => window.setTimeout(resolve, 0))
   client.emit('jobs.updated', { sessionId: SESSION_ID, jobs: [job] })
   return { client, store }
 }

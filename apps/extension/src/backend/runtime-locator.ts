@@ -1,7 +1,7 @@
 import type { RuntimeLocator, RuntimeLookupResult } from '@dsh-vscode/application'
 import type { DshRuntime, OperatingSystem } from '@dsh-vscode/domain'
 import { AppError } from '@dsh-vscode/domain'
-import { isKnownDshVersion } from '@dsh-vscode/dsh-adapter'
+import { isKnownDshVersion } from '@dsh-vscode/dsh-adapter/contracts'
 import path from 'node:path'
 
 import { isAbsoluteFilePath, isLocalRuntimePath } from './runtime-paths.js'

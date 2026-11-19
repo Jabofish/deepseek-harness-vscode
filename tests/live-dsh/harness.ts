@@ -5,46 +5,13 @@ import { createServer, Socket } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 
-import {
-  DshProcessSupervisor,
-  type SpawnedChild,
-} from '../../apps/extension/src/backend/process-supervisor.js'
+import type { SpawnedChild } from '../../apps/extension/src/backend/process-supervisor.js'
 import { resolveWindowsShim } from '../../apps/extension/src/backend/windows-shim.js'
-import { terminateOwnedWindowsTree } from '../../apps/extension/src/backend/owned-process-tree.js'
-import { VersionedBackendFactory } from '../../packages/dsh-adapter/src/backend-factory.js'
 import type { ExportFileSystem } from '../../packages/dsh-adapter/src/repositories/export-repository.js'
-import { managedWebArguments } from '../../packages/dsh-adapter/src/launch-contract.js'
-import { VersionedBackendProbe } from '../../packages/dsh-adapter/src/probe.js'
+import type { DshVersionAdapter } from '../../packages/dsh-adapter/src/contracts.js'
+import type { Rc151VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc151/adapter.js'
 import type { DshBackend } from '../../packages/domain/src/backend.js'
 import type { BackendEndpoint, ManagedProcessHandle } from '../../packages/domain/src/runtime.js'
-import { Rc151VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc151/adapter.js'
-import { Rc152VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc152/adapter.js'
-import { Rc153VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc153/adapter.js'
-import { Alpha161VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha161/adapter.js'
-import { Alpha162VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha162/adapter.js'
-import { Alpha171VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha171/adapter.js'
-import { Alpha172VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha172/adapter.js'
-import { Rc171VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc171/adapter.js'
-import { Rc172VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc172/adapter.js'
-import { Rc201VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc201/adapter.js'
-import { Rc202VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc202/adapter.js'
-import { Alpha212VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha212/adapter.js'
-import { Alpha213VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha213/adapter.js'
-import { Alpha214VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha214/adapter.js'
-import { Alpha215VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha215/adapter.js'
-import { Rc211VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc211/adapter.js'
-import { Rc212VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc212/adapter.js'
-import { Rc213VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc213/adapter.js'
-import { Rc214VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc214/adapter.js'
-import { Rc215VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc215/adapter.js'
-import { Alpha222VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha222/adapter.js'
-import { Alpha223VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha223/adapter.js'
-import { Rc221VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc221/adapter.js'
-import { Rc222VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc222/adapter.js'
-import { Rc223VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc223/adapter.js'
-import { Rc224VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc224/adapter.js'
-import { Rc225VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc225/adapter.js'
-import { Alpha211VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha211/adapter.js'
 import { acquireManagedRuntimeScope, type ManagedRuntimeScope } from './runtime-scope.js'
 import { resolveLiveRuntime } from './runtime.js'
 
@@ -134,6 +101,17 @@ export async function startManagedRuntime(options?: {
   /** Exercise the production spawner without changing the test-owned process lifecycle. */
   readonly spawn?: typeof spawnManagedChild
 }): Promise<ManagedLiveRuntime> {
+  const [
+    { DshProcessSupervisor },
+    { VersionedBackendFactory },
+    { VersionedBackendProbe },
+    { managedWebArguments },
+  ] = await Promise.all([
+    import('../../apps/extension/src/backend/process-supervisor.js'),
+    import('../../packages/dsh-adapter/src/backend-factory.js'),
+    import('../../packages/dsh-adapter/src/probe.js'),
+    import('../../packages/dsh-adapter/src/launch-contract.js'),
+  ])
   const runtimeExecutable = resolveLiveRuntime(
     options?.requestedRuntime?.trim() || process.env.DSH_LIVE_RUNTIME?.trim() || 'dsh',
   )
@@ -216,36 +194,8 @@ export async function startManagedRuntime(options?: {
     assertLoopbackEndpoint(started.endpoint)
     steps.push(`managed start pid=${started.pid} endpoint=${started.endpoint.baseUrl}`)
 
-    const adapters = [
-      new Rc225VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
-      new Rc224VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
-      new Rc223VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
-      new Rc222VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
-      new Rc221VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
-      new Alpha223VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
-      new Alpha222VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
-      new Rc215VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
-      new Rc214VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
-      new Rc213VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
-      new Rc212VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
-      new Rc211VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
-      new Alpha215VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
-      new Alpha214VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
-      new Alpha213VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
-      new Alpha212VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
-      new Alpha211VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
-      new Rc202VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
-      new Rc201VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
-      new Rc172VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
-      new Rc171VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
-      new Alpha172VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
-      new Alpha171VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
-      new Alpha162VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
-      new Alpha161VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
-      new Rc153VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
-      new Rc152VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
-      new Rc151VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
-    ]
+    const adapterOptionValues = adapterOptions(endpointCookie, options?.exportFileSystem)
+    const adapters = await loadVersionAdapters(adapterOptionValues)
     const probe = new VersionedBackendProbe(adapters, { fetch: globalThis.fetch })
     const connected = await probe.probe({
       endpoint: started.endpoint,
@@ -401,9 +351,112 @@ export function spawnManagedChild(
     kill: (signal?: NodeJS.Signals) => {
       child.kill(signal)
     },
-    ...(process.platform === 'win32' ? { terminateTree: () => terminateOwnedWindowsTree(child) } : {}),
+    ...(process.platform === 'win32'
+      ? {
+          terminateTree: async () => {
+            const { terminateOwnedWindowsTree } =
+              await import('../../apps/extension/src/backend/owned-process-tree.js')
+            return terminateOwnedWindowsTree(child)
+          },
+        }
+      : {}),
     exited,
   }
+}
+
+/** Deferred so offline unit runs skip importing every historical adapter and codec. */
+async function loadVersionAdapters(
+  options: ConstructorParameters<typeof Rc151VersionAdapter>[0],
+): Promise<readonly DshVersionAdapter[]> {
+  const [
+    { Rc225VersionAdapter },
+    { Rc224VersionAdapter },
+    { Rc223VersionAdapter },
+    { Rc222VersionAdapter },
+    { Rc221VersionAdapter },
+    { Alpha223VersionAdapter },
+    { Alpha222VersionAdapter },
+    { Rc215VersionAdapter },
+    { Rc214VersionAdapter },
+    { Rc213VersionAdapter },
+    { Rc212VersionAdapter },
+    { Rc211VersionAdapter },
+    { Alpha215VersionAdapter },
+    { Alpha214VersionAdapter },
+    { Alpha213VersionAdapter },
+    { Alpha212VersionAdapter },
+    { Alpha211VersionAdapter },
+    { Rc202VersionAdapter },
+    { Rc201VersionAdapter },
+    { Rc172VersionAdapter },
+    { Rc171VersionAdapter },
+    { Alpha172VersionAdapter },
+    { Alpha171VersionAdapter },
+    { Alpha162VersionAdapter },
+    { Alpha161VersionAdapter },
+    { Rc153VersionAdapter },
+    { Rc152VersionAdapter },
+    { Rc151VersionAdapter },
+  ] = await Promise.all([
+    import('../../packages/dsh-adapter/src/versions/rc225/adapter.js'),
+    import('../../packages/dsh-adapter/src/versions/rc224/adapter.js'),
+    import('../../packages/dsh-adapter/src/versions/rc223/adapter.js'),
+    import('../../packages/dsh-adapter/src/versions/rc222/adapter.js'),
+    import('../../packages/dsh-adapter/src/versions/rc221/adapter.js'),
+    import('../../packages/dsh-adapter/src/versions/alpha223/adapter.js'),
+    import('../../packages/dsh-adapter/src/versions/alpha222/adapter.js'),
+    import('../../packages/dsh-adapter/src/versions/rc215/adapter.js'),
+    import('../../packages/dsh-adapter/src/versions/rc214/adapter.js'),
+    import('../../packages/dsh-adapter/src/versions/rc213/adapter.js'),
+    import('../../packages/dsh-adapter/src/versions/rc212/adapter.js'),
+    import('../../packages/dsh-adapter/src/versions/rc211/adapter.js'),
+    import('../../packages/dsh-adapter/src/versions/alpha215/adapter.js'),
+    import('../../packages/dsh-adapter/src/versions/alpha214/adapter.js'),
+    import('../../packages/dsh-adapter/src/versions/alpha213/adapter.js'),
+    import('../../packages/dsh-adapter/src/versions/alpha212/adapter.js'),
+    import('../../packages/dsh-adapter/src/versions/alpha211/adapter.js'),
+    import('../../packages/dsh-adapter/src/versions/rc202/adapter.js'),
+    import('../../packages/dsh-adapter/src/versions/rc201/adapter.js'),
+    import('../../packages/dsh-adapter/src/versions/rc172/adapter.js'),
+    import('../../packages/dsh-adapter/src/versions/rc171/adapter.js'),
+    import('../../packages/dsh-adapter/src/versions/alpha172/adapter.js'),
+    import('../../packages/dsh-adapter/src/versions/alpha171/adapter.js'),
+    import('../../packages/dsh-adapter/src/versions/alpha162/adapter.js'),
+    import('../../packages/dsh-adapter/src/versions/alpha161/adapter.js'),
+    import('../../packages/dsh-adapter/src/versions/rc153/adapter.js'),
+    import('../../packages/dsh-adapter/src/versions/rc152/adapter.js'),
+    import('../../packages/dsh-adapter/src/versions/rc151/adapter.js'),
+  ])
+  return [
+    new Rc225VersionAdapter(options),
+    new Rc224VersionAdapter(options),
+    new Rc223VersionAdapter(options),
+    new Rc222VersionAdapter(options),
+    new Rc221VersionAdapter(options),
+    new Alpha223VersionAdapter(options),
+    new Alpha222VersionAdapter(options),
+    new Rc215VersionAdapter(options),
+    new Rc214VersionAdapter(options),
+    new Rc213VersionAdapter(options),
+    new Rc212VersionAdapter(options),
+    new Rc211VersionAdapter(options),
+    new Alpha215VersionAdapter(options),
+    new Alpha214VersionAdapter(options),
+    new Alpha213VersionAdapter(options),
+    new Alpha212VersionAdapter(options),
+    new Alpha211VersionAdapter(options),
+    new Rc202VersionAdapter(options),
+    new Rc201VersionAdapter(options),
+    new Rc172VersionAdapter(options),
+    new Rc171VersionAdapter(options),
+    new Alpha172VersionAdapter(options),
+    new Alpha171VersionAdapter(options),
+    new Alpha162VersionAdapter(options),
+    new Alpha161VersionAdapter(options),
+    new Rc153VersionAdapter(options),
+    new Rc152VersionAdapter(options),
+    new Rc151VersionAdapter(options),
+  ]
 }
 
 async function* textStream(stream: NodeJS.ReadableStream | null): AsyncIterable<string> {

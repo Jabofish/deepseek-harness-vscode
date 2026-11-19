@@ -7,7 +7,7 @@ import type {
   ExtensionSettings,
   ExtensionSettingsSummary,
 } from '@dsh-vscode/domain'
-import { redactText } from '@dsh-vscode/dsh-adapter'
+import { redactText } from '@dsh-vscode/dsh-adapter/redaction'
 import { sanitizePublicValue } from '../view/public-value.js'
 
 export function stateSubscriptionDisposable(unsubscribe: () => void): vscode.Disposable {

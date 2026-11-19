@@ -80,12 +80,16 @@ const tick = async (): Promise<void> => {
 }
 
 async function waitForSocket(): Promise<FakeMuxSocket> {
-  await vi.waitFor(() => expect(FakeMuxSocket.instances[0]).toBeDefined())
+  for (let step = 0; step < 50 && FakeMuxSocket.instances[0] === undefined; step += 1)
+    await vi.advanceTimersByTimeAsync(0)
+  expect(FakeMuxSocket.instances[0]).toBeDefined()
   return FakeMuxSocket.instances[0]!
 }
 
 async function waitForOpens(socket: FakeMuxSocket, count: number): Promise<void> {
-  await vi.waitFor(() => expect(socket.opens()).toHaveLength(count), { timeout: 3_000, interval: 10 })
+  for (let step = 0; step < 50 && socket.opens().length < count; step += 1)
+    await vi.advanceTimersByTimeAsync(0)
+  expect(socket.opens()).toHaveLength(count)
 }
 
 function snapshot(assistantStream: Record<string, unknown> = { revision: 0 }): Record<string, unknown> {
@@ -242,6 +246,7 @@ describe('assistant preview recovery', () => {
           }),
         ),
       )
+      await vi.advanceTimersByTimeAsync(1_000)
       await waitForOpens(socket, attempt + 2)
       await tick()
     }

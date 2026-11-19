@@ -26,7 +26,7 @@ import {
   ModsBandUseCases,
   InspectorUseCases,
 } from '@dsh-vscode/application'
-import { redactMultilineText } from '@dsh-vscode/dsh-adapter'
+import { redactMultilineText } from '@dsh-vscode/dsh-adapter/redaction'
 import type { FeatureRequest } from '@dsh-vscode/webview-protocol'
 import { handleAccountFeatureRequest } from '../account/account-feature-handler.js'
 import type { AccountLifecycleHost } from '../account/account-lifecycle-host.js'

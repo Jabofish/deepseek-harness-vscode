@@ -236,7 +236,11 @@ async function absentIdentityFrames(
   session: SessionDetail,
   steps: string[],
 ): Promise<void> {
-  if (['0.2.2-alpha.2', '0.2.2-alpha.3', '0.2.2-rc.1'].includes(backend.connection.capabilities.dshVersion)) {
+  if (
+    ['alpha222', 'alpha223', 'rc221', 'rc222', 'rc223', 'rc224', 'rc225'].includes(
+      backend.connection.capabilities.protocolVersion,
+    )
+  ) {
     // These hosts read a full image reference without checking log ownership.
     // The adapter must refuse an absent reference before calling that Remote.
     await expect(backend.sessions.readAttachment(session.id, ABSENT_ATTACHMENT)).rejects.toMatchObject({

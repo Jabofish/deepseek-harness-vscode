@@ -7,7 +7,7 @@ import type {
   FeatureEventIdentity,
   ToolCallView,
 } from '@dsh-vscode/domain'
-import { rc6Mapper } from '@dsh-vscode/dsh-adapter'
+import { rc6Mapper } from '@dsh-vscode/dsh-adapter/versions/rc6/mapper'
 
 import { ChangeSetTracker } from './change-set-tracker.js'
 

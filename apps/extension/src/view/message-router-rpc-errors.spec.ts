@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { Rc6SessionRepository, type DshTransport } from '@dsh-vscode/dsh-adapter'
+import type { DshTransport } from '@dsh-vscode/dsh-adapter/contracts'
+import { Rc6SessionRepository } from '@dsh-vscode/dsh-adapter/repositories/session-repository'
 import { WebviewMessageRouter } from './message-router.js'
 
 describe('RPC diagnostic to Webview boundary', () => {

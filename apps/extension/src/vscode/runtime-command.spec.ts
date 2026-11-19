@@ -52,11 +52,11 @@ describe('runtime npm execution', () => {
   it('terminates its own timed out child and returns a distinguishable failure', async () => {
     await expect(
       streamRuntimeCommand(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
-        timeout: 100,
+        timeout: 50,
         maxBuffer: 128,
       }),
     ).rejects.toMatchObject({ code: 'ETIMEDOUT', timedOut: true, killed: true })
-  })
+  }, 15_000)
 
   it('reports startup and nonzero exit errors with bounded diagnostics', async () => {
     await expect(

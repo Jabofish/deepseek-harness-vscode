@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { SUPPORTED_DSH_VERSIONS, VersionedBackendProbe } from '@dsh-vscode/dsh-adapter'
+import { SUPPORTED_DSH_VERSIONS } from '@dsh-vscode/dsh-adapter/contracts'
+import { VersionedBackendProbe } from '@dsh-vscode/dsh-adapter/probe'
 
 import { createAdapterOptions } from './adapter-options.js'
 import { createVersionAdapters } from './version-adapters.js'

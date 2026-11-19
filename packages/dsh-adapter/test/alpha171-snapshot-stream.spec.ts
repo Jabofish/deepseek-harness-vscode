@@ -37,25 +37,31 @@ function createTransport(validateEvent: () => void): AlphaLoopbackApiClient {
 }
 
 async function openFollow(previousStreamId?: string): Promise<{ socket: FakeWebSocket; streamId: string }> {
-  const socket = await vi.waitFor(() => {
-    const instance = FakeWebSocket.instances[0]
-    if (instance === undefined) throw new Error('The mux socket has not been created.')
-    return instance
-  })
+  const socket = await vi.waitFor(
+    () => {
+      const instance = FakeWebSocket.instances[0]
+      if (instance === undefined) throw new Error('The mux socket has not been created.')
+      return instance
+    },
+    { interval: 1 },
+  )
   if (socket.readyState === 0) socket.open()
-  const streamId = await vi.waitFor(() => {
-    for (const sent of socket.sent) {
-      const frame = JSON.parse(sent) as Record<string, unknown>
-      if (
-        frame.type === 'open' &&
-        frame.endpoint === 'session/follow' &&
-        typeof frame.streamId === 'string' &&
-        frame.streamId !== previousStreamId
-      )
-        return frame.streamId
-    }
-    throw new Error('The session/follow stream has not opened.')
-  })
+  const streamId = await vi.waitFor(
+    () => {
+      for (const sent of socket.sent) {
+        const frame = JSON.parse(sent) as Record<string, unknown>
+        if (
+          frame.type === 'open' &&
+          frame.endpoint === 'session/follow' &&
+          typeof frame.streamId === 'string' &&
+          frame.streamId !== previousStreamId
+        )
+          return frame.streamId
+      }
+      throw new Error('The session/follow stream has not opened.')
+    },
+    { interval: 1 },
+  )
   return { socket, streamId }
 }
 
@@ -95,7 +101,7 @@ describe('alpha171 incremental snapshot transport', () => {
         })
       }
       socket.message({ type: 'item', streamId, value: snapshot(count) })
-      await vi.waitFor(() => expect(events).toHaveLength(count + 2))
+      await vi.waitFor(() => expect(events).toHaveLength(count + 2), { interval: 1 })
 
       expect(deliveredAtCallback).toBeGreaterThan(0)
       expect(deliveredAtCallback).toBeLessThan(count)
@@ -150,7 +156,7 @@ describe('alpha171 incremental snapshot transport', () => {
       if (action === 'restart') {
         const next = await openFollow(streamId)
         next.socket.message({ type: 'item', streamId: next.streamId, value: snapshot(1) })
-        await vi.waitFor(() => expect(events).toHaveLength(oldCount + 2))
+        await vi.waitFor(() => expect(events).toHaveLength(oldCount + 2), { interval: 1 })
         expect(events.slice(oldCount)).toMatchObject([
           { type: 'turn.started', sequence: 0, replayed: true },
           { type: 'session.subscribed', lastSequence: 0 },

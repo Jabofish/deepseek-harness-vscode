@@ -4,7 +4,15 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./attachment-codec": "./src/attachment-codec.ts",
+    "./backend-factory": "./src/backend-factory.ts",
+    "./contracts": "./src/contracts.ts",
+    "./launch-contract": "./src/launch-contract.ts",
+    "./probe": "./src/probe.ts",
+    "./redaction": "./src/redaction.ts",
+    "./repositories/*": "./src/repositories/*.ts",
+    "./versions/*": "./src/versions/*.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit"

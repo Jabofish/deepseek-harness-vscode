@@ -371,7 +371,7 @@ describe('DshConnectionCoordinator', () => {
     const deps = dependencies({
       discovery: {
         discover: vi.fn(async () => {
-          await new Promise((resolve) => setTimeout(resolve, 10))
+          await Promise.resolve()
           return []
         }),
       },

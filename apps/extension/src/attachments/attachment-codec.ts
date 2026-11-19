@@ -1,5 +1,5 @@
 import { AppError } from '@dsh-vscode/domain'
-import { isSupportedImageMimeType, matchesImageSignature } from '@dsh-vscode/dsh-adapter'
+import { isSupportedImageMimeType, matchesImageSignature } from '@dsh-vscode/dsh-adapter/attachment-codec'
 
 import {
   MAX_ATTACHMENT_BYTES,

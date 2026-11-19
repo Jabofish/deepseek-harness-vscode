@@ -1,6 +1,6 @@
 import type { BackendDiscovery } from '@dsh-vscode/application'
 import { isLoopbackEndpoint, type BackendCandidate } from '@dsh-vscode/domain'
-import { isDshPackageVersion } from '@dsh-vscode/dsh-adapter'
+import { isDshPackageVersion } from '@dsh-vscode/dsh-adapter/contracts'
 
 import { discoveryCancelled, type DiscoveryProvider } from './provider.js'
 

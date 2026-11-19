@@ -5,7 +5,7 @@ import {
   createFeatureRequestHandler,
   type FeatureRequestHandlerDependencies,
 } from './feature-request-handler.js'
-import { Alpha211ModsBandRepository } from '@dsh-vscode/dsh-adapter'
+import { Alpha211ModsBandRepository } from '@dsh-vscode/dsh-adapter/versions/alpha211/mods-band-repository'
 import { featureRequestSchema } from '@dsh-vscode/webview-protocol'
 import { featureResponsePayloadSchema } from '@dsh-vscode/webview-protocol'
 vi.mock('vscode', () => ({}))

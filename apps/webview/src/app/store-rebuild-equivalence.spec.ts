@@ -297,9 +297,9 @@ async function replay(messages: readonly HostMessage[]): Promise<{
   await store.openSession(SESSION_ID)
   for (const message of messages) {
     client.emit(message)
-    await new Promise((resolve) => window.setTimeout(resolve, 4))
+    await Promise.resolve()
   }
-  await new Promise((resolve) => window.setTimeout(resolve, 60))
+  await new Promise((resolve) => window.setTimeout(resolve, 0))
   return { store, client }
 }
 
@@ -324,7 +324,7 @@ describe('Host recovery reread equivalence', () => {
         sequence: 1,
       },
     })
-    await new Promise((resolve) => window.setTimeout(resolve, 80))
+    await new Promise((resolve) => window.setTimeout(resolve, 0))
 
     // Guard against a vacuous pass: every node family in the fixture has to be
     // present in the reference transcript before the rebuild is compared.
@@ -411,7 +411,7 @@ describe('Host recovery reread equivalence', () => {
         sequence: 1,
       },
     })
-    await new Promise((resolve) => window.setTimeout(resolve, 80))
+    await new Promise((resolve) => window.setTimeout(resolve, 0))
 
     expect(expected.some((line) => line.startsWith('tool:call-interrupted:failed:shell:'))).toBe(true)
     expect(expected.indexOf('turn-terminal:turn-terminal:1')).toBeGreaterThan(

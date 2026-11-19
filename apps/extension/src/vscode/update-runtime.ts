@@ -5,7 +5,10 @@ import type {
   DshUpdateSnapshot,
 } from '@dsh-vscode/domain'
 import { AppError } from '@dsh-vscode/domain'
-import { DSH_PACKAGE_NAME, isDshPackageVersion as isDshSemVerVersion } from '@dsh-vscode/dsh-adapter'
+import {
+  DSH_PACKAGE_NAME,
+  isDshPackageVersion as isDshSemVerVersion,
+} from '@dsh-vscode/dsh-adapter/contracts'
 
 import {
   RUNTIME_INSTALL_MAX_BUFFER,

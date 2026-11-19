@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
+import { promises as fs } from 'node:fs'
 import path from 'node:path'
 
 export const fileLockScript = [
@@ -24,6 +25,15 @@ export function spawnFileLocker(file: string): ChildProcess {
       env: { ...process.env, DSH_TEST_LOCK_FILE: file },
     },
   )
+}
+
+/** Light-weight Node process whose current directory prevents renaming `directory` on Windows. */
+export function spawnDirectoryLocker(directory: string): ChildProcess {
+  return spawn(process.execPath, ['-e', "console.log('locked'); setInterval(() => {}, 60_000)"], {
+    cwd: directory,
+    windowsHide: true,
+    shell: false,
+  })
 }
 
 export function waitForFixtureOutput(child: ChildProcess): Promise<void> {
@@ -54,4 +64,12 @@ export async function stopFixtureChild(child: ChildProcess): Promise<void> {
   const exited = once(child, 'exit')
   child.kill('SIGKILL')
   await exited
+}
+
+/** Returns the errno code when renaming a locked path fails, or `undefined` if rename succeeded. */
+export async function readRenameBlockCode(from: string, to: string): Promise<string | undefined> {
+  return fs.rename(from, to).then(
+    () => undefined,
+    (cause: unknown) => (cause instanceof Error && 'code' in cause ? String(cause.code) : undefined),
+  )
 }

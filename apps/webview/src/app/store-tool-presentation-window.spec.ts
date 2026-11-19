@@ -67,7 +67,7 @@ class StreamClient {
   }
 }
 
-function settle(milliseconds = 24): Promise<void> {
+function settle(milliseconds = 0): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds))
 }
 

@@ -1,6 +1,6 @@
 import { AppError, type ChangeSetFile, type DshBackend, type SessionDetail } from '@dsh-vscode/domain'
 import type { ChangeUseCases } from '@dsh-vscode/application'
-import { redactMultilineText } from '@dsh-vscode/dsh-adapter'
+import { redactMultilineText } from '@dsh-vscode/dsh-adapter/redaction'
 import type { FeatureHostEvent, FeatureRequest } from '@dsh-vscode/webview-protocol'
 import type { ChangeSetTracker } from './change-set-tracker.js'
 

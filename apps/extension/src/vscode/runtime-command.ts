@@ -97,7 +97,7 @@ function stopOwnedCommand(child: ChildProcess): void {
     execFile(
       executable,
       ['/pid', String(child.pid), '/T', '/F'],
-      { windowsHide: true, timeout: 5_000 },
+      { windowsHide: true, timeout: 15_000 },
       (error) => {
         if (error !== null && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
       },

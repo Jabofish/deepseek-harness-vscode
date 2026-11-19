@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { describe, expect, it, vi, type Mock } from 'vitest'
 import type { BackendEvent, DshBackend } from '@dsh-vscode/domain'
-import { Alpha211VersionAdapter } from '@dsh-vscode/dsh-adapter'
+import { Alpha211VersionAdapter } from '@dsh-vscode/dsh-adapter/versions/alpha211/adapter'
 import { hostMessageSchema, type HostMessage, type TranscriptWindow } from '@dsh-vscode/webview-protocol'
 import { TranscriptWindowService } from '../view/transcript-window.js'
 import { sanitizePublicValue } from '../view/public-value.js'

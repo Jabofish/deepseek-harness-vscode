@@ -61,7 +61,7 @@ export async function terminateOwnedWindowsTree(child: ChildProcess): Promise<vo
     execFile(
       path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe'),
       ['/PID', String(rootPid), '/T', '/F'],
-      { windowsHide: true, timeout: 5_000, env: windowsSystemToolEnvironment() },
+      { windowsHide: true, timeout: 15_000, env: windowsSystemToolEnvironment() },
       (cause) => {
         terminationFailure = cause ?? undefined
         terminationFinished = true

@@ -846,9 +846,9 @@ async function answerFollow(
 }
 
 async function waitForEvent(predicate: () => boolean): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  for (let attempt = 0; attempt < 500; attempt += 1) {
     if (predicate()) return
-    await new Promise((resolve) => setTimeout(resolve, 25))
+    await new Promise((resolve) => setTimeout(resolve, 1))
   }
   throw new Error('the expected alpha event was not observed')
 }
