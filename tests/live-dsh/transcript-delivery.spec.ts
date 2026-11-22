@@ -11,7 +11,9 @@ import { TranscriptWindowService } from '../../apps/extension/src/view/transcrip
 import type { BackendEvent } from '../../packages/domain/src/events.js'
 
 const version = process.env.DSH_LIVE_RUNTIME_VERSION
-const enabled = process.env.DSH_LIVE_SMOKE === '1' && ['0.2.1-alpha.2', '0.2.2-rc.1'].includes(version ?? '')
+const enabled =
+  process.env.DSH_LIVE_SMOKE === '1' &&
+  ['0.2.1-alpha.2', '0.2.2-rc.1', '0.2.2-rc.5', '0.2.3-alpha.1', '0.2.3-alpha.2'].includes(version ?? '')
 const answer = 'Native delivery recovery fixture answer'
 
 /** Test producer using Session.append at the pinned alpha212 commit

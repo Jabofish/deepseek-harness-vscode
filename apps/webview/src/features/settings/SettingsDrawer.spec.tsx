@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ExtensionSettingsSummary, ModelDescriptor, ModelProvider } from '@dsh-vscode/domain'
 
 import { type DshSettingsSnapshot } from '../../app/store.js'
+import { parseDshUpdateSnapshot } from '../../app/store/host-settings.js'
 import { I18nProvider } from '../../i18n.js'
 import { SettingsDrawer } from './SettingsDrawer.js'
 
@@ -189,6 +190,28 @@ describe('SettingsDrawer', () => {
     window.localStorage.clear()
     document.documentElement.lang = 'en'
     vi.unstubAllGlobals()
+  })
+
+  it('allows reinstalling the selected global version when its launcher failed verification', async () => {
+    const version = '0.2.2-rc.5'
+    const dshUpdate = parseDshUpdateSnapshot({
+      status: 'ready',
+      globalVersion: version,
+      globalLauncherUnverified: true,
+      latestVersion: version,
+      availableVersions: [version],
+      updateAvailable: false,
+      checkedAt: '2026-11-22T00:00:00.000Z',
+    })!
+    const onInstallDshVersion = vi
+      .fn()
+      .mockResolvedValue({ ...dshUpdate, globalLauncherUnverified: undefined })
+    renderDrawer({ dshUpdate, onInstallDshVersion, onCheckDshUpdates: vi.fn().mockResolvedValue(dshUpdate) })
+    expect(await screen.findByText(/global DSH launcher failed verification/i)).toBeDefined()
+    const install = screen.getByRole<HTMLButtonElement>('button', { name: 'Download and install' })
+    expect(install.disabled).toBe(false)
+    fireEvent.click(install)
+    await waitFor(() => expect(onInstallDshVersion).toHaveBeenCalledWith(version))
   })
 
   it('does not preselect a connection mode the page cannot represent and blocks Apply until one is chosen', async () => {

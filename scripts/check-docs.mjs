@@ -113,7 +113,13 @@ else {
 const publishedVersion = code.match(
   /LATEST_PUBLISHED_DSH_VERSION = '(\d+\.\d+\.\d+-(?:rc|alpha)\.\d+)'/u,
 )?.[1]
-const installerVersion = code.match(/DEFAULT_INSTALL_DSH_VERSION = '(\d+\.\d+\.\d+-(?:rc|alpha)\.\d+)'/u)?.[1]
+const installerVersion = code.match(/DEFAULT_INSTALL_DSH_VERSION = '(\d+\.\d+\.\d+-rc\.\d+)'/u)?.[1]
+const releaseCandidates = [...(versionsBlock ?? '').matchAll(/'([\d.]+-rc\.\d+)'/gu)].map((match) => match[1])
+// All candidates have the same SemVer layout; compare each number as a number.
+const releaseOrder = new Intl.Collator('en', { numeric: true })
+releaseCandidates.sort((left, right) => releaseOrder.compare(left, right))
+if (installerVersion !== releaseCandidates.at(-1))
+  errors.push('guided installation must pin the newest verified DSH release candidate')
 const documentedPublished = contract.match(
   /最新发布包为 `@deepseek-ai\/dsh@(\d+\.\d+\.\d+-(?:rc|alpha)\.\d+)`/u,
 )?.[1]

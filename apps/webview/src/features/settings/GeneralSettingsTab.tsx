@@ -440,6 +440,11 @@ export function GeneralSettingsTab(input: GeneralSettingsTabProps): ReactElement
                 <dt>{t('settings.dshUpdateLatest')}</dt>
                 <dd>{dshUpdate.latestVersion ?? t('settings.dshUpdateUnavailable')}</dd>
               </dl>
+              {dshUpdate.globalLauncherUnverified === true ? (
+                <p className="dsh-settings__runtime-update-notice" role="status">
+                  {t('settings.dshUpdateGlobalLauncherUnverified')}
+                </p>
+              ) : null}
               {dshUpdate.updateAvailable ? (
                 <p className="dsh-settings__runtime-update-notice" role="status">
                   {t('settings.dshUpdateAvailable', {

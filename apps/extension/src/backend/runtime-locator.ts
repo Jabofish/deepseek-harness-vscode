@@ -1,7 +1,7 @@
 import type { RuntimeLocator, RuntimeLookupResult } from '@dsh-vscode/application'
 import type { DshRuntime, OperatingSystem } from '@dsh-vscode/domain'
 import { AppError } from '@dsh-vscode/domain'
-import { isKnownDshVersion } from '@dsh-vscode/dsh-adapter/contracts'
+import { isDshPackageVersion, isKnownDshVersion } from '@dsh-vscode/dsh-adapter/contracts'
 import path from 'node:path'
 
 import { isAbsoluteFilePath, isLocalRuntimePath } from './runtime-paths.js'
@@ -208,6 +208,30 @@ export class DshRuntimeLocator implements RuntimeLocator {
     )
   }
 
+  /** Verify the launcher npm installed, even if discovery prefers another executable. */
+  public async verifyNpmGlobalRuntime(version: string, signal?: AbortSignal): Promise<boolean> {
+    if (signal?.aborted === true) throw runtimeDetectionCancelled(signal)
+    const prefix = await this.dependencies.npmGlobalPrefix(signal)
+    if (signal?.aborted) throw runtimeDetectionCancelled(signal)
+    const os = this.dependencies.os
+    if (prefix === undefined || /[\r\n]/u.test(prefix) || !isLocalRuntimePath(prefix, os)) return false
+    const launcher =
+      os === 'windows' ? path.win32.join(prefix, 'dsh.cmd') : path.posix.join(prefix, 'bin', 'dsh')
+    if (!(await this.dependencies.fileExists(launcher))) return false
+    try {
+      const output = await this.dependencies.executeVersion(launcher, signal)
+      if (signal?.aborted) throw runtimeDetectionCancelled(signal)
+      return reportedDshVersion(output) === version
+    } catch (error) {
+      if (signal?.aborted) throw runtimeDetectionCancelled(signal)
+      this.dependencies.logProbeFailure?.({
+        name: pathApi(os).basename(launcher),
+        message: probeFailureDetail(error),
+      })
+      return false
+    }
+  }
+
   private async findSupported(
     candidates: readonly Candidate[],
     locations: string[],
@@ -261,17 +285,18 @@ export class DshRuntimeLocator implements RuntimeLocator {
     const probeSignal =
       signal === undefined ? timeoutAbort.signal : AbortSignal.any([signal, timeoutAbort.signal])
     try {
-      const version = await withTimeout(
+      const output = await withTimeout(
         this.dependencies.executeVersion(candidate.path, probeSignal),
         3_000,
         signal,
         () => timeoutAbort.abort(new Error('runtime version detection cancelled')),
       )
+      const version = reportedDshVersion(output)
       return {
         executable: candidate.path,
-        version: normalizeVersion(version),
-        supported: isDshVersion(version),
-        compatibility: isKnownDshVersion(normalizeVersion(version)) ? 'known' : 'unknown',
+        version: version ?? firstVersionLine(output).slice(0, 128),
+        supported: version !== undefined,
+        compatibility: version !== undefined && isKnownDshVersion(version) ? 'known' : 'unknown',
         source: candidate.source,
       }
     } catch (error) {
@@ -341,21 +366,14 @@ function runtimePathKey(value: string, os: OperatingSystem): string {
   return os === 'windows' ? normalized.toLowerCase() : normalized
 }
 
-const DSH_VERSION_LABEL_PATTERN = /\b\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\b/u
-
-function normalizeVersion(output: string): string {
-  const firstLine = output.trim().split(/\r?\n/u, 1)[0]?.trim() ?? ''
-  const match = firstLine.match(DSH_VERSION_LABEL_PATTERN)
-  return (match?.[0] ?? firstLine).slice(0, 128)
+function firstVersionLine(output: string): string {
+  return output.trim().split(/\r?\n/u, 1)[0]?.trim() ?? ''
 }
 
-function isDshVersion(output: string): boolean {
-  // A discovered binary is trusted as the managed backend only when it reports
-  // a SemVer-like DSH version label. Arbitrary text from an unrelated
-  // executable (or a PATH-compromise) is not identity evidence; the adapter
-  // probe still bounds best-effort compatibility for unknown-but-SemVer builds.
-  const firstLine = output.trim().split(/\r?\n/u, 1)[0]?.trim() ?? ''
-  return DSH_VERSION_LABEL_PATTERN.test(firstLine)
+/** Read the complete CLI identity, including build metadata used by custom runtimes. */
+export function reportedDshVersion(output: string): string | undefined {
+  const identity = firstVersionLine(output).replace(/^dsh\s+/u, '')
+  return identity.length <= 128 && isDshPackageVersion(identity) ? identity : undefined
 }
 
 async function withTimeout<T>(

@@ -949,6 +949,7 @@
   "settings.dshUpdateInvalidResponse": "npm 软件源返回的版本列表无效，请检查软件源设置后重试。",
   "settings.dshUpdateCurrent": "当前 DSH 版本",
   "settings.dshUpdateGlobal": "全局安装包",
+  "settings.dshUpdateGlobalLauncherUnverified": "全局 DSH 启动器验证失败。可重新安装该包，或选择其他版本。",
   "settings.dshUpdateLatest": "最新 DSH 版本",
   "settings.dshUpdateNotInstalled": "未安装",
   "settings.dshUpdateAvailable": "可更新至 DSH {version}。",

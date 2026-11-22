@@ -7,6 +7,7 @@ import { AppError } from '@dsh-vscode/domain'
 import { DSH_PACKAGE_NAME, isDshPackageVersion } from '@dsh-vscode/dsh-adapter/contracts'
 import type { RuntimeCommandOptions, RuntimeCommandResult } from './update-runtime.js'
 import { resolveWindowsShim, type WindowsShimResolutionOptions } from '../backend/windows-shim.js'
+import { reportedDshVersion } from '../backend/runtime-locator.js'
 import { streamRuntimeCommand } from './runtime-command.js'
 import { findWindowsLockOwners } from '../backend/windows-lock-owners.js'
 
@@ -41,9 +42,7 @@ export async function verifyWindowsRuntime(
     timeout: 15_000,
     maxBuffer: 32_768,
   })
-  if (
-    !probe.stdout.split(/\r?\n/u).some((line) => line.trim() === version || line.trim() === `dsh ${version}`)
-  )
+  if (reportedDshVersion(probe.stdout) !== version)
     throw installationError('The installed DSH executable reported an unexpected version.')
 }
 

@@ -403,6 +403,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
       : (dshUpdate?.latestVersion ?? availableDshVersions[0])
   const selectedDshVersionAlreadyInstalled =
     dshUpdate?.status === 'ready' &&
+    dshUpdate.globalLauncherUnverified !== true &&
     effectiveSelectedDshVersion !== undefined &&
     dshUpdate.globalVersion === effectiveSelectedDshVersion
 

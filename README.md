@@ -66,7 +66,7 @@ Existing `dsh.*` settings and command IDs are retained, and DSH session data sta
 ### Start a session
 
 1. Open the **JaboDSH** view.
-2. If DSH is missing, use the guided installer, select an existing executable, or copy the exact install command shown in the view. The installer shows npm output and verifies the installed version; npm warnings alone do not fail the installation.
+2. If DSH is missing, use the guided installer, select an existing executable, or copy the exact install command shown in the view. Guided installation uses the newest verified release candidate and requires Node.js 24.9.0 or later in the Extension Host's npm environment. The installer shows npm output and verifies the installed launcher.
 3. Choose or create a workspace, start a session, and send a task.
 
 With the message box empty, press ↑ to bring back a prompt you already sent in that conversation; ↑ and ↓ move through older and newer prompts, and editing the text ends the walk.
