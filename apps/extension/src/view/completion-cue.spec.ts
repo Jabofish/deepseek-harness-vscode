@@ -133,7 +133,7 @@ it('applies the focus policy to needs-input cues', () => {
 
 it('scopes input deduplication to the session and clears it on reconnect', () => {
   const { cue, notify } = fixture()
-  const request = (sessionId: string) =>
+  const request = (sessionId: string): void =>
     cue.accept('question.requested', { question: { id: 'same-request', sessionId } })
   request('first')
   request('first')
