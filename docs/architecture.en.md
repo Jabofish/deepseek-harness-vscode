@@ -58,15 +58,16 @@ The Host and Webview are two processes of one extension; DSH is a third process;
 The code is a small set of packages with a strict dependency direction.
 
 ```text
-apps/extension  -> application + dsh-adapter + webview-protocol + domain + timeline
-application     -> domain
-dsh-adapter     -> application ports + domain + pinned upstream contract
-editor-bridge   -> domain + DSH runtime peers (cordis / tools / typert)
-apps/webview    -> domain + timeline + ui + webview-protocol
-webview-protocol -> domain + timeline
-timeline        -> domain
-ui              -> domain + React
-domain          -> nothing platform-specific
+apps/extension             -> application + dsh-adapter + webview-protocol + domain + timeline
+application                -> domain
+dsh-adapter                -> application ports + domain + dsh-session-codec-alpha222 + pinned upstream contract
+dsh-session-codec-alpha222 -> pinned V4 session codec (dsh-session-format-v3-to-v4 + cordis)
+editor-bridge              -> domain + DSH runtime peers (cordis / tools / typert)
+apps/webview               -> domain + timeline + ui + webview-protocol
+webview-protocol           -> domain + timeline
+timeline                   -> domain
+ui                         -> domain + React
+domain                     -> nothing platform-specific
 ```
 
 | Layer                | Responsibility                                                                           |

@@ -9,15 +9,16 @@
 ## 依赖方向
 
 ```text
-apps/extension  -> application + dsh-adapter + webview-protocol + domain + timeline
-application     -> domain
-dsh-adapter     -> application ports + domain + pinned upstream contract
-editor-bridge   -> domain + optional DSH runtime peers
-apps/webview    -> domain DTO + timeline + ui + webview-protocol
-webview-protocol -> domain + timeline
-timeline        -> domain
-ui              -> domain + React
-domain          -> nothing platform-specific
+apps/extension             -> application + dsh-adapter + webview-protocol + domain + timeline
+application                -> domain
+dsh-adapter                -> application ports + domain + dsh-session-codec-alpha222 + pinned upstream contract
+dsh-session-codec-alpha222 -> pinned V4 session codec (dsh-session-format-v3-to-v4 + cordis)
+editor-bridge              -> domain + optional DSH runtime peers
+apps/webview               -> domain DTO + timeline + ui + webview-protocol
+webview-protocol           -> domain + timeline
+timeline                   -> domain
+ui                         -> domain + React
+domain                     -> nothing platform-specific
 ```
 
 | 层               | 职责                                                | 禁止                                 |
