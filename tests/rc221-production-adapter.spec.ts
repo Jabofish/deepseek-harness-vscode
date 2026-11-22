@@ -24,6 +24,8 @@ describe.each([
   { version: '0.2.2-rc.3', protocol: 'rc223' },
   { version: '0.2.2-rc.4', protocol: 'rc224' },
   { version: '0.2.2-rc.5', protocol: 'rc225' },
+  { version: '0.2.3-alpha.1', protocol: 'alpha231' },
+  { version: '0.2.3-alpha.2', protocol: 'alpha232' },
 ])('$protocol production Adapter assembly', ({ version, protocol }) => {
   beforeEach(() => vi.useFakeTimers())
   afterEach(() => vi.useRealTimers())

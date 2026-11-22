@@ -105,11 +105,17 @@ export function parseDshUpdateSnapshot(value: unknown): DshUpdateSnapshot | unde
     return undefined
   const restartRequired = snapshot.restartRequired
   if (restartRequired !== undefined && typeof restartRequired !== 'boolean') return undefined
+  if (
+    snapshot.globalLauncherUnverified !== undefined &&
+    (snapshot.globalLauncherUnverified !== true || globalVersion === undefined)
+  )
+    return undefined
   return {
     status: snapshot.status,
     ...(currentVersion === undefined ? {} : { currentVersion }),
     ...(currentSource === undefined ? {} : { currentSource }),
     ...(globalVersion === undefined ? {} : { globalVersion }),
+    ...(snapshot.globalLauncherUnverified === true ? { globalLauncherUnverified: true } : {}),
     ...(latestVersion === undefined ? {} : { latestVersion }),
     ...(latestTagVersion === undefined ? {} : { latestTagVersion }),
     ...(nextTagVersion === undefined ? {} : { nextTagVersion }),

@@ -26,7 +26,8 @@ import { LIVE_TIMEOUT_MS, startManagedRuntime, type ManagedLiveRuntime } from '.
  * remain intact for the earlier composition that actually ships the bundle.
  */
 describe.skipIf(
-  process.env.DSH_LIVE_SMOKE !== '1' || process.env.DSH_LIVE_RUNTIME_VERSION === '0.2.1-alpha.1',
+  process.env.DSH_LIVE_SMOKE !== '1' ||
+    !['0.2.0-rc.1', '0.2.0-rc.2'].includes(process.env.DSH_LIVE_RUNTIME_VERSION ?? ''),
 )('live DSH optional Schedule bundle', () => {
   it(
     'reports the shipped composition as unavailable and answers once the profile enables it',

@@ -1,5 +1,6 @@
 import { AppError } from '@dsh-vscode/domain'
 import { RUNTIME_INSTALL_FAILURE_MESSAGES } from '../vscode/runtime-installation.js'
+import { DSH_PACKAGE_STARTUP_FAILURE_MESSAGE } from '../vscode/update-runtime.js'
 import { redactText } from '@dsh-vscode/dsh-adapter/redaction'
 import {
   MAX_HOST_ERROR_MESSAGE_CHARS,
@@ -505,6 +506,7 @@ function publicErrorMessage(
       if (reason === 'npm-not-found')
         return 'npm was not found in the Extension Host environment. Copy the install command or open a terminal.'
       if (reason === 'invalid-version') return 'Select an exact DSH version from the upstream version list.'
+      if (reason === 'package-startup-failed') return DSH_PACKAGE_STARTUP_FAILURE_MESSAGE
       if (reason === 'metadata-unavailable')
         return withRuntimeUpdateDetail(
           'The selected DSH version could not be verified against the upstream registry.',
@@ -512,7 +514,7 @@ function publicErrorMessage(
         )
       if (reason === 'verify-failed')
         return withRuntimeUpdateDetail(
-          'DSH installation finished, but the selected global version could not be verified.',
+          'DSH installation finished, but the selected global executable could not be verified.',
           context.detail,
         )
       if (reason === 'install-failed')

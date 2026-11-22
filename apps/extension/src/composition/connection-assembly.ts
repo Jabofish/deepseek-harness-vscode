@@ -20,6 +20,7 @@ import {
   type ConnectionRequest,
 } from '@dsh-vscode/application'
 import { VersionedBackendFactory } from '@dsh-vscode/dsh-adapter/backend-factory'
+import { DEFAULT_INSTALL_DSH_VERSION } from '@dsh-vscode/dsh-adapter/contracts'
 import { VersionedBackendProbe } from '@dsh-vscode/dsh-adapter/probe'
 import { redactText } from '@dsh-vscode/dsh-adapter/redaction'
 import { runtimeNpmEnvironment, streamRuntimeCommand } from '../vscode/runtime-command.js'
@@ -41,7 +42,7 @@ import { resolveNpmExecutable } from '../backend/runtime-paths.js'
 import { resolveWindowsShim } from '../backend/windows-shim.js'
 import type { VsCodeConfigurationSource } from '../config/configuration-source.js'
 import { normalizeServerUrl } from '../config/configuration-source.js'
-import { DSH_PACKAGE } from '../constants.js'
+import { INSTALL_ARGUMENTS } from '../constants.js'
 import { RuntimeInstaller } from '../vscode/install-runtime.js'
 import {
   DshRuntimeUpdater,
@@ -485,7 +486,7 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
       const npm = resolveNpmExecutable(os, extensionRuntimePathEntries(os, process.env))
       let resume: (() => Promise<void>) | undefined
       try {
-        await executeRuntimeCommand(npm, ['install', '--global', DSH_PACKAGE], {
+        await executeRuntimeCommand(npm, INSTALL_ARGUMENTS, {
           timeout: RUNTIME_INSTALL_TIMEOUT_MS,
           maxBuffer: RUNTIME_INSTALL_MAX_BUFFER,
           beforeReplace: async () => {
@@ -499,7 +500,7 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
     verifyInstall: async () => {
       runtimeLocator.invalidate()
       try {
-        const verified = (await runtimeLocator.locate()).runtime?.supported === true
+        const verified = await runtimeLocator.verifyNpmGlobalRuntime(DEFAULT_INSTALL_DSH_VERSION)
         appendInstallStatus(
           verified
             ? 'DSH installed and verified.'
@@ -524,6 +525,7 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
       runtimeLocator.invalidate()
       return (await runtimeLocator.locate(signal)).runtime
     },
+    verifyGlobalRuntime: (version, signal) => runtimeLocator.verifyNpmGlobalRuntime(version, signal),
     activeVersion: () => {
       const state = coordinator.getState()
       return state.kind === 'connected' ? state.backend.capabilities.dshVersion : undefined

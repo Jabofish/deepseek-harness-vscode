@@ -6,6 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { runTests } from '@vscode/test-electron'
+import { DEFAULT_INSTALL_DSH_VERSION } from '../../packages/dsh-adapter/src/contracts.ts'
 
 import { resolveLiveRuntime } from '../live-dsh/runtime.ts'
 import { resolveVscodeExecutable } from './vscode-executable.ts'
@@ -33,6 +34,13 @@ export async function run(): Promise<void> {
   const vscodeExecutablePath = resolveVscodeExecutable(process.env.DSH_VSCODE_E2E_EXECUTABLE)
   const mode = resolveMode(process.env.DSH_VSCODE_E2E_MODE)
   const startsRuntime = mode === 'managed' || mode === 'auto'
+  const guidedInstall = process.env.DSH_VSCODE_E2E_GUIDED_INSTALL === '1'
+  const requestedRuntime = process.env.DSH_VSCODE_E2E_RUNTIME?.trim()
+  const invalidSettings = process.env.DSH_VSCODE_E2E_INVALID_SETTINGS === '1'
+  if (guidedInstall && (mode !== 'managed' || invalidSettings || requestedRuntime))
+    throw new Error(
+      'Guided-install E2E requires managed mode without executable or invalid-settings overrides.',
+    )
   // `auto` runs every discovery provider, and the default-port and process
   // providers ignore DSH_HOME entirely. Attaching to a DSH this run does not
   // own would touch the developer's real sessions, so refuse before anything
@@ -53,12 +61,11 @@ export async function run(): Promise<void> {
   // use the user's own profile, so the scenario always runs against a directory
   // inside this test-owned root and the Extension Host is told to expect it.
   const isolatedHome = startsRuntime ? path.join(root, 'dsh-home') : undefined
-  const invalidSettings = process.env.DSH_VSCODE_E2E_INVALID_SETTINGS === '1'
+  const installPrefix = guidedInstall ? path.join(root, 'npm-prefix') : undefined
   // `dsh.runtime.executablePath` is an absolute path by contract, so a bare
   // command name has to be resolved before it is written. Letting it through
   // would fail extension activation with an invalid-settings error instead of
   // launching the runtime the environment variable asked for.
-  const requestedRuntime = process.env.DSH_VSCODE_E2E_RUNTIME?.trim()
   let runtimeExecutable =
     requestedRuntime === undefined || requestedRuntime === ''
       ? undefined
@@ -167,6 +174,17 @@ export async function run(): Promise<void> {
         ELECTRON_RUN_AS_NODE: undefined,
         ...(invalidSettings ? { DSH_VSCODE_E2E_INVALID_SETTINGS: '1' } : {}),
         ...(process.env.DSH_VSCODE_E2E_COMPANION === '1' ? { DSH_VSCODE_E2E_COMPANION: '1' } : {}),
+        ...(installPrefix === undefined
+          ? {}
+          : {
+              npm_config_prefix: installPrefix,
+              DSH_VSCODE_E2E_INSTALL_PREFIX: installPrefix,
+              DSH_VSCODE_E2E_INSTALL_VERSION: DEFAULT_INSTALL_DSH_VERSION,
+              PATH: [
+                process.platform === 'win32' ? installPrefix : path.join(installPrefix, 'bin'),
+                process.env.PATH ?? '',
+              ].join(path.delimiter),
+            }),
         // The Extension Host passes its environment to the DSH it starts, and
         // the suite refuses to connect unless both point at the same
         // test-owned home.

@@ -19,6 +19,8 @@ const protocols: Readonly<Record<string, string>> = {
   '0.2.2-rc.3': 'rc223',
   '0.2.2-rc.4': 'rc224',
   '0.2.2-rc.5': 'rc225',
+  '0.2.3-alpha.1': 'alpha231',
+  '0.2.3-alpha.2': 'alpha232',
 }
 describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1' || protocols[version] === undefined)(
   'live rc.3 workspace blanks and model-listing configuration',

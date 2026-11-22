@@ -56,6 +56,8 @@ export async function run() {
     return
   }
 
+  if (process.env.DSH_VSCODE_E2E_INSTALL_PREFIX !== undefined) await assertGuidedInstallation(mode)
+
   if (mode === 'attach-only') {
     const port = settings['dsh.connection.attachPorts']?.[0]
     assert.equal(typeof port, 'number', 'attach-only mode must record the fixture port')
@@ -103,6 +105,30 @@ export async function run() {
       `[dsh-vscode-e2e] attached methods=[${observed.methods.join(',')}] mux=${observed.muxUpgrades} host=${observed.hostUpgrades}`,
     )
   }
+}
+
+async function assertGuidedInstallation(mode) {
+  const prefix = process.env.DSH_VSCODE_E2E_INSTALL_PREFIX
+  const version = process.env.DSH_VSCODE_E2E_INSTALL_VERSION
+  assert.equal(mode, 'new-isolated')
+  assert.equal(prefix, path.join(path.dirname(process.env.DSH_HOME), 'npm-prefix'))
+  assert.equal(prefix, process.env.npm_config_prefix)
+  assert.match(version, /^\d+\.\d+\.\d+-rc\.\d+$/u)
+  const packageJson = vscode.Uri.file(
+    path.join(
+      prefix,
+      ...(process.platform === 'win32' ? [] : ['lib']),
+      'node_modules',
+      '@deepseek-ai',
+      'dsh',
+      'package.json',
+    ),
+  )
+  await assert.rejects(vscode.workspace.fs.stat(packageJson), { code: 'FileNotFound' })
+  await vscode.commands.executeCommand('dsh.installRuntime')
+  const installed = JSON.parse(new TextDecoder().decode(await vscode.workspace.fs.readFile(packageJson)))
+  assert.equal(installed.version, version)
+  console.log(`[dsh-vscode-e2e] guided installation verified DSH ${version} in the isolated npm prefix`)
 }
 
 /** Real commands and files in the disposable profile, separate from DOM feedback tests. */

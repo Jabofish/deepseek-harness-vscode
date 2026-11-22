@@ -949,6 +949,7 @@
   "settings.dshUpdateInvalidResponse": "The npm registry returned an invalid version list. Check the configured registry, then retry.",
   "settings.dshUpdateCurrent": "Current DSH version",
   "settings.dshUpdateGlobal": "Global package",
+  "settings.dshUpdateGlobalLauncherUnverified": "The global DSH launcher failed verification. Reinstall the package or choose another version.",
   "settings.dshUpdateLatest": "Latest DSH version",
   "settings.dshUpdateNotInstalled": "not installed",
   "settings.dshUpdateAvailable": "DSH {version} is available.",
