@@ -20,6 +20,7 @@ const host = vi.hoisted(() => {
     createGate: undefined as Promise<void> | undefined,
     createStarted: false,
     connectCount: 0,
+    windowFocused: false,
     responseRendered: vi.fn(() => ({ bell: true })),
   }
 })
@@ -80,6 +81,11 @@ vi.mock('vscode', () => ({
       }
       host.panels.push(panel)
       return panel
+    },
+    state: {
+      get focused() {
+        return host.windowFocused
+      },
     },
   },
   env: { language: 'en' },
@@ -152,6 +158,7 @@ function buildGateway(): Harness {
   host.createGate = undefined
   host.createStarted = false
   host.connectCount = 0
+  host.windowFocused = false
   host.responseRendered.mockClear()
   const sent: Sent[] = []
   const events: Sent[] = []
@@ -319,8 +326,99 @@ describe('request gateway editor surface routes', () => {
       request('surface.responseRendered', 'rendered', { sessionId: 's', turn: 1 }),
       'sidebar',
     )
-    expect(host.responseRendered).toHaveBeenCalledExactlyOnceWith('s', 1)
+    expect(host.responseRendered).toHaveBeenCalledExactlyOnceWith('s', 1, undefined)
     expect(harness.sent.find((entry) => entry.requestId === 'rendered')?.payload).toEqual({ bell: true })
+  })
+
+  it('forwards the renderer focus signal to the cue authority', async () => {
+    harness.openSidebar()
+    await harness.gateway.router.handle(request('app.ready', 'ready'), 'sidebar')
+    const window = harness.transcript.forSurface('sidebar')
+    window.installPage('s', { events: [], hasMore: false }, window.begin('s'))
+    await harness.gateway.router.handle(
+      request('surface.responseRendered', 'unfocused', { sessionId: 's', turn: 1, focused: false }),
+      'sidebar',
+    )
+    await harness.gateway.router.handle(
+      request('surface.responseRendered', 'focused', { sessionId: 's', turn: 1, focused: true }),
+      'sidebar',
+    )
+    expect(host.responseRendered.mock.calls).toEqual([
+      ['s', 1, false],
+      ['s', 1, true],
+    ])
+  })
+
+  it('resolves focus and a chime target for a needs-input cue', async () => {
+    harness.openSidebar()
+    await harness.gateway.router.handle(request('app.ready', 'ready'), 'sidebar')
+    for (const id of ['sidebar', 'editor-cue']) {
+      const window = harness.transcript.forSurface(id)
+      window.installPage('s', { events: [], hasMore: false }, window.begin('s'))
+    }
+    harness.surfaces.register({
+      surfaceId: 'editor-cue',
+      kind: 'editor',
+      visible: true,
+      isReady: true,
+      postMessage: () => Promise.resolve(true),
+    } as never)
+
+    await harness.gateway.router.handle(
+      request('surface.focus', 'cue-focus', { focused: true }),
+      'editor-cue',
+    )
+    const watched = harness.gateway.cueContext('s')
+    expect(watched.focused).toBe(true)
+    expect(typeof watched.surfaceId).toBe('string')
+
+    host.windowFocused = true
+    await harness.gateway.router.handle(
+      request('surface.focus', 'cue-blur', { focused: false }),
+      'editor-cue',
+    )
+    expect(harness.gateway.cueContext('s')).toMatchObject({ focused: false })
+    expect(harness.gateway.cueContext('other')).toEqual({ focused: true })
+  })
+
+  it('keeps a watched session quiet when another visible panel renders first', async () => {
+    harness.openSidebar()
+    await harness.gateway.router.handle(request('app.ready', 'ready'), 'sidebar')
+    for (const id of ['sidebar', 'editor-watch']) {
+      const window = harness.transcript.forSurface(id)
+      window.installPage('s', { events: [], hasMore: false }, window.begin('s'))
+    }
+    harness.surfaces.register({
+      surfaceId: 'editor-watch',
+      kind: 'editor',
+      visible: true,
+      isReady: true,
+      postMessage: () => Promise.resolve(true),
+    } as never)
+    await harness.gateway.router.handle(request('surface.focus', 'watch', { focused: true }), 'editor-watch')
+    await harness.gateway.router.handle(
+      request('surface.responseRendered', 'sidebar-render', {
+        sessionId: 's',
+        turn: 1,
+        focused: false,
+      }),
+      'sidebar',
+    )
+    expect(host.responseRendered).toHaveBeenCalledExactlyOnceWith('s', 1, true)
+
+    await harness.gateway.router.handle(
+      request('surface.focus', 'unwatch', { focused: false }),
+      'editor-watch',
+    )
+    await harness.gateway.router.handle(
+      request('surface.responseRendered', 'sidebar-render-again', {
+        sessionId: 's',
+        turn: 1,
+        focused: false,
+      }),
+      'sidebar',
+    )
+    expect(host.responseRendered).toHaveBeenLastCalledWith('s', 1, false)
   })
 
   it('does not let a hidden surface consume the cue before a visible surface renders', async () => {
@@ -340,7 +438,7 @@ describe('request gateway editor surface routes', () => {
       request('surface.responseRendered', 'visible', { sessionId: 's', turn: 1 }),
       'sidebar',
     )
-    expect(host.responseRendered).toHaveBeenCalledExactlyOnceWith('s', 1)
+    expect(host.responseRendered).toHaveBeenCalledExactlyOnceWith('s', 1, undefined)
     expect(harness.sent.find((entry) => entry.requestId === 'visible')?.payload).toEqual({ bell: true })
   })
 

@@ -1,4 +1,5 @@
 import type { PluginInstallProgressView, SubagentCatalog, QuestionSettlements } from '@dsh-vscode/domain'
+import { PLAY_COMPLETION_CUE_EVENT } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from '../protocol-client.js'
 import type { PluginInstallRecoveryController } from '../plugin-install-recovery.js'
 import type { AppState, StateSetter } from './types.js'
@@ -13,6 +14,7 @@ import type { createTurnWatchers } from './turn-watchers.js'
 import type { createSurfaceActions } from './surface-actions.js'
 import { parseHostDomainEvent } from './event-parser.js'
 import { backendEventSessionId, applyHostMessage } from './host-message-reducers.js'
+import { playCompletionCueBell } from '../cue-audio.js'
 import { object } from './unknown-record.js'
 import { parsePermissionCatalog } from './permission-catalog.js'
 import { connectionIdentity } from './session-projection.js'
@@ -157,6 +159,10 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
     // active session in the editor area). They own their own reduction and never
     // reach the conversation pipeline.
     if (surfaceActions.applySurfaceEvent(message)) return
+    if (message.type === 'event' && message.name === PLAY_COMPLETION_CUE_EVENT) {
+      void playCompletionCueBell()
+      return
+    }
     if (message.type === 'event' && message.name === 'ui.resync') {
       deps.invalidateJobFollow()
       turnWatchers.disposeAll()

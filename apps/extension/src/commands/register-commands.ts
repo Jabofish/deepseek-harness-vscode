@@ -33,6 +33,7 @@ export const COMMANDS = [
   'dsh.moveChatToSidebar',
   'dsh.renameEditorSession',
   'dsh.showDiagnostics',
+  'dsh.completionCue.test',
   'dsh.addSelectionContext',
   'dsh.addFileContext',
   'dsh.addSymbolContext',

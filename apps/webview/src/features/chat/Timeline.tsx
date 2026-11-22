@@ -94,7 +94,7 @@ export interface TimelineProps {
   readonly loadFullNode?: (nodeId: string, signal?: AbortSignal) => Promise<TimelineNode>
   readonly loadFullContent?: (nodeId: string) => Promise<string>
   /** Receipt after the settled turn's current full bodies have committed. */
-  readonly onResponseRendered?: (sessionId: string, turn: number) => Promise<boolean>
+  readonly onResponseRendered?: (sessionId: string, turn: number, focused?: boolean) => Promise<boolean>
   /** Whether an older DSH history window is available. */
   readonly hasMoreHistory?: boolean
   readonly loadingOlderHistory?: boolean

@@ -6,6 +6,10 @@ Release entries describe behaviour at that release. `Unreleased` lists changes a
 
 ## Unreleased
 
+- Completion cues now use each visible chat's real focus (reported by the Webview) instead of relying only on VS Code's window focus, which stays stale on some Linux window managers; a visible chat the user is watching keeps the cue quiet even when another panel renders the same reply first. The bell is unlocked by the first chat interaction, reuses one audio context, gives up on a blocked resume and plays a louder two-tone chime. The setting stays off by default and is window-scoped, so it appears in User and Workspace settings. Adds **JaboDSH: Test Completion Cue**, an opt-in `dsh.completionCueWhenFocused` for a cue while watching, and debug-level cue decisions (with their redaction-safe fields) in the JaboDSH output. The same cue now fires once when the agent asks a question or waits for an approval, with a "needs your input" notification text.
+- `notification` cues now use the desktop notification service on Linux (fixed-argument `notify-send`) and macOS (`osascript`), falling back to VS Code's in-window notification when no notifier is available; Windows and remote workspaces use the in-window fallback.
+- 完成提示改用每个可见聊天的 Webview 真实焦点，不再只依赖 VS Code 窗口焦点（部分 Linux 窗口管理器下该值会滞留）；用户正在查看某个可见聊天时，即使其他面板先渲染同一回复也不会触发提示。提示音在首次聊天交互时解锁、复用同一音频上下文、在恢复超时后放弃，并改为更响的双音。设置仍默认关闭，作用域为窗口级，可在用户和工作区设置中找到。新增 **JaboDSH: Test Completion Cue** 命令、可选的 `dsh.completionCueWhenFocused`（查看回复时也提醒），并在 JaboDSH 输出中以 debug 级别记录提示决策及其脱敏字段。代理请求提问或等待审批时，也会以“需要输入”的通知内容提醒一次。
+- `notification` 提示在 Linux（固定参数的 `notify-send`）和 macOS（`osascript`）上使用桌面通知服务，缺少可用通知器时回退到 VS Code 窗口内通知；Windows 和远程工作区使用窗口内通知。
 - Adds exact support for DSH `0.2.3-alpha.2` (`4b399c39a6d1479cd84ca591b4d7c88e24d38a96`). Its stock npm package starts with the updated Cordis Loader and requires Node `^24.22.3 || >=26.13.1`.
 - 适配 DSH `0.2.3-alpha.2`（`4b399c39a6d1479cd84ca591b4d7c88e24d38a96`）。原版 npm 包使用更新后的 Cordis Loader，可正常启动。Node 要求为 `^24.22.3 || >=26.13.1`。
 - Guided installation now installs and verifies DSH `0.2.2-rc.5` directly. The update list excludes the unbootable `0.2.3-alpha.1` npm package.

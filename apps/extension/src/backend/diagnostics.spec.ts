@@ -61,6 +61,70 @@ describe('RedactedDiagnostics', () => {
     diagnostics.dispose()
   })
 
+  it('keeps completion cue decisions and their bounded coordinates', () => {
+    const { lines, channel } = fakeChannel()
+    const diagnostics = new RedactedDiagnostics(channel, () => 'debug')
+    diagnostics.log('debug', 'completion-cue', {
+      decision: 'suppressed',
+      reason: 'focused',
+      mode: 'bell',
+      turn: 3,
+      ageMs: 1200,
+      native: true,
+      prompt: 'private prompt',
+    })
+
+    const entry = JSON.parse(lines[0] ?? '') as { event: string; fields: Record<string, unknown> }
+    expect(entry.event).toBe('completion-cue')
+    expect(entry.fields).toEqual({
+      decision: 'suppressed',
+      reason: 'focused',
+      mode: 'bell',
+      turn: 3,
+      ageMs: 1200,
+      native: true,
+    })
+    const recent = JSON.parse(diagnostics.recentEvents()[0] ?? '') as {
+      fields: Record<string, unknown>
+    }
+    expect(recent.fields).toMatchObject({
+      decision: 'suppressed',
+      reason: 'focused',
+      mode: 'bell',
+      turn: 3,
+      native: true,
+    })
+    expect(recent.fields).not.toHaveProperty('prompt')
+
+    diagnostics.log('debug', 'completion-cue', {
+      decision: 'needs-input',
+      kind: 'question',
+      mode: 'bell',
+      focused: false,
+      delivered: true,
+    })
+    const needsInput = JSON.parse(lines[1] ?? '') as {
+      event: string
+      fields: Record<string, unknown>
+    }
+    expect(needsInput.fields).toEqual({
+      decision: 'needs-input',
+      kind: 'question',
+      mode: 'bell',
+      focused: false,
+      delivered: true,
+    })
+    const needsInputRecent = JSON.parse(diagnostics.recentEvents()[1] ?? '') as {
+      fields: Record<string, unknown>
+    }
+    expect(needsInputRecent.fields).toMatchObject({
+      decision: 'needs-input',
+      kind: 'question',
+      delivered: true,
+    })
+    diagnostics.dispose()
+  })
+
   it('keeps a bounded recent ring without exposing secrets', () => {
     const { channel } = fakeChannel()
     const diagnostics = new RedactedDiagnostics(channel)

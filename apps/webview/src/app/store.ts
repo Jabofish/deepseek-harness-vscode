@@ -829,13 +829,20 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     getState: () => state,
     subscribe: (listener, keys) =>
       disposed ? () => undefined : subscriptions.subscribe(listener, state, keys),
-    responseRendered: async (sessionId, turn) => {
+    responseRendered: async (sessionId, turn, focused) => {
       const result = await client.request<{ bell?: unknown }>({
         type: 'surface.responseRendered',
         requestId: requestId(),
-        payload: { sessionId, turn },
+        payload: { sessionId, turn, ...(focused === undefined ? {} : { focused }) },
       })
       return result?.bell === true
+    },
+    reportSurfaceFocus: async (focused) => {
+      await client.request({
+        type: 'surface.focus',
+        requestId: requestId(),
+        payload: { focused },
+      })
     },
     watchSessionTurnEnd: (sessionId) => turnWatchers.watch(sessionId),
     ...lifecycleActions,

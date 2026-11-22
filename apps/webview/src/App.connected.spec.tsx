@@ -272,6 +272,7 @@ function storeFor(state: AppState): AppStore {
     ...state,
     getState: () => state,
     responseRendered: vi.fn().mockResolvedValue(false),
+    reportSurfaceFocus: vi.fn().mockResolvedValue(undefined),
     subscribe: () => () => undefined,
     watchSessionTurnEnd: vi.fn(() => ({ completion: Promise.resolve(), dispose: vi.fn() })),
     initialize: vi.fn().mockResolvedValue(undefined),

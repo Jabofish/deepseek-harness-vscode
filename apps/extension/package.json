@@ -46,6 +46,7 @@
     "onCommand:dsh.openChatInEditor",
     "onCommand:dsh.moveChatToSidebar",
     "onCommand:dsh.openWebUi",
+    "onCommand:dsh.completionCue.test",
     "onCommand:dsh.installRuntime",
     "onCommand:dsh.addSelectionContext",
     "onCommand:dsh.addFileContext",
@@ -190,6 +191,10 @@
       {
         "command": "dsh.showDiagnostics",
         "title": "JaboDSH: Show Redacted Diagnostics"
+      },
+      {
+        "command": "dsh.completionCue.test",
+        "title": "JaboDSH: Test Completion Cue"
       },
       {
         "command": "dsh.addSelectionContext",
@@ -481,6 +486,9 @@
           "command": "dsh.showDiagnostics"
         },
         {
+          "command": "dsh.completionCue.test"
+        },
+        {
           "command": "dsh.addSelectionContext",
           "when": "false"
         },
@@ -564,8 +572,19 @@
             "off"
           ],
           "default": "off",
-          "scope": "application",
-          "description": "Cue after a live response is rendered while the VS Code window is unfocused. Notification uses VS Code notifications; bell plays a brief sound in the chat. Notification and audio delivery follow the editor, browser and operating system settings."
+          "scope": "window",
+          "enumDescriptions": [
+            "Show a desktop notification on local Linux and macOS, or a VS Code notification.",
+            "Play a short chime in the chat.",
+            "No cue."
+          ],
+          "description": "Cue when a live response is rendered or the agent asks for input (question or approval) while the chat does not have focus, for example when the VS Code window is unfocused. Set it in User or Workspace settings. The bell plays in the chat Webview and may need one click inside the chat before the first sound. Run \"JaboDSH: Test Completion Cue\" to check the configured mode."
+        },
+        "dsh.completionCueWhenFocused": {
+          "type": "boolean",
+          "default": false,
+          "scope": "window",
+          "description": "Play the cue even while the chat has focus, for reply completion and for questions or approvals that need input."
         },
         "dsh.editor.enabled": {
           "type": "boolean",

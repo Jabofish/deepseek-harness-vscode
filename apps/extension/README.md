@@ -60,7 +60,7 @@ Choose **Open in Editor Area** or run **JaboDSH: Open Chat in Editor Area** (`/m
 
 **Open Web UI** uses VS Code's integrated browser by default. To use your system browser, set `dsh.webUi.browser` to `external` in VS Code Settings.
 
-Set `dsh.completionCue` to `notification` or `bell` for a cue after a successful live reply finishes rendering while VS Code is unfocused; the default is `off`. Notifications use VS Code's notification UI. Desktop popups and sound depend on editor, browser and operating system settings.
+Set `dsh.completionCue` in your User or Workspace settings to `notification` or `bell` for a cue after a successful live reply finishes rendering, or when the agent asks a question or waits for an approval, while the chat does not have focus (for example when VS Code is unfocused); the default is `off`. Notifications use the desktop notification service on Linux and macOS, with VS Code's in-window notification as the fallback; Windows and remote workspaces use the in-window notification. The bell plays in the chat and may need one click inside the chat before the first sound. Set `dsh.completionCueWhenFocused` to `true` to cue even while you watch the reply. Run **JaboDSH: Test Completion Cue** to check the configured mode.
 
 To drag a session directly into a split, run **JaboDSH: Open Drag Sessions** to open **JaboDSH Sessions** in Explorer, then drag a session row to an editor edge. The Explorer list is hidden until you run that command.
 

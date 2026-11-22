@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import type { TimelineState } from '@dsh-vscode/timeline'
 import type { AppStore } from './store.js'
+import { installCompletionCueAudioUnlock, playCompletionCueBell } from './cue-audio.js'
 
 /** Called by the transcript renderer after current full bodies have committed. */
 export function useCompletionCue(
@@ -9,6 +10,9 @@ export function useCompletionCue(
   pendingIds?: ReadonlySet<string>,
 ): void {
   const last = useRef<string | undefined>(undefined)
+  // A cue arrives long after the gesture that sent the prompt, so warm the
+  // shared audio context while the user is still interacting with the chat.
+  useEffect(() => installCompletionCueAudioUnlock(), [])
   const answer = timeline.nodes.findLast(
     (node) =>
       node.kind === 'assistant-message' &&
@@ -26,41 +30,20 @@ export function useCompletionCue(
     const key = JSON.stringify([sessionId, turn])
     if (last.current === key) return
     let active = true
-    let audio: AudioContext | undefined
     const timer = window.setTimeout(() => {
       last.current = key
-      void responseRendered(sessionId, turn)
+      // The renderer knows whether the chat really has focus; VS Code's window
+      // focus is stale on some Linux window managers.
+      void responseRendered(sessionId, turn, document.hasFocus())
         .then(async (bell) => {
-          if (!bell || !active || typeof AudioContext === 'undefined') return
-          const context = new AudioContext()
-          audio = context
-          let started = false
-          try {
-            await context.resume()
-            if (!active) return
-            const oscillator = context.createOscillator()
-            const gain = context.createGain()
-            oscillator.connect(gain)
-            gain.connect(context.destination)
-            oscillator.frequency.value = 880
-            gain.gain.setValueAtTime(0.08, context.currentTime)
-            gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.18)
-            oscillator.onended = () => {
-              void context.close().catch(() => undefined)
-            }
-            oscillator.start()
-            oscillator.stop(context.currentTime + 0.2)
-            started = true
-          } finally {
-            if (!started) await context.close()
-          }
+          if (!bell || !active) return
+          await playCompletionCueBell()
         })
         .catch(() => undefined)
     }, 0)
     return () => {
       active = false
       window.clearTimeout(timer)
-      if (audio !== undefined && audio.state !== 'closed') void audio.close().catch(() => undefined)
     }
   }, [sessionId, turn, pending, responseRendered])
 }

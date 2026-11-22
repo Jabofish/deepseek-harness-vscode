@@ -58,6 +58,8 @@ export interface RequestGateway {
     signal: AbortSignal,
   ) => Promise<void>
   readonly moveChatToSidebar: (surfaceId?: string, signal?: AbortSignal) => Promise<void>
+  /** Focus and a chime target for a needs-input cue in this session. */
+  readonly cueContext: (sessionId: string) => { focused: boolean; surfaceId?: string }
 }
 
 function workspaceTrustRequired(): AppError {
@@ -251,11 +253,58 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
   }
 
   let openingConnection: { readonly abort: AbortController; readonly promise: Promise<unknown> } | undefined
+  /**
+   * Renderer focus per live Webview. A session can be shown by the sidebar and
+   * an editor tab at once, so the receipt's own signal is not enough: a visible
+   * chat the user is watching must keep the cue quiet even when another panel
+   * renders the same answer first.
+   */
+  const surfaceFocus = new Map<string, boolean>()
+  const cueContext = (sessionId: string): { focused: boolean; surfaceId?: string } => {
+    let visible: string | undefined
+    let any: string | undefined
+    let focused = false
+    let reported = false
+    for (const surface of surfaces.list()) {
+      if (!surface.isReady || !deps.transcript.hasSurface(surface.surfaceId)) continue
+      if (deps.transcript.forSurface(surface.surfaceId).activeSessionId() !== sessionId) continue
+      any ??= surface.surfaceId
+      if (!surface.visible) continue
+      visible ??= surface.surfaceId
+      if (!surfaceFocus.has(surface.surfaceId)) continue
+      reported = true
+      if (surfaceFocus.get(surface.surfaceId) === true) focused = true
+    }
+    // No renderer has reported focus for a visible chat showing this session;
+    // fall back to VS Code's window focus.
+    if (!reported) focused = vscode.window.state.focused
+    const surfaceId = visible ?? any
+    return surfaceId === undefined ? { focused } : { focused, surfaceId }
+  }
+  const anotherFocusedSurface = (senderId: string, sessionId: string): boolean => {
+    for (const [id, focused] of surfaceFocus) {
+      const surface = surfaces.get(id)
+      if (surface === undefined) {
+        surfaceFocus.delete(id)
+        continue
+      }
+      if (!focused || id === senderId || !surface.visible) continue
+      if (!deps.transcript.hasSurface(id)) continue
+      if (deps.transcript.forSurface(id).activeSessionId() === sessionId) return true
+    }
+    return false
+  }
   const handleRequest = async (
     request: WebviewRequest,
     signal: AbortSignal,
     surfaceId: string | undefined,
   ): Promise<unknown> => {
+    if (request.type === 'surface.focus') {
+      signal.throwIfAborted()
+      if (surfaceId !== undefined && surfaces.get(surfaceId) !== undefined)
+        surfaceFocus.set(surfaceId, request.payload.focused)
+      return {}
+    }
     if (request.type === 'surface.responseRendered') {
       signal.throwIfAborted()
       const surface = surfaceId === undefined ? undefined : surfaces.get(surfaceId)
@@ -266,7 +315,14 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
         deps.transcript.forSurface(surface.surfaceId).activeSessionId() !== request.payload.sessionId
       )
         return { bell: false }
-      return deps.responseRendered?.(request.payload.sessionId, request.payload.turn) ?? { bell: false }
+      const watched = anotherFocusedSurface(surface.surfaceId, request.payload.sessionId)
+      return (
+        deps.responseRendered?.(
+          request.payload.sessionId,
+          request.payload.turn,
+          watched ? true : request.payload.focused,
+        ) ?? { bell: false }
+      )
     }
     if (request.type === 'ui.events.ack') {
       if (surfaceId !== undefined) deps.acknowledgeHostEvents?.(surfaceId, request.payload.sequence)
@@ -280,6 +336,8 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
       return { updated: true }
     }
     if (request.type === 'app.ready') {
+      // Keep the renderer focus report: the Webview may have sent it before
+      // this handshake, and the next focus change refreshes it.
       if (surfaceId !== undefined) deps.forgetHostSurface?.(surfaceId)
       const opening = openingConnection
       if (request.payload?.snapshotOnly === true) {
@@ -884,6 +942,7 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
   }
   const onSurfaceWorkCancelled = (disposedSurfaceId: string): void => {
     selectionRequests.delete(disposedSurfaceId)
+    surfaceFocus.delete(disposedSurfaceId)
     sessionWatch.surfaceReleased(disposedSurfaceId)
     deps.forgetHostSurface?.(disposedSurfaceId)
     deps.transcript.remove(disposedSurfaceId)
@@ -993,5 +1052,6 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     moveChatToSidebar,
     openDroppedSession,
     sessionNavigation,
+    cueContext,
   }
 }

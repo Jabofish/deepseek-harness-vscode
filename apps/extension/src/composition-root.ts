@@ -1,5 +1,10 @@
 import * as vscode from 'vscode'
-import { CompletionCue } from './view/completion-cue.js'
+import {
+  COMPLETION_CUE_INPUT_NOTIFICATION,
+  COMPLETION_CUE_NOTIFICATION,
+  CompletionCue,
+} from './view/completion-cue.js'
+import { showNativeNotification } from './view/native-notification.js'
 import { BillingFeatureHost } from './billing/billing-feature-handler.js'
 import { ModelsDevPriceSource } from './billing/models-dev-price-source.js'
 import { FrankfurterExchangeSource } from './billing/frankfurter-exchange-source.js'
@@ -9,6 +14,7 @@ import {
   featureHostMessageSchema,
   hostEnvelopeSchema,
   hostMessageSchema,
+  PLAY_COMPLETION_CUE_EVENT,
   type FeatureHostMessage,
   type HostMessage,
 } from '@dsh-vscode/webview-protocol'
@@ -237,14 +243,29 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     },
     (hasSurface) => surfaces.list().some((surface) => surface.isReady && !hasSurface(surface.surfaceId)),
   )
+  const notifyCompletionCue = async (body: string): Promise<boolean> => {
+    const shown =
+      vscode.env.remoteName === undefined &&
+      (await showNativeNotification('JaboDSH', body).catch(() => false))
+    diagnostics.log('debug', 'completion-cue', { decision: 'notified', native: shown })
+    if (!shown) await Promise.resolve(vscode.window.showInformationMessage(body)).catch(() => undefined)
+    return shown
+  }
+  const needsInputContext: {
+    current: ((sessionId: string) => { focused: boolean; bell: () => void }) | undefined
+  } = { current: undefined }
   const completionCue = new CompletionCue({
     mode: () => vscode.workspace.getConfiguration('dsh').get('completionCue', 'off'),
     focused: () => vscode.window.state.focused,
-    notify: () => {
-      void Promise.resolve(vscode.window.showInformationMessage('JaboDSH response is ready.')).catch(
-        () => undefined,
+    includeFocused: () =>
+      vscode.workspace.getConfiguration('dsh').get<boolean>('completionCueWhenFocused', false),
+    notify: (reason) => {
+      void notifyCompletionCue(
+        reason === 'turn' ? COMPLETION_CUE_NOTIFICATION : COMPLETION_CUE_INPUT_NOTIFICATION,
       )
     },
+    needsInput: (sessionId) => needsInputContext.current?.(sessionId),
+    log: (event) => diagnostics.log('debug', 'completion-cue', event),
   })
   const {
     postFeatureEvent,
@@ -391,7 +412,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     currentWorkspaceFolders,
   })
   const gateway = createRequestGateway({
-    responseRendered: (sessionId, turn) => completionCue.rendered(sessionId, turn),
+    responseRendered: (sessionId, turn, chatFocused) => completionCue.rendered(sessionId, turn, chatFocused),
     acknowledgeHostEvents: acknowledgeEvents,
     forgetHostSurface: forgetSurface,
     prepareEditorSession: (sessionId, signal) => commands.editorCompanion.prepareSession(sessionId, signal),
@@ -447,6 +468,59 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const { router, provider, editorSurfaces, moveChatToSidebar, openDroppedSession, sessionNavigation } =
     gateway
   nativeNavigation.current = sessionNavigation
+  needsInputContext.current = (sessionId) => {
+    const context = gateway.cueContext(sessionId)
+    return {
+      focused: context.focused,
+      bell: () => {
+        if (context.surfaceId !== undefined)
+          void postEventTo(context.surfaceId, PLAY_COMPLETION_CUE_EVENT, {})
+      },
+    }
+  }
+  // The cue only runs for live, unfocused turns, so expose the configured
+  // mode on demand instead of asking the user to wait for one.
+  const openCompletionCueSettings = async (): Promise<void> => {
+    await vscode.commands.executeCommand('workbench.action.openSettings', 'dsh.completionCue')
+  }
+  const testCompletionCue = async (): Promise<void> => {
+    const mode = completionCue.mode()
+    diagnostics.log('info', 'completion-cue', { decision: 'test', mode })
+    const settingsAction = 'Open Settings'
+    if (mode === 'off') {
+      const answer = await vscode.window.showInformationMessage(
+        'Completion cues are off. Set "dsh.completionCue" to "notification" or "bell" in your User settings.',
+        settingsAction,
+      )
+      if (answer === settingsAction) await openCompletionCueSettings()
+      return
+    }
+    if (mode === 'notification') {
+      const native = await notifyCompletionCue(COMPLETION_CUE_NOTIFICATION)
+      if (!native) {
+        const answer = await vscode.window.showWarningMessage(
+          'Desktop notifications are unavailable; VS Code can only show this cue inside its window. Choose "bell" for an audible cue.',
+          settingsAction,
+        )
+        if (answer === settingsAction) await openCompletionCueSettings()
+      }
+      return
+    }
+    // One chord, not one per open editor chat: target the surface a real cue
+    // would come from.
+    const surface = surfaces.active
+    if (surface === undefined || !(await postEventTo(surface.surfaceId, PLAY_COMPLETION_CUE_EVENT, {}))) {
+      await vscode.window.showWarningMessage(
+        'The JaboDSH chat is not ready. Open it, then run the completion cue test again.',
+      )
+      return
+    }
+    // Delivery only proves the frame reached the Webview; playback policy can
+    // still keep the first chime silent until the chat has been clicked.
+    void vscode.window.showInformationMessage(
+      'Completion cue test sent. If you heard nothing, click inside the chat once and run the test again.',
+    )
+  }
   const commands = createCommandsAssembly({
     context,
     configuration,
@@ -493,6 +567,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       })
     },
     disposeEndpointAccess: () => externalConnection.dispose(),
+    testCompletionCue,
   })
 
   const root: CompositionRoot = {

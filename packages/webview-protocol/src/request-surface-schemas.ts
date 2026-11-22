@@ -13,7 +13,30 @@ export const surfaceRequestSchemas = [
     .object({
       type: z.literal('surface.responseRendered'),
       ...requestBase,
-      payload: z.object({ sessionId: id, turn: z.number().int().nonnegative().safe() }).strict(),
+      payload: z
+        .object({
+          sessionId: id,
+          turn: z.number().int().nonnegative().safe(),
+          /**
+           * `document.hasFocus()` in the chat renderer. The Host cannot read the
+           * editor's real focus reliably on every Linux window manager, so the
+           * renderer's signal decides whether the cue is wanted.
+           */
+          focused: z.boolean().optional(),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('surface.focus'),
+      ...requestBase,
+      /**
+       * Whether this Webview holds renderer focus. The Host tracks it per
+       * surface so a completion cue stays quiet while any visible chat showing
+       * the same session is being watched.
+       */
+      payload: z.object({ focused: z.boolean() }).strict(),
     })
     .strict(),
   z
