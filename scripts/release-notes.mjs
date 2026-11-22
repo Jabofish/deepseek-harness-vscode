@@ -31,8 +31,11 @@ const englishBullets = bullets.filter((bullet) => !/\p{Script=Han}/u.test(bullet
 const highlights = (englishBullets.length > 0 ? englishBullets : bullets).slice(0, 5)
 if (highlights.length === 0) throw new Error(`CHANGELOG.md has no release notes for ${version}.`)
 
+// Structured sections carry their complete release text, including translations and acknowledgements.
+const notes = section.some((line) => line.startsWith('### '))
+  ? section.join('\n').trim()
+  : highlights.map((bullet) => `- ${bullet}`).join('\n')
 const repositoryUrl = manifest.repository.url.replace(/\.git$/u, '')
 process.stdout.write(
-  `## ${version}\n\n${highlights.map((bullet) => `- ${bullet}`).join('\n')}\n\n` +
-    `[Detailed changelog](${repositoryUrl}/blob/${tag}/apps/extension/CHANGELOG.md)\n`,
+  `## ${version}\n\n${notes}\n\n[Detailed changelog](${repositoryUrl}/blob/${tag}/apps/extension/CHANGELOG.md)\n`,
 )

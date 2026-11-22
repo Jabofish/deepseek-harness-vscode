@@ -6,7 +6,7 @@ import type { TimelineState } from '@dsh-vscode/timeline'
 
 const audio = vi.hoisted(() => ({
   unlock: vi.fn(() => vi.fn()),
-  play: vi.fn(() => Promise.resolve(true)),
+  play: vi.fn<(_signal?: AbortSignal) => Promise<boolean>>(() => Promise.resolve(true)),
 }))
 
 vi.mock('./cue-audio.js', () => ({
@@ -80,8 +80,12 @@ it('plays the accepted bell through the unlocked Webview audio', async () => {
     useCompletionCue(responseRendered, timeline(true))
     return <p>Final answer</p>
   }
-  render(<View />)
+  const view = render(<View />)
   await waitFor(() => expect(audio.play).toHaveBeenCalledTimes(1))
+  const signal = audio.play.mock.calls[0]?.[0]
+  expect(signal?.aborted).toBe(false)
   expect(responseRendered).toHaveBeenCalledExactlyOnceWith('s', 1, true)
   expect(audio.unlock).toHaveBeenCalled()
+  view.unmount()
+  expect(signal?.aborted).toBe(true)
 })

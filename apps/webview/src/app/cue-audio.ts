@@ -22,20 +22,24 @@ function audioContext(): AudioContext | undefined {
 
 const isRunning = (audio: AudioContext): boolean => audio.state === 'running'
 
-async function runningContext(audio: AudioContext): Promise<boolean> {
+async function runningContext(audio: AudioContext, signal?: AbortSignal): Promise<boolean> {
   if (isRunning(audio)) return true
   let timer: ReturnType<typeof setTimeout> | undefined
+  let stop: (() => void) | undefined
   try {
+    const stopped = new Promise<boolean>((resolve) => {
+      stop = () => resolve(false)
+      timer = setTimeout(stop, RESUME_TIMEOUT_MS)
+      signal?.addEventListener('abort', stop, { once: true })
+    })
     const resumed = audio.resume().then(
       () => true,
       () => false,
     )
-    const timedOut = new Promise<boolean>((resolve) => {
-      timer = setTimeout(() => resolve(false), RESUME_TIMEOUT_MS)
-    })
-    return (await Promise.race([resumed, timedOut])) && isRunning(audio)
+    return (await Promise.race([resumed, stopped])) && isRunning(audio)
   } finally {
     if (timer !== undefined) clearTimeout(timer)
+    if (stop !== undefined) signal?.removeEventListener('abort', stop)
   }
 }
 
@@ -50,11 +54,12 @@ export function unlockCompletionCueAudio(): void {
  * Play the two-tone completion chime. Returns false when this Webview cannot
  * produce sound, for example when playback policy still blocks the context.
  */
-export async function playCompletionCueBell(): Promise<boolean> {
-  const audio = audioContext()
-  if (audio === undefined) return false
+export async function playCompletionCueBell(signal?: AbortSignal): Promise<boolean> {
   try {
-    if (!(await runningContext(audio))) return false
+    signal?.throwIfAborted()
+    const audio = audioContext()
+    if (audio === undefined || !(await runningContext(audio, signal))) return false
+    signal?.throwIfAborted()
     const start = audio.currentTime
     for (const [offset, frequency] of [
       [0, 880],
