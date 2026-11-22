@@ -300,10 +300,9 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     surfaceId: string | undefined,
   ): Promise<unknown> => {
     if (request.type === 'surface.focus') {
-      if (surfaceId !== undefined) {
-        if (request.payload.focused) surfaceFocus.set(surfaceId, true)
-        else surfaceFocus.delete(surfaceId)
-      }
+      signal.throwIfAborted()
+      if (surfaceId !== undefined && surfaces.get(surfaceId) !== undefined)
+        surfaceFocus.set(surfaceId, request.payload.focused)
       return {}
     }
     if (request.type === 'surface.responseRendered') {
@@ -943,6 +942,7 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
   }
   const onSurfaceWorkCancelled = (disposedSurfaceId: string): void => {
     selectionRequests.delete(disposedSurfaceId)
+    surfaceFocus.delete(disposedSurfaceId)
     sessionWatch.surfaceReleased(disposedSurfaceId)
     deps.forgetHostSurface?.(disposedSurfaceId)
     deps.transcript.remove(disposedSurfaceId)

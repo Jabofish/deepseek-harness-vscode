@@ -23,10 +23,13 @@ function updater(
   current = runtime(),
   onProgress?: (progress: DshRuntimeUpdateProgress) => void,
   prepareManagedUpdate?: () => Promise<(() => Promise<void>) | undefined>,
+  verifyGlobalRuntime: (version: string, signal?: AbortSignal) => Promise<boolean> = () =>
+    Promise.resolve(true),
 ): DshRuntimeUpdater {
   return new DshRuntimeUpdater({
     npmExecutable: () => 'npm.cmd',
     locateRuntime: () => Promise.resolve(current),
+    verifyGlobalRuntime,
     execute: async (executable, args, options) => {
       if (args[0] === 'install') await options.beforeReplace?.()
       return execute(executable, args, options)
@@ -39,6 +42,58 @@ function updater(
 }
 
 describe('DshRuntimeUpdater', () => {
+  it.each([
+    { next: '0.2.2-rc.5', expectedNext: '0.2.2-rc.5' },
+    { next: '0.2.3-alpha.1', expectedNext: undefined },
+  ])('offers Alpha.2 and refuses Alpha.1 when next points to $next', async ({ next, expectedNext }) => {
+    const execute: ExecuteRuntimeCommand = (_executable, args) => {
+      if (args[0] === 'list') return Promise.resolve({ stdout: '{}', stderr: '' })
+      if (args[0] !== 'view') throw new Error('install must not run')
+      return Promise.resolve({
+        stdout: JSON.stringify({
+          'dist-tags': { latest: '0.2.2-rc.5', next, alpha: '0.2.3-alpha.2' },
+          versions: ['0.2.2-rc.5', '0.2.3-alpha.1', '0.2.3-alpha.2'],
+        }),
+        stderr: '',
+      })
+    }
+    const subject = updater(execute, runtime('0.2.2-rc.5'))
+    const snapshot = await subject.checkForUpdates()
+    expect(snapshot).toMatchObject({
+      latestVersion: '0.2.3-alpha.2',
+      latestTagVersion: '0.2.2-rc.5',
+      availableVersions: ['0.2.3-alpha.2', '0.2.2-rc.5'],
+      updateAvailable: true,
+    })
+    expect(snapshot.nextTagVersion).toBe(expectedNext)
+    await expect(subject.installVersion('0.2.3-alpha.1')).rejects.toMatchObject({
+      code: 'CAPABILITY_UNAVAILABLE',
+      context: { operation: 'runtime.update', reason: 'package-startup-failed' },
+    })
+  })
+
+  it('repairs a same-version install when its launcher is broken and requires an executable after npm returns', async () => {
+    let installs = 0
+    const execute: ExecuteRuntimeCommand = (_executable, args) => {
+      if (args[0] === 'view') return Promise.resolve({ stdout: metadata, stderr: '' })
+      if (args[0] === 'install') installs++
+      return Promise.resolve({
+        stdout: JSON.stringify({ dependencies: { '@deepseek-ai/dsh': { version: '0.1.0-rc.8' } } }),
+        stderr: '',
+      })
+    }
+    const subject = updater(execute, runtime(), undefined, undefined, () => Promise.resolve(false))
+    expect(await subject.checkForUpdates()).toMatchObject({
+      globalVersion: '0.1.0-rc.8',
+      globalLauncherUnverified: true,
+    })
+    await expect(subject.installVersion('0.1.0-rc.8')).rejects.toMatchObject({
+      code: 'DSH_NOT_FOUND',
+      context: { operation: 'runtime.update', reason: 'verify-failed' },
+    })
+    expect(installs).toBe(1)
+  })
+
   it('rechecks global state before a mutation and accepts npm list JSON on a nonzero exit', async () => {
     let installed = '0.1.0-rc.6'
     let installs = 0
@@ -88,6 +143,7 @@ describe('DshRuntimeUpdater', () => {
       '--no-audit',
       '--no-fund',
       '--ignore-scripts',
+      '--engine-strict',
       '--loglevel=info',
     ])
   })

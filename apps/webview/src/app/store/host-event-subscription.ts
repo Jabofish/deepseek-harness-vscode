@@ -1,4 +1,5 @@
 import type { PluginInstallProgressView, SubagentCatalog, QuestionSettlements } from '@dsh-vscode/domain'
+import { PLAY_COMPLETION_CUE_EVENT } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from '../protocol-client.js'
 import type { PluginInstallRecoveryController } from '../plugin-install-recovery.js'
 import type { AppState, StateSetter } from './types.js'
@@ -158,9 +159,7 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
     // active session in the editor area). They own their own reduction and never
     // reach the conversation pipeline.
     if (surfaceActions.applySurfaceEvent(message)) return
-    // The Host's cue self-test bypasses focus and live turns; it only needs this
-    // renderer to produce the same chime a real completion cue uses.
-    if (message.type === 'event' && message.name === 'ui.completionCue.play') {
+    if (message.type === 'event' && message.name === PLAY_COMPLETION_CUE_EVENT) {
       void playCompletionCueBell()
       return
     }

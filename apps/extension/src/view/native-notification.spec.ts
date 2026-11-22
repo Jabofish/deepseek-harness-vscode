@@ -3,7 +3,7 @@ import { expect, it, vi } from 'vitest'
 import { showNativeNotification } from './native-notification.js'
 
 class FakeChild extends EventEmitter {
-  public readonly unref = vi.fn()
+  public readonly kill = vi.fn()
 }
 
 function notifier(outcome: { readonly code?: number; readonly error?: boolean } = { code: 0 }): {
@@ -32,9 +32,9 @@ it('uses notify-send with fixed arguments on Linux', async () => {
   expect(spawn).toHaveBeenCalledWith(
     'notify-send',
     ['--app-name=JaboDSH', '--urgency=normal', '--icon=dialog-information', 'JaboDSH', 'Response is ready.'],
-    { stdio: 'ignore', detached: true },
+    { stdio: 'ignore' },
   )
-  expect(child.unref).toHaveBeenCalledTimes(1)
+  expect(child.kill).not.toHaveBeenCalled()
 })
 
 it('uses osascript on macOS and escapes the fixed text', async () => {
@@ -48,7 +48,7 @@ it('uses osascript on macOS and escapes the fixed text', async () => {
   expect(spawn).toHaveBeenCalledWith(
     'osascript',
     ['-e', 'display notification "Line\\\\one" with title "Jabo \\"DSH\\""'],
-    { stdio: 'ignore', detached: true },
+    { stdio: 'ignore' },
   )
 })
 
@@ -88,6 +88,7 @@ it('gives up when the notifier never exits', async () => {
     })
     await vi.advanceTimersByTimeAsync(200)
     expect(await pending).toBe(false)
+    expect(child.kill).toHaveBeenCalledExactlyOnceWith('SIGKILL')
   } finally {
     vi.useRealTimers()
   }

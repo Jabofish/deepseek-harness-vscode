@@ -21,10 +21,11 @@ const lanAddress = Object.values(networkInterfaces())
       !entry.internal &&
       /^(?:10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.)/u.test(entry.address),
   )?.address
+const version = process.env.DSH_LIVE_RUNTIME_VERSION ?? ''
 
 describe.skipIf(
   process.env.DSH_LIVE_SMOKE !== '1' ||
-    process.env.DSH_LIVE_RUNTIME_VERSION !== '0.2.1-alpha.2' ||
+    !['0.2.1-alpha.2', '0.2.2-rc.5', '0.2.3-alpha.1', '0.2.3-alpha.2'].includes(version) ||
     lanAddress === undefined,
 )('live external HTTP connection', () => {
   it(
@@ -148,12 +149,12 @@ describe.skipIf(
           endpoint,
           source: 'configured',
           confidence: 100,
-          runtimeVersion: '0.2.1-alpha.2',
+          runtimeVersion: version,
         })
         if (connection === undefined)
           throw new Error(`Remote production probe rejected the owned DSH: ${JSON.stringify(responses)}`)
         expect(connection).not.toHaveProperty('pid')
-        expect(connection.capabilities.adapterId).toBe('dsh-0.2.1-alpha.2')
+        expect(connection.capabilities.adapterId).toBe(`dsh-${version}`)
         connectedBackend = await new VersionedBackendFactory(adapters).connect(connection)
         const workspace = await connectedBackend.workspaces.create({
           name: 'External fixture',
@@ -193,7 +194,7 @@ describe.skipIf(
             endpoint,
             source: 'configured',
             confidence: 100,
-            runtimeVersion: '0.2.1-alpha.2',
+            runtimeVersion: version,
           }),
         ).toBeDefined()
         const untrusted = parseServerOrigin(`http://untrusted-fixture.test:${address.port}`)
@@ -205,7 +206,7 @@ describe.skipIf(
             endpoint: untrusted,
             source: 'configured',
             confidence: 100,
-            runtimeVersion: '0.2.1-alpha.2',
+            runtimeVersion: version,
           }),
         ).rejects.toMatchObject({ code: 'PERMISSION_DENIED' })
         await access.clear(endpoint)

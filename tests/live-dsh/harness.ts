@@ -369,6 +369,8 @@ async function loadVersionAdapters(
   options: ConstructorParameters<typeof Rc151VersionAdapter>[0],
 ): Promise<readonly DshVersionAdapter[]> {
   const [
+    { Alpha232VersionAdapter },
+    { Alpha231VersionAdapter },
     { Rc225VersionAdapter },
     { Rc224VersionAdapter },
     { Rc223VersionAdapter },
@@ -398,6 +400,8 @@ async function loadVersionAdapters(
     { Rc152VersionAdapter },
     { Rc151VersionAdapter },
   ] = await Promise.all([
+    import('../../packages/dsh-adapter/src/versions/alpha232/adapter.js'),
+    import('../../packages/dsh-adapter/src/versions/alpha231/adapter.js'),
     import('../../packages/dsh-adapter/src/versions/rc225/adapter.js'),
     import('../../packages/dsh-adapter/src/versions/rc224/adapter.js'),
     import('../../packages/dsh-adapter/src/versions/rc223/adapter.js'),
@@ -428,6 +432,8 @@ async function loadVersionAdapters(
     import('../../packages/dsh-adapter/src/versions/rc151/adapter.js'),
   ])
   return [
+    new Alpha232VersionAdapter(options),
+    new Alpha231VersionAdapter(options),
     new Rc225VersionAdapter(options),
     new Rc224VersionAdapter(options),
     new Rc223VersionAdapter(options),

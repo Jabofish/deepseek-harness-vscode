@@ -124,6 +124,8 @@ The default `attach-only` mode drives a real Extension Host against a controlled
 
 For native launch paths, set `DSH_VSCODE_E2E_MODE=managed` or `auto`, plus `DSH_VSCODE_E2E_RUNTIME` to the chosen runtime, in the same environment as the command. Both modes create a disposable `DSH_HOME`; the suite checks ownership and that the runtime actually wrote to that home. `auto` also refuses known serving external endpoints before starting, but cannot prove that the OS process-scan source contains no other DSH: use an environment without unrelated instances, and never stop a user's instance to make a test pass.
 
+To test guided installation, use `DSH_VSCODE_E2E_MODE=managed` and `DSH_VSCODE_E2E_GUIDED_INSTALL=1` with no `DSH_VSCODE_E2E_RUNTIME` override. The runner creates a disposable npm prefix, runs the extension's Install DSH command, verifies the exact RC and exercises connect and reconnect. Use a compatible Node.js and npm on PATH. With a populated npm cache, `npm_config_offline=true` runs the install without registry access.
+
 Optional `DSH_VSCODE_E2E_COMPANION=1` checks supported companion installation/reconnect paths; `DSH_VSCODE_E2E_INVALID_SETTINGS=1` checks activation with invalid settings. Report which mode/options ran. These automated checks do not observe every focus, theme, sidebar or chat behaviour; use the manual checks below for affected interactions. Report an editor update lock or unavailable display as a blocker.
 
 ## Manual interaction checks

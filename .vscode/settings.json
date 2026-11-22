@@ -8,7 +8,5 @@
   "eslint.useFlatConfig": true,
   "files.eol": "\n",
   "typescript.tsdk": "node_modules/typescript/lib",
-  "i18n-ally.localesPaths": [],
-  "dsh.editor.allowEdits": true,
-  "dsh.editor.enabled": false
+  "i18n-ally.localesPaths": []
 }

@@ -14,6 +14,7 @@ import {
   featureHostMessageSchema,
   hostEnvelopeSchema,
   hostMessageSchema,
+  PLAY_COMPLETION_CUE_EVENT,
   type FeatureHostMessage,
   type HostMessage,
 } from '@dsh-vscode/webview-protocol'
@@ -243,7 +244,9 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     (hasSurface) => surfaces.list().some((surface) => surface.isReady && !hasSurface(surface.surfaceId)),
   )
   const notifyCompletionCue = async (body: string): Promise<boolean> => {
-    const shown = await showNativeNotification('JaboDSH', body).catch(() => false)
+    const shown =
+      vscode.env.remoteName === undefined &&
+      (await showNativeNotification('JaboDSH', body).catch(() => false))
     diagnostics.log('debug', 'completion-cue', { decision: 'notified', native: shown })
     if (!shown) await Promise.resolve(vscode.window.showInformationMessage(body)).catch(() => undefined)
     return shown
@@ -470,7 +473,8 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     return {
       focused: context.focused,
       bell: () => {
-        if (context.surfaceId !== undefined) void postEventTo(context.surfaceId, 'ui.completionCue.play', {})
+        if (context.surfaceId !== undefined)
+          void postEventTo(context.surfaceId, PLAY_COMPLETION_CUE_EVENT, {})
       },
     }
   }
@@ -505,7 +509,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     // One chord, not one per open editor chat: target the surface a real cue
     // would come from.
     const surface = surfaces.active
-    if (surface === undefined || !(await postEventTo(surface.surfaceId, 'ui.completionCue.test', {}))) {
+    if (surface === undefined || !(await postEventTo(surface.surfaceId, PLAY_COMPLETION_CUE_EVENT, {}))) {
       await vscode.window.showWarningMessage(
         'The JaboDSH chat is not ready. Open it, then run the completion cue test again.',
       )

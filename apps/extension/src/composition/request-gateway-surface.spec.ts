@@ -20,6 +20,7 @@ const host = vi.hoisted(() => {
     createGate: undefined as Promise<void> | undefined,
     createStarted: false,
     connectCount: 0,
+    windowFocused: false,
     responseRendered: vi.fn(() => ({ bell: true })),
   }
 })
@@ -81,7 +82,11 @@ vi.mock('vscode', () => ({
       host.panels.push(panel)
       return panel
     },
-    state: { focused: false },
+    state: {
+      get focused() {
+        return host.windowFocused
+      },
+    },
   },
   env: { language: 'en' },
   ViewColumn: { Active: -1 },
@@ -153,6 +158,7 @@ function buildGateway(): Harness {
   host.createGate = undefined
   host.createStarted = false
   host.connectCount = 0
+  host.windowFocused = false
   host.responseRendered.mockClear()
   const sent: Sent[] = []
   const events: Sent[] = []
@@ -366,12 +372,13 @@ describe('request gateway editor surface routes', () => {
     expect(watched.focused).toBe(true)
     expect(typeof watched.surfaceId).toBe('string')
 
+    host.windowFocused = true
     await harness.gateway.router.handle(
       request('surface.focus', 'cue-blur', { focused: false }),
       'editor-cue',
     )
     expect(harness.gateway.cueContext('s')).toMatchObject({ focused: false })
-    expect(harness.gateway.cueContext('other')).toEqual({ focused: false })
+    expect(harness.gateway.cueContext('other')).toEqual({ focused: true })
   })
 
   it('keeps a watched session quiet when another visible panel renders first', async () => {

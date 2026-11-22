@@ -41,6 +41,8 @@ export interface DshUpdateSnapshot {
   readonly currentVersion?: string
   readonly currentSource?: DshRuntime['source']
   readonly globalVersion?: string
+  /** npm lists the version, but its launcher failed verification. It may be reinstalled. */
+  readonly globalLauncherUnverified?: true
   readonly latestVersion?: string
   readonly latestTagVersion?: string
   readonly nextTagVersion?: string

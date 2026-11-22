@@ -574,7 +574,7 @@
           "default": "off",
           "scope": "window",
           "enumDescriptions": [
-            "Show a desktop notification on Linux and macOS, or a VS Code notification.",
+            "Show a desktop notification on local Linux and macOS, or a VS Code notification.",
             "Play a short chime in the chat.",
             "No cue."
           ],

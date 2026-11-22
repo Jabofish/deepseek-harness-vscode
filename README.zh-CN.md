@@ -66,7 +66,7 @@ JaboDSH 接替 `Direwolf.deepseek-harness-client`（DeepSeek Harness Companion f
 ### 开始会话
 
 1. 打开 **JaboDSH** 视图。
-2. 如果缺少 DSH，使用引导安装、选择现有可执行文件，或复制视图显示的精确安装命令。安装器会显示 npm 输出并验证安装版本；npm 警告本身不会导致安装失败。
+2. 如果缺少 DSH，使用引导安装、选择现有可执行文件，或复制视图显示的精确安装命令。引导安装使用最新的已验证 RC，扩展宿主运行 npm 所用的 Node.js 须为 24.9.0 或更高版本。安装器会显示 npm 输出并验证安装后的启动器。
 3. 选择或创建工作区，开始会话并发送任务。
 
 输入框为空时，按 ↑ 可调出本对话已发送的上一条提示，↑/↓ 在历史提示之间前后切换；开始编辑后即退出历史浏览。
@@ -77,7 +77,7 @@ JaboDSH 的 Chat 视图默认注册在辅助侧边栏（VS Code 默认布局中�
 
 标题栏的 **Open Web UI** 默认使用 VS Code 内置浏览器。若要使用系统浏览器，在 VS Code 设置中将 `dsh.webUi.browser` 改为 `external`。
 
-在**用户**或**工作区**设置中将 `dsh.completionCue` 设为 `notification`（通知）或 `bell`（短提示音），可在聊天未获得焦点（例如 VS Code 窗口失去焦点）时，于实时回复成功结束并渲染后，或代理请求输入（提问、审批）时提醒；默认 `off`（关闭）。`notification` 在 Linux（通过 libnotify 的 `notify-send`）和 macOS 上使用桌面通知服务，缺少可用通知器时回退到 VS Code 窗口内通知；Windows 使用窗口内通知。`bell` 会在聊天中播放短提示音。将 `dsh.completionCueWhenFocused` 设为 `true` 后，即使正在查看回复也会提醒；运行 **JaboDSH: Test Completion Cue** 可检查当前模式；若没有声音，先在聊天中点击一次再运行。实际投递受编辑器、浏览器及音频设置影响。
+在**用户**或**工作区**设置中将 `dsh.completionCue` 设为 `notification`（通知）或 `bell`（短提示音），可在聊天未获得焦点（例如 VS Code 窗口失去焦点）时，于实时回复成功结束并渲染后，或代理请求输入（提问、审批）时提醒；默认 `off`（关闭）。`notification` 在 Linux（通过 libnotify 的 `notify-send`）和 macOS 上使用桌面通知服务，缺少可用通知器时回退到 VS Code 窗口内通知；Windows 和远程工作区使用窗口内通知。`bell` 会在聊天中播放短提示音。将 `dsh.completionCueWhenFocused` 设为 `true` 后，即使正在查看回复也会提醒；运行 **JaboDSH: Test Completion Cue** 可检查当前模式；若没有声音，先在聊天中点击一次再运行。实际投递受编辑器、浏览器及音频设置影响。
 
 选择 **在编辑器区打开** 或执行 **JaboDSH: Open Chat in Editor Area**（`/moveto:editor`）打开标签，`/moveto:sidebar` 可移回侧边栏。也可拖动已打开的编辑器标签分栏。手动排序时，拖到下方某行会放在该行之后，拖到上方某行会放在该行之前。顺序由 DSH 保存，当前空白会话保持置顶。
 

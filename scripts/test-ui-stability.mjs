@@ -93,7 +93,12 @@ if (!process.env.DSH_UI_SCENARIO && !process.env.DSH_UI_GROUP) {
   assert.equal(code, 0, 'Functional UI behavior tests failed')
   const report = JSON.parse(await readFile(reportPath, 'utf8'))
   assert(report.numPassedTests > 0, 'No functional UI behavior tests ran')
-  assert.equal(report.numPendingTests, 0, 'Functional UI behavior tests must not be skipped')
+  // The default Vitest config explicitly skips stress-tagged cases. They run
+  // under the separate stress command, even when they share a functional file.
+  const skippedStress = report.testResults
+    .flatMap((result) => result.assertionResults)
+    .filter((test) => test.status === 'skipped' && test.tags?.includes('stress')).length
+  assert.equal(report.numPendingTests, skippedStress, 'Functional UI behavior tests must not be skipped')
   for (const file of files) {
     const result = report.testResults.find((result) => resolve(result.name) === resolve(root, file))
     assert(
@@ -101,7 +106,12 @@ if (!process.env.DSH_UI_SCENARIO && !process.env.DSH_UI_GROUP) {
       `No passed tests for ${file}`,
     )
   }
-  behavior = { passed: report.numPassedTests, failed: report.numFailedTests, suites: uiBehaviorSuites }
+  behavior = {
+    passed: report.numPassedTests,
+    failed: report.numFailedTests,
+    skippedStress,
+    suites: uiBehaviorSuites,
+  }
   console.log(`${behavior.passed} functional UI checks passed across ${files.length} files`)
 } else {
   console.log('Targeted browser run; functional UI behavior suites are omitted')

@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ReactElement } from 'react'
 import type { HostMessage } from '@dsh-vscode/webview-protocol'
-import { hostMessageSchema } from '@dsh-vscode/webview-protocol'
+import { hostMessageSchema, PLAY_COMPLETION_CUE_EVENT } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
 import {
   createHostBackedAppStore as createAppStore,
@@ -1129,7 +1129,7 @@ describe('completion cue self-test', () => {
       await store.openSession('session-stream')
       const timeline = store.getState().timeline
       const requests = client.requests.length
-      client.emit(event(1, 'ui.completionCue.play', {}))
+      client.emit(event(1, PLAY_COMPLETION_CUE_EVENT, {}))
       expect(cueAudio.play).toHaveBeenCalledTimes(1)
       expect(store.getState().timeline).toBe(timeline)
       expect(client.requests.length).toBe(requests)

@@ -69,6 +69,7 @@ export class CompletionCue {
   public accept(name: string, payload: unknown): void {
     if (name === 'connection.snapshot') {
       this.turns.clear()
+      this.needsInputSeen.clear()
       return
     }
     if (typeof payload !== 'object' || payload === null) return
@@ -113,7 +114,7 @@ export class CompletionCue {
     if (typeof id !== 'string' || typeof sessionId !== 'string') return
     // A continued or already-answered question is a read-only receipt.
     if (kind === 'question' && (request?.state === 'continued' || request?.replyQueued === true)) return
-    const key = `${kind}:${id}`
+    const key = JSON.stringify([sessionId, kind, id])
     if (this.needsInputSeen.has(key)) return
     this.needsInputSeen.add(key)
     while (this.needsInputSeen.size > 256)

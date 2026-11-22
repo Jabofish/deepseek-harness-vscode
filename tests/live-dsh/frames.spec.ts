@@ -237,7 +237,7 @@ async function absentIdentityFrames(
   steps: string[],
 ): Promise<void> {
   if (
-    ['alpha222', 'alpha223', 'rc221', 'rc222', 'rc223', 'rc224', 'rc225'].includes(
+    ['alpha222', 'alpha223', 'rc221', 'rc222', 'rc223', 'rc224', 'rc225', 'alpha231', 'alpha232'].includes(
       backend.connection.capabilities.protocolVersion,
     )
   ) {

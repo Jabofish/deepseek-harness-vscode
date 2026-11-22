@@ -31,5 +31,6 @@ export type FeatureHostEnvelope = z.infer<typeof featureHostEnvelopeSchema>
 export type FeatureWebviewEnvelope = z.infer<typeof featureWebviewEnvelopeSchema>
 
 export const PROTOCOL_VERSION = 1 as const
+export const PLAY_COMPLETION_CUE_EVENT = 'ui.completionCue.play' as const
 
 export type ProtocolEnvelope = WebviewEnvelope | HostEnvelope | FeatureWebviewEnvelope | FeatureHostEnvelope

@@ -69,6 +69,14 @@ afterEach(() => {
 })
 
 describe('runtime installer', () => {
+  it('copies an exact command for the current release candidate and enforces its Node engine', async () => {
+    const harness = createHarness()
+    await harness.installer.copyInstallCommand()
+    expect(harness.writeText).toHaveBeenCalledWith(
+      'npm install --global @deepseek-ai/dsh@0.2.2-rc.5 --ignore-scripts --engine-strict',
+    )
+  })
+
   it('reports an unverified install as a not-found runtime instead of success', async () => {
     const harness = createHarness({ verifyInstall: () => Promise.resolve(false) })
 

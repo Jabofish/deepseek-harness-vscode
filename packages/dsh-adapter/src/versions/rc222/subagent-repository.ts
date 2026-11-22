@@ -1,4 +1,9 @@
-import { AppError, type SubagentHistoryPage, type SubagentHistoryQuery } from '@dsh-vscode/domain'
+import {
+  AppError,
+  type SessionProjectionSnapshot,
+  type SubagentHistoryPage,
+  type SubagentHistoryQuery,
+} from '@dsh-vscode/domain'
 import type { DshTransport } from '../../contracts.js'
 import type { SubagentRepositoryOptions } from '../../repositories/subagent-repository.js'
 import { Alpha212SubagentRepository } from '../alpha212/subagent-repository.js'
@@ -12,7 +17,13 @@ const interruptReceipt = z.object({ accepted: z.literal(true) }).strict()
 
 /** Target Session authorisation is supplied by the Host and rechecked by the Gateway. */
 export class Rc222SubagentRepository extends Alpha212SubagentRepository {
-  public constructor(transport: DshTransport, options: SubagentRepositoryOptions) {
+  public constructor(
+    transport: DshTransport,
+    options: SubagentRepositoryOptions,
+    private readonly mapHistoryProjection: (
+      projection: SessionProjectionSnapshot,
+    ) => SessionProjectionSnapshot = mapRc222PublicProjection,
+  ) {
     super(transport, { ...options, namedCatalog: true, directChildControls: true })
   }
 
@@ -25,7 +36,7 @@ export class Rc222SubagentRepository extends Alpha212SubagentRepository {
     if (page.projection === undefined) return page
     return {
       ...page,
-      projection: mapRc222PublicProjection({
+      projection: this.mapHistoryProjection({
         ...page.projection,
         values: mapRc202ProjectionValues(page.projection.values),
       }),

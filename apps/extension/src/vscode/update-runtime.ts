@@ -19,6 +19,9 @@ import {
 
 const UPDATE_CHECK_TIMEOUT_MS = 60_000
 const UPDATE_MAX_BUFFER = RUNTIME_INSTALL_MAX_BUFFER
+// This npm release cannot start with the published Cordis Loader. An independently
+// built runtime with the same identity can still connect through its exact Adapter.
+const BROKEN_NPM_DSH_VERSION = '0.2.3-alpha.1'
 export interface RuntimeCommandOptions {
   readonly timeout: number
   readonly maxBuffer: number
@@ -44,6 +47,7 @@ export type ExecuteRuntimeCommand = (
 export interface DshRuntimeUpdaterDependencies {
   readonly npmExecutable: () => string
   readonly locateRuntime: (signal?: AbortSignal) => Promise<DshRuntime | undefined>
+  readonly verifyGlobalRuntime: (version: string, signal?: AbortSignal) => Promise<boolean>
   readonly execute: ExecuteRuntimeCommand
   /** Safe, phase-only progress; never include npm output, paths, or secrets. */
   readonly onProgress?: (progress: DshRuntimeUpdateProgress) => void
@@ -62,6 +66,11 @@ interface RegistryMetadata {
   readonly versions: readonly string[]
   readonly latestTagVersion?: string
   readonly nextTagVersion?: string
+}
+
+interface GlobalRuntime {
+  readonly version: string
+  readonly verified: boolean
 }
 
 export class DshRuntimeUpdater {
@@ -142,6 +151,8 @@ export class DshRuntimeUpdater {
         'Select an exact DSH version from the upstream version list.',
         false,
       )
+    if (requested === BROKEN_NPM_DSH_VERSION)
+      throw updateError('package-startup-failed', DSH_PACKAGE_STARTUP_FAILURE_MESSAGE, false)
     this.emitProgress({ phase: 'checking', version: requested })
     const checked = await this.checkOnce(signal, revision, false)
     if (checked.status !== 'ready' || !checked.availableVersions.includes(requested)) {
@@ -153,7 +164,7 @@ export class DshRuntimeUpdater {
         checked.failure === undefined ? undefined : `Registry check failed: ${checked.failure}.`,
       )
     }
-    if (checked.globalVersion === requested) {
+    if (checked.globalVersion === requested && checked.globalLauncherUnverified !== true) {
       // Installing the exact global version again is a no-op. Keep this guard
       // in the Host as well as the Webview because the UI snapshot can be
       // stale or a caller can bypass the Webview action entirely.
@@ -181,6 +192,7 @@ export class DshRuntimeUpdater {
           '--no-audit',
           '--no-fund',
           '--ignore-scripts',
+          '--engine-strict',
           '--loglevel=info',
         ],
         {
@@ -252,10 +264,10 @@ export class DshRuntimeUpdater {
 
     this.emitProgress({ phase: 'verifying', version: requested, startedAt })
     const globalVersion = await this.readGlobalVersion()
-    if (globalVersion !== requested) {
+    if (globalVersion !== requested || !(await this.dependencies.verifyGlobalRuntime(requested))) {
       throw updateError(
         'verify-failed',
-        'DSH installation finished, but the selected global version could not be verified.',
+        'DSH installation finished, but the selected global executable could not be verified.',
         true,
       )
     }
@@ -273,7 +285,7 @@ export class DshRuntimeUpdater {
         }),
       ])
     } catch {
-      // The package was verified through npm global state. A separately
+      // The exact npm global launcher has already been verified. A separately
       // configured executable may still be broken, so do not turn a completed
       // package update into a false install failure.
       runtime = undefined
@@ -282,7 +294,7 @@ export class DshRuntimeUpdater {
       probeAbort.abort()
     }
     const metadata = this.metadata ?? metadataFromSnapshot(checked)
-    const snapshot = this.snapshot('ready', runtime, globalVersion, metadata)
+    const snapshot = this.snapshot(runtime, { version: globalVersion, verified: true }, metadata)
     this.cached = snapshot
     this.emitProgress({ phase: 'completed', version: requested, startedAt, snapshot: this.cached })
     return this.cached
@@ -298,7 +310,7 @@ export class DshRuntimeUpdater {
     const [runtimeResult, metadataResult, globalResult] = await Promise.allSettled([
       this.dependencies.locateRuntime(signal),
       this.readMetadata(signal),
-      this.readGlobalVersion(signal),
+      this.readGlobalRuntime(signal),
     ])
     // Another surface may have installed DSH while this registry request was pending.
     if (revision !== this.revision)
@@ -313,13 +325,13 @@ export class DshRuntimeUpdater {
 
     const runtime = runtimeResult.status === 'fulfilled' ? runtimeResult.value : undefined
     const currentVersion = this.dependencies.activeVersion?.() ?? runtime?.version
-    const globalVersion = globalResult.status === 'fulfilled' ? globalResult.value : undefined
+    const global = globalResult.status === 'fulfilled' ? globalResult.value : undefined
     if (metadataResult.status !== 'fulfilled') {
       const snapshot: DshUpdateSnapshot = {
         status: 'unavailable',
         ...(currentVersion === undefined ? {} : { currentVersion }),
         ...(runtime === undefined ? {} : { currentSource: runtime.source }),
-        ...(globalVersion === undefined ? {} : { globalVersion }),
+        ...(global === undefined ? {} : { globalVersion: global.version }),
         availableVersions: [],
         updateAvailable: false,
         checkedAt,
@@ -333,7 +345,7 @@ export class DshRuntimeUpdater {
     }
 
     if (revision === this.revision) this.metadata = metadataResult.value
-    const snapshot = this.snapshot('ready', runtime, globalVersion, metadataResult.value, checkedAt)
+    const snapshot = this.snapshot(runtime, global, metadataResult.value, checkedAt)
     if (revision === this.revision) {
       this.cached = snapshot
       if (progress) this.emitProgress({ phase: 'completed' })
@@ -377,25 +389,32 @@ export class DshRuntimeUpdater {
     }
   }
 
+  private async readGlobalRuntime(signal?: AbortSignal): Promise<GlobalRuntime | undefined> {
+    const version = await this.readGlobalVersion(signal)
+    if (version === undefined) return undefined
+    return { version, verified: await this.dependencies.verifyGlobalRuntime(version, signal) }
+  }
+
   private snapshot(
-    status: 'ready',
     runtime: DshRuntime | undefined,
-    globalVersion: string | undefined,
+    global: GlobalRuntime | undefined,
     metadata: RegistryMetadata,
     checkedAt = this.timestamp(),
   ): DshUpdateSnapshot {
     const latestVersion = metadata.versions[0]
     const currentVersion = this.dependencies.activeVersion?.() ?? runtime?.version
+    const globalVersion = global?.version
     const installedVersion = globalVersion ?? currentVersion
     const updateAvailable =
       latestVersion !== undefined &&
       installedVersion !== undefined &&
       compareVersions(latestVersion, installedVersion) > 0
     return {
-      status,
+      status: 'ready',
       ...(currentVersion === undefined ? {} : { currentVersion }),
       ...(runtime === undefined ? {} : { currentSource: runtime.source }),
       ...(globalVersion === undefined ? {} : { globalVersion }),
+      ...(global?.verified === false ? { globalLauncherUnverified: true } : {}),
       ...(latestVersion === undefined ? {} : { latestVersion }),
       ...(metadata.latestTagVersion === undefined ? {} : { latestTagVersion: metadata.latestTagVersion }),
       ...(metadata.nextTagVersion === undefined ? {} : { nextTagVersion: metadata.nextTagVersion }),
@@ -403,7 +422,7 @@ export class DshRuntimeUpdater {
       updateAvailable,
       checkedAt,
       ...(this.dependencies.canRestart === undefined ? {} : { canRestart: this.dependencies.canRestart() }),
-      ...(globalVersion !== undefined && currentVersion !== undefined && globalVersion !== currentVersion
+      ...(global?.verified === true && currentVersion !== undefined && globalVersion !== currentVersion
         ? { restartRequired: true }
         : {}),
     }
@@ -443,7 +462,9 @@ export function parseNpmMetadata(output: string): RegistryMetadata {
       ? [versionValue]
       : []
   const versions = uniqueSortedVersions(
-    rawVersions.filter((entry): entry is string => typeof entry === 'string'),
+    rawVersions.filter(
+      (entry): entry is string => typeof entry === 'string' && entry !== BROKEN_NPM_DSH_VERSION,
+    ),
   )
   if (versions.length === 0) throw new Error('The npm registry returned no valid DSH versions.')
   const tags = asRecord(record?.['dist-tags'])
@@ -579,7 +600,13 @@ function cancelledError(cause: unknown): AppError {
 }
 
 function updateError(
-  reason: 'invalid-version' | 'metadata-unavailable' | 'npm-not-found' | 'install-failed' | 'verify-failed',
+  reason:
+    | 'invalid-version'
+    | 'metadata-unavailable'
+    | 'npm-not-found'
+    | 'install-failed'
+    | 'verify-failed'
+    | 'package-startup-failed',
   message: string,
   retryable: boolean,
   cause?: unknown,
@@ -589,7 +616,7 @@ function updateError(
     code:
       reason === 'npm-not-found' || reason === 'verify-failed'
         ? 'DSH_NOT_FOUND'
-        : reason === 'metadata-unavailable'
+        : reason === 'metadata-unavailable' || reason === 'package-startup-failed'
           ? 'CAPABILITY_UNAVAILABLE'
           : 'INVALID_CONFIGURATION',
     message,
@@ -602,3 +629,6 @@ function updateError(
     },
   })
 }
+
+export const DSH_PACKAGE_STARTUP_FAILURE_MESSAGE =
+  'This DSH npm release has a startup defect. Install the latest release candidate instead.'

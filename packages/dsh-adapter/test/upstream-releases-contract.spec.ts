@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { DshTransport } from '../src/contracts.js'
+import type { Alpha1VersionAdapter } from '../src/versions/alpha/adapter.js'
 import { Alpha222VersionAdapter } from '../src/versions/alpha222/adapter.js'
 import { Alpha223VersionAdapter } from '../src/versions/alpha223/adapter.js'
 import { Rc214VersionAdapter } from '../src/versions/rc214/adapter.js'
@@ -9,6 +10,8 @@ import { Rc222VersionAdapter } from '../src/versions/rc222/adapter.js'
 import { Rc223VersionAdapter } from '../src/versions/rc223/adapter.js'
 import { Rc224VersionAdapter } from '../src/versions/rc224/adapter.js'
 import { Rc225VersionAdapter } from '../src/versions/rc225/adapter.js'
+import { Alpha231VersionAdapter } from '../src/versions/alpha231/adapter.js'
+import { Alpha232VersionAdapter } from '../src/versions/alpha232/adapter.js'
 import {
   candidate,
   endpoint,
@@ -20,7 +23,13 @@ import { ProbeFixtureTransport } from './support/probe-fixture.js'
 import { callRpc } from '../src/versions/rc6/rpc.js'
 import { namedBlank } from './fixtures/rc215-contract.js'
 
-describe.each([
+const releases: readonly {
+  readonly AdapterBase: typeof Alpha1VersionAdapter
+  readonly version: string
+  readonly protocol: string
+}[] = [
+  { AdapterBase: Alpha232VersionAdapter, version: '0.2.3-alpha.2', protocol: 'alpha232' },
+  { AdapterBase: Alpha231VersionAdapter, version: '0.2.3-alpha.1', protocol: 'alpha231' },
   { AdapterBase: Rc225VersionAdapter, version: '0.2.2-rc.5', protocol: 'rc225' },
   { AdapterBase: Rc224VersionAdapter, version: '0.2.2-rc.4', protocol: 'rc224' },
   { AdapterBase: Rc223VersionAdapter, version: '0.2.2-rc.3', protocol: 'rc223' },
@@ -30,7 +39,9 @@ describe.each([
   { AdapterBase: Rc214VersionAdapter, version: '0.2.1-rc.4', protocol: 'rc214' },
   { AdapterBase: Rc215VersionAdapter, version: '0.2.1-rc.5', protocol: 'rc215' },
   { AdapterBase: Alpha222VersionAdapter, version: '0.2.2-alpha.2', protocol: 'alpha222' },
-])('published upstream $version', ({ AdapterBase, version: release, protocol }) => {
+]
+
+describe.each(releases)('published upstream $version', ({ AdapterBase, version: release, protocol }) => {
   it('admits the release independently, rejects adjacent versions and closes every probe transport', async () => {
     const fixture = new ProbeFixtureTransport()
     class Adapter extends AdapterBase {
@@ -59,12 +70,15 @@ describe.each([
         '0.2.2-rc.4',
         '0.2.2-rc.5',
         '0.2.2-rc.6',
+        '0.2.3-alpha.1',
+        '0.2.3-alpha.2',
+        '0.2.3-alpha.3',
       ].filter((v) => v !== release),
       `${release}+unverified`,
       '',
     ])
       expect(await adapter.probe(candidate(version))).toBeUndefined()
-    expect(await adapter.probeCompatibility()).toBeUndefined()
+    expect(await adapter.probeCompatibility(candidate(release))).toBeUndefined()
     expect(fixture.closeCalls).toBe(1)
   })
 

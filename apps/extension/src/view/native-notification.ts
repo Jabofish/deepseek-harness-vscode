@@ -45,7 +45,7 @@ export async function showNativeNotification(
   return await new Promise<boolean>((resolve) => {
     let child: ChildProcess
     try {
-      child = spawnFn(command.file, command.args, { stdio: 'ignore', detached: true })
+      child = spawnFn(command.file, command.args, { stdio: 'ignore' })
     } catch {
       resolve(false)
       return
@@ -57,9 +57,11 @@ export async function showNativeNotification(
       clearTimeout(timer)
       resolve(shown)
     }
-    const timer = setTimeout(() => finish(false), dependencies.timeoutMs ?? NOTIFIER_TIMEOUT_MS)
+    const timer = setTimeout(() => {
+      finish(false)
+      child.kill('SIGKILL')
+    }, dependencies.timeoutMs ?? NOTIFIER_TIMEOUT_MS)
     child.once('error', () => finish(false))
     child.once('exit', (code) => finish(code === 0))
-    child.unref()
   })
 }

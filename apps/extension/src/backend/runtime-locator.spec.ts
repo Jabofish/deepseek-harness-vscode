@@ -36,8 +36,43 @@ function locator(version: string): DshRuntimeLocator {
 }
 
 describe('DshRuntimeLocator compatibility policy', () => {
+  it('verifies the exact global launcher independently of configured and PATH runtimes', async () => {
+    const launcher = 'C:\\npm\\dsh.cmd'
+    const executeVersion = vi.fn((candidate: string) =>
+      Promise.resolve(candidate === launcher ? '0.2.2-rc.5' : '0.2.1-rc.2'),
+    )
+    const subject = new DshRuntimeLocator({
+      os: 'windows',
+      configuredPath: () => 'C:\\configured\\dsh.cmd',
+      pathEntries: () => ['C:\\other'],
+      npmGlobalPrefix: () => Promise.resolve('C:\\npm'),
+      fileExists: () => Promise.resolve(true),
+      executeVersion,
+    })
+    expect(await subject.verifyNpmGlobalRuntime('0.2.2-rc.5')).toBe(true)
+    expect(await subject.verifyNpmGlobalRuntime('0.2.1-rc.2')).toBe(false)
+    executeVersion.mockRejectedValueOnce(new Error('CLI failed to start'))
+    expect(await subject.verifyNpmGlobalRuntime('0.2.2-rc.5')).toBe(false)
+    expect(executeVersion.mock.calls.map(([candidate]) => candidate)).toEqual([launcher, launcher, launcher])
+  })
+
   it('rejects a selected executable that does not report a version', async () => {
     await expect(locator('   ').locate()).resolves.toMatchObject({ runtime: { supported: false } })
+  })
+
+  it.each(['0.2.3-alpha.1+custom', 'dsh 0.2.3-alpha.1+custom'])(
+    'keeps the complete CLI identity %s',
+    async (identity) => {
+      await expect(locator(identity).locate()).resolves.toMatchObject({
+        runtime: { version: '0.2.3-alpha.1+custom', supported: true, compatibility: 'unknown' },
+      })
+    },
+  )
+
+  it('rejects a version fragment embedded in unrelated output', async () => {
+    await expect(locator('unrelated-program 0.2.3-alpha.1').locate()).resolves.toMatchObject({
+      runtime: { supported: false, compatibility: 'unknown' },
+    })
   })
 
   it('does not turn a PATH probe timeout into a false DSH_NOT_FOUND result', async () => {

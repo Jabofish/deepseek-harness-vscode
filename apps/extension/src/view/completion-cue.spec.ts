@@ -131,6 +131,20 @@ it('applies the focus policy to needs-input cues', () => {
   expect(notify).toHaveBeenCalledTimes(1)
 })
 
+it('scopes input deduplication to the session and clears it on reconnect', () => {
+  const { cue, notify } = fixture()
+  const request = (sessionId: string) =>
+    cue.accept('question.requested', { question: { id: 'same-request', sessionId } })
+  request('first')
+  request('first')
+  request('second')
+  expect(notify).toHaveBeenCalledTimes(2)
+
+  cue.accept('connection.snapshot', { kind: 'connected' })
+  request('first')
+  expect(notify).toHaveBeenCalledTimes(3)
+})
+
 it('ignores replayed, continued and already-answered questions', () => {
   const { cue, notify, logs } = fixture()
   cue.accept('question.requested', {
