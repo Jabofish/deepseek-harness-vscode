@@ -13,6 +13,7 @@ import type { createTurnWatchers } from './turn-watchers.js'
 import type { createSurfaceActions } from './surface-actions.js'
 import { parseHostDomainEvent } from './event-parser.js'
 import { backendEventSessionId, applyHostMessage } from './host-message-reducers.js'
+import { playCompletionCueBell } from '../cue-audio.js'
 import { object } from './unknown-record.js'
 import { parsePermissionCatalog } from './permission-catalog.js'
 import { connectionIdentity } from './session-projection.js'
@@ -157,6 +158,12 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
     // active session in the editor area). They own their own reduction and never
     // reach the conversation pipeline.
     if (surfaceActions.applySurfaceEvent(message)) return
+    // The Host's cue self-test bypasses focus and live turns; it only needs this
+    // renderer to produce the same chime a real completion cue uses.
+    if (message.type === 'event' && message.name === 'ui.completionCue.play') {
+      void playCompletionCueBell()
+      return
+    }
     if (message.type === 'event' && message.name === 'ui.resync') {
       deps.invalidateJobFollow()
       turnWatchers.disposeAll()

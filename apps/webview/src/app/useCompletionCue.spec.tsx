@@ -1,13 +1,29 @@
 // @vitest-environment jsdom
 import { StrictMode } from 'react'
 import { cleanup, render, waitFor } from '@testing-library/react'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { TimelineState } from '@dsh-vscode/timeline'
-import { useCompletionCue } from './useCompletionCue.js'
+
+const audio = vi.hoisted(() => ({
+  unlock: vi.fn(() => vi.fn()),
+  play: vi.fn(() => Promise.resolve(true)),
+}))
+
+vi.mock('./cue-audio.js', () => ({
+  installCompletionCueAudioUnlock: audio.unlock,
+  playCompletionCueBell: audio.play,
+}))
+
+const { useCompletionCue } = await import('./useCompletionCue.js')
+
+beforeEach(() => {
+  audio.unlock.mockClear()
+  audio.play.mockClear()
+})
 
 afterEach(() => {
   cleanup()
-  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
 })
 const timeline = (completed: boolean): TimelineState => ({
   sessionId: 's',
@@ -25,7 +41,8 @@ const timeline = (completed: boolean): TimelineState => ({
   ],
 })
 
-it('waits for the settled response commit and deduplicates Strict Mode and unrelated rerenders', async () => {
+it('waits for the settled response commit and forwards the chat focus', async () => {
+  vi.spyOn(document, 'hasFocus').mockReturnValue(false)
   const responseRendered = vi.fn(() => {
     expect(document.querySelector('p')?.textContent).toBe('Final answer')
     return Promise.resolve(false)
@@ -46,51 +63,25 @@ it('waits for the settled response commit and deduplicates Strict Mode and unrel
       <View completed />
     </StrictMode>,
   )
-  await waitFor(() => expect(responseRendered).toHaveBeenCalledExactlyOnceWith('s', 1))
+  await waitFor(() => expect(responseRendered).toHaveBeenCalledExactlyOnceWith('s', 1, false))
   view.rerender(
     <StrictMode>
       <View completed />
     </StrictMode>,
   )
   expect(responseRendered).toHaveBeenCalledTimes(1)
+  expect(audio.play).not.toHaveBeenCalled()
 })
 
-it('plays the approved bell and releases audio when the panel closes', async () => {
-  const close = vi.fn(() => Promise.resolve())
-  const stop = vi.fn()
-  const context = {
-    resume: () => Promise.resolve(),
-    close,
-    state: 'running',
-    currentTime: 0,
-    destination: {},
-    createOscillator: () => ({
-      connect: vi.fn(),
-      frequency: { value: 0 },
-      start: vi.fn(),
-      stop,
-      onended: undefined,
-    }),
-    createGain: () => ({
-      connect: vi.fn(),
-      gain: { setValueAtTime: vi.fn(), exponentialRampToValueAtTime: vi.fn() },
-    }),
-  }
-  vi.stubGlobal(
-    'AudioContext',
-    class {
-      constructor() {
-        return context
-      }
-    },
-  )
-  const store = { responseRendered: vi.fn(() => Promise.resolve(true)) }
+it('plays the accepted bell through the unlocked Webview audio', async () => {
+  vi.spyOn(document, 'hasFocus').mockReturnValue(true)
+  const responseRendered = vi.fn(() => Promise.resolve(true))
   function View(): React.ReactElement {
-    useCompletionCue(store.responseRendered, timeline(true))
+    useCompletionCue(responseRendered, timeline(true))
     return <p>Final answer</p>
   }
-  const view = render(<View />)
-  await waitFor(() => expect(stop).toHaveBeenCalledWith(0.2))
-  view.unmount()
-  expect(close).toHaveBeenCalledTimes(1)
+  render(<View />)
+  await waitFor(() => expect(audio.play).toHaveBeenCalledTimes(1))
+  expect(responseRendered).toHaveBeenCalledExactlyOnceWith('s', 1, true)
+  expect(audio.unlock).toHaveBeenCalled()
 })

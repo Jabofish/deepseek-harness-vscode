@@ -29,6 +29,7 @@ import type { OpenFileCandidate } from './app/store.js'
 import type { useAppController } from './AppController.js'
 import { CONVERSATION_VIEW_IDS } from './app/conversation-view-ids.js'
 import { useConversationLayout } from './app/ConversationLayoutProvider.js'
+import { useSurfaceFocusReport } from './app/useSurfaceFocusReport.js'
 
 const EMPTY_OPEN_FILE_CANDIDATES: readonly OpenFileCandidate[] = []
 export function AppView(props: ReturnType<typeof useAppController>): ReactElement {
@@ -166,6 +167,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
     visibleReferenceLoading,
     welcomeVisible,
   } = props
+  useSurfaceFocusReport(store.reportSurfaceFocus)
   const readDiagnostics = useCallback(() => store.readDiagnostics(), [store])
   const [inspectorOpenRequestId, setInspectorOpenRequestId] = useState<string>()
   // Recalling a prompt reads the conversation's own durable messages; a new

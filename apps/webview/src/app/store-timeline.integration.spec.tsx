@@ -1,11 +1,10 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ReactElement } from 'react'
 import type { HostMessage } from '@dsh-vscode/webview-protocol'
 import { hostMessageSchema } from '@dsh-vscode/webview-protocol'
-
 import type { ProtocolClient } from './protocol-client.js'
 import {
   createHostBackedAppStore as createAppStore,
@@ -13,6 +12,13 @@ import {
 } from '../test/host-window-store.js'
 import { Timeline } from '../features/chat/Timeline.js'
 import { TrajectoryView } from '../features/trajectory/TrajectoryView.js'
+
+const cueAudio = vi.hoisted(() => ({ play: vi.fn(() => Promise.resolve(true)) }))
+
+vi.mock('./cue-audio.js', () => ({
+  installCompletionCueAudioUnlock: () => () => undefined,
+  playCompletionCueBell: cueAudio.play,
+}))
 
 class StreamClient {
   public readonly requests: WebviewRequest[] = []
@@ -1105,6 +1111,29 @@ describe('Store to Timeline streamed rendering', () => {
       expect(view.container.textContent).not.toContain('team-message-1')
     } finally {
       unsubscribe()
+      store.dispose()
+    }
+  })
+})
+
+describe('completion cue self-test', () => {
+  afterEach(() => {
+    cleanup()
+    cueAudio.play.mockClear()
+  })
+
+  it('plays the chime without touching the conversation', async () => {
+    const client = new StreamClient()
+    const store = createAppStore(client as unknown as ProtocolClient)
+    try {
+      await store.openSession('session-stream')
+      const timeline = store.getState().timeline
+      const requests = client.requests.length
+      client.emit(event(1, 'ui.completionCue.play', {}))
+      expect(cueAudio.play).toHaveBeenCalledTimes(1)
+      expect(store.getState().timeline).toBe(timeline)
+      expect(client.requests.length).toBe(requests)
+    } finally {
       store.dispose()
     }
   })

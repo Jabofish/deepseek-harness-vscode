@@ -44,6 +44,7 @@ const routesAllowedWhileUntrusted = [
   'surface.moveToSidebar',
   'surface.titlebarLayout',
   'surface.responseRendered',
+  'surface.focus',
   'ui.events.ack',
   'ui.response.ack',
   'view.openLink',

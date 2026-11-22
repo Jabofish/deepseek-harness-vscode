@@ -275,7 +275,9 @@ export interface DshSettingsSnapshot {
 }
 
 export interface AppActions {
-  responseRendered(this: void, sessionId: string, turn: number): Promise<boolean>
+  responseRendered(this: void, sessionId: string, turn: number, focused?: boolean): Promise<boolean>
+  /** Tell the Host whether this chat Webview holds renderer focus. */
+  reportSurfaceFocus(this: void, focused: boolean): Promise<void>
   featureRequest<T>(this: void, request: FeatureRequest): Promise<T>
   subscribeFeature(this: void, listener: (message: FeatureHostEvent) => void): () => void
   loadAccountLifecycle(): Promise<void>

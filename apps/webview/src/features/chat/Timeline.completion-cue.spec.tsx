@@ -1,12 +1,17 @@
 // @vitest-environment jsdom
 import { act, cleanup, render, screen } from '@testing-library/react'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { TimelineNode } from '@dsh-vscode/timeline'
 import { Timeline } from './Timeline.js'
+
+beforeEach(() => {
+  vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+})
 
 afterEach(() => {
   cleanup()
   vi.useRealTimers()
+  vi.restoreAllMocks()
 })
 
 const answer = (id: string, markdown: string): Extract<TimelineNode, { kind: 'assistant-message' }> => ({
@@ -50,7 +55,7 @@ it('acknowledges only after every omitted answer block has loaded and committed'
     await Promise.resolve()
   })
   await act(() => vi.advanceTimersByTimeAsync(0))
-  expect(responseRendered).toHaveBeenCalledExactlyOnceWith('s', 1)
+  expect(responseRendered).toHaveBeenCalledExactlyOnceWith('s', 1, false)
 })
 
 it('does not acknowledge failed hydration or the previous content version', async () => {
@@ -97,5 +102,5 @@ it('does not acknowledge failed hydration or the previous content version', asyn
     await Promise.resolve()
   })
   await act(() => vi.advanceTimersByTimeAsync(0))
-  expect(responseRendered).toHaveBeenCalledExactlyOnceWith('s', 1)
+  expect(responseRendered).toHaveBeenCalledExactlyOnceWith('s', 1, false)
 })

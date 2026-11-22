@@ -74,6 +74,19 @@ function sentPrompts(client: FakeClient): readonly Extract<WebviewRequest, { typ
 }
 
 describe('AppStore command dispatch', () => {
+  it('reports renderer focus to the Host', async () => {
+    const client = new FakeClient(() => ({}))
+    const store = createAppStore(client as unknown as ProtocolClient)
+    try {
+      await store.reportSurfaceFocus(true)
+      await store.reportSurfaceFocus(false)
+      expect(client.requests).toHaveLength(2)
+      expect(client.requests[0]).toMatchObject({ type: 'surface.focus', payload: { focused: true } })
+      expect(client.requests[1]).toMatchObject({ type: 'surface.focus', payload: { focused: false } })
+    } finally {
+      store.dispose()
+    }
+  })
   it('submits a slash line no DSH command answers as a prompt gesture', async () => {
     // `/dsh-badge add a badge` is how a user-invocable skill is addressed. The
     // host answers `undefined` for anything outside its command directory, and

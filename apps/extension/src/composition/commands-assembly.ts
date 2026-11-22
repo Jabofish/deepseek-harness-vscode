@@ -87,6 +87,8 @@ export interface CommandsAssemblyDependencies {
   readonly supervisor: DshProcessSupervisor
   readonly attachmentTokens: AttachmentStore
   readonly channel: vscode.OutputChannel
+  /** Exercises the configured completion cue independently of a live turn. */
+  readonly testCompletionCue?: () => Promise<void>
 }
 
 export interface CommandsAssembly {
@@ -303,6 +305,7 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
           }
         },
         'dsh.showDiagnostics': () => diagnostics.show(),
+        'dsh.completionCue.test': () => deps.testCompletionCue?.(),
         'dsh.addSelectionContext': () => captureEditorContextFromCommand('selection'),
         'dsh.addFileContext': () => captureEditorContextFromCommand('file'),
         'dsh.addSymbolContext': () => captureEditorContextFromCommand('symbol'),
