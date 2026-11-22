@@ -29,20 +29,20 @@ export function useCompletionCue(
     if (sessionId === undefined || turn === undefined || pending || responseRendered === undefined) return
     const key = JSON.stringify([sessionId, turn])
     if (last.current === key) return
-    let active = true
+    const playback = new AbortController()
     const timer = window.setTimeout(() => {
       last.current = key
       // The renderer knows whether the chat really has focus; VS Code's window
       // focus is stale on some Linux window managers.
       void responseRendered(sessionId, turn, document.hasFocus())
         .then(async (bell) => {
-          if (!bell || !active) return
-          await playCompletionCueBell()
+          if (!bell || playback.signal.aborted) return
+          await playCompletionCueBell(playback.signal)
         })
         .catch(() => undefined)
     }, 0)
     return () => {
-      active = false
+      playback.abort()
       window.clearTimeout(timer)
     }
   }, [sessionId, turn, pending, responseRendered])

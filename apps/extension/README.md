@@ -51,7 +51,7 @@ For manual installation, download a matching platform VSIX (or the universal pac
 If you used `Direwolf.deepseek-harness-client`, disable or uninstall it before installing JaboDSH to avoid duplicate commands and views. Keep its data if you need its local templates or checkpoints. Existing `dsh.*` settings and commands remain compatible; DSH session data stays in the runtime. Private extension storage, saved editor tabs and Webview preferences do not migrate automatically. Reopen sessions, authorise external connections again, and check editor companion status. See the [migration instructions](https://github.com/Jabofish/deepseek-harness-vscode#switch-from-the-previous-extension).
 
 1. Open the **JaboDSH** view.
-2. If DSH is missing, use the guided installer, select an existing executable, or copy the exact install command shown in the view. The installer shows npm output and verifies the installed version; npm warnings alone do not fail the installation.
+2. If DSH is missing, use the guided installer, select an existing executable, or copy the exact install command shown in the view. Guided installation installs the latest verified DSH release candidate and verifies the npm-installed launcher. The Node.js used by npm must be at least 24.9.0.
 3. Choose or create a workspace, start a session, and send a task.
 
 The Chat view is registered in VS Code's Secondary Side Bar by default (on the right in the default workbench layout). VS Code may keep a previously saved view location after an upgrade.

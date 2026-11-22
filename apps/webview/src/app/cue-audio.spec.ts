@@ -118,6 +118,28 @@ it('gives up when a blocked context never settles resume()', async () => {
   expect(await playback).toBe(false)
 })
 
+it('cancels a pending chime and stays silent when audio later resumes', async () => {
+  const stub = stubAudio('suspended')
+  let finishResume = (): void => undefined
+  const resumed = new Promise<void>((resolve) => {
+    finishResume = resolve
+  })
+  stub.resume.mockImplementationOnce(async () => {
+    await resumed
+    stub.contextState.value = 'running'
+  })
+  const abort = new AbortController()
+  const playback = playCompletionCueBell(abort.signal)
+  expect(stub.resume).toHaveBeenCalledOnce()
+
+  abort.abort()
+  expect(await playback).toBe(false)
+  finishResume()
+  await resumed
+  expect(stub.starts).toEqual([])
+  expect(await playCompletionCueBell()).toBe(true)
+})
+
 it('unlocks on the first gesture and releases both listeners', () => {
   const stub = stubAudio('suspended')
   const target = new EventTarget()
