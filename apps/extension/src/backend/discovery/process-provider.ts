@@ -178,16 +178,19 @@ function dshManifestPath(commandLine: string): string | undefined {
 }
 
 function dshManifestPathFromToken(token: string): string | undefined {
+  // Reject UNC (`\\host\share\...`) and device (`\\?\...`) paths in either
+  // separator style: Win32 accepts `//host/share` as UNC, so reading a "local"
+  // manifest would otherwise trigger SMB authentication against an
+  // attacker-chosen host during auto-discovery (NetNTLMv2 capture/relay).
+  if (/^[\\/]{2}/u.test(token)) return undefined
   const windowsPath = path.win32.isAbsolute(token) && /^[A-Za-z]:[\\/]/u.test(token)
-  const uncPath = path.win32.isAbsolute(token) && token.startsWith('\\\\')
-  const posixPath = !windowsPath && !uncPath && path.posix.isAbsolute(token)
-  if (!windowsPath && !uncPath && !posixPath) return undefined
-  const pathApi = windowsPath || uncPath ? path.win32 : path.posix
+  const posixPath = !windowsPath && path.posix.isAbsolute(token)
+  if (!windowsPath && !posixPath) return undefined
+  const pathApi = windowsPath ? path.win32 : path.posix
   const normalized = pathApi.normalize(token)
-  const suffixMatches =
-    windowsPath || uncPath
-      ? /(?:^|\\)node_modules\\@deepseek-ai\\dsh\\lib\\bin\.js$/iu.test(normalized)
-      : /(?:^|\/)node_modules\/@deepseek-ai\/dsh\/lib\/bin\.js$/u.test(normalized)
+  const suffixMatches = windowsPath
+    ? /(?:^|\\)node_modules\\@deepseek-ai\\dsh\\lib\\bin\.js$/iu.test(normalized)
+    : /(?:^|\/)node_modules\/@deepseek-ai\/dsh\/lib\/bin\.js$/u.test(normalized)
   if (!suffixMatches) return undefined
   const packageRoot = pathApi.dirname(pathApi.dirname(normalized))
   return pathApi.join(packageRoot, 'package.json')

@@ -25,3 +25,11 @@ allowBuilds:
 minimumReleaseAge: 1440
 minimumReleaseAgeExclude:
   - '@vscode/vsce@4.1.0'
+
+# Keep the shipped graph on patched transitive builds. `js-yaml` and the nested
+# `zod` arrive through @deepseek-ai packages we do not control, some of which
+# pin older exact versions; the override deliberately replaces those pins, so
+# re-run the adapter contract tests and typecheck after any upstream bump.
+overrides:
+  js-yaml: 4.3.2
+  zod: 4.6.6

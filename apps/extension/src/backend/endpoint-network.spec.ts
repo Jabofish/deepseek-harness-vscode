@@ -3,6 +3,7 @@
 import { createServer } from 'node:http'
 import { once } from 'node:events'
 import { WebSocketServer } from 'ws'
+import { Agent } from 'undici'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { parseServerOrigin, type BackendEndpoint } from '@dsh-vscode/domain'
 import { EndpointNetwork, isDisallowedRemoteAddress } from './endpoint-network.js'
@@ -100,6 +101,37 @@ describe('endpoint network boundary', () => {
     expect(fetch.mock.calls[1]?.[1]?.redirect).toBe('manual')
     await value.release(remote)
     await expect(value.fetch(`${remote.baseUrl}/api`)).rejects.toMatchObject({ code: 'INVALID_ENDPOINT' })
+  })
+
+  it('keeps the pinned lookup on the agent used by later requests', async () => {
+    const server = createServer((_request, response) => response.end('pinned'))
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    const address = server.address()
+    if (address === null || typeof address === 'string') throw new Error('Server fixture did not bind')
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response())
+    const resolve = vi.fn(async () => [{ address: '127.0.0.1', family: 4 as const }])
+    const value = network({ fetch, resolve })
+    try {
+      const local = endpoint(`http://localhost:${address.port}`)
+      await value.prepare(local, false, new AbortController().signal)
+      await value.fetch(`${local.baseUrl}/api`)
+      const dispatcher = (fetch.mock.calls[0]?.[1] as { dispatcher?: unknown } | undefined)?.dispatcher
+      expect(dispatcher).toBeInstanceOf(Agent)
+      // `dsh-pin.invalid` cannot resolve in public DNS, so the request reaches
+      // the fixture only while the agent still carries the pinned lookup.
+      const response = await (dispatcher as Agent).request({
+        origin: `http://dsh-pin.invalid:${address.port}`,
+        path: '/',
+        method: 'GET',
+      })
+      expect(response.statusCode).toBe(200)
+      expect(await response.body.text()).toBe('pinned')
+    } finally {
+      await value.dispose()
+      server.close()
+      await once(server, 'close')
+    }
   })
 
   it('blocks HTTP redirects on real sockets and closes live WebSockets on release', async () => {

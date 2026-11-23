@@ -6,6 +6,14 @@ Release entries describe behaviour at that release. `Unreleased` lists changes a
 
 ## Unreleased
 
+### Changes
+
+- **Security: discovery, transport and settings.** Process discovery ignores DSH package manifests named through UNC or device paths, so a crafted command line no longer triggers SMB authentication to an attacker-chosen host. Mapped network drives and directory junctions remain outside this check. Bundled `undici`, `zod` and `markdown-it` now use patched releases. `dsh.connection.runtimeVersion` is machine-scoped and ignored unless it is an exact package version. Editor-context and navigation feature routes require a trusted workspace. The CI dependency audit blocks high-severity and critical advisories in the shipped graph.
+
+### 更新内容
+
+- **安全：进程发现、传输与设置。** 进程发现会忽略通过 UNC 或设备路径指定的 DSH 包清单，避免构造的命令行触发对攻击者主机的 SMB 认证。映射的网络驱动器和目录联接不在该检查范围内。内置的 `undici`、`zod` 与 `markdown-it` 更新为已修复版本。`dsh.connection.runtimeVersion` 改为机器级设置，非精确包版本的值将被忽略。编辑器上下文和导航特性路由要求工作区受信任。CI 依赖审计会阻断已发布依赖图中的高危和严重漏洞。
+
 ## 0.4.10
 
 ### Changes

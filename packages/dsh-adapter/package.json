@@ -26,7 +26,7 @@
     "dsh-session-format-alpha211": "npm:@deepseek-ai/dsh-session-format-v3-to-v4@0.2.1-alpha.1",
     "dsh-session-format-alpha212": "npm:@deepseek-ai/dsh-session-format-v3-to-v4@0.2.1-alpha.2",
     "ws": "8.21.3",
-    "zod": "4.4.3"
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@types/ws": "8.18.1"
