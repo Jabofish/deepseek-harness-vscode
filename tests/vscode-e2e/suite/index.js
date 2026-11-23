@@ -39,17 +39,25 @@ export async function run() {
 
   const folder = vscode.workspace.workspaceFolders?.[0]
   assert.ok(folder, 'the e2e workspace must be open')
-  const settings = JSON.parse(
-    new TextDecoder().decode(
-      await vscode.workspace.fs.readFile(vscode.Uri.joinPath(folder.uri, '.vscode', 'settings.json')),
-    ),
-  )
-  const mode = settings['dsh.connection.mode']
+  const configuration = vscode.workspace.getConfiguration('dsh')
+  const mode = process.env.DSH_VSCODE_E2E_EXPECTED_MODE
   assert.ok(
     mode === 'attach-only' || mode === 'new-isolated' || mode === 'auto',
-    `unexpected DSH connection mode in the e2e workspace: ${String(mode)}`,
+    `unexpected DSH connection mode in the e2e runner: ${String(mode)}`,
   )
-  if (mode !== 'attach-only') assertManagedIsolation(mode)
+  const attachOnly = mode === 'attach-only'
+  const fixturePort = Number(process.env.DSH_VSCODE_E2E_FIXTURE_PORT)
+  assert.equal(configuration.get('connection.mode'), mode, 'VS Code must apply the requested mode')
+  assert.equal(configuration.get('runtime.autoStart'), !attachOnly)
+  if (attachOnly) {
+    assert.ok(Number.isInteger(fixturePort) && fixturePort > 0 && fixturePort <= 65535)
+    assert.deepEqual(configuration.get('connection.attachPorts'), [fixturePort])
+  } else {
+    assert.equal(configuration.inspect('connection.attachPorts')?.globalValue, undefined)
+  }
+  const executable = process.env.DSH_VSCODE_E2E_EXPECTED_EXECUTABLE
+  if (executable !== undefined) assert.equal(configuration.get('runtime.executablePath'), executable)
+  if (!attachOnly) assertManagedIsolation(mode)
 
   if (process.env.DSH_VSCODE_E2E_INVALID_SETTINGS === '1') {
     await assertInvalidSettingIsReported()
@@ -58,11 +66,9 @@ export async function run() {
 
   if (process.env.DSH_VSCODE_E2E_INSTALL_PREFIX !== undefined) await assertGuidedInstallation(mode)
 
-  if (mode === 'attach-only') {
-    const port = settings['dsh.connection.attachPorts']?.[0]
-    assert.equal(typeof port, 'number', 'attach-only mode must record the fixture port')
+  if (attachOnly) {
     await new Promise((resolve) => setTimeout(resolve, IDLE_OBSERVATION_MS))
-    const beforeConnect = await readObservations(port)
+    const beforeConnect = await readObservations(fixturePort)
     assert.deepEqual(
       {
         methods: beforeConnect.methods,
@@ -73,7 +79,7 @@ export async function run() {
       'activating the extension without opening its view must not connect to DSH',
     )
     await vscode.commands.executeCommand('workbench.view.extension.dsh-container')
-    await waitForAttachObservations(port)
+    await waitForAttachObservations(fixturePort)
     console.log('[dsh-vscode-e2e] opening the DSH view connected to the fixture')
   }
 
@@ -85,7 +91,7 @@ export async function run() {
   // after the activation-without-a-view assertion above has completed.
   await vscode.commands.executeCommand('dsh.moveChatToSidebar')
 
-  if (mode !== 'attach-only') {
+  if (!attachOnly) {
     // In managed mode the extension owns a real runtime and never talks to the
     // attach fixture, so the wire-level assertions below do not apply.
     // Reconnecting exercises the owned start → stop → start path end to end.
@@ -98,9 +104,7 @@ export async function run() {
     console.log(`[dsh-vscode-e2e] ${mode}: connect and reconnect both completed against the owned runtime`)
     if (process.env.DSH_VSCODE_E2E_COMPANION === '1') await assertCompanionInstallation()
   } else {
-    const port = settings['dsh.connection.attachPorts']?.[0]
-    assert.equal(typeof port, 'number', 'attach-only mode must record the fixture port')
-    const observed = await waitForAttachObservations(port)
+    const observed = await waitForAttachObservations(fixturePort)
     console.log(
       `[dsh-vscode-e2e] attached methods=[${observed.methods.join(',')}] mux=${observed.muxUpgrades} host=${observed.hostUpgrades}`,
     )

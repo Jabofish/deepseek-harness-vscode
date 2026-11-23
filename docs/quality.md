@@ -120,9 +120,9 @@ pnpm build
 DSH_VSCODE_E2E_EXECUTABLE='<path-to-Code-executable>' DSH_VSCODE_E2E_MODE=attach-only node --experimental-transform-types tests/vscode-e2e/run.ts
 ```
 
-The default `attach-only` mode drives a real Extension Host against a controlled loopback fixture. It covers activation, commands and transport. Use managed mode for the real DSH launch path and the manual scenarios below for chat interaction.
+The default `attach-only` mode drives a real Extension Host against a controlled loopback fixture. It covers activation, commands and transport. Each run uses disposable VS Code user data and extension directories. The runner sets machine-scoped options in User settings and checks the effective settings before connecting. Use managed mode for the real DSH launch path and the manual scenarios below for chat interaction.
 
-For native launch paths, set `DSH_VSCODE_E2E_MODE=managed` or `auto`, plus `DSH_VSCODE_E2E_RUNTIME` to the chosen runtime, in the same environment as the command. Both modes create a disposable `DSH_HOME`; the suite checks ownership and that the runtime actually wrote to that home. `auto` also refuses known serving external endpoints before starting, but cannot prove that the OS process-scan source contains no other DSH: use an environment without unrelated instances, and never stop a user's instance to make a test pass.
+For native launch paths, set `DSH_VSCODE_E2E_MODE=managed` or `auto`, plus `DSH_VSCODE_E2E_RUNTIME` to the chosen runtime, in the same environment as the command. The runner puts a launcher for that runtime first on the test process's PATH. Without an override it uses ordinary runtime discovery. Both modes create a disposable `DSH_HOME`. The suite checks ownership and that the runtime wrote to that home. `auto` refuses known serving external endpoints before starting. Run it in an environment without unrelated DSH instances.
 
 To test guided installation, use `DSH_VSCODE_E2E_MODE=managed` and `DSH_VSCODE_E2E_GUIDED_INSTALL=1` with no `DSH_VSCODE_E2E_RUNTIME` override. The runner creates a disposable npm prefix, runs the extension's Install DSH command, verifies the exact RC and exercises connect and reconnect. Use a compatible Node.js and npm on PATH. With a populated npm cache, `npm_config_offline=true` runs the install without registry access.
 

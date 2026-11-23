@@ -1,12 +1,14 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
+import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import type { Duplex } from 'node:stream'
 import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { runTests } from '@vscode/test-electron'
 import { DEFAULT_INSTALL_DSH_VERSION } from '../../packages/dsh-adapter/src/contracts.ts'
+import { resolveWindowsShim } from '../../apps/extension/src/backend/windows-shim.ts'
 
 import { resolveLiveRuntime } from '../live-dsh/runtime.ts'
 import { resolveVscodeExecutable } from './vscode-executable.ts'
@@ -56,33 +58,15 @@ export async function run(): Promise<void> {
   }
   const root = await mkdtemp(path.join(os.tmpdir(), 'dsh-vscode-e2e-'))
   const workspace = path.join(root, 'workspace')
-  const settingsDirectory = path.join(workspace, '.vscode')
+  const userData = path.join(root, 'vscode-user-data')
+  const settingsDirectory = path.join(userData, 'User')
+  const connectionMode = mode === 'managed' ? 'new-isolated' : mode
   // Managed and auto modes start a real DSH. Without an explicit home it would
   // use the user's own profile, so the scenario always runs against a directory
   // inside this test-owned root and the Extension Host is told to expect it.
   const isolatedHome = startsRuntime ? path.join(root, 'dsh-home') : undefined
   const installPrefix = guidedInstall ? path.join(root, 'npm-prefix') : undefined
-  // `dsh.runtime.executablePath` is an absolute path by contract, so a bare
-  // command name has to be resolved before it is written. Letting it through
-  // would fail extension activation with an invalid-settings error instead of
-  // launching the runtime the environment variable asked for.
-  let runtimeExecutable =
-    requestedRuntime === undefined || requestedRuntime === ''
-      ? undefined
-      : resolveLiveRuntime(requestedRuntime)
-  if (
-    startsRuntime &&
-    process.platform === 'win32' &&
-    runtimeExecutable !== undefined &&
-    /\.js$/iu.test(runtimeExecutable)
-  ) {
-    // The production launcher accepts a Windows npm shim. Give a source-built
-    // CLI the same shape inside this test-owned temporary directory.
-    const shim = path.join(root, 'dsh-source.cmd')
-    await writeFile(shim, `@echo off\r\nnode "${runtimeExecutable}" %*\r\n`, 'utf8')
-    runtimeExecutable = shim
-  }
-  const executablePathSetting = invalidSettings ? INVALID_EXECUTABLE_PATH : runtimeExecutable
+  const executablePathSetting = invalidSettings ? INVALID_EXECUTABLE_PATH : undefined
   const fixtureSockets = new Set<Duplex>()
   const observations: FixtureObservations = {
     methods: [],
@@ -123,7 +107,20 @@ export async function run(): Promise<void> {
     socket.once('error', () => fixtureSockets.delete(socket))
   })
   try {
+    const runtimeExecutable =
+      startsRuntime && requestedRuntime ? path.resolve(resolveLiveRuntime(requestedRuntime)) : undefined
+    // Test Electron refuses modal dialogs. Expose the selected runtime through
+    // PATH discovery, leaving native consent for custom settings intact.
+    const runtimeBin =
+      runtimeExecutable === undefined ? undefined : await prepareRuntimePath(root, runtimeExecutable)
+    const pathPrefix =
+      installPrefix === undefined
+        ? runtimeBin
+        : process.platform === 'win32'
+          ? installPrefix
+          : path.join(installPrefix, 'bin')
     await writeFile(path.join(root, 'workspace-marker.txt'), 'test-owned\n', 'utf8')
+    await mkdir(workspace, { recursive: true })
     await mkdir(settingsDirectory, { recursive: true })
     if (isolatedHome !== undefined) await mkdir(isolatedHome, { recursive: true })
     await new Promise<void>((resolve, reject) => {
@@ -137,11 +134,11 @@ export async function run(): Promise<void> {
       path.join(settingsDirectory, 'settings.json'),
       JSON.stringify(
         {
-          'dsh.connection.mode':
-            mode === 'auto' ? 'auto' : mode === 'managed' ? 'new-isolated' : 'attach-only',
-          // auto must not see the fixture as a candidate, or the run would prove
-          // an attach to simulated traffic instead of discovery over a real runtime.
-          'dsh.connection.attachPorts': startsRuntime ? [] : [address.port],
+          // The connection policy and executable are machine-scoped. VS Code
+          // reads them from this disposable profile's User settings.
+          'dsh.connection.mode': connectionMode,
+          // An explicit port list limits discovery and disables automatic launch.
+          ...(startsRuntime ? {} : { 'dsh.connection.attachPorts': [address.port] }),
           'dsh.connection.discoveryTimeoutMs': 3_000,
           'dsh.connection.requestTimeoutMs': 5_000,
           'dsh.runtime.autoStart': startsRuntime,
@@ -172,6 +169,13 @@ export async function run(): Promise<void> {
         // Codex/VS Code terminals can inherit this Electron switch. Passing it
         // through makes Code.exe execute the workspace path as a Node script.
         ELECTRON_RUN_AS_NODE: undefined,
+        DSH_VSCODE_DEV_MANAGED_RUNTIME: undefined,
+        DSH_VSCODE_E2E_EXPECTED_MODE: connectionMode,
+        DSH_VSCODE_E2E_FIXTURE_PORT: startsRuntime ? undefined : String(address.port),
+        DSH_VSCODE_E2E_EXPECTED_EXECUTABLE: executablePathSetting,
+        ...(pathPrefix === undefined
+          ? {}
+          : { PATH: [pathPrefix, process.env.PATH ?? ''].join(path.delimiter) }),
         ...(invalidSettings ? { DSH_VSCODE_E2E_INVALID_SETTINGS: '1' } : {}),
         ...(process.env.DSH_VSCODE_E2E_COMPANION === '1' ? { DSH_VSCODE_E2E_COMPANION: '1' } : {}),
         ...(installPrefix === undefined
@@ -180,10 +184,6 @@ export async function run(): Promise<void> {
               npm_config_prefix: installPrefix,
               DSH_VSCODE_E2E_INSTALL_PREFIX: installPrefix,
               DSH_VSCODE_E2E_INSTALL_VERSION: DEFAULT_INSTALL_DSH_VERSION,
-              PATH: [
-                process.platform === 'win32' ? installPrefix : path.join(installPrefix, 'bin'),
-                process.env.PATH ?? '',
-              ].join(path.delimiter),
             }),
         // The Extension Host passes its environment to the DSH it starts, and
         // the suite refuses to connect unless both point at the same
@@ -194,6 +194,8 @@ export async function run(): Promise<void> {
       // required to refuse an automatic start and managed mode can never run.
       launchArgs: [
         workspace,
+        `--user-data-dir=${userData}`,
+        `--extensions-dir=${path.join(root, 'vscode-extensions')}`,
         '--disable-gpu',
         '--skip-welcome',
         '--skip-release-notes',
@@ -242,8 +244,30 @@ export async function run(): Promise<void> {
     await new Promise<void>((resolve) => {
       server.close(() => resolve())
     })
-    await rm(root, { recursive: true, force: true })
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   }
+}
+
+async function prepareRuntimePath(root: string, executable: string): Promise<string> {
+  if (!(await stat(executable)).isFile()) throw new Error('The E2E runtime must be a file.')
+  const bin = path.join(root, 'runtime-bin')
+  await mkdir(bin)
+  if (process.platform === 'win32') {
+    const shim = resolveWindowsShim(executable, 'windows', (file) => readFileSync(file, 'utf8'))
+    const target = shim?.prefixArgs[0] ?? shim?.executable ?? executable
+    if (!/\.(?:[cm]?js|exe)$/iu.test(target))
+      throw new Error('The E2E runtime must resolve to a Windows executable or a Node entrypoint.')
+    if (!(await stat(target)).isFile()) throw new Error('The Windows E2E runtime target must be a file.')
+    const command = /\.exe$/iu.test(target) ? `"${target}"` : `node "${target}"`
+    await writeFile(path.join(bin, 'dsh.cmd'), `@echo off\r\n${command} %*\r\n`, 'utf8')
+  } else {
+    const quote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`
+    const command = /\.[cm]?js$/iu.test(executable)
+      ? `${quote(process.execPath)} ${quote(executable)}`
+      : quote(executable)
+    await writeFile(path.join(bin, 'dsh'), `#!/bin/sh\nexec ${command} "$@"\n`, { mode: 0o700 })
+  }
+  return bin
 }
 
 interface FixtureObservations {
