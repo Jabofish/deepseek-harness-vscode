@@ -15,6 +15,7 @@ import { defineStateView, type StoreWithoutStateView } from './store/state-view.
 import { createJobActions } from './store/job-actions.js'
 import { withAvailableList } from './store/list-availability.js'
 import { getVsCodeApi } from '../vscode-api.js'
+import { translate } from '../i18n.js'
 import { ProtocolClient } from './protocol-client.js'
 import type { AppState, AppStore, StateSetter } from './store/types.js'
 import { requestId } from './store/ids.js'
@@ -438,16 +439,21 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
    */
   const resolveSubagentOpen = async (
     sessionId: string,
+    knownParentSessionId?: string,
   ): Promise<
     | { readonly kind: 'subagent'; readonly entry: SubagentView; readonly parentAvailable: boolean }
     | { readonly kind: 'session'; readonly sessionId: string }
   > => {
     const visited = new Set<string>([sessionId])
     let target = sessionId
+    let parentHint = knownParentSessionId
     for (;;) {
       const summary = state.sessions.find((session) => session.id === target)
-      if (summary?.origin !== 'subagent' || summary.parentSessionId === undefined) break
-      const catalog = await loadSubagentCatalog(summary.parentSessionId)
+      const parentSessionId =
+        parentHint ?? (summary?.origin === 'subagent' ? summary.parentSessionId : undefined)
+      parentHint = undefined
+      if (parentSessionId === undefined) break
+      const catalog = await loadSubagentCatalog(parentSessionId)
       // A diagnostic entry is not presentable: `isSubagentView` keeps the climb
       // going so those stay unreachable rather than half-openable.
       const entry = catalog?.entries.find(
@@ -455,10 +461,11 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       )
       if (catalog !== undefined && entry !== undefined)
         return { kind: 'subagent', entry, parentAvailable: catalog.parentAvailable }
+      if (knownParentSessionId !== undefined) throw new Error(translate('app.error.openSubagent'))
       // Malformed lineage must not walk forever; fall back to the named session.
-      if (visited.has(summary.parentSessionId)) return { kind: 'session', sessionId }
-      visited.add(summary.parentSessionId)
-      target = summary.parentSessionId
+      if (visited.has(parentSessionId)) return { kind: 'session', sessionId }
+      visited.add(parentSessionId)
+      target = parentSessionId
     }
     return { kind: 'session', sessionId: target }
   }
@@ -802,9 +809,17 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
    * how many editor tabs exist.
    */
   const openSession = (sessionId: string): Promise<void> => {
-    if (state.surface?.kind === 'editor' && state.surface.sessionId !== sessionId)
-      return surfaceActions.methods.openSessionInEditor(sessionId)
+    if (state.surface?.kind === 'editor') {
+      if (state.surface.sessionId !== sessionId) return surfaceActions.methods.openSessionInEditor(sessionId)
+      if (state.surface.parentSessionId !== undefined)
+        return open(sessionId, { parentSessionId: state.surface.parentSessionId })
+    }
     return open(sessionId)
+  }
+  const openSubagentInEditor = async (entry: SubagentView): Promise<void> => {
+    if (entry.mode === 'external') throw new Error(translate('subagents.externalUnavailable'))
+    const title = [entry.name, entry.label?.trim()].filter(Boolean).join(' · ')
+    await surfaceActions.methods.openSessionInEditor(entry.id, title || undefined)
   }
   const store: StoreWithoutStateView = {
     ...accountActions.methods,
@@ -962,7 +977,18 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       })
       return queue
     },
-    openSubagent,
+    openSubagent: (entry, parentAvailable) =>
+      state.surface?.kind === 'editor' && state.surface.sessionId !== entry.id
+        ? openSubagentInEditor(entry)
+        : openSubagent(entry, parentAvailable),
+    openSubagentInEditor,
+    interruptSubagent: async (sessionId) => {
+      await client.request<unknown>({
+        type: 'subagent.interrupt',
+        requestId: requestId(),
+        payload: { sessionId },
+      })
+    },
     ...sessionActions,
     ...goalQueueActions,
     runtimeAction: (action) =>

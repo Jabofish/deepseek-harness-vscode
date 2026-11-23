@@ -7,10 +7,31 @@ import {
   type KeyboardEvent,
   type ReactElement,
 } from 'react'
-import type { SessionSummary, SubagentCatalog, SubagentView } from '@dsh-vscode/domain'
+import type {
+  JobView,
+  PermissionRequest,
+  SessionSummary,
+  SubagentCatalog,
+  SubagentLiveActivity,
+  SubagentView,
+  UserQuestion,
+} from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
 import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 import { Icon } from '../../ui/Icon.js'
+import {
+  aggregateLoadedChildren,
+  childEntries,
+  flattenSubagentCatalog,
+  formatSubagentDuration,
+  formatTokens,
+  subagentActivityHeading,
+  subagentDisplayLabel,
+  subagentDotState,
+  subagentDurationMs,
+  subagentModeLabel,
+  subagentTokenTotal,
+} from './subagent-display.js'
 
 export interface SubagentCatalogProps {
   /** Owner of the direct-child catalog, including an empty catalog. */
@@ -19,16 +40,20 @@ export interface SubagentCatalogProps {
   readonly catalog: SubagentCatalog
   /** Session-list summaries used for the official token and duration metrics. */
   readonly summaries?: readonly SessionSummary[]
+  /** Bounded Host-derived live activity headings keyed by child session id. */
+  readonly activities?: Readonly<Record<string, SubagentLiveActivity>>
+  /** Active session jobs (used for producer-owned background subagent progress fallback). */
+  readonly jobs?: readonly JobView[]
+  /** Live pending permission requests across sessions. */
+  readonly permissions?: readonly PermissionRequest[]
+  /** Live pending user questions across sessions. */
+  readonly questions?: readonly UserQuestion[]
   /** Lazily fetch one parent's catalog level (`subagent.list`). */
   readonly onLoadChildren: (sessionId: string) => Promise<SubagentCatalog | undefined>
   /** Open one child session for viewing, as upstream's `openChild`. */
   readonly onOpenChild: (entry: SubagentView, parentAvailable: boolean) => void
-}
-
-interface CatalogNode {
-  readonly entry: SubagentCatalog['entries'][number]
-  readonly level: number
-  readonly parentAvailable: boolean
+  /** Open one child session in a separate editor panel without leaving the parent. */
+  readonly onOpenInEditor?: (entry: SubagentView) => void
 }
 
 interface FloatingMenuPosition {
@@ -43,121 +68,7 @@ const MENU_MAX_HEIGHT = 300
 const VIEWPORT_GUTTER = 12
 const MENU_GAP = 6
 const EMPTY_SUMMARIES: readonly SessionSummary[] = []
-
-function isRunning(entry: SubagentView): boolean {
-  return entry.activity === 'running'
-}
-
-function childEntries(catalog: SubagentCatalog): readonly SubagentView[] {
-  return catalog.entries.filter((entry): entry is SubagentView => entry.kind === 'child')
-}
-
-function record(value: unknown): Readonly<Record<string, unknown>> | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Readonly<Record<string, unknown>>)
-    : undefined
-}
-
-function nonNegativeInteger(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
-}
-
-function formatTokens(value: number): string {
-  const scaled = (next: number): string =>
-    next >= 100 ? String(Math.round(next)) : String(Math.round(next * 10) / 10)
-  if (value < 1_000) return String(value)
-  if (value < 1_000_000) return `${scaled(value / 1_000)}K`
-  return `${scaled(value / 1_000_000)}M`
-}
-
-function subagentTokenTotal(summary: SessionSummary | undefined): number | undefined {
-  const usage = record(summary?.projection?.values.tokenUsage)
-  if (usage === undefined) return undefined
-  const input = nonNegativeInteger(usage.uncachedInputTokens ?? usage.inputTokens)
-  const output = nonNegativeInteger(usage.outputTokens)
-  const cacheRead = nonNegativeInteger(usage.cacheReadTokens)
-  const cacheWrite = nonNegativeInteger(usage.cacheWriteTokens)
-  if (
-    input === undefined ||
-    output === undefined ||
-    (usage.cacheReadTokens !== undefined && cacheRead === undefined) ||
-    (usage.cacheWriteTokens !== undefined && cacheWrite === undefined)
-  )
-    return undefined
-  return (input ?? 0) + (output ?? 0) + (cacheRead ?? 0) + (cacheWrite ?? 0)
-}
-
-function subagentDurationMs(
-  summary: SessionSummary | undefined,
-  activity: SubagentView['activity'],
-  now: number,
-): number | undefined {
-  const timing = record(summary?.projection?.values.subagentTiming)
-  if (timing === undefined) return undefined
-  const settledMs = nonNegativeInteger(timing.settledMs)
-  if (settledMs === undefined) return undefined
-  if (timing.active === undefined) return settledMs
-  const active = record(timing.active)
-  if (active === undefined) return undefined
-  const since = nonNegativeInteger(active.since)
-  const through = nonNegativeInteger(active.through)
-  if (since === undefined || through === undefined) return undefined
-  const end = activity === 'running' ? now : through
-  return settledMs + Math.max(0, end - since)
-}
-
-function formatSubagentDuration(ms: number, t: ReturnType<typeof useI18n>['t']): string {
-  const totalSeconds = Math.floor(Math.max(0, ms) / 1_000)
-  const minutes = Math.floor(totalSeconds / 60)
-  const hours = Math.floor(minutes / 60)
-  if (hours > 0) return t('duration.hoursMinutes', { hours, minutes: String(minutes % 60).padStart(2, '0') })
-  if (minutes > 0)
-    return t('duration.minutesSeconds', { minutes, seconds: String(totalSeconds % 60).padStart(2, '0') })
-  return t('duration.seconds', { seconds: totalSeconds })
-}
-
-interface SubagentAggregate {
-  readonly total: number
-  readonly running: number
-}
-
-function aggregateLoadedChildren(
-  catalog: SubagentCatalog,
-  catalogs: Readonly<Record<string, SubagentCatalog>>,
-  visited: ReadonlySet<string> = new Set(),
-): SubagentAggregate {
-  let total = 0
-  let running = 0
-  for (const entry of childEntries(catalog)) {
-    total += 1
-    if (isRunning(entry)) running += 1
-    const branch = catalogs[entry.id]
-    if (!entry.hasChildren || branch === undefined || visited.has(entry.id)) continue
-    const nextVisited = new Set(visited)
-    nextVisited.add(entry.id)
-    const nested = aggregateLoadedChildren(branch, catalogs, nextVisited)
-    total += nested.total
-    running += nested.running
-  }
-  return { total, running }
-}
-
-function flatten(
-  catalog: SubagentCatalog,
-  catalogs: Readonly<Record<string, SubagentCatalog>>,
-  expanded: ReadonlySet<string>,
-  level: number,
-  output: CatalogNode[] = [],
-): CatalogNode[] {
-  for (const entry of catalog.entries) {
-    output.push({ entry, level, parentAvailable: catalog.parentAvailable })
-    if (entry.kind === 'child' && entry.hasChildren && expanded.has(entry.id)) {
-      const branch = catalogs[entry.id]
-      if (branch !== undefined) flatten(branch, catalogs, expanded, level + 1, output)
-    }
-  }
-  return output
-}
+const EMPTY_ACTIVITIES: Readonly<Record<string, SubagentLiveActivity>> = {}
 
 /** Compact session-header catalog for navigating direct and nested subagents. */
 export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null {
@@ -176,6 +87,7 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
   const menuRef = useRef<HTMLDivElement>(null)
   const children = useMemo(() => childEntries(props.catalog), [props.catalog])
   const summaries = props.summaries ?? EMPTY_SUMMARIES
+  const activities = props.activities ?? EMPTY_ACTIVITIES
   const summariesById = useMemo(() => {
     const result = new Map<string, SessionSummary>()
     for (const summary of summaries) result.set(summary.id, summary)
@@ -281,13 +193,11 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
   }
 
   const rows = useMemo(
-    () => flatten(props.catalog, catalogs, expanded, 1),
+    () => flattenSubagentCatalog(props.catalog, catalogs, expanded, 1),
     [catalogs, expanded, props.catalog],
   )
-  // Roving tabindex: the tree is one tab stop, and the arrow keys that already
-  // roam here move focus between rows. The stop follows that focus — Tab and
-  // Shift+Tab must leave the tree from the row the user is on, not snap back
-  // to the first row. Diagnostic rows never take focus.
+  // Arrow keys move the row tab stop. Tab reaches the current row's editor
+  // action when available. Diagnostic rows never take focus.
   const firstSelectableId = rows.find((row) => row.entry.kind !== 'diagnostic')?.entry.id
   const tabStopId =
     activeRowId !== undefined &&
@@ -373,16 +283,15 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
             const branch = entry.hasChildren
             const isExpanded = expanded.has(entry.id)
             const loading = busy.has(entry.id)
-            const entryLabel = [entry.name, entry.label?.trim()].filter(Boolean).join(' · ') || entry.id
-            const mode =
-              entry.mode === 'external'
-                ? t('subagents.mode.external')
-                : entry.mode === 'continuable'
-                  ? t('subagents.mode.continuable')
-                  : t('subagents.mode.oneShot')
-            const status = isRunning(entry)
-              ? t('subagents.activity.running')
-              : t('subagents.activity.inactive')
+            const entryLabel = subagentDisplayLabel(entry, t)
+            const mode = subagentModeLabel(entry.mode, t)
+            const liveActivity = activities[entry.id]
+            const status = subagentActivityHeading(entry, liveActivity, t, {
+              ...(props.jobs === undefined ? {} : { jobs: props.jobs }),
+              ...(props.permissions === undefined ? {} : { permissions: props.permissions }),
+              ...(props.questions === undefined ? {} : { questions: props.questions }),
+            })
+            const dot = subagentDotState(entry, liveActivity, props.permissions, props.questions)
             const availability =
               entry.mode === 'external'
                 ? t('subagents.externalUnavailable')
@@ -413,6 +322,7 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
                 className={`dsh-subagent-tree__row${entry.mode === 'external' ? ' dsh-subagent-tree__row--disabled' : ''}`}
                 onFocus={() => setActiveRowId(entry.id)}
                 onKeyDown={(event) => {
+                  if (event.target !== event.currentTarget) return
                   if (event.key === 'Enter' || event.key === ' ') {
                     event.preventDefault()
                     if (entry.mode !== 'external') props.onOpenChild(entry, parentAvailable)
@@ -449,7 +359,7 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
                 ) : (
                   <span className="dsh-subagent-tree__spacer" />
                 )}
-                <span className="dsh-jobs-popover__dot" data-state={isRunning(entry) ? 'ongoing' : 'done'} />
+                <span className="dsh-jobs-popover__dot" data-state={dot} />
                 <span className="dsh-subagent-tree__label">{entryLabel}</span>
                 <span className="dsh-subagent-tree__meta">
                   {loading
@@ -463,6 +373,24 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
                     {metrics}
                   </span>
                 )}
+                {entry.mode !== 'external' && props.onOpenInEditor !== undefined ? (
+                  <button
+                    type="button"
+                    tabIndex={entry.id === tabStopId ? 0 : -1}
+                    className="dsh-icon-button dsh-subagent-tree__action"
+                    aria-label={t('subagents.openInEditor', { label: entryLabel })}
+                    title={t('subagents.openInEditor', { label: entryLabel })}
+                    onClick={(event) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      setOpen(false)
+                      triggerRef.current?.focus()
+                      props.onOpenInEditor?.(entry)
+                    }}
+                  >
+                    <Icon name="open-in-editor" />
+                  </button>
+                ) : null}
               </div>
             )
           })}

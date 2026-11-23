@@ -311,6 +311,10 @@
   margin-inline: auto;
 }
 
+.dsh-app[data-conversation-layout='focused'] .dsh-conversation > .dsh-subagent-strip {
+  width: min(calc(100% - 2 * var(--dsh-space-1)), var(--dsh-timeline-content-max-width));
+}
+
 .dsh-app[data-conversation-layout='focused'] .dsh-interaction {
   gap: var(--dsh-space-1);
   padding: var(--dsh-space-2);

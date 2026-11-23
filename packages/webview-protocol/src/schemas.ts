@@ -8,6 +8,7 @@ export {
   jobFollowUpdatedPayloadSchema,
   jobFollowFailedPayloadSchema,
   hostEventSchema,
+  subagentLiveActivitySchema,
   hostMessageSchema,
   webviewEnvelopeSchema,
   hostEnvelopeSchema,

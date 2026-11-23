@@ -94,6 +94,7 @@ export function createHostBackedAppStore(
         'connection.snapshot',
         'connection.output',
         'runtime.update.progress',
+        'subagent.activity',
         'ui.sessions.toggle',
         'ui.settings.toggle',
         'session.created',

@@ -76,6 +76,7 @@ export function createInitialState(composerPreferences: ComposerPreferences): Ap
     feedback: {},
     feedbackUnavailable: false,
     subagents: EMPTY_SUBAGENT_CATALOG,
+    subagentActivities: {},
     activeSubagent: undefined,
     queue: [],
     editorContext: [],

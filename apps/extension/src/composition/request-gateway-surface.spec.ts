@@ -224,7 +224,10 @@ function buildGateway(): Harness {
     },
     backendService: {
       replayEvents: () => [],
-      requireBackend: () => ({ sessions: { rename: () => Promise.resolve(host.renamedTitle) } }),
+      requireBackend: () => ({
+        sessions: { rename: () => Promise.resolve(host.renamedTitle) },
+        subagents: { parentOf: (id: string) => (id === 'child-1' ? 'session-1' : undefined) },
+      }),
     },
     editorContextProvider: { dispose: () => teardowns.push('editor-context') },
     connect: () => {
@@ -595,5 +598,23 @@ describe('request gateway editor surface routes', () => {
     harness.gateway.editorSurfaces.closeAll()
     expect(harness.gateway.editorSurfaces.forSession('session-2')).toBeUndefined()
     expect(harness.gateway.editorSurfaces.forSession('session-1')).toBeUndefined()
+  })
+
+  it('announces parentSessionId when an editor tab is assigned to a known subagent', async () => {
+    await harness.gateway.router.handle(
+      request('surface.openInEditor', 'r-child', { sessionId: 'child-1', title: 'reviewer · Audit' }),
+      'sidebar',
+    )
+    const surfaceId = harness.gateway.editorSurfaces.forSession('child-1')?.surfaceId
+    expect(surfaceId).toBeDefined()
+    await harness.gateway.router.handle(request('app.ready', 'ready-child'), surfaceId)
+
+    expect(harness.events).toContainEqual(
+      expect.objectContaining({
+        surfaceId,
+        name: 'ui.surface.assigned',
+        payload: { kind: 'editor', sessionId: 'child-1', parentSessionId: 'session-1' },
+      }),
+    )
   })
 })

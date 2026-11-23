@@ -342,4 +342,58 @@ describe('Host event delivery', () => {
     expect(posted.filter((msg) => msg.type === 'event' && msg.name === 'ui.resync')).toHaveLength(0)
     pipeline.dispose()
   })
+
+  it('emits coalesced live subagent activity for known subagents only and clears on disconnect', async () => {
+    const posted: Array<HostMessage | FeatureHostMessage> = []
+    const backend = {
+      connection: { backendInstanceId: 'backend-1', connectionGeneration: 1 },
+      subagents: { parentOf: (id: string) => (id === 'child-1' ? 'root-1' : undefined) },
+    }
+    const pipeline = createHostEventPipeline({
+      transcript: {
+        accept: () => true,
+        dispose: vi.fn(),
+      },
+      post: (message) => {
+        posted.push(message)
+        return Promise.resolve(true)
+      },
+      postTo: () => Promise.resolve(true),
+      backendService: { requireBackend: () => backend } as never,
+      diagnostics: { log: vi.fn(), connectionOutput: () => undefined } as never,
+      editorContextUseCases: { availability: vi.fn() } as never,
+      featureOwner: () => ({ workspaceFolderId: 'w1', sessionId: 'root-1' }) as never,
+      currentWorkspaceFolders: () => [],
+      temporaryWorkspaceManager: {} as never,
+      runtimeUpdateProgress: { current: vi.fn() },
+    })
+
+    await pipeline.postBackendEvent(backend as never, {
+      type: 'tool.updated',
+      sessionId: 'root-1',
+      tool: { id: 't0', name: 'read', category: 'tool', title: 'read', status: 'running', metadata: {} },
+    })
+    expect(posted).toHaveLength(0)
+
+    await pipeline.postBackendEvent(backend as never, {
+      type: 'tool.updated',
+      sessionId: 'child-1',
+      tool: { id: 't1', name: 'edit', category: 'tool', title: 'edit', status: 'running', metadata: {} },
+    })
+    await Promise.resolve()
+    expect(posted).toContainEqual(
+      expect.objectContaining({
+        type: 'event',
+        name: 'subagent.activity',
+        payload: { sessionId: 'child-1', phase: 'tool', toolName: 'edit', activeToolCount: 1 },
+      }),
+    )
+    expect(pipeline.subagentActivitySnapshots()).toEqual([
+      { sessionId: 'child-1', phase: 'tool', toolName: 'edit', activeToolCount: 1 },
+    ])
+
+    pipeline.publishState({ kind: 'idle' } as never)
+    expect(pipeline.subagentActivitySnapshots()).toEqual([])
+    pipeline.dispose()
+  })
 })

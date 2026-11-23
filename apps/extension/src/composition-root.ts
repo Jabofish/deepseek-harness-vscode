@@ -280,6 +280,8 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     nextFeatureLocalSequence,
     acknowledgeEvents,
     forgetSurface,
+    markSubagents,
+    subagentActivitySnapshots,
     dispose: disposeHostEventPipeline,
   } = createHostEventPipeline({
     surfaceIds: () =>
@@ -415,6 +417,8 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     responseRendered: (sessionId, turn, chatFocused) => completionCue.rendered(sessionId, turn, chatFocused),
     acknowledgeHostEvents: acknowledgeEvents,
     forgetHostSurface: forgetSurface,
+    markSubagents,
+    subagentActivitySnapshots,
     prepareEditorSession: (sessionId, signal) => commands.editorCompanion.prepareSession(sessionId, signal),
     transcript,
     post,

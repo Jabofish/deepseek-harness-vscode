@@ -3,11 +3,13 @@ import type {
   BackendEvent,
   SessionConfigurationPatch,
   SessionSummary,
+  SubagentLiveActivity,
 } from '@dsh-vscode/domain'
 import { CONNECTION_PHASES } from '@dsh-vscode/domain'
 import { matchesQuestionResolution } from '@dsh-vscode/domain'
 import {
   connectionOutputSchema,
+  subagentLiveActivitySchema,
   transcriptPatchSchema,
   type HostMessage,
   type TranscriptPatch,
@@ -42,6 +44,50 @@ import { currentTodos } from './todo-state.js'
 import { withAvailableList } from './list-availability.js'
 import { installTranscript, installTranscriptPatch, parseTranscript } from './transcript-state.js'
 
+const MAX_SUBAGENT_ACTIVITIES = 64
+
+function updateSubagentActivity(
+  current: Readonly<Record<string, SubagentLiveActivity>> | undefined,
+  activity: SubagentLiveActivity,
+): Readonly<Record<string, SubagentLiveActivity>> | undefined {
+  const existing =
+    current !== undefined && Object.hasOwn(current, activity.sessionId)
+      ? current[activity.sessionId]
+      : undefined
+  if (activity.phase === 'idle') {
+    if (existing === undefined) return current
+    const next = { ...current }
+    delete next[activity.sessionId]
+    return next
+  }
+  if (
+    existing !== undefined &&
+    existing.phase === activity.phase &&
+    existing.toolName === activity.toolName &&
+    existing.activeToolCount === activity.activeToolCount
+  )
+    return current
+  const previous = { ...current }
+  delete previous[activity.sessionId]
+  const next = { ...previous, [activity.sessionId]: activity }
+  const keys = Object.keys(next)
+  while (keys.length > MAX_SUBAGENT_ACTIVITIES) {
+    const oldest = keys.shift()
+    if (oldest !== undefined) delete next[oldest]
+  }
+  return next
+}
+
+function pruneSubagentActivity(
+  current: Readonly<Record<string, SubagentLiveActivity>> | undefined,
+  sessionId: string,
+): Readonly<Record<string, SubagentLiveActivity>> | undefined {
+  if (current === undefined || !Object.hasOwn(current, sessionId)) return current
+  const next = { ...current }
+  delete next[sessionId]
+  return next
+}
+
 export function applyHostMessage(
   message: HostMessage,
   state: AppState,
@@ -69,6 +115,21 @@ export function applyHostMessage(
       // A malformed full window needs the same authoritative recovery as a bad patch.
       if (object(message.payload)?.sessionId === state.activeSessionId) onTranscriptRecovery?.()
     }
+    return
+  }
+  if (message.name === 'subagent.activity') {
+    const parsed = subagentLiveActivitySchema.safeParse(message.payload)
+    if (!parsed.success) return
+    const { sessionId, phase, toolName, activeToolCount } = parsed.data
+    const activity: SubagentLiveActivity = {
+      sessionId,
+      phase,
+      ...(toolName === undefined ? {} : { toolName }),
+      ...(activeToolCount === undefined ? {} : { activeToolCount }),
+    }
+    const nextActivities = updateSubagentActivity(state.subagentActivities, activity)
+    if (nextActivities !== state.subagentActivities)
+      setState({ ...state, subagentActivities: nextActivities ?? {} })
     return
   }
   if (message.name === 'runtime.update.progress') {
@@ -309,8 +370,17 @@ export function applyHostMessage(
             entry: { ...next.activeSubagent.entry, activity },
           }
         : next.activeSubagent
-    if (sessions !== next.sessions || subagents !== next.subagents || activeSubagent !== next.activeSubagent)
-      next = { ...next, sessions, subagents, activeSubagent }
+    const subagentActivities =
+      activity === 'inactive' && status !== 'awaiting-input'
+        ? pruneSubagentActivity(next.subagentActivities, event.sessionId)
+        : next.subagentActivities
+    if (
+      sessions !== next.sessions ||
+      subagents !== next.subagents ||
+      activeSubagent !== next.activeSubagent ||
+      subagentActivities !== next.subagentActivities
+    )
+      next = { ...next, sessions, subagents, activeSubagent, subagentActivities: subagentActivities ?? {} }
   } else if (event.type === 'session.activity') {
     const updatedAt = new Date(event.updatedAt).toISOString()
     const sessions = updateSessionById(next.sessions, event.sessionId, (session) => {
@@ -448,6 +518,7 @@ export function applyHostMessage(
         ...next.subagents,
         entries: next.subagents.entries.filter((entry) => entry.id !== event.sessionId),
       },
+      subagentActivities: pruneSubagentActivity(next.subagentActivities, event.sessionId) ?? {},
       ...(wasActive
         ? {
             activeSessionId: undefined,
@@ -609,6 +680,7 @@ export function withoutConnectionScopedSurfaces(state: AppState): AppState {
     permissions: [],
     questions: [],
     subagents: EMPTY_SUBAGENT_CATALOG,
+    subagentActivities: {},
     commands: [],
     accountLifecycleAvailable: false,
     accountLifecycle: null,

@@ -314,3 +314,137 @@ describe('AppStore session branching', () => {
     store.dispose()
   })
 })
+
+describe('AppStore live subagent activity and editor tabs', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('tracks live subagent activity updates and prunes idle or removed children', () => {
+    const client = new FakeClient(answer)
+    const store = createAppStore(client as unknown as ProtocolClient)
+    try {
+      client.emit({
+        type: 'event',
+        name: 'subagent.activity',
+        sequence: 1,
+        payload: { sessionId: 'child-1', phase: 'tool', toolName: 'edit', activeToolCount: 1 },
+      })
+      const firstRef = store.getState().subagentActivities
+      expect(firstRef).toEqual({
+        'child-1': { sessionId: 'child-1', phase: 'tool', toolName: 'edit', activeToolCount: 1 },
+      })
+
+      // Duplicate frames preserve object identity.
+      client.emit({
+        type: 'event',
+        name: 'subagent.activity',
+        sequence: 2,
+        payload: { sessionId: 'child-1', phase: 'tool', toolName: 'edit', activeToolCount: 1 },
+      })
+      expect(store.getState().subagentActivities).toBe(firstRef)
+
+      client.emit({
+        type: 'event',
+        name: 'subagent.activity',
+        sequence: 3,
+        payload: { sessionId: 'child-1', phase: 'idle' },
+      })
+      expect(store.getState().subagentActivities).toEqual({})
+
+      client.emit({
+        type: 'event',
+        name: 'subagent.activity',
+        sequence: 4,
+        payload: { sessionId: 'child-2', phase: 'thinking' },
+      })
+      expect(store.getState().subagentActivities?.['child-2']?.phase).toBe('thinking')
+      client.emit({
+        type: 'event',
+        name: 'session.status',
+        sequence: 5,
+        payload: { sessionId: 'child-2', status: 'idle' },
+      })
+      expect(store.getState().subagentActivities).toEqual({})
+    } finally {
+      store.dispose()
+    }
+  })
+
+  it('opens an assigned child before the session list and keeps the editor bound when opening a descendant', async () => {
+    const childEntry = child({
+      id: 'child-ed',
+      name: 'reviewer',
+      label: 'Audit diff',
+      parentSessionId: 'parent-1',
+    })
+    const client = new FakeClient((request) => {
+      if (request.type === 'surface.openInEditor') return { surface: 'editor' }
+      if (request.type === 'subagent.list') {
+        return request.payload.sessionId === 'parent-1'
+          ? { entries: [childEntry], parentAvailable: true }
+          : { entries: [], parentAvailable: true }
+      }
+      return answer(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+    try {
+      client.emit({
+        type: 'event',
+        name: 'ui.surface.assigned',
+        sequence: 1,
+        payload: { kind: 'editor', sessionId: 'child-ed', parentSessionId: 'parent-1' },
+      })
+      await vi.waitFor(() => expect(store.getState().activeSessionId).toBe('child-ed'))
+      expect(store.getState().activeSubagent?.entry.id).toBe('child-ed')
+      expect(client.requests.some((request) => request.type === 'subagent.history')).toBe(true)
+      expect(client.requests.some((request) => request.type === 'session.open')).toBe(false)
+
+      await store.openSubagent(
+        child({ id: 'descendant', label: 'Review tests', parentSessionId: 'child-ed' }),
+        true,
+      )
+      expect(client.requests).toContainEqual(
+        expect.objectContaining({
+          type: 'surface.openInEditor',
+          payload: { sessionId: 'descendant', title: 'Review tests' },
+        }),
+      )
+      expect(store.getState().activeSessionId).toBe('child-ed')
+    } finally {
+      store.dispose()
+    }
+  })
+
+  it('opens controllable subagents in an editor tab, refuses external ones, and interrupts children directly', async () => {
+    const client = new FakeClient((request) => {
+      if (request.type === 'surface.openInEditor') return { surface: 'editor' }
+      return answer(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+    try {
+      await store.openSubagentInEditor?.(
+        child({ id: 'child-1', name: 'reviewer', label: 'Review changes', mode: 'continuable' }),
+      )
+      expect(client.requests).toContainEqual(
+        expect.objectContaining({
+          type: 'surface.openInEditor',
+          payload: { sessionId: 'child-1', title: 'reviewer · Review changes' },
+        }),
+      )
+
+      await expect(
+        store.openSubagentInEditor?.(child({ id: 'ext-1', mode: 'external', label: 'External run' })),
+      ).rejects.toThrow()
+      expect(client.requests.filter((request) => request.type === 'surface.openInEditor')).toHaveLength(1)
+
+      await store.interruptSubagent?.('child-1')
+      expect(client.requests).toContainEqual(
+        expect.objectContaining({
+          type: 'subagent.interrupt',
+          payload: { sessionId: 'child-1' },
+        }),
+      )
+    } finally {
+      store.dispose()
+    }
+  })
+})

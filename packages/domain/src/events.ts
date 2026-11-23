@@ -87,6 +87,27 @@ export interface SubagentCatalogEntryFact {
   readonly label?: string
 }
 
+export const SUBAGENT_LIVE_ACTIVITY_PHASES = [
+  'thinking',
+  'responding',
+  'preparing-tool',
+  'tool',
+  'awaiting-approval',
+  'awaiting-question',
+  'idle',
+] as const
+
+export type SubagentLiveActivityPhase = (typeof SUBAGENT_LIVE_ACTIVITY_PHASES)[number]
+
+/** Safe, Host-derived live activity heading for a running subagent session. */
+export interface SubagentLiveActivity {
+  readonly sessionId: string
+  readonly phase: SubagentLiveActivityPhase
+  /** Bounded structured tool identifier; never raw shell commands or paths. */
+  readonly toolName?: string
+  readonly activeToolCount?: number
+}
+
 /** A filesystem reference explicitly declared by DSH's `present` tool. */
 export interface PresentedFileView {
   readonly path: string

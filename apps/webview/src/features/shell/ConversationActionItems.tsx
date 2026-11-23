@@ -35,7 +35,10 @@ interface ConversationActionItemsProps {
     | 'promptTemplates'
     | 'promptTemplatesLoading'
     | 'subagents'
+    | 'subagentActivities'
     | 'sessions'
+    | 'permissions'
+    | 'questions'
     | 'subagentImagePrompts'
   >
   readonly store: AppStore
@@ -179,6 +182,10 @@ export function ConversationActionItems({
         parentSessionId={activeId}
         catalog={state.subagents}
         summaries={state.sessions}
+        {...(state.subagentActivities === undefined ? {} : { activities: state.subagentActivities })}
+        jobs={state.jobs}
+        permissions={state.permissions}
+        questions={state.questions}
         onLoadChildren={(sessionId) => store.loadSubagentChildren(sessionId)}
         onOpenChild={(entry, parentAvailable) => {
           // rc.6 requires already-durable image blocks and therefore does
@@ -188,6 +195,14 @@ export function ConversationActionItems({
           void store
             .openSubagent(entry, parentAvailable)
             .catch((reason: unknown) =>
+              setError(reason instanceof Error ? reason.message : t('app.error.openSubagent')),
+            )
+        }}
+        onOpenInEditor={(entry) => {
+          closeMenu()
+          void store
+            .openSubagentInEditor?.(entry)
+            ?.catch((reason: unknown) =>
               setError(reason instanceof Error ? reason.message : t('app.error.openSubagent')),
             )
         }}

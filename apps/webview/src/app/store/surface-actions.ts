@@ -19,7 +19,7 @@ export interface SurfaceActionHost {
    * The store's ordinary session-open path. A bound editor tab uses exactly the
    * same open as the session list; the surface never reimplements it.
    */
-  readonly openSession: (sessionId: string) => Promise<void>
+  readonly openSession: (sessionId: string, options?: { readonly parentSessionId?: string }) => Promise<void>
 }
 
 export interface SurfaceActions {
@@ -62,9 +62,20 @@ export function createSurfaceActions(host: SurfaceActionHost): SurfaceActions {
     // assignment never carries one and always means "no binding".
     const rawSessionId = kind === 'editor' ? assigned?.sessionId : undefined
     const sessionId = nonEmptyString(rawSessionId) ? rawSessionId : undefined
-    const surface: SurfaceAssignment = sessionId === undefined ? { kind } : { kind, sessionId }
+    const rawParentSessionId = kind === 'editor' ? assigned?.parentSessionId : undefined
+    const parentSessionId = nonEmptyString(rawParentSessionId) ? rawParentSessionId : undefined
+    const surface: SurfaceAssignment =
+      sessionId === undefined
+        ? { kind }
+        : parentSessionId === undefined
+          ? { kind, sessionId }
+          : { kind, sessionId, parentSessionId }
     setState((current) => {
-      if (current.surface?.kind === surface.kind && current.surface.sessionId === surface.sessionId)
+      if (
+        current.surface?.kind === surface.kind &&
+        current.surface.sessionId === surface.sessionId &&
+        current.surface.parentSessionId === surface.parentSessionId
+      )
         return current
       return { ...current, surface }
     })
@@ -73,7 +84,9 @@ export function createSurfaceActions(host: SurfaceActionHost): SurfaceActions {
     // is not on screen yet has anything to load; re-opening the active one would
     // discard the transcript and replay its history.
     if (getState().activeSessionId === sessionId) return
-    void openSession(sessionId).catch(reportFailure)
+    void openSession(sessionId, parentSessionId === undefined ? undefined : { parentSessionId }).catch(
+      reportFailure,
+    )
   }
 
   const applyHandoff = (payload: unknown): void => {
@@ -88,8 +101,8 @@ export function createSurfaceActions(host: SurfaceActionHost): SurfaceActions {
    * open a second tab for itself, and the Host owns the user-facing warning
    * when nothing is selected.
    */
-  const requestEditorTab = async (sessionId: string): Promise<void> => {
-    const title = editorTabTitle(getState(), sessionId)
+  const requestEditorTab = async (sessionId: string, explicitTitle?: string): Promise<void> => {
+    const title = editorTabTitle(getState(), sessionId, explicitTitle)
     setState((current) => ({ ...current, surfaceError: undefined }))
     try {
       await client.request<unknown>({
@@ -112,7 +125,8 @@ export function createSurfaceActions(host: SurfaceActionHost): SurfaceActions {
   }
 
   /** Explicitly open an editor tab without changing the sidebar selection. */
-  const openSessionInEditor = (sessionId: string): Promise<void> => requestEditorTab(sessionId)
+  const openSessionInEditor = (sessionId: string, title?: string): Promise<void> =>
+    requestEditorTab(sessionId, title)
 
   /**
    * The client-owned `/moveto` command. A malformed target or a missing session
@@ -158,7 +172,14 @@ export function createSurfaceActions(host: SurfaceActionHost): SurfaceActions {
 }
 
 /** The session title the tab can show; the Host treats it as a label only. */
-function editorTabTitle(state: AppState, sessionId: string): string | undefined {
+function editorTabTitle(state: AppState, sessionId: string, explicitTitle?: string): string | undefined {
+  const provided = explicitTitle?.trim()
+  if (provided !== undefined && provided !== '') return provided.slice(0, MAX_EDITOR_TITLE_CHARS)
+  const subagent = state.subagents.entries.find((entry) => entry.kind === 'child' && entry.id === sessionId)
+  if (subagent !== undefined && subagent.kind === 'child') {
+    const subagentTitle = [subagent.name, subagent.label?.trim()].filter(Boolean).join(' · ').trim()
+    if (subagentTitle !== '') return subagentTitle.slice(0, MAX_EDITOR_TITLE_CHARS)
+  }
   const title = state.sessions.find((session) => session.id === sessionId)?.title.trim()
   if (title === undefined || title === '') return undefined
   return title.slice(0, MAX_EDITOR_TITLE_CHARS)

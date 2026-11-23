@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { CONNECTION_PHASES } from '@dsh-vscode/domain'
+import { CONNECTION_PHASES, SUBAGENT_LIVE_ACTIVITY_PHASES } from '@dsh-vscode/domain'
 import { connectionOutputSchema } from './connection-output.js'
 import { containsControlCharacters, featureRelativePathSchema } from './feature-schemas/feature-shared.js'
 import { protocolAppErrorCodeSchema } from './feature-schemas.js'
@@ -227,6 +227,7 @@ const genericHostEventSchema = z
           name !== 'job.follow.failed' &&
           name !== 'queue.updated' &&
           name !== 'tool.preparing' &&
+          name !== 'subagent.activity' &&
           name !== 'connection.snapshot' &&
           name !== 'session.transcript',
       ),
@@ -325,6 +326,29 @@ const jobFollowFailedHostEventSchema = z
   })
   .strict()
 
+export const subagentLiveActivitySchema = z
+  .object({
+    sessionId: id,
+    phase: z.enum(SUBAGENT_LIVE_ACTIVITY_PHASES),
+    toolName: z
+      .string()
+      .max(80)
+      .regex(/^[a-z0-9_][a-z0-9_.:-]*$/iu)
+      .optional(),
+    activeToolCount: z.number().int().min(1).max(32).optional(),
+  })
+  .strict()
+
+const subagentActivityHostEventSchema = z
+  .object({
+    type: z.literal('event'),
+    name: z.literal('subagent.activity'),
+    sequence: z.number().int().nonnegative(),
+    requiresAck: z.literal(true).optional(),
+    payload: subagentLiveActivitySchema,
+  })
+  .strict()
+
 export const hostEventSchema = z.union([
   connectionSnapshotHostEventSchema,
   z
@@ -337,6 +361,7 @@ export const hostEventSchema = z.union([
     })
     .strict(),
   toolPreparingHostEventSchema,
+  subagentActivityHostEventSchema,
   queueUpdatedHostEventSchema,
   jobFollowUpdatedHostEventSchema,
   jobFollowFailedHostEventSchema,

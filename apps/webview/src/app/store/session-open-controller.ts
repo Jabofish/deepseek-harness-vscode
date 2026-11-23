@@ -44,7 +44,10 @@ export interface SessionOpenHost {
   readonly feedbackCache: ReturnType<typeof createFeedbackCache>
   readonly commandDirectory: CommandDirectoryCache
   readonly requestSessionOpen: (sessionId: string, version: number) => Promise<unknown>
-  readonly resolveSubagentOpen: (sessionId: string) => Promise<SubagentOpenResolution>
+  readonly resolveSubagentOpen: (
+    sessionId: string,
+    knownParentSessionId?: string,
+  ) => Promise<SubagentOpenResolution>
   readonly loadCommandDirectory: CommandDirectoryCache['load']
   readonly loadSubagentCatalog: (sessionId: string) => Promise<SubagentCatalog | undefined>
   readonly sessionWorkspaceFolderId: (sessionId: string) => string | undefined
@@ -73,7 +76,10 @@ interface SessionAdvisoryReads {
 }
 
 export function createSessionOpenController(host: SessionOpenHost): {
-  readonly open: (requestedSessionId: string, options?: { readonly startup?: boolean }) => Promise<void>
+  readonly open: (
+    requestedSessionId: string,
+    options?: { readonly startup?: boolean; readonly parentSessionId?: string },
+  ) => Promise<void>
   readonly openSubagent: (entry: SubagentView, parentAvailable: boolean) => Promise<void>
 } {
   const {
@@ -186,7 +192,7 @@ export function createSessionOpenController(host: SessionOpenHost): {
   }
   const open = async (
     requestedSessionId: string,
-    options: { readonly startup?: boolean } = {},
+    options: { readonly startup?: boolean; readonly parentSessionId?: string } = {},
   ): Promise<void> => {
     let sessionId = requestedSessionId
     // Claims the intent slot before any await. A root open stays fully
@@ -195,11 +201,12 @@ export function createSessionOpenController(host: SessionOpenHost): {
     // child pays the catalog read, and that read can be superseded.
     const intent = host.nextOpenIntent()
     if (
+      options.parentSessionId !== undefined ||
       getState().sessions.some(
         (session) => session.id === requestedSessionId && session.origin === 'subagent',
       )
     ) {
-      const resolution = await resolveSubagentOpen(requestedSessionId)
+      const resolution = await resolveSubagentOpen(requestedSessionId, options.parentSessionId)
       if (intent !== host.getOpenIntent()) return
       if (resolution.kind === 'subagent') {
         await openSubagent(resolution.entry, resolution.parentAvailable)

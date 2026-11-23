@@ -7,6 +7,26 @@ import {
 } from './schemas.js'
 import { featureRequestSchema, featureResponseSchema } from './feature-schemas.js'
 
+describe('subagent activity Webview protocol', () => {
+  it('allows only a bounded structured activity heading', () => {
+    const message = {
+      type: 'event',
+      name: 'subagent.activity',
+      sequence: 1,
+      payload: { sessionId: 'child', phase: 'tool', toolName: 'read', activeToolCount: 1 },
+    }
+    expect(hostMessageSchema.safeParse(message).success).toBe(true)
+    expect(
+      hostMessageSchema.safeParse({ ...message, payload: { ...message.payload, command: 'private' } })
+        .success,
+    ).toBe(false)
+    expect(
+      hostMessageSchema.safeParse({ ...message, payload: { ...message.payload, toolName: '/tmp/file' } })
+        .success,
+    ).toBe(false)
+  })
+})
+
 describe('custom provider Webview protocol', () => {
   it('accepts only the non-secret provider draft and its CAS revision', () => {
     const result = webviewRequestSchema.safeParse({

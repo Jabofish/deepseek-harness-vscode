@@ -8,10 +8,12 @@ import type {
   DshRuntimeUpdateProgress,
   EditorContextOwner,
   PluginInstallProgressView,
+  SubagentLiveActivity,
 } from '@dsh-vscode/domain'
 import type { BackendService, EditorContextUseCases } from '@dsh-vscode/application'
 import type { FeatureHostEvent, FeatureHostMessage, HostMessage } from '@dsh-vscode/webview-protocol'
 import type { RedactedDiagnostics } from '../backend/diagnostics.js'
+import { SubagentActivityTracker } from '../backend/subagent-activity-tracker.js'
 import type { TemporaryWorkspaceManager } from '../backend/temporary-workspace.js'
 import { sanitizePublicValue } from '../view/public-value.js'
 import { updateContextKeys, updateEditorContextAvailabilityKeys } from '../vscode/context-keys.js'
@@ -61,6 +63,7 @@ function coalesceSlotKey(surfaceScope: string, name: string, payload: unknown): 
     case 'jobs.updated':
     case 'goal.updated':
     case 'subagent.catalog.updated':
+    case 'subagent.activity':
       return JSON.stringify([surfaceScope, name, sessionId])
     case 'session.projection':
       return typeof record.key === 'string' && record.key !== 'userQuestions'
@@ -160,6 +163,8 @@ export interface HostEventPipeline {
   readonly acknowledgeEvents: (surfaceId: string, sequence: number) => void
   readonly forgetSurface: (surfaceId: string) => void
   readonly dispose: () => void
+  readonly markSubagents: (sessionIds: readonly string[]) => void
+  readonly subagentActivitySnapshots: () => readonly SubagentLiveActivity[]
   readonly postFeatureEvent: PostFeatureEvent
   readonly publishAccountSnapshot: (snapshot: AccountLifecycleSnapshot) => void
   readonly publishAccountSessionExpired: () => void
@@ -349,6 +354,15 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
   let eventEpoch = 0
   const surfaceEpochs = new Map<string, object>()
   let eventBackend: DshBackend | undefined
+  const subagentActivity = new SubagentActivityTracker({
+    isSubagent: (sessionId) => {
+      try {
+        return backendService.requireBackend().subagents?.parentOf?.(sessionId) !== undefined
+      } catch {
+        return false
+      }
+    },
+  })
   const broadcastReceipts = new Map<
     string,
     {
@@ -518,7 +532,10 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
       eventBackend = backend
       eventEpoch++
       controlDelivery?.reset()
+      subagentActivity.reset()
     }
+    const activityUpdate = subagentActivity.observe(event)
+    if (activityUpdate !== undefined) void postEvent('subagent.activity', activityUpdate)
     deps.onEvent?.(event.type, event)
     if (deps.transcript.accept(event)) return Promise.resolve(true)
     const targetSurfaces =
@@ -579,6 +596,7 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
       eventEpoch++
       eventBackend = undefined
       controlDelivery?.reset()
+      subagentActivity.reset()
       deps.transcript?.dispose()
     }
     void updateContextKeys(vscode.commands, state)
@@ -599,9 +617,17 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
     dispose: () => {
       eventEpoch++
       controlDelivery?.dispose()
+      subagentActivity.reset()
       broadcastReceipts.clear()
       eventPostQueue.dispose()
     },
+    markSubagents: (sessionIds) => {
+      for (const sessionId of sessionIds) {
+        const update = subagentActivity.markSubagent(sessionId)
+        if (update !== undefined) void postEvent('subagent.activity', update)
+      }
+    },
+    subagentActivitySnapshots: () => subagentActivity.snapshots(),
     postFeatureEvent,
     publishAccountSnapshot,
     publishAccountSessionExpired,

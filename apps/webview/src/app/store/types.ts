@@ -67,6 +67,7 @@ import type {
   TaskListScope,
   TaskSummary,
   SubagentCatalog,
+  SubagentLiveActivity,
   SubagentView,
   TodoView,
   UserQuestion,
@@ -144,6 +145,8 @@ export interface SurfaceAssignment {
   readonly kind: 'sidebar' | 'editor'
   /** The session an editor tab is bound to; absent for the side bar. */
   readonly sessionId?: string
+  /** Parent session id when the Host assigned this editor tab to a subagent child. */
+  readonly parentSessionId?: string
 }
 
 export interface AppState extends SessionModelDirectoryState {
@@ -234,6 +237,8 @@ export interface AppState extends SessionModelDirectoryState {
   readonly feedbackUnavailable?: boolean
   /** Complete direct-child catalog for the active ordinary or child session. */
   readonly subagents: SubagentCatalog
+  /** Bounded Host-derived live activity headings keyed by child session id. */
+  readonly subagentActivities?: Readonly<Record<string, SubagentLiveActivity>>
   /** Durable address facts retained when a catalog child is opened. */
   readonly activeSubagent: ActiveSubagent | undefined
   readonly queue: readonly QueuedInput[]
@@ -306,6 +311,10 @@ export interface AppActions {
   forgetDirectPromptRequests(ids: readonly string[]): void
   refreshQueue(sessionId: string): Promise<readonly QueuedInput[] | undefined>
   openSubagent(entry: SubagentView, parentAvailable: boolean): Promise<void>
+  /** Open a local subagent child in a dedicated editor tab without leaving the parent chat. */
+  openSubagentInEditor?(entry: SubagentView): Promise<void>
+  /** Interrupt one running subagent child directly (`subagent.interrupt`). */
+  interruptSubagent?(sessionId: string): Promise<void>
   renameSession(sessionId: string, title: string): Promise<void>
   renameWorkspace(workspaceId: string, name: string): Promise<void>
   addWorkspaceFolder(): Promise<void>
@@ -485,7 +494,7 @@ export interface AppActions {
    * Ask the Host to show a session in the editor area. Used while the side bar
    * is handed off, when opening a session there would target a hidden chat.
    */
-  openSessionInEditor(sessionId: string): Promise<void>
+  openSessionInEditor(sessionId: string, title?: string): Promise<void>
   /** Run the client-owned `/moveto` command; the line never reaches DSH. */
   runMovetoCommand(line: string): Promise<MovetoOutcome>
   setDrawer(drawer: AppState['drawer']): void

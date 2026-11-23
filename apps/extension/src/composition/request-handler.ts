@@ -353,11 +353,20 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
       const current = coordinator.getState()
       const surface = surfaceId === undefined ? undefined : surfaces.get(surfaceId)
       if (surface !== undefined) {
+        let parentSessionId: string | undefined
+        if (surface.kind === 'editor' && surface.sessionId !== undefined) {
+          try {
+            parentSessionId = backendService.requireBackend().subagents?.parentOf?.(surface.sessionId)
+          } catch {
+            parentSessionId = undefined
+          }
+        }
         await announceSurface(
           surface.surfaceId,
           {
             kind: surface.kind,
             ...(surface.sessionId === undefined ? {} : { sessionId: surface.sessionId }),
+            ...(parentSessionId === undefined ? {} : { parentSessionId }),
           },
           () => !signal.aborted && surfaces.get(surface.surfaceId) === surface,
         )
@@ -366,12 +375,26 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
       }
       // Joining a surface must not reattach shared services, stop Job follows
       // or broadcast a connection transition to existing chats.
-      if (current.kind === 'connected')
+      if (current.kind === 'connected') {
         for (const event of backendService.replayEvents()) {
           signal.throwIfAborted()
           if (surfaceId === undefined) await postEvent(event.type, publicValue(event))
           else await postEventTo(surfaceId, event.type, publicValue(event))
         }
+        signal.throwIfAborted()
+        await Promise.all(
+          (deps.subagentActivitySnapshots?.() ?? []).map((activity) =>
+            surfaceId === undefined
+              ? postEvent('subagent.activity', activity)
+              : postEventTo(
+                  surfaceId,
+                  'subagent.activity',
+                  activity,
+                  () => !signal.aborted && surfaces.get(surfaceId) === surface,
+                ),
+          ),
+        )
+      }
       return { connected: current.kind === 'connected' }
     }
     if (request.type === 'connection.configure') {
@@ -808,7 +831,14 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     }
     if (request.type === 'subagent.list') {
       await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
-      return publicValue(await advancedUseCases.listSubagents(request.payload.sessionId, signal))
+      const catalog = await advancedUseCases.listSubagents(request.payload.sessionId, signal)
+      signal.throwIfAborted()
+      deps.markSubagents?.(
+        catalog.entries
+          .filter((entry) => entry.kind === 'child' && entry.mode !== 'external')
+          .map((entry) => entry.id),
+      )
+      return publicValue(catalog)
     }
     if (request.type === 'subagent.history') {
       const detail = await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
@@ -953,7 +983,11 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
   // current editor-tab count is re-announced together with the surface identity.
   const announceSurface = async (
     surfaceId: string,
-    assigned: { readonly kind: 'sidebar' | 'editor'; readonly sessionId?: string },
+    assigned: {
+      readonly kind: 'sidebar' | 'editor'
+      readonly sessionId?: string
+      readonly parentSessionId?: string
+    },
     isCurrent: () => boolean,
   ): Promise<void> => {
     // Send the existing connection before the assignment starts session.open.

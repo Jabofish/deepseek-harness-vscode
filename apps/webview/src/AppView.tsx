@@ -13,6 +13,7 @@ import { SessionInspector } from './features/inspector/SessionInspector.js'
 import { AppNotices, type AppNotice } from './features/shell/AppNotices.js'
 import { AppHeader } from './features/shell/AppHeader.js'
 import { SessionLineage } from './features/subagents/SessionLineage.js'
+import { SubagentActivityStrip } from './features/subagents/SubagentActivityStrip.js'
 import { SessionTitlePicker } from './features/sessions/SessionTitlePicker.js'
 import { displaySessionTitle } from './features/sessions/session-title.js'
 import { ConversationActionsMenu } from './features/shell/ConversationActionsMenu.js'
@@ -87,6 +88,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
     conversationFontStyle,
     conversationView,
     trajectoryAvailable,
+    discardAttachmentDrafts,
     dismissedConnection,
     error,
     estimatedContextTokens,
@@ -693,6 +695,37 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                       running={activeRunning}
                     />
                   )}
+                  <SubagentActivityStrip
+                    key={`subagent-strip-${state.connectionEpoch}:${active.id}`}
+                    parentSessionId={active.id}
+                    catalog={state.subagents}
+                    summaries={state.sessions}
+                    {...(state.subagentActivities === undefined
+                      ? {}
+                      : { activities: state.subagentActivities })}
+                    jobs={state.jobs}
+                    permissions={state.permissions}
+                    questions={state.questions}
+                    onLoadChildren={(sessionId) => store.loadSubagentChildren(sessionId)}
+                    onOpenChild={(entry, parentAvailable) => {
+                      if (!state.subagentImagePrompts) discardAttachmentDrafts()
+                      void store
+                        .openSubagent(entry, parentAvailable)
+                        .catch((reason: unknown) =>
+                          setError(reason instanceof Error ? reason.message : t('app.error.openSubagent')),
+                        )
+                    }}
+                    onOpenInEditor={(entry) => {
+                      void store
+                        .openSubagentInEditor?.(entry)
+                        ?.catch((reason: unknown) =>
+                          setError(reason instanceof Error ? reason.message : t('app.error.openSubagent')),
+                        )
+                    }}
+                    onInterruptChild={async (entry) => {
+                      await store.interruptSubagent?.(entry.id)
+                    }}
+                  />
                   <QueuePanel
                     key={state.activeSessionId}
                     items={state.queue}

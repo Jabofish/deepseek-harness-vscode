@@ -59,6 +59,7 @@ export const STATE_VIEW_KEYS_B = [
 
 export const STATE_VIEW_KEYS_C = [
   'subagents',
+  'subagentActivities',
   'activeSubagent',
   'queue',
   'editorContext',

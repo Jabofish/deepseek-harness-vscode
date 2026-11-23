@@ -4,7 +4,12 @@ import type { UserQuestion } from './tools.js'
 type Resolution = Extract<BackendEvent, { type: 'question.resolved' }>
 
 /** Request identity takes precedence over reusable model-supplied item ids. */
-export function matchesQuestionResolution(question: UserQuestion, event: Resolution): boolean {
+export function matchesQuestionResolution(
+  question: Pick<UserQuestion, 'id' | 'sessionId' | 'rpcId'> & {
+    readonly items?: readonly Pick<NonNullable<UserQuestion['items']>[number], 'id'>[]
+  },
+  event: Resolution,
+): boolean {
   return (
     question.sessionId === event.sessionId &&
     (event.questionRpcId !== undefined

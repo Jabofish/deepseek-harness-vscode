@@ -109,4 +109,29 @@ describe('SubagentDrawer tree', () => {
     const diagnostic = screen.getByRole('treeitem', { name: 'broken · Corrupt child record' })
     expect(diagnostic.getAttribute('aria-disabled')).toBe('true')
   })
+
+  it('displays live activity headings and opens local children in an editor tab without triggering row open', () => {
+    const onOpenChild = vi.fn()
+    const onOpenInEditor = vi.fn()
+    const entry = child({ id: 'c1', label: 'Researcher', activity: 'running', mode: 'continuable' })
+    render(
+      <SubagentDrawer
+        parentSessionId="root"
+        catalog={catalog([entry])}
+        activities={{ c1: { sessionId: 'c1', phase: 'thinking' } }}
+        onLoadChildren={vi.fn().mockResolvedValue(catalog([entry]))}
+        onOpenChild={onOpenChild}
+        onOpenInEditor={onOpenInEditor}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Subagents: 1, 1 running' }))
+    expect(screen.getByText(/Thinking…/)).toBeDefined()
+    const action = screen.getByRole('button', { name: 'Open Researcher in editor' })
+    expect(action.tabIndex).toBe(0)
+    expect(fireEvent.keyDown(action, { key: 'Enter' })).toBe(true)
+    fireEvent.click(action)
+    expect(onOpenInEditor).toHaveBeenCalledWith(entry)
+    expect(onOpenChild).not.toHaveBeenCalled()
+  })
 })

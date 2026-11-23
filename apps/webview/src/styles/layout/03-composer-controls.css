@@ -15,7 +15,8 @@
  * messages above are centered. */
 .dsh-compose-area > *,
 .dsh-conversation > .dsh-goal-bar,
-.dsh-conversation > .dsh-goal-strip {
+.dsh-conversation > .dsh-goal-strip,
+.dsh-conversation > .dsh-subagent-strip {
   width: min(100%, var(--dsh-timeline-content-max-width));
   margin-inline: auto;
 }

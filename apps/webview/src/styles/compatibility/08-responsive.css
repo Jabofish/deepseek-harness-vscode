@@ -46,7 +46,7 @@
    would place them in an implicit column and long values could widen the
    menu beyond the viewport. */
 .dsh-subagent-tree__row {
-  grid-template-columns: 18px 8px minmax(0, 1fr) minmax(0, 96px);
+  grid-template-columns: 18px 8px minmax(0, 1fr) minmax(0, 96px) auto;
 }
 
 .dsh-settings .dsh-button--compact,

@@ -1,5 +1,10 @@
 import type * as vscode from 'vscode'
-import type { EditorContextOwner, SessionDetail, SessionSummary } from '@dsh-vscode/domain'
+import type {
+  EditorContextOwner,
+  SessionDetail,
+  SessionSummary,
+  SubagentLiveActivity,
+} from '@dsh-vscode/domain'
 import type {
   AdvancedAgentUseCases,
   BackendService,
@@ -35,6 +40,8 @@ export interface RequestGatewayDependencies {
   ) => { bell: boolean }
   readonly acknowledgeHostEvents?: (surfaceId: string, sequence: number) => void
   readonly forgetHostSurface?: (surfaceId: string) => void
+  readonly markSubagents?: (sessionIds: readonly string[]) => void
+  readonly subagentActivitySnapshots?: () => readonly SubagentLiveActivity[]
   readonly prepareEditorSession?: (sessionId: string, signal: AbortSignal) => Promise<void>
   readonly transcript: TranscriptWindowRegistry
   readonly post: PostHostMessage
