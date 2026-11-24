@@ -10,6 +10,27 @@ export const PROMPT_TEMPLATE_VARIABLES = [
 ] as const
 
 export type PromptTemplateVariable = (typeof PROMPT_TEMPLATE_VARIABLES)[number]
+
+/** UTF-8 bytes one template variable value may carry. */
+export const MAX_PROMPT_TEMPLATE_VARIABLE_BYTES = 10_000
+
+/**
+ * Cut a value to the variable budget on a code-point boundary, so context the
+ * Host fills in (a long selection, many diagnostics) never makes a template
+ * insert fail as a whole.
+ */
+export function fitPromptTemplateVariableValue(value: string): string {
+  if (byteLength(value) <= MAX_PROMPT_TEMPLATE_VARIABLE_BYTES) return value
+  let bytes = 0
+  let end = 0
+  for (const character of value) {
+    const size = byteLength(character)
+    if (bytes + size > MAX_PROMPT_TEMPLATE_VARIABLE_BYTES) break
+    bytes += size
+    end += character.length
+  }
+  return value.slice(0, end)
+}
 export type PromptTemplateScope = 'workspace' | 'global' | 'session'
 export const PROMPT_MODES = ['ask', 'plan', 'act', 'debug', 'review'] as const
 export type PromptMode = (typeof PROMPT_MODES)[number]
@@ -136,7 +157,7 @@ export function expandPromptTemplate(
 ): PromptTemplateInsertion {
   const provided = values ?? {}
   for (const [key, value] of Object.entries(provided)) {
-    if (!isPromptTemplateVariable(key) || byteLength(value) > 10_000)
+    if (!isPromptTemplateVariable(key) || byteLength(value) > MAX_PROMPT_TEMPLATE_VARIABLE_BYTES)
       throw invalidTemplate('Template variable values are invalid.')
   }
   const unresolved = new Set<PromptTemplateVariable>()

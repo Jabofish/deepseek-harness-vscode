@@ -723,7 +723,8 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
   )
 }
 
-const TEMPLATE_VARIABLE_RE = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/gu
+// Same placeholder grammar as the Host expander: `{{name}}`, no inner spaces.
+const TEMPLATE_VARIABLE_RE = /\{\{([A-Za-z][A-Za-z0-9_-]{0,127})\}\}/gu
 const ALLOWED_TEMPLATE_VARIABLE_SET = new Set<string>(PROMPT_TEMPLATE_VARIABLES)
 
 function mergeReferencedVariables(

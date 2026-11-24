@@ -4,6 +4,7 @@ import type { EditorBridgeHost } from '../editor/editor-bridge-host.js'
 import {
   AppError,
   SCHEDULE_INPUT_ERROR_CODES,
+  fitPromptTemplateVariableValue,
   type CheckpointSummary,
   type EditorContextOwner,
   type SessionDetail,
@@ -666,9 +667,19 @@ export function createFeatureRequestHandler(deps: FeatureRequestHandlerDependenc
   return { handleFeatureRequest }
 }
 
-const MAX_TEMPLATE_VARIABLE_CHARS = 32_768
-
 async function resolvePromptTemplateVariables(
+  session: SessionDetail,
+  folders: readonly vscode.WorkspaceFolder[],
+): Promise<Readonly<Record<string, string>>> {
+  // Every value must fit the per-variable budget the template expander
+  // enforces; one oversized value would otherwise fail the whole insert.
+  const values = await collectPromptTemplateVariables(session, folders)
+  return Object.fromEntries(
+    Object.entries(values).map(([key, value]) => [key, fitPromptTemplateVariableValue(value)]),
+  )
+}
+
+async function collectPromptTemplateVariables(
   session: SessionDetail,
   folders: readonly vscode.WorkspaceFolder[],
 ): Promise<Readonly<Record<string, string>>> {
@@ -688,7 +699,7 @@ async function resolvePromptTemplateVariables(
   if (relativePath !== '') values.currentFile = relativePath
   if (!activeEditor.selection.isEmpty) {
     const selectedText = activeEditor.document.getText(activeEditor.selection)
-    if (selectedText.trim() !== '') values.selection = selectedText.slice(0, MAX_TEMPLATE_VARIABLE_CHARS)
+    if (selectedText.trim() !== '') values.selection = selectedText
   }
   const diagnostics = vscode.languages.getDiagnostics(activeEditor.document.uri)
   if (diagnostics.length > 0) {
@@ -699,7 +710,7 @@ async function resolvePromptTemplateVariables(
           `${relativePath}:${diag.range.start.line + 1}:${diag.range.start.character + 1} ${diag.message}`,
       )
       .join('\n')
-    if (formatted !== '') values.currentDiagnostics = formatted.slice(0, MAX_TEMPLATE_VARIABLE_CHARS)
+    if (formatted !== '') values.currentDiagnostics = formatted
   }
   try {
     const symbols = await vscode.commands.executeCommand<

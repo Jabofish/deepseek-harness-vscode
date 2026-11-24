@@ -160,7 +160,8 @@ describe('PromptTemplatesDrawer', () => {
     const editor = screen.getByRole('dialog', { name: 'Create prompt template' })
     fireEvent.change(within(editor).getByLabelText('Title'), { target: { value: 'Auto vars' } })
     fireEvent.change(within(editor).getByLabelText('Template text'), {
-      target: { value: 'Check {{currentFile}}: {{selection}}' },
+      // A spaced placeholder is not one the Host expands, so it is not declared.
+      target: { value: 'Check {{currentFile}}: {{selection}} for {{ sessionTitle }}' },
     })
     fireEvent.submit(editor)
     await waitFor(() =>
