@@ -14,7 +14,14 @@ vi.mock('../vscode-api.js', () => ({
 }))
 
 import { createAppStore } from './store.js'
-import { activateDraftOwner, readDraft, resetDraft, restoreDrafts, setDraft } from './draft-store.js'
+import {
+  activateDraftOwner,
+  adoptSavedDrafts,
+  readDraft,
+  resetDraft,
+  restoreDrafts,
+  setDraft,
+} from './draft-store.js'
 
 const client = {
   subscribe: () => () => {},
@@ -61,6 +68,26 @@ describe('composer draft persistence', () => {
     store.setDrawer(undefined)
     expect((vscodeState.value as { drafts?: unknown }).drafts).toEqual({ 'session-a': 'saved' })
     expect(store.takeSavedDrafts?.()).toEqual({ 'session-a': 'saved' })
+    store.dispose()
+  })
+
+  it('keeps every draft when the composer remounts while text is being typed', () => {
+    vi.useFakeTimers()
+    vscodeState.value = { version: 1, drafts: { 'session-b': 'other chat' } }
+    const store = createAppStore(client)
+    adoptSavedDrafts(() => store.takeSavedDrafts?.() ?? {})
+    activateDraftOwner('session-a')
+    setDraft('typed just now')
+    // An error-boundary recovery remounts App with the same store before the
+    // batched write ran.
+    adoptSavedDrafts(() => store.takeSavedDrafts?.() ?? {})
+    expect(readDraft()).toBe('typed just now')
+    vi.advanceTimersByTime(300)
+    expect(vscodeState.value).toMatchObject({
+      drafts: { 'session-a': 'typed just now', 'session-b': 'other chat' },
+    })
+    activateDraftOwner('session-b')
+    expect(readDraft()).toBe('other chat')
     store.dispose()
   })
 })

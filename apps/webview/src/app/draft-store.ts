@@ -189,6 +189,17 @@ export function restoreDrafts(entries: Readonly<Record<string, string>>): void {
   store.restore(entries)
 }
 
+/**
+ * Start a mounted composer from the drafts the Webview state holds. The saved
+ * set is read before the in-memory drafts are cleared: clearing announces a
+ * change, and saving that empty set first would overwrite every draft.
+ */
+export function adoptSavedDrafts(takeSaved: () => Readonly<Record<string, string>>): void {
+  const saved = takeSaved()
+  store.reset()
+  store.restore(saved)
+}
+
 export function subscribeDrafts(listener: () => void): () => void {
   return store.subscribe(listener)
 }

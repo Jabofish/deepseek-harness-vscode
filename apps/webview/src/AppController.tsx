@@ -33,7 +33,7 @@ import { createAppStore, type AppState, type AppStore } from './app/store.js'
 import { sameShallowSelection, useAppStoreSelector } from './app/useAppStoreSelector.js'
 import { selectAppViewState, APP_VIEW_SUBSCRIPTION } from './app/store/view-state.js'
 import { selectSessionModels } from './app/store/model-directory-state.js'
-import { activateDraftOwner, clearDraftIf, readDraft, resetDraft, restoreDrafts } from './app/draft-store.js'
+import { activateDraftOwner, adoptSavedDrafts, clearDraftIf, readDraft } from './app/draft-store.js'
 import { publicProtocolErrorMessage } from './app/protocol-client.js'
 import { useDshSettings } from './app/useDshSettings.js'
 import { useComposerAttachments } from './app/useComposerAttachments.js'
@@ -77,8 +77,7 @@ const useAppControllerImpl = () => {
     // A remount (error-boundary recovery, test render) must not inherit the
     // previous mount's in-memory text; it starts from the drafts the Webview
     // state saved, so a rebuilt view keeps unsent prompts.
-    resetDraft()
-    restoreDrafts(store.takeSavedDrafts?.() ?? {})
+    adoptSavedDrafts(() => store.takeSavedDrafts?.() ?? {})
     return () => {
       mountedRef.current = false
     }
