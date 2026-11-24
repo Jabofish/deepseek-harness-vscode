@@ -150,10 +150,12 @@ function toolLocationTargets(locations: readonly ToolLocationView[] | undefined)
   const seen = new Set<string>()
   const targets: ToolCardTarget[] = []
   for (const location of locations) {
-    const href = location.path.trim()
-    if (href === '' || seen.has(href)) continue
+    const path = location.path.trim()
+    if (path === '') continue
+    const href = location.line === undefined ? path : `${path}#L${location.line + 1}`
+    if (seen.has(href)) continue
     seen.add(href)
-    targets.push({ href, label: location.line === undefined ? href : `${href}:${location.line + 1}` })
+    targets.push({ href, label: location.line === undefined ? path : `${path}:${location.line + 1}` })
   }
   return targets
 }

@@ -170,12 +170,49 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     }
 
     try {
-      if (revealInFolder) {
-        await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(resolved.path))
-        return { opened: true }
+      const candidatePaths = [resolved.path]
+      if (fileUri === undefined) {
+        for (const root of roots) {
+          const fallback = resolveLinkTarget({ href: target, roots: [root], basePath: root })
+          if (fallback.kind === 'file' && !candidatePaths.includes(fallback.path))
+            candidatePaths.push(fallback.path)
+        }
       }
-      const document = await vscode.workspace.openTextDocument(vscode.Uri.file(resolved.path))
-      await vscode.window.showTextDocument(document, { preview: true })
+      if (revealInFolder) {
+        let lastError: unknown
+        for (const candidate of candidatePaths) {
+          try {
+            await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(candidate))
+            return { opened: true }
+          } catch (error) {
+            lastError = error
+          }
+        }
+        throw lastError
+      }
+      let document: vscode.TextDocument | undefined
+      let lastError: unknown
+      for (const candidate of candidatePaths) {
+        try {
+          document = await vscode.workspace.openTextDocument(vscode.Uri.file(candidate))
+          break
+        } catch (error) {
+          lastError = error
+        }
+      }
+      if (document === undefined) throw lastError
+      const showOptions: vscode.TextDocumentShowOptions = { preview: true }
+      if (resolved.line !== undefined) {
+        const maxLine = Math.max(0, document.lineCount - 1)
+        const startLine = Math.max(0, Math.min(resolved.line - 1, maxLine))
+        const startChar = Math.max(0, (resolved.column ?? 1) - 1)
+        const endLine =
+          resolved.endLine === undefined
+            ? startLine
+            : Math.max(startLine, Math.min(resolved.endLine - 1, maxLine))
+        showOptions.selection = new vscode.Range(startLine, startChar, endLine, startChar)
+      }
+      await vscode.window.showTextDocument(document, showOptions)
       return { opened: true }
     } catch {
       return { opened: false, message: 'The linked workspace file could not be opened.' }

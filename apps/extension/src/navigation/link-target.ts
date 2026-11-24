@@ -19,7 +19,13 @@ export interface LinkTargetRequest {
 
 export type LinkTarget =
   | { readonly kind: 'external'; readonly url: string }
-  | { readonly kind: 'file'; readonly path: string }
+  | {
+      readonly kind: 'file'
+      readonly path: string
+      readonly line?: number
+      readonly endLine?: number
+      readonly column?: number
+    }
   | { readonly kind: 'rejected'; readonly message: string }
 
 /**
@@ -53,22 +59,75 @@ export function resolveLinkTarget(request: LinkTargetRequest): LinkTarget {
 
   const fileUrlPath = request.fileUrlPath
   let filePath: string | undefined
+  let location: FileLinkLocation | undefined
   if (fileUrlPath !== undefined) {
+    const fragmentIndex = target.indexOf('#')
+    if (fragmentIndex >= 0) location = parseFragmentLocation(target.slice(fragmentIndex + 1))
     filePath = path.resolve(fileUrlPath)
   } else {
     const separator = target.search(/[?#]/)
+    const fragmentIndex = target.indexOf('#')
+    if (fragmentIndex >= 0) location = parseFragmentLocation(target.slice(fragmentIndex + 1))
     let decoded: string
     try {
       decoded = decodeURIComponent(separator === -1 ? target : target.slice(0, separator))
     } catch {
       return rejected('The file link is not valid.')
     }
+    const stripped = stripColonLocation(decoded)
+    decoded = stripped.path
+    if (location === undefined && stripped.location !== undefined) location = stripped.location
     filePath = workspaceFilePath(decoded, basePath, request.roots)
     if (filePath === undefined) return rejected('The file link is empty.')
   }
   if (!request.roots.some((root) => isOwnedPath(root, filePath)))
     return rejected('Only files inside the current workspace can be opened.')
-  return { kind: 'file', path: filePath }
+  return {
+    kind: 'file',
+    path: filePath,
+    ...(location === undefined ? {} : location),
+  }
+}
+
+interface FileLinkLocation {
+  readonly line: number
+  readonly endLine?: number
+  readonly column?: number
+}
+
+function parseFragmentLocation(fragment: string): FileLinkLocation | undefined {
+  const lineRange = /^L?(\d+)(?:C(\d+))?(?:-L?(\d+))?$/iu.exec(fragment.trim())
+  if (lineRange === null) return undefined
+  const line = Number.parseInt(lineRange[1] ?? '', 10)
+  if (!Number.isSafeInteger(line) || line < 1) return undefined
+  const column = lineRange[2] === undefined ? undefined : Number.parseInt(lineRange[2], 10)
+  const endLine = lineRange[3] === undefined ? undefined : Number.parseInt(lineRange[3], 10)
+  return {
+    line,
+    ...(column !== undefined && Number.isSafeInteger(column) && column >= 1 ? { column } : {}),
+    ...(endLine !== undefined && Number.isSafeInteger(endLine) && endLine >= line ? { endLine } : {}),
+  }
+}
+
+function stripColonLocation(decoded: string): {
+  readonly path: string
+  readonly location?: FileLinkLocation
+} {
+  const match = /^(.+?):(\d+)(?::(\d+))?$/u.exec(decoded)
+  if (match === null) return { path: decoded }
+  const candidatePath = match[1] ?? ''
+  // Never misinterpret a bare Windows drive like `C:123` as a line suffix.
+  if (candidatePath === '' || /^[A-Za-z]$/u.test(candidatePath)) return { path: decoded }
+  const line = Number.parseInt(match[2] ?? '', 10)
+  if (!Number.isSafeInteger(line) || line < 1) return { path: decoded }
+  const column = match[3] === undefined ? undefined : Number.parseInt(match[3], 10)
+  return {
+    path: candidatePath,
+    location: {
+      line,
+      ...(column !== undefined && Number.isSafeInteger(column) && column >= 1 ? { column } : {}),
+    },
+  }
 }
 
 /**

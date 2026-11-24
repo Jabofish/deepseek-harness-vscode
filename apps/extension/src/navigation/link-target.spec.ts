@@ -72,10 +72,26 @@ describe('link target resolution', () => {
   it('reads a root-relative link as workspace-relative', () => {
     // Markdown documents address workspace files as `/src/main.ts`; that reading
     // has to keep working now that a rooted path can also be a host path.
-    expect(open('/src/main.ts')).toEqual({ kind: 'file', path: path.join(workspace, 'src', 'main.ts') })
+    expect(open('/src/main.ts')).toEqual({
+      kind: 'file',
+      path: path.join(workspace, 'src', 'main.ts'),
+    })
     expect(open('/src/main.ts#L10')).toEqual({
       kind: 'file',
       path: path.join(workspace, 'src', 'main.ts'),
+      line: 10,
+    })
+    expect(open('src/main.ts:42:8')).toEqual({
+      kind: 'file',
+      path: path.join(workspace, 'src', 'main.ts'),
+      line: 42,
+      column: 8,
+    })
+    expect(open('/src/main.ts#L10-L20')).toEqual({
+      kind: 'file',
+      path: path.join(workspace, 'src', 'main.ts'),
+      line: 10,
+      endLine: 20,
     })
   })
 

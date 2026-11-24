@@ -2,7 +2,7 @@
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { projectUserText } from './UserText.js'
+import { containsUserTextReferences, projectUserText } from './UserText.js'
 
 describe('UserText', () => {
   afterEach(() => cleanup())
@@ -38,5 +38,17 @@ describe('UserText', () => {
     expect(screen.queryByRole('button', { name: /docs/u })).toBeNull()
     expect(screen.getByText('Earlier debugging')).toBeDefined()
     expect(screen.getByText('docs')).toBeDefined()
+  })
+
+  it('ignores decorators, scoped packages, and code spans so Markdown stays intact', () => {
+    expect(containsUserTextReferences('Use @Injectable() and @Override here')).toBe(false)
+    expect(containsUserTextReferences('Install @types/node and @dsh-vscode/domain')).toBe(false)
+    expect(containsUserTextReferences('Check `@src/index.ts` or ```ts\n@src/app.ts\n```')).toBe(false)
+    expect(containsUserTextReferences('Check @src/index.ts please')).toBe(true)
+
+    const openSession = vi.fn()
+    render(<div>{projectUserText('See @[Past session](dsh-session:s-42)', [], { openSession })}</div>)
+    fireEvent.click(screen.getByRole('button', { name: 'Past session' }))
+    expect(openSession).toHaveBeenCalledWith('s-42')
   })
 })

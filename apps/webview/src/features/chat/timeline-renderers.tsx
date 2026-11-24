@@ -344,7 +344,12 @@ function renderNode(
                 {projectUserText(
                   node.markdown,
                   sessionReferenceLabels,
-                  onOpenLink === undefined ? undefined : { openFile: onOpenLink },
+                  onOpenLink === undefined && onOpenSession === undefined
+                    ? undefined
+                    : {
+                        ...(onOpenLink === undefined ? {} : { openFile: onOpenLink }),
+                        ...(onOpenSession === undefined ? {} : { openSession: onOpenSession }),
+                      },
                 )}
               </div>
             ) : (

@@ -260,20 +260,23 @@ function presentationTargets(
     if (value === undefined || value === '' || targets.some((target) => target.href === value)) return
     targets.push({ href: value, label: labelText })
   }
-  for (const location of locations ?? []) add(location.path, location.path)
+  const addLocation = (location: ToolLocationView): void => {
+    const href = location.line === undefined ? location.path : `${location.path}#L${location.line + 1}`
+    const text = location.line === undefined ? location.path : `${location.path}:${location.line + 1}`
+    add(href, text)
+  }
+  for (const location of locations ?? []) addLocation(location)
   if (view === undefined) return targets
   switch (view.card) {
     case 'generic':
-      if (view.phase === 'call')
-        for (const location of view.locations ?? []) add(location.path, location.path)
+      if (view.phase === 'call') for (const location of view.locations ?? []) addLocation(location)
       break
     case 'diff':
-      for (const location of view.phase === 'call' ? (view.locations ?? []) : [])
-        add(location.path, location.path)
+      for (const location of view.phase === 'call' ? (view.locations ?? []) : []) addLocation(location)
       for (const diff of view.diffs) add(diff.path, diff.path)
       break
     case 'read':
-      add(view.path, `${view.path}:${view.offset}`)
+      add(`${view.path}#L${view.offset}`, `${view.path}:${view.offset}`)
       break
     case 'web':
       if (view.kind === 'fetch' && !hasWebRenderer) add(view.url, view.url)
