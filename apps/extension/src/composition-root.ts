@@ -477,6 +477,9 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const { router, provider, editorSurfaces, moveChatToSidebar, openDroppedSession, sessionNavigation } =
     gateway
   nativeNavigation.current = sessionNavigation
+  const stopAttentionBadge = taskRegistry.onPendingInteractionsChanged((count) =>
+    provider.setAttentionBadge(count),
+  )
   needsInputContext.current = (sessionId) => {
     const context = gateway.cueContext(sessionId)
     return {
@@ -589,6 +592,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const root: CompositionRoot = {
     start: commands.start,
     dispose: () => {
+      stopAttentionBadge()
       eventLoopLag.dispose()
       transcript.dispose()
       sessionWatch.dispose()

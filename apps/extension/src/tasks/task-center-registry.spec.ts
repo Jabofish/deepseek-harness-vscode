@@ -205,4 +205,25 @@ describe('TaskCenterRegistry', () => {
       (await registry.list({ sessionId: 'session-1' })).some((task) => task.interactionId === 'q-1'),
     ).toBe(false)
   })
+
+  it('announces how many approvals and questions are waiting', async () => {
+    const current = backend()
+    const registry = new TaskCenterRegistry({ now: () => 4_000 })
+    const counts: number[] = []
+    registry.onPendingInteractionsChanged((count) => counts.push(count))
+    registry.attach(current, () => 'folder-1')
+    registry.setCurrentSession('session-1')
+    current.events.emit({
+      type: 'question.requested',
+      question: { id: 'q-1', sessionId: 'session-1', prompt: 'Continue?', allowFreeText: true },
+    })
+    current.events.emit({
+      type: 'question.requested',
+      question: { id: 'q-2', sessionId: 'session-1', prompt: 'Again?', allowFreeText: true },
+    })
+    expect(registry.pendingInteractionCount).toBe(2)
+    await registry.answer('interaction:question:q-1', 'q-1', 'yes')
+    registry.detach()
+    expect(counts).toEqual([1, 2, 1, 0])
+  })
 })

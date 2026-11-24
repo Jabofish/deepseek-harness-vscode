@@ -66,6 +66,8 @@ export class TaskCenterRegistry implements TaskRepository {
   private currentSessionId: string | undefined
   private attachmentGeneration = 0
   private readonly workspaceTaskIds = new Set<string>()
+  private readonly pendingListeners = new Set<(count: number) => void>()
+  private announcedPending = 0
 
   public constructor(options: TaskCenterRegistryOptions = {}) {
     this.now = options.now ?? (() => Date.now())
@@ -96,6 +98,27 @@ export class TaskCenterRegistry implements TaskRepository {
     this.entries.clear()
     this.interactions.clear()
     this.workspaceTaskIds.clear()
+    this.announcePending()
+  }
+
+  /** Approvals and questions currently waiting for the user in this window. */
+  public get pendingInteractionCount(): number {
+    return this.interactions.size
+  }
+
+  /** Called whenever the waiting approval/question count changes. */
+  public onPendingInteractionsChanged(listener: (count: number) => void): () => void {
+    this.pendingListeners.add(listener)
+    return () => {
+      this.pendingListeners.delete(listener)
+    }
+  }
+
+  private announcePending(): void {
+    const count = this.interactions.size
+    if (count === this.announcedPending) return
+    this.announcedPending = count
+    for (const listener of this.pendingListeners) listener(count)
   }
 
   public dispose(): void {
@@ -366,6 +389,7 @@ export class TaskCenterRegistry implements TaskRepository {
       await this.requireBackend().interactions.respondToPermission(interaction.interactionId, answer, signal)
     else await this.requireBackend().interactions.respondToQuestion(interaction.interactionId, answer, signal)
     this.interactions.delete(taskId)
+    this.announcePending()
     const { interactionId, ...taskWithoutInteraction } = task
     void interactionId
     const next: TaskSummary = {
@@ -622,6 +646,7 @@ export class TaskCenterRegistry implements TaskRepository {
       for (const [taskId, interaction] of this.interactions)
         if (interaction.sessionId === event.sessionId) this.interactions.delete(taskId)
     }
+    this.announcePending()
     // Transcript chunks do not change a task's status, ownership or actions.
     // Re-reading every repository here turns a token stream into a task/list
     // and session/history request storm, followed by another Webview reread.

@@ -41,6 +41,7 @@ export class DshWebviewViewProvider implements vscode.WebviewViewProvider, Webvi
   private readonly viewListeners: vscode.Disposable[] = []
   private readonly readyWaiters = new Set<(ready: boolean) => void>()
   private isVisible = false
+  private attentionCount = 0
   private disposed = false
 
   public constructor(private readonly dependencies: DshWebviewDependencies) {
@@ -55,11 +56,37 @@ export class DshWebviewViewProvider implements vscode.WebviewViewProvider, Webvi
     return this.isVisible
   }
 
+  /**
+   * A count on the view icon while approvals or questions wait, so a collapsed
+   * or hidden chat still says the agent is blocked on the user.
+   */
+  public setAttentionBadge(count: number): void {
+    this.attentionCount = Math.max(0, Math.floor(count))
+    this.applyAttentionBadge()
+  }
+
+  private applyAttentionBadge(): void {
+    if (this.view === undefined) return
+    const count = this.attentionCount
+    this.view.badge =
+      count === 0
+        ? undefined
+        : {
+            value: count,
+            tooltip: vscode.env.language.toLowerCase().startsWith('zh')
+              ? `${count} 个审批或问题等待处理`
+              : count === 1
+                ? '1 approval or question is waiting for you'
+                : `${count} approvals or questions are waiting for you`,
+          }
+  }
+
   public resolveWebviewView(webviewView: vscode.WebviewView): void {
     if (this.disposed) return
     if (this.view !== undefined) this.disposeViewListeners()
     this.view = webviewView
     this.isVisible = webviewView.visible
+    this.applyAttentionBadge()
     webviewView.webview.options = {
       enableScripts: true,
       localResourceRoots: [vscode.Uri.joinPath(this.dependencies.extensionUri, 'media')],
