@@ -7,13 +7,18 @@ import { useQuietActivity } from '../../app/AccessibilityProvider.js'
 
 export interface TodoListProps {
   readonly todos: readonly TodoView[]
+  /** Inside an already-opened panel the list starts expanded. */
+  readonly defaultOpen?: boolean
 }
 
 /** Persistent task progress directly above the composer. */
-export const TodoList = memo(function TodoList({ todos }: TodoListProps): ReactElement | null {
+export const TodoList = memo(function TodoList({
+  todos,
+  defaultOpen = false,
+}: TodoListProps): ReactElement | null {
   const { t } = useI18n()
   const quiet = useQuietActivity()
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(defaultOpen)
   const toggleRef = useRef<HTMLButtonElement>(null)
   const { completed, current } = useMemo(() => summarizeTodos(todos), [todos])
   if (todos.length === 0) return null

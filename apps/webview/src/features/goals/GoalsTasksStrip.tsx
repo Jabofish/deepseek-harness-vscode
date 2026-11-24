@@ -113,8 +113,13 @@ export const GoalsTasksStrip = memo(function GoalsTasksStrip(
               {...(props.onClearGoal === undefined ? {} : { onClear: props.onClearGoal })}
             />
           )}
-          {goals.length === 0 ? null : <GoalTodoStrip goals={goals} />}
-          {todos.length === 0 ? null : <TodoList todos={todos} />}
+          {/* The single live goal is already the bar above; the list only adds
+              value once earlier goals exist. Opening the panel is the user's
+              request to see details, so nested lists start expanded. */}
+          {goals.length > (activeGoal === undefined ? 0 : 1) ? (
+            <GoalTodoStrip goals={goals} defaultOpen />
+          ) : null}
+          {todos.length === 0 ? null : <TodoList todos={todos} defaultOpen />}
         </div>
       </div>
     </section>

@@ -496,6 +496,9 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                         onRetry={retryConnection}
                         onOpenSettings={() => store.setDrawer('settings')}
                         onShowDiagnosticsOutput={() => store.showDiagnostics()}
+                        onReadDiagnostics={readDiagnostics}
+                        onReconnectDiagnostics={() => store.reconnect()}
+                        connectionEpoch={state.connectionEpoch ?? 0}
                       />
                     )}
                   </div>

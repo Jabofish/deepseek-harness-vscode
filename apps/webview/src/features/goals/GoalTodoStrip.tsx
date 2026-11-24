@@ -1,4 +1,4 @@
-import { memo, type ReactElement } from 'react'
+import { memo, useState, type ReactElement } from 'react'
 import type { GoalView } from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
@@ -6,15 +6,19 @@ import { Icon } from '../../ui/Icon.js'
 export const GoalTodoStrip = memo(function GoalTodoStrip({
   goals,
   label,
+  defaultOpen = false,
 }: {
   readonly goals: readonly GoalView[]
   readonly label?: string
+  /** Inside an already-opened panel the list starts expanded. */
+  readonly defaultOpen?: boolean
 }): ReactElement {
+  const [open, setOpen] = useState(defaultOpen)
   const { t } = useI18n()
   const title = label ?? t('goals.title')
   const completed = goals.filter((goal) => goal.status === 'completed').length
   return (
-    <details className="dsh-goal-strip">
+    <details className="dsh-goal-strip" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary className="dsh-goal-strip__summary">
         <span className="dsh-goal-strip__heading">
           <span className="dsh-goal-strip__icon" aria-hidden="true">
