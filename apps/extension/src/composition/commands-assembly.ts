@@ -38,15 +38,7 @@ import {
   SESSION_LIST_VIEW_ID,
 } from '../view/native-session-list.js'
 import { EditorBridgeHost } from '../editor/editor-bridge-host.js'
-
-const TRANSPORT_CONFIGURATION_KEYS = [
-  'dsh.connection.mode',
-  'dsh.connection.serverUrl',
-  'dsh.connection.runtimeVersion',
-  'dsh.connection.managedPort',
-  'dsh.connection.attachPorts',
-  'dsh.connection.requestTimeoutMs',
-] as const
+import { reconnectsAfterConfigurationChange, retriesWithNewRuntime } from './configuration-reconnect.js'
 
 export interface CommandsAssemblyDependencies {
   readonly sessionNavigation: RequestGateway['sessionNavigation']
@@ -251,7 +243,13 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
             await vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${EXTENSION_ID}`)
         },
         'dsh.openWebUi': () => openDshWebUi(coordinator.getState(), endpointLaunchUrls),
-        'dsh.installRuntime': () => runtimeInstaller.install(),
+        // Same follow-up as the view's install button: a missing runtime
+        // connects as soon as it exists, a live connection keeps running.
+        'dsh.installRuntime': async () => {
+          await runtimeInstaller.install()
+          runtimeLocator.invalidate()
+          if (retriesWithNewRuntime(coordinator.getState().kind)) await reconnect()
+        },
         'dsh.selectExecutable': () => runtimeInstaller.selectExecutable(),
         'dsh.copyInstallCommand': () => runtimeInstaller.copyInstallCommand(),
         'dsh.openDocumentation': () => vscode.env.openExternal(vscode.Uri.parse(DSH_DOCUMENTATION_URL)),
@@ -335,19 +333,7 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
         // A new executable path only takes effect on the next locate; the
         // memoized result would otherwise keep the previous one alive.
         if (affectsConfiguration('dsh.runtime.executablePath')) runtimeLocator.invalidate()
-        if (!TRANSPORT_CONFIGURATION_KEYS.some((key) => affectsConfiguration(key))) return
-        const stateKind = coordinator.getState().kind
-        if (
-          stateKind !== 'connected' &&
-          stateKind !== 'connecting' &&
-          stateKind !== 'discovering' &&
-          stateKind !== 'locating-runtime' &&
-          stateKind !== 'starting' &&
-          stateKind !== 'failed' &&
-          stateKind !== 'runtime-missing' &&
-          stateKind !== 'port-conflict'
-        )
-          return
+        if (!reconnectsAfterConfigurationChange(affectsConfiguration, coordinator.getState().kind)) return
         // Disconnect invalidates the coordinator generation and aborts an
         // in-flight attach. The shared reconnect operation coalesces this
         // automatic path with an explicit connection.configure reconnect.
