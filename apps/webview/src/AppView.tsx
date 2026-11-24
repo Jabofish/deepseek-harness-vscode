@@ -654,6 +654,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                     transcriptView={transcriptView}
                     openRequestId={inspectorOpenRequestId}
                     showTrigger={false}
+                    onBeforePick={() => setConversationView('chat')}
                     onRevealNode={(nodeId) => {
                       setConversationView('chat')
                       setInspectorReveal({
@@ -774,6 +775,9 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                         : { nodeChangeBase: state.timeline.nodeChangeBase })}
                       streaming={streaming}
                       running={activeRunning}
+                      hasMoreHistory={state.historyHasMore}
+                      loadingOlderHistory={state.historyLoading}
+                      onLoadOlderHistory={timelineOnLoadOlderHistory}
                     />
                   )}
                   <SubagentActivityStrip

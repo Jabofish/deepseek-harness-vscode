@@ -11,6 +11,7 @@ import { Icon } from '../../ui/Icon.js'
 import { useCompleteTranscriptNodes } from '../chat/useCompleteTranscriptNodes.js'
 import { TurnProgressAnnouncement } from '../chat/TurnProgressAnnouncement.js'
 import { useQuietActivity } from '../../app/AccessibilityProvider.js'
+import { CopyButton } from '../chat/CopyButton.js'
 
 export interface TrajectoryViewProps {
   readonly sessionId: string | undefined
@@ -27,6 +28,27 @@ export interface TrajectoryViewProps {
   readonly omittedNodeIds?: readonly string[]
   readonly contentVersions?: Readonly<Record<string, string>>
   readonly loadFullNode?: (nodeId: string, signal?: AbortSignal) => Promise<TimelineNode>
+  /** Whether an older DSH history window is available. */
+  readonly hasMoreHistory?: boolean
+  readonly loadingOlderHistory?: boolean
+  readonly onLoadOlderHistory?: () => Promise<void> | void
+}
+
+type KindFilter = 'all' | TrajectoryRecord['kind'] | 'errors'
+const KIND_FILTERS: readonly KindFilter[] = [
+  'all',
+  'user',
+  'message',
+  'tool',
+  'context',
+  'compacted',
+  'errors',
+]
+
+function matchesKind(record: TrajectoryRecord, filter: KindFilter): boolean {
+  if (filter === 'all') return true
+  if (filter === 'errors') return record.isError
+  return record.kind === filter
 }
 
 /**
@@ -42,6 +64,8 @@ export const TrajectoryView = memo(function TrajectoryView(props: TrajectoryView
   const quiet = useQuietActivity()
   const previousSessionRef = useRef(props.sessionId)
   const [query, setQuery] = useState('')
+  const [kindFilter, setKindFilter] = useState<KindFilter>('all')
+  const [olderFailed, setOlderFailed] = useState(false)
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined)
   /** The row button that opened the inspector; it takes the keyboard back. */
   const selectedRowRef = useRef<HTMLButtonElement | null>(null)
@@ -70,7 +94,24 @@ export const TrajectoryView = memo(function TrajectoryView(props: TrajectoryView
     () => trajectoryProjectorState.project(sourceNodes, changeStart, changeBase),
     [changeBase, changeStart, sourceNodes, trajectoryProjectorState],
   )
-  const matches = useMemo(() => searchTrajectoryRecords(projection, query), [projection, query])
+  const searchMatches = useMemo(() => searchTrajectoryRecords(projection, query), [projection, query])
+  const matches = useMemo(
+    () =>
+      kindFilter === 'all'
+        ? searchMatches
+        : searchMatches.filter((record) => matchesKind(record, kindFilter)),
+    [kindFilter, searchMatches],
+  )
+  const visibleSections = useMemo(
+    () =>
+      kindFilter === 'all'
+        ? projection.sections
+        : projection.sections.flatMap((section) => {
+            const records = section.records.filter((record) => matchesKind(record, kindFilter))
+            return records.length === 0 ? [] : [{ ...section, records }]
+          }),
+    [kindFilter, projection],
+  )
   const searching = query.trim() !== ''
   const selected = useMemo(() => {
     if (selectedId === undefined) return undefined
@@ -98,8 +139,17 @@ export const TrajectoryView = memo(function TrajectoryView(props: TrajectoryView
       previousSessionRef.current = props.sessionId
       setSelectedId(undefined)
       setQuery('')
+      setKindFilter('all')
+      setOlderFailed(false)
     }
   }, [props.sessionId])
+  const loadOlder = (): void => {
+    if (props.onLoadOlderHistory === undefined || props.loadingOlderHistory === true) return
+    setOlderFailed(false)
+    void Promise.resolve()
+      .then(() => props.onLoadOlderHistory?.())
+      .catch(() => setOlderFailed(true))
+  }
 
   return (
     <div
@@ -118,6 +168,19 @@ export const TrajectoryView = memo(function TrajectoryView(props: TrajectoryView
           aria-label={t('trajectory.searchAria')}
           onChange={(event) => setQuery(event.target.value)}
         />
+        <div className="dsh-trajectory__filters" role="group" aria-label={t('trajectory.filter.aria')}>
+          {KIND_FILTERS.map((filter) => (
+            <button
+              key={filter}
+              type="button"
+              className="dsh-trajectory__filter"
+              aria-pressed={kindFilter === filter}
+              onClick={() => setKindFilter(filter)}
+            >
+              {t(`trajectory.filter.${filter}`)}
+            </button>
+          ))}
+        </div>
         {searching ? (
           <span className="dsh-trajectory__count" role={quiet ? undefined : 'status'}>
             {t(matches.length === 1 ? 'trajectory.matches' : 'trajectory.matches.plural', {
@@ -140,8 +203,23 @@ export const TrajectoryView = memo(function TrajectoryView(props: TrajectoryView
           aria-label={t('trajectory.ledger')}
         >
           <div ref={contentRef} className="dsh-trajectory__content">
+            {props.hasMoreHistory === true && props.onLoadOlderHistory !== undefined ? (
+              <div className="dsh-timeline__history-more">
+                <button
+                  type="button"
+                  className="dsh-timeline__history-more-button"
+                  disabled={props.loadingOlderHistory === true}
+                  onClick={loadOlder}
+                >
+                  {t(props.loadingOlderHistory === true ? 'timeline.loadingOlder' : 'timeline.loadOlder')}
+                </button>
+                {olderFailed ? <span role="alert">{t('inspector.loadFailed')}</span> : null}
+              </div>
+            ) : null}
             {projection.recordCount === 0 ? (
               <p className="dsh-trajectory__empty">{t('trajectory.empty')}</p>
+            ) : !searching && visibleSections.length === 0 ? (
+              <p className="dsh-trajectory__empty">{t('trajectory.noKindMatch')}</p>
             ) : searching ? (
               matches.length === 0 ? (
                 <p className="dsh-trajectory__empty">{t('trajectory.noMatch', { query: query.trim() })}</p>
@@ -159,7 +237,7 @@ export const TrajectoryView = memo(function TrajectoryView(props: TrajectoryView
                 </ul>
               )
             ) : (
-              projection.sections.map((section, sectionIndex) => (
+              visibleSections.map((section, sectionIndex) => (
                 <section
                   className="dsh-trajectory__section"
                   key={
@@ -244,7 +322,9 @@ const TrajectoryRow = memo(function TrajectoryRow(props: {
           aria-hidden="true"
         />
         <span className="dsh-trajectory__index">#{record.index}</span>
-        <span className={`dsh-trajectory__kind dsh-trajectory__kind--${record.kind}`}>{record.kind}</span>
+        <span className={`dsh-trajectory__kind dsh-trajectory__kind--${record.kind}`}>
+          {t(`trajectory.kind.${record.kind}`)}
+        </span>
         <span className="dsh-trajectory__text">{record.text}</span>
         <span className="dsh-trajectory__time">
           {record.streaming
@@ -288,7 +368,7 @@ function TrajectoryInspector(props: {
     >
       <header className="dsh-trajectory-inspector__header">
         <h4>
-          #{record.index} · {record.kind}
+          #{record.index} · {t(`trajectory.kind.${record.kind}`)}
           {record.modelLabel === undefined ? '' : ` · ${record.modelLabel}`}
         </h4>
         <button
@@ -345,6 +425,9 @@ function TrajectoryInspector(props: {
       {record.inputDetail === undefined ? null : (
         <details className="dsh-trajectory-inspector__block" open>
           <summary>{t('trajectory.input')}</summary>
+          <div className="dsh-trajectory-inspector__copy">
+            <CopyButton text={record.inputDetail} className="dsh-icon-button" translate={t} />
+          </div>
           <pre>{record.inputDetail}</pre>
         </details>
       )}
@@ -354,12 +437,18 @@ function TrajectoryInspector(props: {
             {t('trajectory.output')}
             {record.isError ? ` · ${t('trajectory.failed')}` : ''}
           </summary>
+          <div className="dsh-trajectory-inspector__copy">
+            <CopyButton text={record.outputDetail} className="dsh-icon-button" translate={t} />
+          </div>
           <pre>{record.outputDetail}</pre>
         </details>
       )}
       {record.thinkingDetail === undefined ? null : (
         <details className="dsh-trajectory-inspector__block">
           <summary>{t('timeline.thinking')}</summary>
+          <div className="dsh-trajectory-inspector__copy">
+            <CopyButton text={record.thinkingDetail} className="dsh-icon-button" translate={t} />
+          </div>
           <pre>{record.thinkingDetail}</pre>
         </details>
       )}

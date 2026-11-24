@@ -6,6 +6,8 @@ export interface InspectorRecord {
   readonly type: string
   readonly sequence?: number
   readonly nodeId?: string
+  /** Structural facts only (tool name/status, ending reason/code, notice level); never bodies. */
+  readonly summary?: readonly string[]
   readonly fields: Readonly<Record<string, Readonly<Record<string, number | boolean>>>>
 }
 function counts(value: unknown, keys: readonly string[]): Record<string, number | boolean> {
@@ -35,11 +37,13 @@ export function inspectChatNode(node: TimelineNode, index: number): InspectorRec
   if (node.kind === 'assistant-message' && node.reasoning !== undefined)
     structure.reasoningCharacters = node.reasoning.markdown.length
   const sequence = 'sequence' in node && typeof node.sequence === 'number' ? node.sequence : undefined
+  const summary = structuralSummary(node)
   return {
     id: `node:${node.id}`,
     source: 'nodes',
     nodeId: node.id,
     type: node.kind,
+    ...(summary.length === 0 ? {} : { summary }),
     ...(sequence === undefined ? {} : { sequence }),
     fields: {
       coordinates: counts(node, COORDINATES),
@@ -56,5 +60,23 @@ export function inspectChatNode(node: TimelineNode, index: number): InspectorRec
           }
         : {}),
     },
+  }
+}
+
+/** Identifiers and states that help locate a row without revealing its text. */
+function structuralSummary(node: TimelineNode): readonly string[] {
+  switch (node.kind) {
+    case 'tool':
+      return [node.tool.name, node.tool.status]
+    case 'turn-terminal':
+      return node.failure?.code === undefined ? [node.reason] : [node.reason, node.failure.code]
+    case 'notice':
+      return [node.level]
+    case 'retry':
+      return [node.state, `#${node.attempt}`]
+    case 'workflow':
+      return [node.workflow.status]
+    default:
+      return []
   }
 }

@@ -48,7 +48,7 @@ it('joins selected chat records to authoritative event facts without exposing bo
   fireEvent.click(filters.getByRole('button', { name: 'Source: Session events' }))
   fireEvent.click(screen.getByRole('option', { name: 'Chat nodes' }))
   fireEvent.click(rows.getByRole('button', { name: '#4 assistant-message' }))
-  expect(screen.getByText('textCharacters')).toBeDefined()
+  expect(screen.getByText('Text characters')).toBeDefined()
   fireEvent.click(screen.getByRole('button', { name: 'Inspect matching unknown' }))
   expect(filters.getByRole('button', { name: 'Source: Session events' })).toBeDefined()
   const selectedRow = rows.getByRole('button', { name: '#4 unknown' })
@@ -82,7 +82,7 @@ it('picks the actual projected conversation row and reveals its source identity'
   const row = view.container.querySelector('.dsh-timeline__row')
   if (row === null) throw new Error('No projected row was mounted')
   fireEvent.click(row)
-  expect(await screen.findByText('textCharacters')).toBeDefined()
+  expect(await screen.findByText('Text characters')).toBeDefined()
   fireEvent.click(screen.getByRole('button', { name: 'Reveal in conversation' }))
   expect(reveal).toHaveBeenCalledWith('node-1')
 })
@@ -117,4 +117,41 @@ it('routes DevTools actions to Host, prevents duplicate clicks and offers copy a
   expect(await screen.findByText('Inspector link copied. Paste it into Chrome.')).toBeDefined()
   expect(document.body.textContent).not.toContain('PRIVATE_EXCEPTION')
   expect(calls.filter((call) => call.type === 'inspector.devtools.copy')).toHaveLength(1)
+})
+
+it('summarises rows with structural facts only and labels fields in the UI language', () => {
+  const tool: TimelineNode = {
+    kind: 'tool',
+    id: 'tool-1',
+    sequence: 7,
+    tool: {
+      id: 'tool-1',
+      name: 'shell',
+      category: 'execution',
+      title: 'PRIVATE_COMMAND',
+      status: 'failed',
+      error: 'PRIVATE_ERROR',
+      metadata: {},
+    },
+  }
+  const onBeforePick = vi.fn()
+  render(
+    <SessionInspector
+      nodes={[tool]}
+      hasMore={false}
+      loading={false}
+      loadOlder={() => {}}
+      featureRequest={unavailable}
+      onBeforePick={onBeforePick}
+    />,
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Session Inspector' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Source: Session events' }))
+  fireEvent.click(screen.getByRole('option', { name: 'Chat nodes' }))
+  fireEvent.click(screen.getByRole('button', { name: '#7 tool shell · failed' }))
+  expect(screen.getByText('Settled')).toBeDefined()
+  expect(screen.getByRole('button', { name: 'Copy' })).toBeDefined()
+  expect(document.body.textContent).not.toMatch(/PRIVATE_/)
+  fireEvent.click(screen.getByRole('button', { name: 'Pick a chat row' }))
+  expect(onBeforePick).toHaveBeenCalledTimes(1)
 })

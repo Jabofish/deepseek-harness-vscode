@@ -12,6 +12,21 @@ import { timelineSourceNodeIds } from '../chat/timeline-inspector-target.js'
 import type { TranscriptViewMode } from '../../app/ui-preferences.js'
 import { Icon } from '../../ui/Icon.js'
 import { SelectMenu } from '../../components/common/SelectMenu.js'
+import { CopyButton } from '../chat/CopyButton.js'
+import type { Translate } from '../../i18n.js'
+
+/** Localized field label, falling back to the raw identifier for unknown keys. */
+function labelOr(t: Translate, key: string, fallback: string): string {
+  const label = t(key)
+  return label === key ? fallback : label
+}
+
+/** A node's own structural summary; an event borrows the summary of its node. */
+function recordSummary(record: InspectorRecord, nodeSummaries: ReadonlyMap<number, string>): string {
+  if (record.summary !== undefined) return record.summary.join(' · ')
+  if (record.source !== 'events' || record.sequence === undefined) return ''
+  return nodeSummaries.get(record.sequence) ?? ''
+}
 
 const PAGE_SIZE = 100
 export function SessionInspector(props: {
@@ -24,6 +39,8 @@ export function SessionInspector(props: {
   readonly showDshEvents?: boolean
   readonly transcriptView?: TranscriptViewMode
   readonly onRevealNode?: (nodeId: string) => void
+  /** Pick needs the chat rows mounted; switch away from the trajectory view first. */
+  readonly onBeforePick?: () => void
   /** A fresh request opens this mounted session; remounts ignore older requests. */
   readonly openRequestId?: string | undefined
   readonly showTrigger?: boolean
@@ -69,6 +86,13 @@ export function SessionInspector(props: {
           ],
     [open, props.nodes, props.eventFacts],
   )
+  const nodeSummaries = useMemo(() => {
+    const summaries = new Map<number, string>()
+    for (const record of records)
+      if (record.source === 'nodes' && record.sequence !== undefined && record.summary !== undefined)
+        summaries.set(record.sequence, record.summary.join(' · '))
+    return summaries
+  }, [records])
   const sourceRecords = useMemo(() => records.filter((record) => record.source === source), [records, source])
   const types = useMemo(
     () => [...new Set(sourceRecords.map((record) => record.type))].sort(),
@@ -251,6 +275,7 @@ export function SessionInspector(props: {
                   type="button"
                   onClick={() => {
                     setOpen(false)
+                    props.onBeforePick?.()
                     setPicking(true)
                   }}
                 >
@@ -286,18 +311,43 @@ export function SessionInspector(props: {
                       <span className="dsh-session-inspector__sequence">#{record.sequence}</span>
                     )}{' '}
                     <span className="dsh-session-inspector__type">{record.type}</span>
+                    {(() => {
+                      const summary = recordSummary(record, nodeSummaries)
+                      return summary === '' ? null : (
+                        <>
+                          {' '}
+                          <span className="dsh-session-inspector__summary">{summary}</span>
+                        </>
+                      )
+                    })()}
                     <Icon name="chevron-right" />
                   </button>
                   {selected === undefined || selected.id !== record.id ? null : (
                     <section className="dsh-session-inspector__detail" aria-label={t('inspector.detail')}>
-                      <h3>{selected.type}</h3>
+                      <div className="dsh-session-inspector__detail-header">
+                        <h3>{selected.type}</h3>
+                        <CopyButton
+                          text={JSON.stringify(
+                            {
+                              type: selected.type,
+                              ...(selected.sequence === undefined ? {} : { sequence: selected.sequence }),
+                              ...(selected.summary === undefined ? {} : { summary: selected.summary }),
+                              fields: selected.fields,
+                            },
+                            null,
+                            2,
+                          )}
+                          className="dsh-icon-button"
+                          translate={t}
+                        />
+                      </div>
                       {Object.entries(selected.fields).map(([field, value]) => (
                         <details key={field} open>
-                          <summary>{field}</summary>
+                          <summary>{labelOr(t, `inspector.group.${field}`, field)}</summary>
                           <dl>
                             {Object.entries(value).map(([key, count]) => (
                               <div key={key}>
-                                <dt>{key}</dt>
+                                <dt title={key}>{labelOr(t, `inspector.field.${key}`, key)}</dt>
                                 <dd>{String(count)}</dd>
                               </div>
                             ))}
