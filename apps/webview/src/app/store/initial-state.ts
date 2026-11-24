@@ -90,6 +90,7 @@ export function createInitialState(composerPreferences: ComposerPreferences): Ap
     tasks: [],
     tasksLoading: false,
     taskScope: 'current-session',
+    taskIncludeCompleted: false,
     tasksComplete: true,
     tasksOmittedSessions: 0,
     checkpoints: [],

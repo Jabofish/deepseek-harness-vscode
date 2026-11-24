@@ -1,4 +1,4 @@
-import { useCallback, useState, type ReactElement } from 'react'
+import { useCallback, type ReactElement } from 'react'
 import type { SubagentView } from '@dsh-vscode/domain'
 import type { AppStore } from '../../app/store.js'
 import { setDraft } from '../../app/draft-store.js'
@@ -29,6 +29,7 @@ interface ConversationActionItemsProps {
     | 'tasks'
     | 'tasksLoading'
     | 'taskScope'
+    | 'taskIncludeCompleted'
     | 'tasksComplete'
     | 'tasksOmittedSessions'
     | 'checkpoints'
@@ -77,7 +78,6 @@ export function ConversationActionItems({
   setError,
   t,
 }: ConversationActionItemsProps): ReactElement | null {
-  const [includeCompletedTasks, setIncludeCompletedTasks] = useState(false)
   const readDiagnostics = useCallback(() => store.readDiagnostics(), [store])
   if (activeId === undefined) return null
   return (
@@ -129,16 +129,13 @@ export function ConversationActionItems({
         tasks={state.tasks}
         loading={state.tasksLoading}
         scope={state.taskScope}
-        includeCompleted={includeCompletedTasks}
+        includeCompleted={state.taskIncludeCompleted}
         complete={state.tasksComplete}
         omittedSessions={state.tasksOmittedSessions}
         alwaysVisible
-        onRefresh={() => store.refreshTasks(activeId, includeCompletedTasks, state.taskScope)}
-        onScopeChange={(scope) => store.refreshTasks(activeId, includeCompletedTasks, scope)}
-        onIncludeCompletedChange={async (include) => {
-          setIncludeCompletedTasks(include)
-          await store.refreshTasks(activeId, include, state.taskScope)
-        }}
+        onRefresh={() => store.refreshTasks(activeId, state.taskIncludeCompleted, state.taskScope)}
+        onScopeChange={(scope) => store.refreshTasks(activeId, state.taskIncludeCompleted, scope)}
+        onIncludeCompletedChange={(include) => store.refreshTasks(activeId, include, state.taskScope)}
         onOpen={async (task) => {
           if (task.sessionId === undefined) return
           // A subagent row names the child in `sourceId`; `sessionId` is its
@@ -149,7 +146,7 @@ export function ConversationActionItems({
         }}
         onStop={async (task) => {
           await store.stopTask(task.taskId, task.taskRevision)
-          await store.refreshTasks(activeId, includeCompletedTasks, state.taskScope)
+          await store.refreshTasks(activeId, state.taskIncludeCompleted, state.taskScope)
         }}
       />
       <CheckpointDrawer

@@ -215,6 +215,7 @@ export function createFeatureActions(host: FeatureActionHost): FeatureActions {
                 ...current,
                 tasks: snapshot.items,
                 taskScope: snapshot.scope,
+                taskIncludeCompleted: includeCompleted,
                 tasksComplete: snapshot.complete,
                 tasksOmittedSessions: snapshot.omittedSessions,
               }
@@ -226,7 +227,8 @@ export function createFeatureActions(host: FeatureActionHost): FeatureActions {
   }
   const refreshTasksState = (
     sessionId: string | undefined = readState().activeSessionId,
-    includeCompleted = false,
+    // Background and session-switch refreshes keep the filter the user chose.
+    includeCompleted = readState().taskIncludeCompleted,
     scope: TaskListScope = 'current-session',
   ): Promise<void> => {
     const activeSessionId = readState().activeSessionId
@@ -838,7 +840,9 @@ export function createFeatureActions(host: FeatureActionHost): FeatureActions {
           readState().activeSessionId)
     ) {
       const taskScope = readState().taskScope
-      void refreshTasksState(readState().activeSessionId, false, taskScope).catch(() => undefined)
+      void refreshTasksState(readState().activeSessionId, readState().taskIncludeCompleted, taskScope).catch(
+        () => undefined,
+      )
       return true
     }
     if (

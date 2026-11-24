@@ -254,6 +254,8 @@ export interface AppState extends SessionModelDirectoryState {
   readonly tasks: readonly TaskSummary[]
   readonly tasksLoading: boolean
   readonly taskScope: TaskListScope
+  /** The task center's "include completed" filter; a list preference kept across sessions. */
+  readonly taskIncludeCompleted: boolean
   readonly tasksComplete: boolean
   readonly tasksOmittedSessions: number
   readonly checkpoints: readonly CheckpointSummary[]

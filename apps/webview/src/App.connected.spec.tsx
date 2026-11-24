@@ -137,6 +137,7 @@ function connectedState(activeSession: boolean): AppState {
     tasks: [],
     tasksLoading: false,
     taskScope: 'current-session',
+    taskIncludeCompleted: false,
     tasksComplete: true,
     tasksOmittedSessions: 0,
     checkpoints: [],
