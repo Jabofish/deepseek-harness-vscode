@@ -241,8 +241,8 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
   const moveChatToSidebar = async (surfaceId?: string, signal?: AbortSignal): Promise<void> => {
     const manager = editorChatSurfaces.current
     if (manager === undefined) throw surfaceRoutesUnavailable()
-    const moveAll = surfaceId === undefined || surfaceId === SIDEBAR_SURFACE_ID
-    const source = moveAll
+    const moveAll = surfaceId === SIDEBAR_SURFACE_ID
+    const source = surfaceId === undefined || moveAll
       ? (manager.surfacesById.find((surface) => surface.panel.active) ?? manager.mostRecent)
       : manager.surfacesById.find((surface) => surface.surfaceId === surfaceId)
     const moving = (moveAll ? manager.surfacesById : source === undefined ? [] : [source]).map((surface) => ({

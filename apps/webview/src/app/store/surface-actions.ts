@@ -120,7 +120,10 @@ export function createSurfaceActions(host: SurfaceActionHost): SurfaceActions {
     const state = getState()
     if (state.surface?.kind === 'editor') return
     const sessionId = state.activeSessionId
-    if (sessionId === undefined) return
+    if (sessionId === undefined) {
+      setState((current) => ({ ...current, surfaceError: translate('commands.movetoNoSession') }))
+      return
+    }
     void requestEditorTab(sessionId).catch(() => undefined)
   }
 

@@ -608,6 +608,25 @@ describe('request gateway editor surface routes', () => {
     expect(harness.gateway.editorSurfaces.count).toBe(0)
   })
 
+  it('closes only the active editor tab when moveChatToSidebar is invoked without a surfaceId', async () => {
+    harness.openSidebar()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await harness.gateway.router.handle(
+      request('surface.openInEditor', 'r1', { sessionId: 'session-1' }),
+      'sidebar',
+    )
+    await harness.gateway.router.handle(
+      request('surface.openInEditor', 'r2', { sessionId: 'session-2' }),
+      'sidebar',
+    )
+
+    await harness.gateway.moveChatToSidebar()
+    expect(host.panels[0]?.disposeCount).toBe(0)
+    expect(host.panels[1]?.disposeCount).toBe(1)
+    expect(harness.gateway.editorSurfaces.count).toBe(1)
+    expect(harness.gateway.editorSurfaces.forSession('session-1')).toBeDefined()
+  })
+
   it('rebinds a created session using the Host sender identity and preserves both session lookups', async () => {
     await harness.gateway.router.handle(
       request('surface.openInEditor', 'open', { sessionId: 'session-1' }),

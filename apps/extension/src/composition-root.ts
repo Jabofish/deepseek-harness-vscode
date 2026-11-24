@@ -549,6 +549,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     reconnectOnTransportChange,
     publishState,
     postEvent,
+    postEventTo,
     postFeatureEvent,
     postEditorContextAvailabilityEvent,
     editorContextUseCases,
