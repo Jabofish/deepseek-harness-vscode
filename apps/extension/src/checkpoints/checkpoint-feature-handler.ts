@@ -23,6 +23,11 @@ type FeatureResponsePayload = Extract<FeatureResponse, { readonly ok: true }>['p
 interface CheckpointFeatureDependencies {
   readonly changeUseCases: ChangeUseCases
   readonly checkpointUseCases: CheckpointUseCases
+  readonly refreshAuthoritativeChanges?: (
+    sessionId: string,
+    workspaceFolderId: string,
+    signal: AbortSignal,
+  ) => Promise<unknown>
   readonly requireCurrentWorkspaceSession: (sessionId: string, signal: AbortSignal) => Promise<SessionDetail>
   readonly featureWorkspaceFolderId: (
     requestedWorkspaceFolderId: string | undefined,
@@ -46,6 +51,7 @@ export async function handleCheckpointFeatureRequest(
   if (request.type === 'checkpoint.create') {
     const session = await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
     const workspaceId = featureWorkspaceFolderId(request.payload.workspaceFolderId, session)
+    await dependencies.refreshAuthoritativeChanges?.(session.id, workspaceId, signal)
     const changes = await changeUseCases.list(
       { workspaceFolderId: workspaceId, sessionId: session.id, limit: 200 },
       signal,

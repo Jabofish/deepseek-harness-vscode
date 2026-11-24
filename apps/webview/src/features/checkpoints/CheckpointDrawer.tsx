@@ -305,7 +305,10 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
             </div>
           ) : null}
           {props.checkpoints.length === 0 && !props.loading ? (
-            <div className="dsh-checkpoints-popover__status">{t('checkpoints.empty')}</div>
+            <div className="dsh-checkpoints-popover__status">
+              <p>{t('checkpoints.empty')}</p>
+              <p className="dsh-checkpoints-popover__hint">{t('checkpoints.setupHint')}</p>
+            </div>
           ) : null}
           <ul className="dsh-checkpoints-popover__rows">
             {props.checkpoints.map((checkpoint) => (
@@ -330,6 +333,9 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
                   <span className="dsh-checkpoints-popover__time">
                     {new Date(checkpoint.createdAt).toLocaleString()}
                   </span>
+                  {!checkpoint.contentEnabled || checkpoint.state === 'metadata-only' ? (
+                    <span className="dsh-checkpoints-popover__hint">{t('checkpoints.metadataOnlyHint')}</span>
+                  ) : null}
                 </div>
                 <div className="dsh-checkpoints-popover__row-actions">
                   {checkpoint.restoreAllowed && checkpoint.expectedRevision !== undefined ? (

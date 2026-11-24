@@ -584,6 +584,8 @@ export function createFeatureRequestHandler(deps: FeatureRequestHandlerDependenc
       return handleCheckpointFeatureRequest(request, signal, {
         changeUseCases,
         checkpointUseCases,
+        refreshAuthoritativeChanges: (sessionId, workspaceId, abortSignal) =>
+          changeTracker.refreshAuthoritative(backendService.requireBackend(), sessionId, workspaceId, abortSignal),
         requireCurrentWorkspaceSession,
         featureWorkspaceFolderId,
         postCheckpointFeatureEvent,

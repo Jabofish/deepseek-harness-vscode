@@ -280,6 +280,8 @@
   "checkpoints.refresh": "Refresh checkpoints",
   "checkpoints.loading": "Loading checkpoints…",
   "checkpoints.empty": "No checkpoints in this session.",
+  "checkpoints.setupHint": "Enable dsh.checkpoints.enabled (and dsh.checkpoints.storeContent for restore) in VS Code Settings. Checkpoints snapshot files changed in this session.",
+  "checkpoints.metadataOnlyHint": "Metadata only — enable dsh.checkpoints.storeContent in VS Code Settings to restore.",
   "checkpoints.create": "Create",
   "checkpoints.createTitle": "Create checkpoint",
   "checkpoints.createSubmit": "Create checkpoint",

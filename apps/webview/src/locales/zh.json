@@ -280,6 +280,8 @@
   "checkpoints.refresh": "刷新检查点",
   "checkpoints.loading": "正在加载检查点…",
   "checkpoints.empty": "本会话没有检查点。",
+  "checkpoints.setupHint": "需在 VS Code 设置中开启 dsh.checkpoints.enabled（若需恢复内容，同时开启 dsh.checkpoints.storeContent）。检查点会快照当前会话中已变更的文件。",
+  "checkpoints.metadataOnlyHint": "仅保存元数据——请在 VS Code 设置中开启 dsh.checkpoints.storeContent 后方可恢复。",
   "checkpoints.create": "创建",
   "checkpoints.createTitle": "创建检查点",
   "checkpoints.createSubmit": "创建检查点",
