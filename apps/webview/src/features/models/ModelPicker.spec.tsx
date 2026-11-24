@@ -79,6 +79,10 @@ describe('DSH model selection behavior', () => {
     expect(highlighted?.getAttribute('aria-label')).toBe('Swift Large')
     expect(highlighted?.textContent).toContain('Swift Large')
     expect(highlighted?.textContent).toContain('swift-large')
+    // Enter that commits IME text into the search box picks nothing.
+    fireEvent.keyDown(search, { key: 'Enter', keyCode: 229 })
+    fireEvent.keyDown(search, { key: 'Enter', isComposing: true })
+    expect(onChange).not.toHaveBeenCalled()
     fireEvent.keyDown(search, { key: 'Enter' })
     expect(onChange).toHaveBeenCalledWith({ providerId: 'local', modelId: 'swift-large' })
     expect(screen.queryByRole('menu')).toBeNull()

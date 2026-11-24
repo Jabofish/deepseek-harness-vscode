@@ -249,7 +249,10 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
   }
 
   const onMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
-    if (event.nativeEvent.isComposing) return
+    // An IME owns Enter while composing: it commits the typed letters into the
+    // search box and must not also pick the first match. 229 is the legacy
+    // composition signal some engines send without isComposing.
+    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return
     if (event.key === 'Escape' || (focused && event.key === 'Tab' && event.shiftKey)) {
       event.preventDefault()
       if (pane === 'root' || (focused && selected === undefined)) {
