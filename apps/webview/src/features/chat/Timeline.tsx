@@ -325,6 +325,8 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
   const stableOnFeedbackSubmit = useStableOptionalCallback(props.onFeedbackSubmit)
   const stableOnFeedbackPrepare = useStableOptionalCallback(props.onFeedbackPrepare)
   const stableLoadFullContent = useStableOptionalCallback(props.loadFullContent)
+  const hasEditPrompt = props.onEditPrompt !== undefined
+  const hasRetryTurn = props.onRetryTurn !== undefined
   const stableOnEditPrompt = useStableOptionalCallback(props.onEditPrompt)
   const stableOnRetryTurn = useStableOptionalCallback(props.onRetryTurn)
   // Only the latest turn ending, with no prompt after it, offers retry/continue.
@@ -923,8 +925,8 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
       onFeedbackPrepare: props.onFeedbackPrepare === undefined ? undefined : stableOnFeedbackPrepare,
       truncatedNodeIds,
       loadFullContent: props.loadFullContent === undefined ? undefined : stableLoadFullContent,
-      onEditPrompt: props.onEditPrompt === undefined ? undefined : stableOnEditPrompt,
-      onRetryTurn: props.onRetryTurn === undefined || running ? undefined : stableOnRetryTurn,
+      onEditPrompt: hasEditPrompt ? stableOnEditPrompt : undefined,
+      onRetryTurn: !hasRetryTurn || running ? undefined : stableOnRetryTurn,
       retryTurnNodeId,
       requestOpenLink,
       t,
@@ -946,8 +948,8 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
       props.feedbackUnavailable,
       performanceUsage,
       props.loadFullContent,
-      props.onEditPrompt === undefined,
-      props.onRetryTurn === undefined,
+      hasEditPrompt,
+      hasRetryTurn,
       running,
       retryTurnNodeId,
       stableOnEditPrompt,

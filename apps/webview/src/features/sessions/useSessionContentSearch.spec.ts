@@ -32,7 +32,9 @@ describe('Session content search dispatch', () => {
     rerender({ query: 'new', open: true })
     // A keystroke right after a dispatch waits for typing to pause.
     expect(onSearch).not.toHaveBeenCalledWith('new')
-    act(() => vi.advanceTimersByTime(120))
+    act(() => {
+      vi.advanceTimersByTime(120)
+    })
     expect(onSearch).toHaveBeenCalledWith('new')
     await act(async () => {
       reads.get('new')!.resolve({ items: [] })
@@ -46,7 +48,9 @@ describe('Session content search dispatch', () => {
     expect(result.current.unavailable).toBe(false)
     expect(result.current.contentSearch.query).toBe('new')
     rerender({ query: 'closed', open: true })
-    act(() => vi.advanceTimersByTime(120))
+    act(() => {
+      vi.advanceTimersByTime(120)
+    })
     expect(onSearch).toHaveBeenCalledWith('closed')
     rerender({ query: 'closed', open: false })
     await act(async () => {
