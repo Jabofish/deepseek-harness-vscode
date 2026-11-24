@@ -162,4 +162,28 @@ describe('QueuePanel', () => {
     expect(onEdit).toHaveBeenCalledTimes(2)
     expect(onEdit).toHaveBeenLastCalledWith('q1', 'retry')
   })
+
+  it('steers every queued row through one ordered action instead of per-row requests', async () => {
+    const onModeChange = vi.fn()
+    const onSteerAll = vi.fn().mockResolvedValue(undefined)
+    render(
+      <I18nProvider>
+        <QueuePanel
+          items={[queuedInput('first'), queuedInput('second')]}
+          running={true}
+          onEdit={vi.fn()}
+          onRemove={vi.fn()}
+          onModeChange={onModeChange}
+          onSteerAll={onSteerAll}
+          onDismissPending={vi.fn()}
+        />
+      </I18nProvider>,
+    )
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Steer all' }))
+      await Promise.resolve()
+    })
+    expect(onSteerAll).toHaveBeenCalledTimes(1)
+    expect(onModeChange).not.toHaveBeenCalled()
+  })
 })

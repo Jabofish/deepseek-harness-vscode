@@ -855,6 +855,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                     onEdit={queueOnEdit}
                     onRemove={queueOnRemove}
                     onModeChange={queueOnModeChange}
+                    onSteerAll={composerOnSteerQueue}
                     onDismissPending={(id) => store.dismissPendingPrompt(id)}
                     onLoadImage={timelineOnLoadImage}
                   />
