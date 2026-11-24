@@ -17,6 +17,7 @@ import { SubagentActivityStrip } from './features/subagents/SubagentActivityStri
 import { SessionTitlePicker } from './features/sessions/SessionTitlePicker.js'
 import { displaySessionTitle } from './features/sessions/session-title.js'
 import { ConversationActionsMenu } from './features/shell/ConversationActionsMenu.js'
+import { PromptTemplatesDrawer } from './features/prompt-templates/PromptTemplatesDrawer.js'
 import { ExportDialog } from './features/export/ExportDialog.js'
 import { GoalsTasksStrip } from './features/goals/GoalsTasksStrip.js'
 import { Timeline } from './features/chat/Timeline.js'
@@ -380,7 +381,32 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                     />
                     <div className="dsh-conversation__compact-menu">
                       <ConversationActionsMenu triggerRef={conversationActionsTriggerRef}>
-                        {compactActions}
+                        {(closeMenu) => (
+                          <>
+                            {compactActions(closeMenu)}
+                            <PromptTemplatesDrawer
+                              onOpenLink={timelineOnOpenLink}
+                              key={`prompt-templates-pending-${state.pendingSession?.revision ?? 0}`}
+                              templates={state.promptTemplates}
+                              loading={state.promptTemplatesLoading}
+                              onRefresh={() => store.refreshPromptTemplates(undefined)}
+                              onRead={(templateId) => store.readPromptTemplate(templateId)}
+                              onInsert={(templateId, variables) =>
+                                store.insertPromptTemplate(templateId, variables)
+                              }
+                              onCreate={(draft) => store.createPromptTemplate(draft)}
+                              onUpdate={(templateId, patch) => store.updatePromptTemplate(templateId, patch)}
+                              onDelete={(templateId) => store.deletePromptTemplate(templateId)}
+                              onApply={(text) => {
+                                setDraft((current) =>
+                                  current.trim() === '' ? text : `${current}\n\n${text}`,
+                                )
+                                setError(undefined)
+                                closeMenu()
+                              }}
+                            />
+                          </>
+                        )}
                       </ConversationActionsMenu>
                     </div>
                   </div>

@@ -24,6 +24,8 @@ export type SettingsActionMethods = Pick<
   | 'readDshSettings'
   | 'openDshSettingsDocument'
   | 'openKeyboardShortcuts'
+  | 'openExtensionSettings'
+  | 'clearExternalCredentials'
   | 'updateDshSetting'
   | 'unsetDshSetting'
   | 'mutateDshSettings'
@@ -62,6 +64,16 @@ export function createSettingsActions(host: SettingsActionHost): SettingsActionM
     },
     openKeyboardShortcuts: async () => {
       await client.request<unknown>({ type: 'settings.openKeyboardShortcuts', requestId: requestId() })
+    },
+    openExtensionSettings: async (section) => {
+      await client.request<unknown>({
+        type: 'settings.openExtensionSettings',
+        requestId: requestId(),
+        ...(section === undefined ? {} : { payload: { section } }),
+      })
+    },
+    clearExternalCredentials: async () => {
+      await client.request<unknown>({ type: 'connection.clearCredentials', requestId: requestId() })
     },
     updateDshSetting: async (path, value, expectedRevision) => {
       await client.request<unknown>({

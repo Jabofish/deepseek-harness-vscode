@@ -161,6 +161,9 @@ export function ConversationActionItems({
         onRestore={(checkpointId, previewId, conflictPolicy) =>
           store.restoreCheckpoint(checkpointId, previewId, conflictPolicy)
         }
+        {...(store.openExtensionSettings === undefined
+          ? {}
+          : { onOpenSettings: () => void store.openExtensionSettings?.('checkpoints') })}
       />
       <PromptTemplatesDrawer
         onOpenLink={timelineOnOpenLink}

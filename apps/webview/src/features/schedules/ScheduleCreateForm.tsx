@@ -199,7 +199,43 @@ export function ScheduleCreateForm({
               }}
             />
           </label>
-          <p className="dsh-schedule-panel__muted">{t('schedules.create.rruleHelp')}</p>
+          <div className="dsh-schedule-panel__actions">
+            <button
+              type="button"
+              className="dsh-button dsh-button--secondary dsh-button--compact"
+              onClick={() => {
+                setCreateDraft({
+                  ...createDraft,
+                  rrule: 'DTSTART:20261124T090000Z\nRRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR',
+                })
+                setCreateError(undefined)
+              }}
+            >
+              {t('schedules.rrule.presetWeekdays')}
+            </button>
+            <button
+              type="button"
+              className="dsh-button dsh-button--secondary dsh-button--compact"
+              onClick={() => {
+                setCreateDraft({
+                  ...createDraft,
+                  rrule: 'DTSTART:20261101T090000Z\nRRULE:FREQ=MONTHLY;BYMONTHDAY=1',
+                })
+                setCreateError(undefined)
+              }}
+            >
+              {t('schedules.rrule.presetMonthly')}
+            </button>
+          </div>
+          <p className="dsh-schedule-panel__muted">
+            {(createDraft.rrule ?? '').trim() === ''
+              ? t('schedules.create.rruleHelp')
+              : /(?:^|\n)RRULE:.*FREQ=(?:SECONDLY|MINUTELY|HOURLY|DAILY|WEEKLY|MONTHLY|YEARLY)/iu.test(
+                    createDraft.rrule ?? '',
+                  )
+                ? t('schedules.rrule.valid')
+                : t('schedules.rrule.invalid')}
+          </p>
         </div>
       ) : null}
       {createDraft.timing === 'after' || createDraft.timing === 'every' ? (

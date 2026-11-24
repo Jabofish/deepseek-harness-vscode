@@ -441,6 +441,10 @@ export interface AppActions {
   readDshSettings(): Promise<DshSettingsSnapshot | undefined>
   openDshSettingsDocument(): Promise<void>
   openKeyboardShortcuts(): Promise<void>
+  openExtensionSettings?(
+    section?: 'all' | 'checkpoints' | 'connection' | 'completionCue' | 'runtime' | 'webUi' | 'editor',
+  ): Promise<void>
+  clearExternalCredentials?(): Promise<void>
   updateDshSetting(path: string, value: unknown, expectedRevision: number): Promise<void>
   unsetDshSetting(path: string, expectedRevision: number): Promise<void>
   mutateDshSettings(

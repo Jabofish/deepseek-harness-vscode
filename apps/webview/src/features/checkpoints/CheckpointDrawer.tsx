@@ -24,6 +24,7 @@ export interface CheckpointDrawerProps {
     previewId: string,
     conflictPolicy: CheckpointConflictPolicy,
   ) => Promise<'completed' | 'partial' | undefined>
+  readonly onOpenSettings?: () => void
 }
 
 type DialogState =
@@ -308,6 +309,15 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
             <div className="dsh-checkpoints-popover__status">
               <p>{t('checkpoints.empty')}</p>
               <p className="dsh-checkpoints-popover__hint">{t('checkpoints.setupHint')}</p>
+              {props.onOpenSettings === undefined ? null : (
+                <button
+                  type="button"
+                  className="dsh-button dsh-button--secondary dsh-button--compact"
+                  onClick={props.onOpenSettings}
+                >
+                  {t('checkpoints.openSettings')}
+                </button>
+              )}
             </div>
           ) : null}
           <ul className="dsh-checkpoints-popover__rows">

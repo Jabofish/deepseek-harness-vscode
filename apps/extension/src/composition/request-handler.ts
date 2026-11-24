@@ -836,6 +836,29 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
       await vscode.commands.executeCommand('workbench.action.openGlobalKeybindings')
       return undefined
     }
+    if (request.type === 'settings.openExtensionSettings') {
+      const section = request.payload?.section
+      const query =
+        section === 'checkpoints'
+          ? 'dsh.checkpoints'
+          : section === 'connection'
+            ? 'dsh.connection'
+            : section === 'completionCue'
+              ? 'dsh.completionCue'
+              : section === 'runtime'
+                ? 'dsh.runtime'
+                : section === 'webUi'
+                  ? 'dsh.webUi'
+                  : section === 'editor'
+                    ? 'dsh.editor'
+                    : '@ext:jabofish.jabodsh'
+      await vscode.commands.executeCommand('workbench.action.openSettings', query)
+      return undefined
+    }
+    if (request.type === 'connection.clearCredentials') {
+      await vscode.commands.executeCommand('dsh.clearExternalCredentials')
+      return undefined
+    }
     if (request.type === 'extensionSettings.read')
       return publicValue(publicExtensionSettings(configuration.read(), extensionVersion))
     if (request.type === 'settings.update')
