@@ -38,7 +38,7 @@ For documentation-only work, the local documentation checks are sufficient. PR C
 | `pnpm test:changed --list`                                    | Preview that selection without running the tests.                                               |
 | `pnpm test:contracts`                                         | Fixed filesystem, style, user-control, schema, route and build contracts.                       |
 | `pnpm test`                                                   | Full default Vitest suite. Stress tests and opt-in live scenarios are excluded or skipped.      |
-| `pnpm check`                                                  | Format, documentation, i18n, lint, typecheck and the default automated suite.                   |
+| `pnpm check`                                                  | Format, documentation, i18n, lint and typecheck in parallel, then the default automated suite.  |
 | `pnpm build`                                                  | Build the companion resources, Webview and extension.                                           |
 | `pnpm test:stress`                                            | Separate serial stress suite, including large history/window and memory probes.                 |
 | `pnpm test:ui-stability`                                      | Selected functional UI suites, then production App/Timeline scenarios in isolated Chromium.     |
