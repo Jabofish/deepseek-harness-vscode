@@ -222,8 +222,44 @@ describe('TaskCenterRegistry', () => {
       question: { id: 'q-2', sessionId: 'session-1', prompt: 'Again?', allowFreeText: true },
     })
     expect(registry.pendingInteractionCount).toBe(2)
+    await vi.waitFor(() => expect(counts).toEqual([2]))
     await registry.answer('interaction:question:q-1', 'q-1', 'yes')
+    await vi.waitFor(() => expect(counts).toEqual([2, 1]))
     registry.detach()
-    expect(counts).toEqual([1, 2, 1, 0])
+    await vi.waitFor(() => expect(counts).toEqual([2, 1, 0]))
+  })
+
+  it('counts only waiting requests from sessions in this window', async () => {
+    const own = {
+      id: 'own',
+      workspaceId: 'dsh-workspace-1',
+      title: 'Own',
+      blank: false,
+      status: 'awaiting-input',
+      createdAt: '2026-08-29T00:00:00.000Z',
+      updatedAt: '2026-08-29T00:01:00.000Z',
+      cwd: '/workspace/own',
+    } satisfies SessionSummary
+    const foreign = { ...own, id: 'foreign', title: 'Other window', cwd: '/elsewhere' }
+    const current = backend({ sessions: [own, foreign] })
+    const registry = new TaskCenterRegistry({
+      now: () => 4_000,
+      workspaceFolderIds: () => ['folder-1'],
+      resolveSessionWorkspaceFolderId: (session) =>
+        session.cwd === '/workspace/own' ? 'folder-1' : undefined,
+    })
+    const counts: number[] = []
+    registry.onPendingInteractionsChanged((count) => counts.push(count))
+    registry.attach(current, () => 'folder-1')
+    current.events.emit({
+      type: 'question.requested',
+      question: { id: 'q-own', sessionId: 'own', prompt: 'Yours?', allowFreeText: true },
+    })
+    current.events.emit({
+      type: 'question.requested',
+      question: { id: 'q-foreign', sessionId: 'foreign', prompt: 'Theirs?', allowFreeText: true },
+    })
+    await vi.waitFor(() => expect(counts).toEqual([1]))
+    expect(registry.pendingInteractionCount).toBe(2)
   })
 })

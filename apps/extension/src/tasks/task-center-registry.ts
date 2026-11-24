@@ -68,6 +68,9 @@ export class TaskCenterRegistry implements TaskRepository {
   private readonly workspaceTaskIds = new Set<string>()
   private readonly pendingListeners = new Set<(count: number) => void>()
   private announcedPending = 0
+  private pendingGeneration = 0
+  /** Whether a session belongs to a folder open in this window, per attachment. */
+  private readonly sessionOwnership = new Map<string, Promise<boolean>>()
 
   public constructor(options: TaskCenterRegistryOptions = {}) {
     this.now = options.now ?? (() => Date.now())
@@ -98,15 +101,20 @@ export class TaskCenterRegistry implements TaskRepository {
     this.entries.clear()
     this.interactions.clear()
     this.workspaceTaskIds.clear()
+    this.sessionOwnership.clear()
     this.announcePending()
   }
 
-  /** Approvals and questions currently waiting for the user in this window. */
+  /** Approvals and questions the registry has seen waiting, in any session. */
   public get pendingInteractionCount(): number {
     return this.interactions.size
   }
 
-  /** Called whenever the waiting approval/question count changes. */
+  /**
+   * Called whenever the number of approvals/questions waiting in sessions this
+   * window owns changes. A shared DSH also reports other windows' requests,
+   * which this window can neither show nor answer.
+   */
   public onPendingInteractionsChanged(listener: (count: number) => void): () => void {
     this.pendingListeners.add(listener)
     return () => {
@@ -115,10 +123,38 @@ export class TaskCenterRegistry implements TaskRepository {
   }
 
   private announcePending(): void {
-    const count = this.interactions.size
-    if (count === this.announcedPending) return
-    this.announcedPending = count
-    for (const listener of this.pendingListeners) listener(count)
+    const generation = ++this.pendingGeneration
+    const sessionIds = [...this.interactions.values()].map((interaction) => interaction.sessionId)
+    void Promise.all(sessionIds.map((sessionId) => this.ownsSession(sessionId))).then((owned) => {
+      if (generation !== this.pendingGeneration) return
+      const count = owned.filter(Boolean).length
+      if (count === this.announcedPending) return
+      this.announcedPending = count
+      for (const listener of this.pendingListeners) listener(count)
+    })
+  }
+
+  private ownsSession(sessionId: string): Promise<boolean> {
+    const backend = this.backend
+    const resolve = this.resolveSessionWorkspaceFolderId
+    const folders = this.workspaceFolderIds?.() ?? []
+    // Without folder information (tests, a folderless window) every request
+    // the backend routes here is this window's to answer.
+    if (backend === undefined || resolve === undefined || folders.length === 0) return Promise.resolve(true)
+    const cached = this.sessionOwnership.get(sessionId)
+    if (cached !== undefined) return cached
+    const owned = backend.sessions
+      .get(sessionId)
+      .then((session) => {
+        const folder = resolve(session)
+        return folder !== undefined && (this.isWorkspaceFolderOpen?.(folder) ?? folders.includes(folder))
+      })
+      .catch(() => {
+        this.sessionOwnership.delete(sessionId)
+        return false
+      })
+    this.sessionOwnership.set(sessionId, owned)
+    return owned
   }
 
   public dispose(): void {
