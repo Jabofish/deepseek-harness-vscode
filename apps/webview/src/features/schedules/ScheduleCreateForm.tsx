@@ -410,6 +410,9 @@ function rrulePreset(rule: string, now = new Date()): string {
   const start = new Date(now)
   start.setHours(9, 0, 0, 0)
   if (start.getTime() <= now.getTime()) start.setDate(start.getDate() + 1)
-  const stamp = start.toISOString().replace(/[-:]/gu, '').replace(/\.\d{3}/u, '')
+  const stamp = start
+    .toISOString()
+    .replace(/[-:]/gu, '')
+    .replace(/\.\d{3}/u, '')
   return `DTSTART:${stamp}\nRRULE:${rule}`
 }
