@@ -381,3 +381,21 @@
     justify-content: flex-start;
   }
 }
+
+.dsh-plugin-configuration__builtin-toggle,
+.dsh-plugin-configuration__switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dsh-space-2);
+  min-width: 0;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+}
+
+.dsh-plugin-configuration__builtin-toggle {
+  margin-block-end: var(--dsh-space-2);
+}
+
+.dsh-plugin-configuration__switch input {
+  margin: 0;
+}

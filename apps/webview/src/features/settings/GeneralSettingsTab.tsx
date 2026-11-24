@@ -6,6 +6,7 @@ import {
   type dshUiPreferences as readDshUiPreferences,
 } from '../../app/ui-preferences.js'
 import { SettingCard, SettingRow } from '../../components/common/SettingCard.js'
+import { ExtensionSettingsCard } from './ExtensionSettingsCard.js'
 import { SelectMenu } from '../../components/common/SelectMenu.js'
 import { Icon } from '../../ui/Icon.js'
 import { AccountLifecycle } from '../account/AccountLifecycle.js'
@@ -697,6 +698,14 @@ export function GeneralSettingsTab(input: GeneralSettingsTabProps): ReactElement
           )}
         </div>
       </SettingCard>
+      {props.onOpenExtensionSettings === undefined ? null : (
+        <ExtensionSettingsCard
+          onOpen={props.onOpenExtensionSettings}
+          {...(props.onClearExternalCredentials === undefined
+            ? {}
+            : { onClearCredentials: props.onClearExternalCredentials })}
+        />
+      )}
     </div>
   )
 }

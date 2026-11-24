@@ -77,7 +77,8 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
   })
   const [catalogLoadState, setCatalogLoadState] = useState<CatalogLoadState>()
   const [refreshToken, setRefreshToken] = useState(0)
-  const [sectionOpen, setSectionOpen] = useState(false)
+  // The Plugins tab is opened to manage plugins; its sections start expanded.
+  const [sectionOpen, setSectionOpen] = useState(true)
   const [openBundles, setOpenBundles] = useState<ReadonlySet<string>>(EMPTY_OPEN_BUNDLES)
   const [standaloneOpen, setStandaloneOpen] = useState(false)
   const [busyKey, setBusyKey] = useState<string>()

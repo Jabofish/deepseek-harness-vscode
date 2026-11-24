@@ -57,6 +57,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactElement {
   const [discovering, setDiscovering] = useState(false)
   const [candidates, setCandidates] = useState<readonly DiscoveredModel[] | undefined>(undefined)
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set())
+  const [candidateQuery, setCandidateQuery] = useState('')
   const [error, setError] = useState<string | undefined>(undefined)
   const [saved, setSaved] = useState(false)
 
@@ -99,9 +100,11 @@ export function ModelListEditor(props: ModelListEditorProps): ReactElement {
         setError(t('settings.noDiscoveredModels'))
         return
       }
-      const known = new Set(draft.map((model) => model.id.trim()).filter((id) => id !== ''))
+      // Aggregators can return hundreds of models; nothing is preselected so
+      // the user adds what they want instead of pruning a full list.
       setCandidates(found)
-      setPicked(new Set(found.filter((model) => !known.has(model.id)).map((model) => model.id)))
+      setCandidateQuery('')
+      setPicked(new Set())
     } catch (reason: unknown) {
       setError(reason instanceof Error ? reason.message : t('settings.discoveryFailed'))
     } finally {
@@ -112,6 +115,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactElement {
   const closeCandidates = (): void => {
     setCandidates(undefined)
     setPicked(new Set())
+    setCandidateQuery('')
     // The dialog is `aria-modal`, so hand the keyboard back to the button that
     // opened it instead of dropping focus on the body.
     discoverTriggerRef.current?.focus()
@@ -124,6 +128,20 @@ export function ModelListEditor(props: ModelListEditorProps): ReactElement {
     refs: [pickerRef],
     onDismiss: closeCandidates,
   })
+
+  const knownIds = new Set(draft.map((model) => model.id.trim()).filter((id) => id !== ''))
+  const needle = candidateQuery.trim().toLowerCase()
+  const visibleCandidates =
+    candidates === undefined
+      ? []
+      : needle === ''
+        ? candidates
+        : candidates.filter(
+            (model) => model.id.toLowerCase().includes(needle) || model.label.toLowerCase().includes(needle),
+          )
+  const selectableCandidates = visibleCandidates.filter((model) => !knownIds.has(model.id))
+  const allVisiblePicked =
+    selectableCandidates.length > 0 && selectableCandidates.every((model) => picked.has(model.id))
 
   const adopt = (): void => {
     if (candidates === undefined) return
@@ -371,26 +389,42 @@ export function ModelListEditor(props: ModelListEditorProps): ReactElement {
               </button>
             </header>
             <div className="dsh-settings__model-picker-actions">
+              <input
+                className="dsh-settings__model-picker-search"
+                type="search"
+                value={candidateQuery}
+                placeholder={t('settings.searchDiscoveredModels')}
+                aria-label={t('settings.searchDiscoveredModels')}
+                onChange={(event) => setCandidateQuery(event.currentTarget.value)}
+              />
               <button
                 className="dsh-button dsh-button--secondary dsh-button--compact"
                 type="button"
+                disabled={selectableCandidates.length === 0}
                 onClick={() => {
-                  const all = candidates.every((model) => picked.has(model.id))
-                  setPicked(all ? new Set() : new Set(candidates.map((model) => model.id)))
+                  setPicked((current) => {
+                    const next = new Set(current)
+                    for (const model of selectableCandidates)
+                      if (allVisiblePicked) next.delete(model.id)
+                      else next.add(model.id)
+                    return next
+                  })
                 }}
               >
-                {candidates.length > 0 && candidates.every((model) => picked.has(model.id))
-                  ? t('settings.deselectAllModels')
-                  : t('settings.selectAllModels')}
+                {allVisiblePicked ? t('settings.deselectAllModels') : t('settings.selectAllModels')}
               </button>
             </div>
+            {visibleCandidates.length === 0 ? (
+              <p className="dsh-settings__empty">{t('settings.noMatchingModels')}</p>
+            ) : null}
             <ul>
-              {candidates.map((model) => (
+              {visibleCandidates.map((model) => (
                 <li key={model.id}>
                   <label>
                     <input
                       type="checkbox"
-                      checked={picked.has(model.id)}
+                      disabled={knownIds.has(model.id)}
+                      checked={knownIds.has(model.id) || picked.has(model.id)}
                       onChange={() =>
                         setPicked((current) => {
                           const next = new Set(current)
@@ -402,6 +436,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactElement {
                     />
                     <span>{model.label}</span>
                     <code>{model.id}</code>
+                    {knownIds.has(model.id) ? <small>{t('settings.modelAlreadyAdded')}</small> : null}
                   </label>
                 </li>
               ))}
@@ -417,9 +452,10 @@ export function ModelListEditor(props: ModelListEditorProps): ReactElement {
               <button
                 className="dsh-button dsh-button--primary dsh-button--compact"
                 type="button"
+                disabled={picked.size === 0}
                 onClick={adopt}
               >
-                {t('settings.addSelectedModels')}
+                {t('settings.addSelectedModelsCount', { count: picked.size })}
               </button>
             </footer>
           </section>

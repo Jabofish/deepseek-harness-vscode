@@ -234,6 +234,14 @@ function FontSizeSettingControl(props: FontSizeSettingControlProps): ReactElemen
         value={draft}
         onChange={(event) => setDraft(event.currentTarget.value)}
         onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return
+          if (event.key === 'Enter') {
+            event.preventDefault()
+            commit()
+          }
+          if (event.key === 'Escape') setDraft(String(props.value))
+        }}
       />
       <span>{props.translate('settings.pixels')}</span>
     </div>

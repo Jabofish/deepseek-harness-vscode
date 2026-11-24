@@ -72,6 +72,11 @@ export function ProviderSettingsEditor(props: ProviderSettingsEditorProps): Reac
   const initialModels = hasModelList
     ? modelListAt(settingValueAt(props.settings.values, [...prefix, 'models']))
     : []
+  // A custom pi-ai profile created here keeps its display name beside the
+  // route; editing it later must not require the settings document.
+  const displayNamePath = isPiAi && settingsPath.length > 0 ? [...prefix, 'displayName'].join('.') : undefined
+  const initialDisplayName = stringAt(profile, 'displayName') ?? ''
+  const [displayName, setDisplayName] = useState(initialDisplayName)
   const [baseUrl, setBaseUrl] = useState(initialBaseUrl)
   const [api, setApi] = useState(initialApi)
   const [models, setModels] = useState<EditableModel[]>(() => initialModels.map(copyModel))
@@ -103,6 +108,7 @@ export function ProviderSettingsEditor(props: ProviderSettingsEditorProps): Reac
       return
     }
     const changes: ProviderSettingChange[] = []
+    addOptionalChange(changes, displayNamePath, displayName, initialDisplayName)
     addOptionalChange(changes, baseUrlPath, baseUrl, initialBaseUrl)
     addOptionalChange(changes, apiPath, api, initialApi)
     if (hasModelList && JSON.stringify(normalizedModels) !== JSON.stringify(initialModels)) {
@@ -141,6 +147,18 @@ export function ProviderSettingsEditor(props: ProviderSettingsEditorProps): Reac
         </p>
       ) : (
         <>
+          {displayNamePath === undefined ? null : (
+            <label className="dsh-settings__provider-editor-field">
+              <span>{t('settings.providerDisplayName')}</span>
+              <input
+                type="text"
+                value={displayName}
+                disabled={disabled}
+                placeholder={props.provider.id}
+                onChange={(event) => setDisplayName(event.target.value)}
+              />
+            </label>
+          )}
           {baseUrlPath === undefined && apiPath === undefined && !hasModelList ? (
             <p className="dsh-settings__advanced-hint">{t('settings.providerNoEditableFields')}</p>
           ) : null}

@@ -96,4 +96,34 @@ describe('ModelListEditor state notifications', () => {
     expect(document.activeElement).toBe(input)
     expect(input.value).toBe('deepseek-chat')
   })
+
+  it('starts discovery with nothing picked, filters the list and skips models already added', async () => {
+    const onChange = vi.fn()
+    render(
+      <ModelListEditor
+        models={[{ id: 'deepseek-chat' }]}
+        writable
+        saving={false}
+        showSave={false}
+        discoveryInput={{ settingsNamespace: 'llm-deepseek', providerId: 'deepseek' }}
+        onChange={onChange}
+        onSave={vi.fn().mockResolvedValue(undefined)}
+        onDiscover={vi.fn().mockResolvedValue([
+          { id: 'deepseek-chat', label: 'deepseek-chat' },
+          { id: 'deepseek-reasoner', label: 'deepseek-reasoner' },
+          { id: 'qwen-max', label: 'Qwen Max' },
+        ])}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Get available models' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Available models' })
+    expect(dialog).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Add selected (0)' }).hasAttribute('disabled')).toBe(true)
+    expect(screen.getByRole<HTMLInputElement>('checkbox', { name: /deepseek-chat/u }).disabled).toBe(true)
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Filter models' }), { target: { value: 'qwen' } })
+    expect(screen.queryByRole('checkbox', { name: /deepseek-reasoner/u })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Select all' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add selected (1)' }))
+    expect(onChange).toHaveBeenLastCalledWith([{ id: 'deepseek-chat' }, { id: 'qwen-max', name: 'Qwen Max' }])
+  })
 })

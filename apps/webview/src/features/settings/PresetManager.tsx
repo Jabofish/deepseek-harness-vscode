@@ -315,7 +315,21 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
       .finally(() => setDeleting(false))
   }
 
-  if (roster.status === 'unavailable') return null
+  if (roster.status === 'unavailable') {
+    // An empty tab looked broken; say why there is nothing to manage.
+    return (
+      <div className="dsh-presets">
+        <p className="dsh-settings__empty">{t('presets.none')}</p>
+        <button
+          className="dsh-button dsh-button--secondary dsh-button--compact"
+          type="button"
+          onClick={() => void load()}
+        >
+          {t('presets.retry')}
+        </button>
+      </div>
+    )
+  }
   if (roster.status === 'loading') {
     return (
       <div className="dsh-presets">
