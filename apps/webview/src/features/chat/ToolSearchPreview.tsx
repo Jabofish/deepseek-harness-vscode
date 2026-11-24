@@ -15,6 +15,7 @@ type SearchRow =
     }
   | {
       readonly type: 'match'
+      readonly filePath: string
       readonly lineNumber: number
       readonly line: string
       readonly key: string
@@ -61,7 +62,7 @@ export function ToolSearchPreview(props: ToolSearchRenderProps): ReactElement {
       ) : (
         <div className="dsh-tool-search-preview__body" tabIndex={0}>
           {rows.map((row) => (
-            <div key={rowKey(row)}>{renderRow(row, toggleFile)}</div>
+            <div key={rowKey(row)}>{renderRow(row, toggleFile, props.onOpenLink)}</div>
           ))}
         </div>
       )}
@@ -72,9 +73,38 @@ export function ToolSearchPreview(props: ToolSearchRenderProps): ReactElement {
   )
 }
 
-function renderRow(row: SearchRow, toggleFile: (index: number) => void): ReactElement {
-  if (row.type === 'path') return <div className="dsh-tool-search-preview__line">{row.path}</div>
+function renderRow(
+  row: SearchRow,
+  toggleFile: (index: number) => void,
+  onOpenLink: ((href: string) => void) | undefined,
+): ReactElement {
+  if (row.type === 'path') {
+    if (onOpenLink !== undefined) {
+      return (
+        <button
+          type="button"
+          className="dsh-tool-search-preview__line dsh-tool-search-preview__line--interactive"
+          onClick={() => onOpenLink(row.path)}
+        >
+          {row.path}
+        </button>
+      )
+    }
+    return <div className="dsh-tool-search-preview__line">{row.path}</div>
+  }
   if (row.type === 'match') {
+    if (onOpenLink !== undefined) {
+      return (
+        <button
+          type="button"
+          className="dsh-tool-search-preview__line dsh-tool-search-preview__line--interactive"
+          onClick={() => onOpenLink(`${row.filePath}#L${row.lineNumber}`)}
+        >
+          <span className="dsh-tool-search-preview__line-number">{row.lineNumber}: </span>
+          {row.line}
+        </button>
+      )
+    }
     return (
       <div className="dsh-tool-search-preview__line">
         <span className="dsh-tool-search-preview__line-number">{row.lineNumber}: </span>
@@ -111,6 +141,7 @@ function toRows(view: SearchView, collapsed: ReadonlySet<number>): SearchRow[] {
     file.matches.forEach((match, matchIndex) => {
       rows.push({
         type: 'match',
+        filePath: file.path,
         lineNumber: match.lineNumber,
         line: match.line,
         key: `${fileIndex}:${match.lineNumber}:${matchIndex}`,

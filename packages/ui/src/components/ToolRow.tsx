@@ -6,7 +6,7 @@ import {
   type ToolPresentationView,
 } from '@dsh-vscode/domain'
 
-import { formatToolText, type PresentationTranslate } from '../tool-presentation.js'
+import { decodeToolValue, formatToolText, type PresentationTranslate } from '../tool-presentation.js'
 import { toolStatusLabel } from '../tool-status.js'
 import {
   renderStructuredDetails,
@@ -201,6 +201,8 @@ export function ToolRow(props: ToolRowProps): ReactElement {
                   props.renderSearch,
                   props.renderWeb,
                   searchRecovery(props.tool),
+                  terminalCommand(props.tool),
+                  webFetchContent(props.tool, props.translate),
                 )}
                 {props.onOpenLink === undefined || detailTargets.length === 0 ? null : (
                   <div
@@ -296,4 +298,22 @@ function searchRecovery(tool: ToolCallView): string | undefined {
     return undefined
   const text = tool.outputSummary
   return text === undefined || text.trim() === '' ? undefined : text
+}
+
+function terminalCommand(tool: ToolCallView): string | undefined {
+  const view = tool.presentation
+  if (view === undefined || view.card !== 'terminal' || view.phase !== 'result') return undefined
+  const decoded = decodeToolValue(tool.inputSummary)
+  if (decoded !== null && typeof decoded === 'object' && !Array.isArray(decoded)) {
+    const command = (decoded as Readonly<Record<string, unknown>>).command
+    if (typeof command === 'string' && command.trim() !== '') return command.trim()
+  }
+  return undefined
+}
+
+function webFetchContent(tool: ToolCallView, t?: PresentationTranslate): string | undefined {
+  const view = tool.presentation
+  if (view === undefined || view.card !== 'web' || view.kind !== 'fetch') return undefined
+  const formatted = formatToolText(tool.outputSummary, t)
+  return formatted === undefined || formatted.trim() === '' ? undefined : formatted
 }

@@ -13,12 +13,21 @@ export function ToolTerminalPreview(props: ToolTerminalRenderProps): ReactElemen
   const { t: defaultTranslate } = useI18n()
   const translate = props.translate ?? defaultTranslate
   const output = props.view.output ?? ''
+  const command = props.command?.trim()
   const lines = useMemo(() => outputLines(output), [output])
   const status = terminalStatus(props.view, translate)
   const empty = output.trim() === ''
 
   return (
     <div className="dsh-tool-terminal-preview" data-terminal="" data-empty={empty ? 'true' : 'false'}>
+      {command !== undefined && command !== '' ? (
+        <div className="dsh-tool-terminal-preview__command-row">
+          <pre className="dsh-tool-terminal-preview__command" tabIndex={0}>
+            {`$ ${command}`}
+          </pre>
+          <CopyButton text={command} className="dsh-tool-terminal-preview__copy" translate={translate} />
+        </div>
+      ) : null}
       <div className="dsh-tool-terminal-preview__header">
         <span
           className={`dsh-tool-terminal-preview__status${status?.error === true ? ' dsh-tool-terminal-preview__status--error' : ''}`}

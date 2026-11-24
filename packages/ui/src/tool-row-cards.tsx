@@ -32,6 +32,7 @@ export interface ToolDiffRenderProps {
  * controls while preserving the raw validated result text. */
 export interface ToolTerminalRenderProps {
   readonly view: Extract<ToolPresentationView, { readonly card: 'terminal'; readonly phase: 'result' }>
+  readonly command?: string
   readonly translate?: PresentationTranslate
 }
 
@@ -41,6 +42,7 @@ export interface ToolTerminalRenderProps {
 export interface ToolSearchRenderProps {
   readonly view: Extract<ToolPresentationView, { readonly card: 'search'; readonly phase: 'result' }>
   readonly translate?: PresentationTranslate
+  readonly onOpenLink?: (href: string) => void
   /**
    * The settled raw result text, passed only when the host capped the search.
    * The card holds the retained matches or paths, so the `Full … stored at
@@ -56,6 +58,7 @@ export interface ToolSearchRenderProps {
  * browser navigation target itself. */
 export interface ToolWebRenderProps {
   readonly view: Extract<ToolPresentationView, { readonly card: 'web'; readonly phase: 'result' }>
+  readonly content?: string
   readonly translate?: PresentationTranslate
   readonly onOpenLink?: (href: string) => void
 }
@@ -101,6 +104,8 @@ export function renderStructuredDetails(
   renderSearch?: (props: ToolSearchRenderProps) => ReactElement,
   renderWeb?: (props: ToolWebRenderProps) => ReactElement,
   recovery?: string,
+  terminalCommand?: string,
+  webContent?: string,
 ): ReactElement {
   return (
     <>
@@ -117,6 +122,8 @@ export function renderStructuredDetails(
             renderSearch,
             renderWeb,
             recovery,
+            terminalCommand,
+            webContent,
           )}
     </>
   )
@@ -133,20 +140,22 @@ export function renderPresentationView(
   renderSearch?: (props: ToolSearchRenderProps) => ReactElement,
   renderWeb?: (props: ToolWebRenderProps) => ReactElement,
   recovery?: string,
+  terminalCommand?: string,
+  webContent?: string,
 ): ReactElement {
   switch (view.card) {
     case 'terminal':
       return view.phase === 'result'
-        ? renderTerminalResult(view, t, renderTerminal)
+        ? renderTerminalResult(view, t, renderTerminal, terminalCommand)
         : renderSections(fallback)
     case 'diff':
       return renderDiffView(view, t, renderDiff)
     case 'search':
-      return renderSearchView(view, t, renderSearch, fallback, recovery)
+      return renderSearchView(view, t, onOpenLink, renderSearch, fallback, recovery)
     case 'read':
       return renderReadView(view, t, renderCode)
     case 'web':
-      return renderWebView(view, t, onOpenLink, renderWeb, fallback)
+      return renderWebView(view, t, onOpenLink, renderWeb, fallback, webContent)
     default:
       return renderSections(fallback)
   }
@@ -158,6 +167,7 @@ function renderWebView(
   onOpenLink: ((href: string) => void) | undefined,
   renderWeb: ((props: ToolWebRenderProps) => ReactElement) | undefined,
   fallback: readonly ToolDetailBlock[],
+  webContent: string | undefined,
 ): ReactElement {
   return tryHostRenderer(
     renderWeb === undefined
@@ -165,6 +175,7 @@ function renderWebView(
       : () =>
           renderWeb({
             view,
+            ...(webContent === undefined ? {} : { content: webContent }),
             ...(t === undefined ? {} : { translate: t }),
             ...(onOpenLink === undefined ? {} : { onOpenLink }),
           }),
@@ -175,6 +186,7 @@ function renderWebView(
 function renderSearchView(
   view: Extract<ToolPresentationView, { readonly card: 'search'; readonly phase: 'result' }>,
   t: PresentationTranslate | undefined,
+  onOpenLink: ((href: string) => void) | undefined,
   renderSearch: ((props: ToolSearchRenderProps) => ReactElement) | undefined,
   fallback: readonly ToolDetailBlock[],
   recovery: string | undefined,
@@ -187,6 +199,7 @@ function renderSearchView(
           const element = renderSearch({
             view,
             ...(t === undefined ? {} : { translate: t }),
+            ...(onOpenLink === undefined ? {} : { onOpenLink }),
             ...(recovery === undefined ? {} : { recovery }),
           })
           renderedByHost = true
@@ -210,12 +223,19 @@ function renderTerminalResult(
   view: Extract<ToolPresentationView, { readonly card: 'terminal'; readonly phase: 'result' }>,
   t?: PresentationTranslate,
   renderTerminal?: (props: ToolTerminalRenderProps) => ReactElement,
+  command?: string,
 ): ReactElement {
   const shared = (): ReactElement => {
     const exit = view.exitCode === undefined ? view.signal : String(view.exitCode)
     const succeeded = view.exitCode === 0
     return (
       <>
+        {command === undefined || command.trim() === '' ? null : (
+          <section className="dsh-tool-row__section dsh-tool-row__terminal-command">
+            <h4>{label(t, 'presentation.field.command', 'Command')}</h4>
+            <pre>{command}</pre>
+          </section>
+        )}
         {view.output === undefined || view.output.trim() === '' ? null : (
           <section className="dsh-tool-row__section dsh-tool-row__terminal-output">
             <h4>{label(t, 'toolrow.presentation.output', 'Output')}</h4>
@@ -242,6 +262,7 @@ function renderTerminalResult(
       : () =>
           renderTerminal({
             view,
+            ...(command === undefined ? {} : { command }),
             ...(t === undefined ? {} : { translate: t }),
           }),
     shared,

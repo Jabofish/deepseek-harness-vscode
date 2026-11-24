@@ -43,4 +43,23 @@ describe('ToolDiffPreview', () => {
       ),
     )
   })
+
+  it('computes line diffs and keeps unchanged lines as context instead of all-delete/all-add', () => {
+    const { container } = render(
+      <ToolDiffPreview
+        diffs={[
+          {
+            path: 'src/edit.ts',
+            oldText: 'line 1\nconst a = 1\nline 3\n',
+            newText: 'line 1\nconst a = 2\nline 3\n',
+          },
+        ]}
+      />,
+    )
+
+    expect(container.querySelectorAll('.dsh-tool-diff-preview__line--ctx')).toHaveLength(2)
+    expect(container.querySelectorAll('.dsh-tool-diff-preview__line--del')).toHaveLength(1)
+    expect(container.querySelectorAll('.dsh-tool-diff-preview__line--add')).toHaveLength(1)
+    expect(container.textContent).toContain('+1 -1')
+  })
 })
