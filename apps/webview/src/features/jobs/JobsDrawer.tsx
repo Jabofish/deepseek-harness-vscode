@@ -78,6 +78,13 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLUListElement>(null)
+  const outputRef = useRef<HTMLPreElement>(null)
+  const followingChunkCount = following?.chunks.length ?? 0
+  useEffect(() => {
+    const element = outputRef.current
+    if (element === null) return
+    element.scrollTop = element.scrollHeight
+  }, [following?.jobId, followingChunkCount])
   const menuPosition = useViewportMenuPosition({
     open,
     anchorRef: triggerRef,
@@ -301,7 +308,7 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
                 </div>
                 {following.error === 'stream-failed' ? <p role="alert">{t('jobs.followFailed')}</p> : null}
                 {following.lossy ? <p>{t('jobs.output.lossy')}</p> : null}
-                <pre role="log" aria-live="polite" tabIndex={0}>
+                <pre ref={outputRef} role="log" aria-live="polite" tabIndex={0}>
                   {following.chunks.length === 0
                     ? t('jobs.output.empty')
                     : following.chunks.map((chunk, index) => (

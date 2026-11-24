@@ -133,7 +133,7 @@ function SessionModsBand(props: {
   return (
     <div className="dsh-mods-band" role="group" aria-label={t('mods.band')}>
       {snapshot?.tree?.map((node, index) => (
-        <BandNode key={index} node={node} pending={pending || failed} press={press} />
+        <BandNode key={index} node={node} pending={pending} press={press} />
       ))}
       {failed ? (
         <div role="status">
@@ -143,7 +143,6 @@ function SessionModsBand(props: {
             className="dsh-button dsh-button--secondary dsh-button--compact"
             disabled={pending}
             onClick={() => {
-              setSnapshot(null)
               setFailed(false)
               setPending(false)
               setRetry((value) => value + 1)

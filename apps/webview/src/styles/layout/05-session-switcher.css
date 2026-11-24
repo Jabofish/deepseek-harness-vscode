@@ -722,6 +722,36 @@
   height: 1rem;
 }
 
+.dsh-conversation__actions-trigger {
+  position: relative;
+}
+
+/* Waiting/running state of the drawers inside the overflow menu. */
+.dsh-conversation__actions-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  background: var(--dsh-info);
+  pointer-events: none;
+}
+
+.dsh-conversation__actions-badge--attention {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0.9rem;
+  height: 0.9rem;
+  padding: 0 3px;
+  color: var(--vscode-editor-background, #000);
+  background: var(--dsh-warning);
+  font-size: 0.6rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
 .dsh-conversation__actions-panel {
   /* Geometry comes from useViewportMenuPosition, anchored to the trigger:
   the topbar may wrap to several lines at narrow widths. */

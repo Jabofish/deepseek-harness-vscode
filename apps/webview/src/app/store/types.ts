@@ -170,6 +170,8 @@ export interface AppState extends SessionModelDirectoryState {
   /** True only when the selected pinned adapter accepts inline subagent images. */
   readonly subagentImagePrompts: boolean
   readonly sessionRestore?: boolean
+  /** False only when the connected adapter cannot export a session ZIP archive. */
+  readonly sessionZipExport?: boolean
   readonly blankSessionReuse?: boolean
   readonly jobControllerAvailable: boolean
   /** Safe compatibility warning for an unknown/fallback DSH runtime. */
@@ -386,9 +388,12 @@ export interface AppActions {
     identity?: QuestionRequestIdentity,
   ): Promise<void>
   cancelQuestion(questionId: string, identity?: QuestionRequestIdentity): Promise<void>
-  pickAttachment(): Promise<PromptAttachment | undefined>
+  /** Native multi-file picker; empty when cancelled. */
+  pickAttachments(): Promise<readonly PromptAttachment[]>
   ingestAttachment(input: IngestedFile): Promise<PromptAttachment | undefined>
   previewAttachment(uri: string): Promise<string | undefined>
+  /** Open a pending text attachment's content in an untitled editor; false when unavailable. */
+  openAttachmentText?(uri: string): Promise<boolean>
   readSessionAttachment(sessionId: string, image: MessageImageReference): Promise<string | undefined>
   releaseAttachments(uris: readonly string[]): Promise<void>
   captureEditorContext(kind: EditorContextKind, workspaceFolderId?: string): Promise<void>

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import type { TaskListScope, TaskSummary } from '@dsh-vscode/domain'
-import { useI18n } from '../../i18n.js'
+import { useI18n, type Translate } from '../../i18n.js'
 import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 import { useViewportMenuPosition } from '../../components/common/useViewportMenuPosition.js'
 import { Icon } from '../../ui/Icon.js'
@@ -25,13 +25,30 @@ function live(task: TaskSummary): boolean {
   return task.status === 'running' || task.status === 'needs-input' || task.status === 'blocked'
 }
 
+/** Progress, model, provider, children and last update as one compact line. */
+function taskDetails(task: TaskSummary, t: Translate, locale: string): string {
+  const parts: string[] = []
+  if (task.progress !== undefined) parts.push(`${Math.round(Math.max(0, Math.min(1, task.progress)) * 100)}%`)
+  if (task.modelLabel !== undefined) parts.push(task.modelLabel)
+  if (task.providerLabel !== undefined && task.providerLabel !== task.modelLabel)
+    parts.push(task.providerLabel)
+  if (task.childCount > 0) parts.push(t('tasks.children', { count: task.childCount }))
+  if (Number.isFinite(task.updatedAt) && task.updatedAt > 0)
+    parts.push(
+      new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(
+        new Date(task.updatedAt),
+      ),
+    )
+  return parts.join(' · ')
+}
+
 function taskStatusKey(task: TaskSummary): string {
   return `tasks.status.${task.status}`
 }
 
 /** Compact task center with an explicit current-session/workspace scope switch. */
 export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
-  const { t } = useI18n()
+  const { locale, t } = useI18n()
   const scope = props.scope ?? 'current-session'
   const complete = props.complete ?? true
   const omittedSessions = props.omittedSessions ?? 0
@@ -245,14 +262,14 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
                   <span className="dsh-tasks-popover__title" title={task.title}>
                     {task.title}
                   </span>
-                  {task.progress === undefined ? null : (
-                    <span className="dsh-tasks-popover__meta">
-                      {`${Math.round(Math.max(0, Math.min(1, task.progress)) * 100)}%`}
-                    </span>
-                  )}
-                  {task.modelLabel === undefined ? null : (
-                    <span className="dsh-tasks-popover__meta">{task.modelLabel}</span>
-                  )}
+                  {(() => {
+                    const details = taskDetails(task, t, locale)
+                    return details === '' ? null : (
+                      <span className="dsh-tasks-popover__meta" title={details}>
+                        {details}
+                      </span>
+                    )
+                  })()}
                   <span className="dsh-tasks-popover__status">{t(taskStatusKey(task))}</span>
                 </button>
                 {task.canSessionCancel ? (

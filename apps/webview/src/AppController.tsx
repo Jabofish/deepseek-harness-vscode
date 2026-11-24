@@ -477,6 +477,7 @@ const useAppControllerImpl = () => {
     composerOnExtrasOpenChange,
     composerOnSelectOpenFile,
     composerOnRemoveAttachment,
+    composerOnOpenAttachmentText,
     composerOnSubmit,
   } = useComposerAttachments({
     store,
@@ -1068,6 +1069,7 @@ const useAppControllerImpl = () => {
     composerOnPromptModeChange,
     composerOnReferenceQueryChange,
     composerOnRemoveAttachment,
+    composerOnOpenAttachmentText,
     composerOnRemoveEditorContext,
     composerOnSelectOpenFile,
     composerOnSteerQueue,

@@ -74,6 +74,7 @@ export interface ComposerAttachments {
   readonly composerOnExtrasOpenChange: (open: boolean) => void
   readonly composerOnSelectOpenFile: (candidateId: string) => void
   readonly composerOnRemoveAttachment: (uri: string) => void
+  readonly composerOnOpenAttachmentText: (uri: string) => void
   readonly composerOnSubmit: (mode: 'queue' | 'steer', signal?: AbortSignal) => Promise<void>
 }
 
@@ -790,9 +791,9 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
   const composerOnPickAttachment = useStableCallback((): void => {
     const generation = attachmentGenerationRef.current
     void store
-      .pickAttachment()
-      .then((attachment) => {
-        if (attachment !== undefined) appendAttachment(attachment, undefined, generation)
+      .pickAttachments()
+      .then((picked) => {
+        for (const attachment of picked) appendAttachment(attachment, undefined, generation)
       })
       .catch((reason: unknown) =>
         setError(reason instanceof Error ? reason.message : t('app.error.attachmentSelection')),
@@ -813,6 +814,16 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
   const composerOnSelectOpenFile = useStableCallback((candidateId: string): void =>
     selectOpenFile(candidateId),
   )
+  const composerOnOpenAttachmentText = useStableCallback((uri: string): void => {
+    void store
+      .openAttachmentText?.(uri)
+      .then((opened) => {
+        if (!opened) setError(t('app.error.openAttachment'))
+      })
+      .catch((reason: unknown) =>
+        setError(reason instanceof Error ? reason.message : t('app.error.openAttachment')),
+      )
+  })
   const composerOnRemoveAttachment = useStableCallback((uri: string): void => {
     removeAttachmentDrafts([uri], true)
   })
@@ -839,6 +850,7 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
     composerOnToggleOpenFilePicker,
     composerOnExtrasOpenChange,
     composerOnSelectOpenFile,
+    composerOnOpenAttachmentText,
     composerOnRemoveAttachment,
     composerOnSubmit,
   }

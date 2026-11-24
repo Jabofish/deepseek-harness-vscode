@@ -72,6 +72,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
     composerOnPromptModeChange,
     composerOnReferenceQueryChange,
     composerOnRemoveAttachment,
+    composerOnOpenAttachmentText,
     composerOnRemoveEditorContext,
     composerOnSelectOpenFile,
     composerOnSteerQueue,
@@ -185,6 +186,16 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
     readonly nodeId: string
     readonly requestId: string
   }>()
+  // The task and job drawers live inside the overflow menu, so their
+  // needs-input/running state is surfaced on the menu trigger itself.
+  let actionsAttentionCount = 0
+  let actionsRunningCount = 0
+  for (const task of state.tasks) {
+    if (task.needsUserAction) actionsAttentionCount += 1
+    else if (task.status === 'running') actionsRunningCount += 1
+  }
+  for (const job of state.jobs)
+    if (job.status === 'running' || job.status === 'stopping') actionsRunningCount += 1
   const compactActions = (closeMenu: () => void): ReactElement => (
     <div className="dsh-conversation__compact-actions">
       <button
@@ -449,6 +460,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                       onExtrasOpenChange={composerOnExtrasOpenChange}
                       onSelectOpenFile={composerOnSelectOpenFile}
                       onRemoveAttachment={composerOnRemoveAttachment}
+                      onOpenAttachmentText={composerOnOpenAttachmentText}
                       onSubmit={composerOnSubmit}
                       onCancel={() => undefined}
                       onSteerQueue={() => undefined}
@@ -540,7 +552,12 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                         </button>
                       ) : null}
                     </div>
-                    <SessionTitlePicker active={active} sessions={state.sessions} onOpen={sessionOnOpen} />
+                    <SessionTitlePicker
+                      active={active}
+                      sessions={state.sessions}
+                      workspaces={state.workspaces}
+                      onOpen={sessionOnOpen}
+                    />
                     <GoalsTasksStrip
                       key={active.id}
                       goals={state.goals}
@@ -579,7 +596,11 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                         onOpenSession={lineageOnOpenSession}
                       />
                     ) : null}
-                    <ConversationActionsMenu triggerRef={conversationActionsTriggerRef}>
+                    <ConversationActionsMenu
+                      triggerRef={conversationActionsTriggerRef}
+                      attentionCount={actionsAttentionCount}
+                      runningCount={actionsRunningCount}
+                    >
                       {(closeMenu) => (
                         <>
                           {compactActions(closeMenu)}
@@ -645,15 +666,18 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                   {visibleExportSessionId === undefined ? null : (
                     <ExportDialog
                       sessionId={visibleExportSessionId}
+                      zipAvailable={state.sessionZipExport !== false}
                       onClose={() => setExportOpen(false)}
-                      onExport={(options) => {
-                        setExportOpen(false)
-                        void store
+                      onExport={(options) =>
+                        // The dialog stays open with an "Exporting…" state until the
+                        // Host finished; the Host reports success with an open action.
+                        store
                           .exportSession(options)
                           .catch((reason: unknown) =>
                             setError(reason instanceof Error ? reason.message : t('export.failed')),
                           )
-                      }}
+                          .finally(() => setExportOpen(false))
+                      }
                     />
                   )}
                   {conversationView === 'chat' ? (
@@ -957,6 +981,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                           onExtrasOpenChange={composerOnExtrasOpenChange}
                           onSelectOpenFile={composerOnSelectOpenFile}
                           onRemoveAttachment={composerOnRemoveAttachment}
+                          onOpenAttachmentText={composerOnOpenAttachmentText}
                           onSubmit={composerOnSubmit}
                           onCancel={composerOnCancel}
                           onSteerQueue={composerOnSteerQueue}

@@ -1,4 +1,5 @@
 import { useCallback, useState, type ReactElement } from 'react'
+import type { SubagentView } from '@dsh-vscode/domain'
 import type { AppStore } from '../../app/store.js'
 import { setDraft } from '../../app/draft-store.js'
 import type { useI18n } from '../../i18n.js'
@@ -202,6 +203,9 @@ export function ConversationActionItems({
               setError(reason instanceof Error ? reason.message : t('app.error.openSubagent')),
             )
         }}
+        {...(store.interruptSubagent === undefined
+          ? {}
+          : { onInterruptChild: async (entry: SubagentView) => await store.interruptSubagent?.(entry.id) })}
         onOpenInEditor={(entry) => {
           closeMenu()
           void store

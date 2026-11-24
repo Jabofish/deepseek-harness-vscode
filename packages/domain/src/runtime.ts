@@ -83,6 +83,8 @@ export interface BackendCapabilities {
   readonly subagentImagePrompts?: boolean
   /** Selected exact adapter exposes a real archive restoration operation. */
   readonly sessionRestore?: boolean
+  /** False when the selected adapter cannot produce a session ZIP archive. */
+  readonly sessionZipExport?: boolean
   /** New Session names a reusable workspace blank, respecting an explicitly requested preset. */
   readonly blankSessionReuse?: boolean
   /** Exact adapter exposes alpha171 Job Controller list/follow/kill endpoints. */

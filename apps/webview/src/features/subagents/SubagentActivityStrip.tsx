@@ -395,9 +395,7 @@ export const SubagentActivityStrip = memo(function SubagentActivityStrip(
               const metaLine = metaParts.join(' · ')
               const canOpen = entry.mode !== 'external'
               const canStop =
-                props.onInterruptChild !== undefined &&
-                isSubagentRunning(entry) &&
-                entry.mode === 'continuable'
+                props.onInterruptChild !== undefined && isSubagentRunning(entry) && entry.mode !== 'external'
               const stopping = stoppingIds.has(entry.id)
 
               return (

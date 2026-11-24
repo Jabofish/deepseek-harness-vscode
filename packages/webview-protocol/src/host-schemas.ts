@@ -261,6 +261,7 @@ const connectionSnapshotHostEventSchema = z
         output: connectionOutputSchema.optional(),
         dshVersion: z.string().max(256).optional(),
         sessionRestore: z.boolean().optional(),
+        sessionZipExport: z.boolean().optional(),
         blankSessionReuse: z.boolean().optional(),
         jobController: z.boolean().optional(),
         accountLifecycleAvailable: z.boolean().optional(),

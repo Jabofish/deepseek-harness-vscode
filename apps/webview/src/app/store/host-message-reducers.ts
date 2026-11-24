@@ -306,6 +306,7 @@ export function applyHostMessage(
               }
             : {}),
           sessionRestore: kind === 'connected' && snapshot?.sessionRestore === true,
+          sessionZipExport: !(kind === 'connected' && snapshot?.sessionZipExport === false),
           blankSessionReuse: kind === 'connected' && snapshot?.blankSessionReuse === true,
           jobControllerAvailable: kind === 'connected' && snapshot?.jobController === true,
           accountLifecycleAvailable: kind === 'connected' && snapshot?.accountLifecycleAvailable === true,

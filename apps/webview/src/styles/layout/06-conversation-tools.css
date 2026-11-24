@@ -388,6 +388,7 @@
 .dsh-tasks-popover__kind,
 .dsh-tasks-popover__session,
 .dsh-tasks-popover__main > .dsh-tasks-popover__status,
+.dsh-tasks-popover__meta,
 .dsh-prompt-templates-popover__row-main em {
   flex: 0 0 auto;
   max-width: 10rem;

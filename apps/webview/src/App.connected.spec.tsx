@@ -356,7 +356,7 @@ function storeFor(state: AppState): AppStore {
     updatePromptTemplate: vi.fn().mockResolvedValue(undefined),
     deletePromptTemplate: vi.fn().mockResolvedValue(undefined),
     setPromptMode: vi.fn().mockResolvedValue(true),
-    pickAttachment: vi.fn().mockResolvedValue(undefined),
+    pickAttachments: vi.fn().mockResolvedValue([]),
     ingestAttachment: vi.fn().mockResolvedValue(undefined),
     previewAttachment: vi.fn().mockResolvedValue(undefined),
     readSessionAttachment: vi.fn().mockResolvedValue(undefined),

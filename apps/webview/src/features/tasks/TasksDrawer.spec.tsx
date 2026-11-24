@@ -107,8 +107,8 @@ describe('TasksDrawer', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: '1 needs input' }))
     await waitFor(() => expect(onRefresh).toHaveBeenCalledOnce())
-    expect(screen.getByText('50%')).toBeDefined()
-    expect(screen.getByText('deepseek-reasoner')).toBeDefined()
+    // Progress, model and the last update share one compact detail line.
+    expect(screen.getByText(/^50% · deepseek-reasoner/u)).toBeDefined()
     fireEvent.click(screen.getByRole('button', { name: 'Review in session' }))
     await waitFor(() => expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ taskId: task.taskId })))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())

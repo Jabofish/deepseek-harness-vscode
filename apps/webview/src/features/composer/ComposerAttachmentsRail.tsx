@@ -16,6 +16,7 @@ export function ComposerAttachmentsRail({
   railRef,
   scrollable,
   onOpenPreview,
+  onOpenText,
   onRemove,
   onRequestFocus,
 }: {
@@ -24,6 +25,8 @@ export function ComposerAttachmentsRail({
   readonly railRef: RefObject<HTMLUListElement | null>
   readonly scrollable: boolean
   readonly onOpenPreview: (uri: string, trigger: HTMLButtonElement) => void
+  /** Open a text attachment's content in the editor; absent hides the action. */
+  readonly onOpenText?: ((uri: string) => void) | undefined
   readonly onRemove: (uri: string) => void
   readonly onRequestFocus?: (() => void) | undefined
 }): ReactElement | null {
@@ -87,6 +90,16 @@ export function ComposerAttachmentsRail({
                       <img src={preview} alt="" aria-hidden="true" />
                     )}
                   </button>
+                ) : onOpenText !== undefined && isTextAttachment(attachment.mimeType) ? (
+                  <button
+                    className="dsh-composer__attachment-thumb"
+                    type="button"
+                    aria-label={t('composer.openAttachment', { name: attachment.name })}
+                    title={t('composer.openAttachment', { name: attachment.name })}
+                    onClick={() => onOpenText(attachment.uri)}
+                  >
+                    <Icon name="file" />
+                  </button>
                 ) : (
                   <span className="dsh-composer__attachment-preview" aria-hidden="true">
                     <Icon name="file" />
@@ -123,4 +136,9 @@ export function ComposerAttachmentsRail({
       ) : null}
     </div>
   )
+}
+
+/** Text attachments can be opened from the composer; binaries cannot. */
+function isTextAttachment(mimeType: string | undefined): boolean {
+  return mimeType !== undefined && !mimeType.startsWith('image/') && mimeType !== 'application/octet-stream'
 }

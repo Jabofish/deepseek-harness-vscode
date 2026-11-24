@@ -34,6 +34,38 @@ export function isAttachmentRequest(request: WebviewRequest): request is Attachm
   return request.type.startsWith('attachment.')
 }
 
+/** Files one native picker selection may attach. */
+const MAX_PICKED_ATTACHMENTS = 10
+
+function pickedFileError(name: string, message: string): AppError {
+  return new AppError({ code: 'INVALID_CONFIGURATION', message: `${name}: ${message}`, retryable: false })
+}
+
+/** Read one picked file through its filesystem provider and validate size and content type. */
+async function readPickedAttachment(uri: vscode.Uri, signal: AbortSignal): Promise<StoredAttachmentInput> {
+  const name = path.posix.basename(uri.path)
+  const info = await vscode.workspace.fs.stat(uri)
+  signal.throwIfAborted()
+  if (
+    (info.type & vscode.FileType.File) === 0 ||
+    (info.type & vscode.FileType.SymbolicLink) !== 0 ||
+    info.size > MAX_IMAGE_ATTACHMENT_BYTES
+  )
+    throw pickedFileError(name, 'The selected file is too large or is not a regular file.')
+  const bytes = Buffer.from(await vscode.workspace.fs.readFile(uri))
+  signal.throwIfAborted()
+  if (bytes.length > MAX_IMAGE_ATTACHMENT_BYTES)
+    throw pickedFileError(name, 'The selected file is too large.')
+  const mimeType = attachmentMimeType(uri.path, bytes)
+  if (mimeType === undefined)
+    throw pickedFileError(name, 'The selected file contents do not match its declared text type.')
+  const maximumBytes = isImageMimeType(mimeType) ? MAX_IMAGE_ATTACHMENT_BYTES : MAX_ATTACHMENT_BYTES
+  if (bytes.length > maximumBytes) throw pickedFileError(name, 'The selected file is too large.')
+  if (isImageMimeType(mimeType) && !validImageBytes(mimeType, bytes))
+    throw pickedFileError(name, 'The selected file contents do not match its declared image type.')
+  return { name, mimeType, dataUri: `data:${mimeType};base64,${bytes.toString('base64')}` }
+}
+
 export function createAttachmentRequestHandler(
   deps: AttachmentDependencies,
 ): (request: AttachmentRequest, signal: AbortSignal) => Promise<unknown> {
@@ -65,59 +97,27 @@ export function createAttachmentRequestHandler(
       const selected = await vscode.window.showOpenDialog({
         canSelectFiles: true,
         canSelectFolders: false,
-        canSelectMany: false,
-        openLabel: 'Attach file',
+        canSelectMany: true,
+        openLabel: 'Attach files',
       })
-      const uri = selected?.[0]
       signal.throwIfAborted()
-      if (uri === undefined) return { cancelled: true }
-      const info = await vscode.workspace.fs.stat(uri)
+      if (selected === undefined || selected.length === 0) return { cancelled: true }
+      if (selected.length > MAX_PICKED_ATTACHMENTS)
+        throw new AppError({
+          code: 'INVALID_CONFIGURATION',
+          message: `Select at most ${MAX_PICKED_ATTACHMENTS} files at a time.`,
+          retryable: false,
+        })
+      // Read and validate every file before keeping any, so one rejected file
+      // never leaves the others half-attached.
+      const prepared: StoredAttachmentInput[] = []
+      for (const uri of selected) prepared.push(await readPickedAttachment(uri, signal))
       signal.throwIfAborted()
-      if (
-        (info.type & vscode.FileType.File) === 0 ||
-        (info.type & vscode.FileType.SymbolicLink) !== 0 ||
-        info.size > MAX_IMAGE_ATTACHMENT_BYTES
-      )
-        throw new AppError({
-          code: 'INVALID_CONFIGURATION',
-          message: 'The selected file is too large or is not a regular file.',
-          retryable: false,
-        })
-      const bytes = Buffer.from(await vscode.workspace.fs.readFile(uri))
-      signal.throwIfAborted()
-      if (bytes.length > MAX_IMAGE_ATTACHMENT_BYTES)
-        throw new AppError({
-          code: 'INVALID_CONFIGURATION',
-          message: 'The selected file is too large.',
-          retryable: false,
-        })
-      const mimeType = attachmentMimeType(uri.path, bytes)
-      if (mimeType === undefined)
-        throw new AppError({
-          code: 'INVALID_CONFIGURATION',
-          message: 'The selected file contents do not match its declared text type.',
-          retryable: false,
-        })
-      const maximumBytes = isImageMimeType(mimeType) ? MAX_IMAGE_ATTACHMENT_BYTES : MAX_ATTACHMENT_BYTES
-      if (bytes.length > maximumBytes)
-        throw new AppError({
-          code: 'INVALID_CONFIGURATION',
-          message: 'The selected file is too large.',
-          retryable: false,
-        })
-      if (isImageMimeType(mimeType) && !validImageBytes(mimeType, bytes))
-        throw new AppError({
-          code: 'INVALID_CONFIGURATION',
-          message: 'The selected file contents do not match its declared image type.',
-          retryable: false,
-        })
+      const attachments = prepared.map((input) => rememberSupportedAttachment(input))
       return {
         cancelled: false,
-        attachment: rememberSupportedAttachment({
-          name: path.posix.basename(uri.path),
-          mimeType,
-          dataUri: `data:${mimeType};base64,${bytes.toString('base64')}`,
-        }),
+        attachment: attachments[0],
+        ...(attachments.length > 1 ? { attachments } : {}),
       }
     }
 
@@ -137,6 +137,17 @@ export function createAttachmentRequestHandler(
     if (request.type === 'attachment.preview') {
       const dataUri = attachmentTokens.preview(request.payload.uri)
       return dataUri === undefined ? { cancelled: true } : { cancelled: false, dataUri }
+    }
+
+    if (request.type === 'attachment.openText') {
+      // A pending text attachment is shown as an untitled preview of its bytes;
+      // nothing is written to disk and the token stays owned by the composer.
+      const content = attachmentTokens.text(request.payload.uri)
+      if (content === undefined) return { opened: false }
+      const document = await vscode.workspace.openTextDocument({ content: content.text })
+      signal.throwIfAborted()
+      await vscode.window.showTextDocument(document, { preview: true })
+      return { opened: true }
     }
 
     if (request.type === 'attachment.release') {

@@ -110,3 +110,29 @@ describe('AttachmentStore', () => {
     expect(store.preview(handles[7]!.uri)).toBeUndefined()
   })
 })
+
+describe('pending text attachment content', () => {
+  it('decodes text attachments only', () => {
+    const store = new AttachmentStore(
+      () => 0,
+      () => 'token',
+    )
+    const text = store.remember({
+      name: 'a.txt',
+      mimeType: 'text/plain',
+      dataUri: 'data:text/plain;base64,5L2g5aW9',
+    })
+    expect(store.text(text.uri)).toEqual({ name: 'a.txt', text: '你好' })
+    const other = new AttachmentStore(
+      () => 0,
+      () => 'image',
+    )
+    const image = other.remember({
+      name: 'a.png',
+      mimeType: 'image/png',
+      dataUri: 'data:image/png;base64,iVBORw0KGgo=',
+    })
+    expect(other.text(image.uri)).toBeUndefined()
+    expect(store.text('dsh-attachment:missing')).toBeUndefined()
+  })
+})

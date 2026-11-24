@@ -172,6 +172,7 @@ export interface ComposerProps {
   readonly onExtrasOpenChange?: (open: boolean) => void
   readonly onSelectOpenFile: (candidateId: string) => void
   readonly onRemoveAttachment: (uri: string) => void
+  readonly onOpenAttachmentText?: ((uri: string) => void) | undefined
   readonly onCaptureEditorContext?: (kind: EditorContextKind) => Promise<void> | void
   readonly onRemoveEditorContext?: (contextRef: string) => Promise<void> | void
   readonly onPreviewEditorContext?: (contextRef: string) => Promise<EditorContextPreview | undefined>
@@ -685,6 +686,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
         railRef={attachmentRailRef}
         scrollable={attachmentRailScrollable}
         onOpenPreview={openPreview}
+        onOpenText={props.onOpenAttachmentText}
         onRemove={(uri) => {
           if (previewUri === uri) closePreview()
           props.onRemoveAttachment(uri)

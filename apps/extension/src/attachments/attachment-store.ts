@@ -70,6 +70,21 @@ export class AttachmentStore {
     return stored !== undefined && isImageMimeType(stored.mimeType ?? '') ? stored.dataUri : undefined
   }
 
+  /** Decoded text of a pending text attachment; undefined for images, binaries and expired tokens. */
+  public text(uri: string): { readonly name: string; readonly text: string } | undefined {
+    this.prune()
+    const stored = this.values.get(uri)
+    const mimeType = stored?.mimeType ?? ''
+    if (stored === undefined || isImageMimeType(mimeType) || mimeType === 'application/octet-stream')
+      return undefined
+    const comma = stored.dataUri.indexOf(',')
+    if (comma < 0 || !stored.dataUri.slice(0, comma).endsWith(';base64')) return undefined
+    return {
+      name: stored.name,
+      text: Buffer.from(stored.dataUri.slice(comma + 1), 'base64').toString('utf8'),
+    }
+  }
+
   public release(attachments: readonly AttachmentHandle[]): void {
     for (const attachment of attachments) this.values.delete(attachment.uri)
   }

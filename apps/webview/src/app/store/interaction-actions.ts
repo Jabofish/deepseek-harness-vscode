@@ -4,6 +4,7 @@ import type { ProtocolClient } from '../protocol-client.js'
 import { requestId } from './ids.js'
 import {
   attachmentFromResult,
+  attachmentsFromResult,
   imageDataUri,
   mergeEditorContext,
   openFileCandidatesFromResult,
@@ -20,7 +21,8 @@ export type InteractionActionMethods = Pick<
   | 'respondToPermission'
   | 'respondToQuestion'
   | 'cancelQuestion'
-  | 'pickAttachment'
+  | 'pickAttachments'
+  | 'openAttachmentText'
   | 'ingestAttachment'
   | 'previewAttachment'
   | 'readSessionAttachment'
@@ -108,8 +110,8 @@ export function createInteractionActions(
         })
         .then(() => settle(question, epoch))
     },
-    pickAttachment: async () => {
-      return attachmentFromResult(
+    pickAttachments: async () => {
+      return attachmentsFromResult(
         await client.request<unknown>({ type: 'attachment.pick', requestId: requestId() }),
       )
     },
@@ -125,6 +127,16 @@ export function createInteractionActions(
           },
         }),
       )
+    },
+    openAttachmentText: async (uri) => {
+      const result = object(
+        await client.request<unknown>({
+          type: 'attachment.openText',
+          requestId: requestId(),
+          payload: { uri },
+        }),
+      )
+      return result?.opened === true
     },
     previewAttachment: async (uri) => {
       const result = object(
