@@ -67,6 +67,8 @@ export function renderDeliverables(
   )
 }
 
+const VISIBLE_PRODUCED_LIMIT = 6
+
 export function renderProducedFiles(
   paths: readonly string[],
   onOpenLink: ((href: string) => void) | undefined,
@@ -74,6 +76,47 @@ export function renderProducedFiles(
   t: Translate,
 ): ReactElement | null {
   if (paths.length === 0) return null
+  const visiblePaths = paths.slice(0, VISIBLE_PRODUCED_LIMIT)
+  const hiddenPaths = paths.slice(VISIBLE_PRODUCED_LIMIT)
+  const renderChip = (path: string): ReactElement => {
+    const label = producedFileLabel(path)
+    return (
+      <span className="dsh-timeline__produced-entry" key={path}>
+        {onOpenLink === undefined ? (
+          <span className="dsh-timeline__produced-chip" title={path}>
+            <Icon name="file" />
+            <ContentFlow as="span" variant="truncate">
+              {label}
+            </ContentFlow>
+          </span>
+        ) : (
+          <button
+            className="dsh-timeline__produced-chip"
+            type="button"
+            title={path}
+            aria-label={t('timeline.openProduced', { name: path })}
+            onClick={() => onOpenLink(path)}
+          >
+            <Icon name="file" />
+            <ContentFlow as="span" variant="truncate">
+              {label}
+            </ContentFlow>
+          </button>
+        )}
+        {onShowInFolder === undefined || paths.length <= 1 ? null : (
+          <button
+            className="dsh-icon-button dsh-timeline__produced-reveal"
+            type="button"
+            title={t('timeline.showFileInFolder', { name: label })}
+            aria-label={t('timeline.showFileInFolder', { name: label })}
+            onClick={() => onShowInFolder(path)}
+          >
+            <Icon name="folder" />
+          </button>
+        )}
+      </span>
+    )
+  }
   return (
     <div
       className="dsh-timeline__produced-files"
@@ -82,31 +125,15 @@ export function renderProducedFiles(
     >
       <span className="dsh-timeline__produced-label">{t('timeline.producedFiles')}</span>
       <div className="dsh-timeline__produced-list">
-        {paths.map((path) => {
-          const label = producedFileLabel(path)
-          return onOpenLink === undefined ? (
-            <span className="dsh-timeline__produced-chip" key={path} title={path}>
-              <Icon name="file" />
-              <ContentFlow as="span" variant="truncate">
-                {label}
-              </ContentFlow>
-            </span>
-          ) : (
-            <button
-              className="dsh-timeline__produced-chip"
-              key={path}
-              type="button"
-              title={path}
-              aria-label={t('timeline.openProduced', { name: path })}
-              onClick={() => onOpenLink(path)}
-            >
-              <Icon name="file" />
-              <ContentFlow as="span" variant="truncate">
-                {label}
-              </ContentFlow>
-            </button>
-          )
-        })}
+        {visiblePaths.map(renderChip)}
+        {hiddenPaths.length > 0 ? (
+          <details className="dsh-timeline__produced-overflow">
+            <summary className="dsh-timeline__produced-chip">
+              {t('timeline.producedFilesMore', { count: hiddenPaths.length })}
+            </summary>
+            <div className="dsh-timeline__produced-list">{hiddenPaths.map(renderChip)}</div>
+          </details>
+        ) : null}
       </div>
       <CopyButton
         text={paths.join('\n')}
@@ -117,6 +144,7 @@ export function renderProducedFiles(
         <button
           className="dsh-button dsh-button--secondary dsh-button--compact dsh-timeline__show-folder"
           type="button"
+          title={t('timeline.showFileInFolder', { name: producedFileLabel(paths[0]!) })}
           onClick={() => onShowInFolder(paths[0]!)}
         >
           {t('timeline.showInFolder')}
@@ -139,10 +167,6 @@ export function producedFilePaths(tools: readonly ToolTimelineNode[]): readonly 
       if (seen.has(location.path)) continue
       seen.add(location.path)
       paths.push(location.path)
-      if (paths.length >= 6) {
-        producedFilePathsCache.set(tools, paths)
-        return paths
-      }
     }
   }
   const result = paths.length === 0 ? EMPTY_PRODUCED_FILE_PATHS : paths

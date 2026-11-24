@@ -56,6 +56,8 @@ export function statisticsRows(
       rows.push({ label: t('stats.cacheRead'), value: exact(usage.cacheReadTokens) })
     if (usage.cacheWriteTokens !== undefined)
       rows.push({ label: t('stats.cacheWrite'), value: exact(usage.cacheWriteTokens) })
+    if (usage.reasoningTokens !== undefined)
+      rows.push({ label: t('stats.reasoning'), value: exact(usage.reasoningTokens) })
     if (usage.totalTokens !== undefined)
       rows.push({ label: t('stats.totalTokens'), value: exact(usage.totalTokens) })
   }

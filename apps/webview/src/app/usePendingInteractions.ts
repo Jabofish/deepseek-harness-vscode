@@ -3,7 +3,7 @@ import type { PermissionRequest, QuestionAnswer, UserQuestion } from '@dsh-vscod
 import { QuestionSettlements } from '@dsh-vscode/domain'
 import type { AppStore } from './store.js'
 import type { useI18n } from '../i18n.js'
-import { approvalCommand } from '../features/interactions/approval-command.js'
+import { approvalContext } from '../features/interactions/approval-command.js'
 import { useCompleteTranscriptNodes } from '../features/chat/useCompleteTranscriptNodes.js'
 import { useStableCallback } from './useStableCallback.js'
 import { requestId } from './store/ids.js'
@@ -20,6 +20,9 @@ import {
 export interface PendingApproval {
   readonly request: PermissionRequest
   readonly command?: string | undefined
+  readonly cwd?: string | undefined
+  readonly paths?: readonly string[] | undefined
+  readonly summary?: string | undefined
   readonly contentPending: boolean
   readonly contentFailed: boolean
 }
@@ -118,15 +121,21 @@ export function usePendingInteractions({
         ? EMPTY_PERMISSION_REQUESTS
         : state.permissions
             .filter((request) => request.sessionId === activeSessionId)
-            .map((request) => ({
-              request,
-              command: approvalCommand(request, fullRequests.nodes),
-              contentPending: request.callId !== undefined && fullRequests.pendingIds.has(request.callId),
-              contentFailed:
-                request.callId !== undefined &&
-                fullRequests.pendingIds.has(request.callId) &&
-                fullRequests.failed,
-            })),
+            .map((request) => {
+              const context = approvalContext(request, fullRequests.nodes)
+              return {
+                request,
+                command: context.command,
+                cwd: context.cwd,
+                paths: context.paths,
+                summary: context.summary,
+                contentPending: request.callId !== undefined && fullRequests.pendingIds.has(request.callId),
+                contentFailed:
+                  request.callId !== undefined &&
+                  fullRequests.pendingIds.has(request.callId) &&
+                  fullRequests.failed,
+              }
+            }),
     [activeSessionId, state.permissions, fullRequests],
   )
   const sessionProjection = activeSessionId === undefined ? undefined : state.projections[activeSessionId]

@@ -13,6 +13,13 @@ import type { TimelineNode } from '@dsh-vscode/timeline'
  * here — at render time, over the current timeline, which also lets a request
  * that arrives before its call fill in as soon as the call lands.
  */
+export interface ApprovalContext {
+  readonly command?: string
+  readonly cwd?: string
+  readonly paths?: readonly string[]
+  readonly summary?: string
+}
+
 export function approvalCommand(
   request: PermissionRequest,
   nodes: readonly TimelineNode[],
@@ -29,4 +36,54 @@ export function approvalCommand(
   // would invent one.
   if (presentation?.card !== 'terminal') return undefined
   return presentation.title
+}
+
+/**
+ * Resolve structured approval context (command, cwd, affected paths, non-terminal summary)
+ * from the paired tool call node so users do not blind-approve file/MCP/network tools.
+ */
+export function approvalContext(request: PermissionRequest, nodes: readonly TimelineNode[]): ApprovalContext {
+  const command = approvalCommand(request, nodes)
+  const node =
+    request.callId === undefined
+      ? undefined
+      : nodes.find((entry) => entry.kind === 'tool' && entry.id === request.callId)
+  if (node?.kind !== 'tool') return command === undefined ? {} : { command }
+  const presentation = node.tool.presentation
+  const metadataCwd =
+    typeof node.tool.metadata.cwd === 'string' && node.tool.metadata.cwd.trim() !== ''
+      ? node.tool.metadata.cwd.trim()
+      : undefined
+  const presentationCwd =
+    typeof presentation?.metadata?.cwd === 'string' && presentation.metadata.cwd.trim() !== ''
+      ? presentation.metadata.cwd.trim()
+      : undefined
+  const cwd = metadataCwd ?? presentationCwd
+
+  const pathSet = new Set<string>()
+  for (const location of node.tool.locations ?? []) {
+    if (location.path.trim() !== '') pathSet.add(location.path.trim())
+  }
+  if (
+    (presentation?.card === 'diff' || presentation?.card === 'file') &&
+    typeof presentation.title === 'string' &&
+    presentation.title.trim() !== ''
+  ) {
+    pathSet.add(presentation.title.trim())
+  }
+  const paths = pathSet.size > 0 ? [...pathSet] : undefined
+
+  const summary =
+    presentation?.card !== 'terminal' &&
+    typeof node.tool.inputSummary === 'string' &&
+    node.tool.inputSummary.trim() !== ''
+      ? node.tool.inputSummary.trim()
+      : undefined
+
+  return {
+    ...(command === undefined ? {} : { command }),
+    ...(cwd === undefined ? {} : { cwd }),
+    ...(paths === undefined ? {} : { paths }),
+    ...(summary === undefined ? {} : { summary }),
+  }
 }

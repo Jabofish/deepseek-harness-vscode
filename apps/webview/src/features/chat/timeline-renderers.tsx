@@ -137,6 +137,9 @@ function renderNode(
                 <span className={`dsh-status-pill dsh-status-pill--${goal.status}`}>
                   {t(`goal.status.${goal.status}`)}
                 </span>
+                {goal.blockedReason === undefined ? null : (
+                  <span className="dsh-timeline__card-meta">{goal.blockedReason.message}</span>
+                )}
               </li>
             ))}
           </ul>
@@ -194,6 +197,14 @@ function renderNode(
             : node.attempt > 1
               ? t('timeline.retryingAttempt', { attempt: node.attempt })
               : t('timeline.retryConnectionLost')
+      const retryMetaParts: string[] = []
+      if (node.maxRetries !== undefined && node.maxRetries > 0)
+        retryMetaParts.push(t('timeline.retryAttemptOf', { attempt: node.attempt, max: node.maxRetries }))
+      if (node.state === 'scheduled' && node.delayMs !== undefined && node.delayMs > 0)
+        retryMetaParts.push(
+          t('timeline.retryDelaySeconds', { seconds: Math.max(1, Math.round(node.delayMs / 1000)) }),
+        )
+      const retryMeta = retryMetaParts.length > 0 ? ` (${retryMetaParts.join(' · ')})` : ''
       return (
         <p
           className={`dsh-timeline__retry${
@@ -207,7 +218,9 @@ function renderNode(
             aria-hidden="true"
           />
           <span className="dsh-timeline__retry-message">
-            {node.message === undefined ? retryLabel : `${retryLabel} — ${node.message}`}
+            {node.message === undefined
+              ? `${retryLabel}${retryMeta}`
+              : `${retryLabel}${retryMeta} — ${node.message}`}
           </span>
         </p>
       )

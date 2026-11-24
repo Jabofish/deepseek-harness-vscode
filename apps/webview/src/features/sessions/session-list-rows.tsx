@@ -56,8 +56,9 @@ export function SessionRow({
   onRename,
   onMove,
 }: SessionRowProps): ReactElement {
-  const { t } = useI18n()
+  const { locale, t } = useI18n()
   const title = displaySessionTitle(session.title, t)
+  const updatedTime = formatSessionUpdatedAt(session.updatedAt, locale)
   const waiting = permissions?.some((request) => request.sessionId === session.id)
     ? 'approval'
     : questions?.some(
@@ -147,6 +148,11 @@ export function SessionRow({
             <span className="dsh-session-item__workspace" title={workspaceName}>
               {workspaceName}
             </span>
+          )}
+          {updatedTime === undefined ? null : (
+            <time className="dsh-session-item__time" dateTime={updatedTime.iso} title={updatedTime.full}>
+              {updatedTime.short}
+            </time>
           )}
         </span>
         <span
@@ -261,4 +267,32 @@ export function WorkspaceCard({
       </div>
     </div>
   )
+}
+
+function formatSessionUpdatedAt(
+  updatedAt: number | undefined,
+  locale: string,
+): { readonly short: string; readonly full: string; readonly iso: string } | undefined {
+  if (updatedAt === undefined || !Number.isFinite(updatedAt) || updatedAt <= 0) return undefined
+  const date = new Date(updatedAt)
+  if (Number.isNaN(date.getTime())) return undefined
+  const now = new Date()
+  const sameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate()
+  const short = new Intl.DateTimeFormat(
+    locale,
+    sameDay
+      ? { hour: '2-digit', minute: '2-digit' }
+      : { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' },
+  ).format(date)
+  const full = new Intl.DateTimeFormat(locale, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date)
+  return { short, full, iso: date.toISOString() }
 }

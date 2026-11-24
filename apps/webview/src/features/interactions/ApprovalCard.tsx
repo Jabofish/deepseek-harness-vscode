@@ -10,9 +10,23 @@ export interface ApprovalCardProps {
   readonly disabled: boolean
   /** Command the request asks to authorize, resolved from the paired call. */
   readonly command?: string
+  readonly cwd?: string
+  readonly paths?: readonly string[]
+  readonly summary?: string
   readonly contentPending?: boolean
   readonly contentFailed?: boolean
   readonly onRespond: (optionId: string) => void
+}
+
+function localizedOptionLabel(
+  option: PermissionRequest['options'][number],
+  t: ReturnType<typeof useI18n>['t'],
+): string {
+  if (option.id === 'allowed-once' && option.label === 'Allow once') return t('approval.option.allowOnce')
+  if ((option.id === 'allowed-always' || option.kind === 'allow-always') && option.label === 'Always allow')
+    return t('approval.option.allowAlways')
+  if (option.id === 'rejected' && option.label === 'Reject') return t('approval.option.reject')
+  return option.label
 }
 
 // A pending card docks in the composer slot for as long as the conversation
@@ -36,12 +50,14 @@ export const ApprovalCard = memo(function ApprovalCard(props: ApprovalCardProps)
             {props.request.title}
           </h2>
         </div>
-        <span className="dsh-approval__risk">
-          {t('approval.risk')}{' '}
-          <span className={`dsh-status-pill dsh-status-pill--${props.request.risk}`}>
-            {t(`approval.risk.${props.request.risk}`)}
+        {props.request.risk === 'unknown' ? null : (
+          <span className="dsh-approval__risk">
+            {t('approval.risk')}{' '}
+            <span className={`dsh-status-pill dsh-status-pill--${props.request.risk}`}>
+              {t(`approval.risk.${props.request.risk}`)}
+            </span>
           </span>
-        </span>
+        )}
       </header>
       <div className="dsh-interaction__body" tabIndex={0}>
         {props.contentPending === true ? (
@@ -52,6 +68,16 @@ export const ApprovalCard = memo(function ApprovalCard(props: ApprovalCardProps)
         <ContentFlow as="p" className="dsh-interaction__description">
           {description}
         </ContentFlow>
+        {props.cwd === undefined ? null : (
+          <p className="dsh-approval__meta">
+            <strong>{t('approval.cwd')}:</strong> <code>{props.cwd}</code>
+          </p>
+        )}
+        {props.paths === undefined || props.paths.length === 0 ? null : (
+          <div className="dsh-approval__meta">
+            <strong>{t('approval.targets')}:</strong> <code>{props.paths.join(', ')}</code>
+          </div>
+        )}
         {props.command === undefined ? null : (
           <div className="dsh-approval__command-container">
             <pre className="dsh-approval__command">
@@ -59,6 +85,18 @@ export const ApprovalCard = memo(function ApprovalCard(props: ApprovalCardProps)
             </pre>
             <CopyButton
               text={props.command}
+              className="dsh-icon-button dsh-approval__command-copy"
+              translate={t}
+            />
+          </div>
+        )}
+        {props.summary === undefined ? null : (
+          <div className="dsh-approval__command-container">
+            <pre className="dsh-approval__command" aria-label={t('approval.details')}>
+              <code>{props.summary}</code>
+            </pre>
+            <CopyButton
+              text={props.summary}
               className="dsh-icon-button dsh-approval__command-copy"
               translate={t}
             />
@@ -76,7 +114,7 @@ export const ApprovalCard = memo(function ApprovalCard(props: ApprovalCardProps)
             disabled={props.disabled || (props.contentPending === true && option.kind !== 'deny')}
             onClick={() => props.onRespond(option.id)}
           >
-            {option.label}
+            {localizedOptionLabel(option, t)}
           </button>
         ))}
       </div>

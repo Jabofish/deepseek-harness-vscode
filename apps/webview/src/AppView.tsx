@@ -803,17 +803,22 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                           {t('composer.stop')}
                         </button>
                       )}
-                      {pendingPermissions.map(({ request, command, contentPending, contentFailed }) => (
-                        <ApprovalCard
-                          key={request.id}
-                          request={request}
-                          disabled={respondingInteractionId !== undefined}
-                          contentPending={contentPending}
-                          contentFailed={contentFailed}
-                          {...(command === undefined ? {} : { command })}
-                          onRespond={approvalRespondFor(request)}
-                        />
-                      ))}
+                      {pendingPermissions.map(
+                        ({ request, command, cwd, paths, summary, contentPending, contentFailed }) => (
+                          <ApprovalCard
+                            key={request.id}
+                            request={request}
+                            disabled={respondingInteractionId !== undefined}
+                            contentPending={contentPending}
+                            contentFailed={contentFailed}
+                            {...(command === undefined ? {} : { command })}
+                            {...(cwd === undefined ? {} : { cwd })}
+                            {...(paths === undefined ? {} : { paths })}
+                            {...(summary === undefined ? {} : { summary })}
+                            onRespond={approvalRespondFor(request)}
+                          />
+                        ),
+                      )}
                       {pendingQuestions.map((question) => (
                         <UserQuestionCard
                           key={JSON.stringify([
