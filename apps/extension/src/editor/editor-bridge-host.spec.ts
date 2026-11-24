@@ -126,6 +126,8 @@ function harness(
   detach: ReturnType<typeof vi.fn>
   navigation: { activeSessionId: string | undefined }
   changeSelection: () => void
+  openSessions: string[]
+  surfacesChanged: () => void
   disconnect: () => void
   connectionReady: () => void
   replaceBackend: () => void
@@ -248,6 +250,8 @@ function harness(
   }
   const reconnect = vi.fn<(signal?: AbortSignal) => Promise<unknown>>().mockResolvedValue(undefined)
   const requestTimeoutMs = vi.fn(() => 30_000)
+  /** Sessions other chat surfaces (editor tabs) display. */
+  const openSessions: string[] = []
   const dependencies = {
     ...(withSetup
       ? { context: { extensionUri: { fsPath: path.resolve('extension-fixture') } }, reconnect }
@@ -262,6 +266,7 @@ function harness(
       },
     },
     sessionNavigation: navigation,
+    openSessionIds: () => openSessions,
   } as unknown as ConstructorParameters<typeof EditorBridgeHost>[0]
   return {
     host: new EditorBridgeHost(dependencies),
@@ -271,6 +276,8 @@ function harness(
     detach,
     navigation,
     changeSelection: () => selection('selection'),
+    openSessions,
+    surfacesChanged: () => selection('surfaces'),
     disconnect: () => listener({ kind: 'idle' }),
     connectionReady: () => selection('connection'),
     backendService,
@@ -444,6 +451,28 @@ describe('automatic editor sharing', () => {
         broker.read('new-session', { kind: 'selection' }, new AbortController().signal),
       ).resolves.toMatchObject({ text: 'selected' })
       expect(host.snapshot().phase).toBe('ready')
+    } finally {
+      await host.dispose()
+      broker.dispose()
+    }
+  })
+  it('releases a closed editor tab session while the active chat keeps its tools', async () => {
+    const broker = new EditorCompanionBroker()
+    const { host, openSessions, surfacesChanged } = harness(
+      'managed',
+      true,
+      path.resolve('some-other-project'),
+      broker,
+    )
+    try {
+      openSessions.push('session-b')
+      await host.enable()
+      await vi.waitFor(() => expect(broker.hasSession('session-b')).toBe(true))
+      expect(broker.hasSession('session-a')).toBe(true)
+      openSessions.length = 0
+      surfacesChanged()
+      await vi.waitFor(() => expect(broker.hasSession('session-b')).toBe(false))
+      expect(broker.hasSession('session-a')).toBe(true)
     } finally {
       await host.dispose()
       broker.dispose()

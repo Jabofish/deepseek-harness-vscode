@@ -278,7 +278,7 @@ export function registerNativeSessionList(navigation: SessionNavigation): vscode
     navigation.onDidChange((change) => {
       if (change === 'connection') provider.invalidate()
       else if (change === 'directory') provider.refresh()
-      else {
+      else if (change === 'selection') {
         const node = provider.selectionChanged()
         if (tree?.visible && node !== undefined)
           void tree.reveal(node, { select: true, focus: false }).then(undefined, () => undefined)

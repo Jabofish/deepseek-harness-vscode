@@ -144,6 +144,8 @@ export class EditorBridgeHost {
         // Coordinator readiness precedes BackendService attachment. The later
         // navigation connection event is the authoritative point to retry.
         if (change === 'connection') void this.reconcile()
+        // A closed editor tab no longer displays its session; release its tools.
+        if (change === 'surfaces') void this.reconcile()
       }),
       vscode.workspace.onDidChangeWorkspaceFolders(() => {
         this.workspaceAccess.reset()

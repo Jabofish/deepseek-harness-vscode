@@ -1082,6 +1082,7 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     deps.transcript.remove(disposedSurfaceId)
     router.cancelSurface(disposedSurfaceId)
     runSharedSurfaceTeardownIfIdle()
+    sessionNavigation.surfacesChanged()
   }
   // A surface that becomes ready after a handoff broadcast never saw it, so the
   // current editor-tab count is re-announced together with the surface identity.
