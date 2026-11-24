@@ -61,6 +61,8 @@ export interface RequestGateway {
   readonly moveChatToSidebar: (surfaceId?: string, signal?: AbortSignal) => Promise<void>
   /** Focus and a chime target for a needs-input cue in this session. */
   readonly cueContext: (sessionId: string) => { focused: boolean; surfaceId?: string }
+  /** Distinct session ids currently open across all ready sidebar and editor surfaces. */
+  readonly openSessionIds: () => readonly string[]
 }
 
 function workspaceTrustRequired(): AppError {
@@ -344,6 +346,15 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     if (!reported) focused = vscode.window.state.focused
     const surfaceId = visible ?? any
     return surfaceId === undefined ? { focused } : { focused, surfaceId }
+  }
+  const openSessionIds = (): readonly string[] => {
+    const ids = new Set<string>()
+    for (const surface of surfaces.list()) {
+      if (!surface.isReady || !deps.transcript.hasSurface(surface.surfaceId)) continue
+      const active = deps.transcript.forSurface(surface.surfaceId).activeSessionId()
+      if (active !== undefined) ids.add(active)
+    }
+    return [...ids]
   }
   const anotherFocusedSurface = (senderId: string, sessionId: string): boolean => {
     for (const [id, focused] of surfaceFocus) {
@@ -1169,5 +1180,6 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     openDroppedSession,
     sessionNavigation,
     cueContext,
+    openSessionIds,
   }
 }

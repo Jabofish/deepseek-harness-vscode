@@ -50,6 +50,7 @@ const TRANSPORT_CONFIGURATION_KEYS = [
 
 export interface CommandsAssemblyDependencies {
   readonly sessionNavigation: RequestGateway['sessionNavigation']
+  readonly openSessionIds?: () => readonly string[]
   readonly authorizeExternalConnection?: () => Promise<void>
   readonly clearExternalCredentials?: () => Promise<void>
   readonly disposeEndpointAccess?: () => Promise<void>

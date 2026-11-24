@@ -361,7 +361,7 @@ function pathApi(os: OperatingSystem): typeof path.posix {
   return os === 'windows' ? path.win32 : path.posix
 }
 
-function runtimePathKey(value: string, os: OperatingSystem): string {
+export function runtimePathKey(value: string, os: OperatingSystem): string {
   const normalized = pathApi(os).normalize(value)
   return os === 'windows' ? normalized.toLowerCase() : normalized
 }

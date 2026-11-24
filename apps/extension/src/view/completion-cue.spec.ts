@@ -114,6 +114,13 @@ it('cues once for a question or an approval that needs the user', () => {
   })
   expect(bell).toHaveBeenCalledTimes(1)
   expect(notify).toHaveBeenCalledTimes(2)
+
+  bell.mockReturnValueOnce(false)
+  cue.accept('permission.requested', {
+    request: { id: 'p3', sessionId: 'bg', title: 'Background approval' },
+  })
+  expect(bell).toHaveBeenCalledTimes(2)
+  expect(notify).toHaveBeenCalledTimes(3)
 })
 
 it('applies the focus policy to needs-input cues', () => {

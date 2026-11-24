@@ -37,7 +37,7 @@ import { MacOsProcessDiscoveryProvider } from '../backend/discovery/macos-proces
 import { WindowsProcessDiscoveryProvider } from '../backend/discovery/windows-process-provider.js'
 import { DshProcessSupervisor } from '../backend/process-supervisor.js'
 import type { RedactedDiagnostics } from '../backend/diagnostics.js'
-import { DshRuntimeLocator, readStoredRuntimePath } from '../backend/runtime-locator.js'
+import { DshRuntimeLocator, readStoredRuntimePath, runtimePathKey } from '../backend/runtime-locator.js'
 import { resolveNpmExecutable } from '../backend/runtime-paths.js'
 import { resolveWindowsShim } from '../backend/windows-shim.js'
 import type { VsCodeConfigurationSource } from '../config/configuration-source.js'
@@ -74,6 +74,13 @@ import { resolveCompanionPackageManager } from '../editor/companion-prerequisite
 
 const execFileAsync = promisify(execFile)
 const RUNTIME_PATH_STATE_KEY = 'dsh.runtime.lastKnownPath'
+const APPROVED_RUNTIME_PATHS_STATE_KEY = 'dsh.runtime.approvedExecutablePaths'
+const MAX_APPROVED_RUNTIME_PATHS = 16
+
+function readApprovedRuntimePaths(value: unknown): readonly string[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
+}
 
 /** F5 explicitly requests a fresh owned runtime instead of discovering a stale companion. */
 function usesDevelopmentRuntime(context: Pick<vscode.ExtensionContext, 'extensionMode'>): boolean {
@@ -114,6 +121,14 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
     onRuntimeUpdateProgress,
     onRuntimeUpdateRestart,
   } = deps
+  const rememberApprovedExecutable = async (candidate: string): Promise<void> => {
+    const key = runtimePathKey(candidate, platform())
+    const existing = readApprovedRuntimePaths(
+      context.globalState.get<unknown>(APPROVED_RUNTIME_PATHS_STATE_KEY),
+    )
+    const next = [key, ...existing.filter((entry) => entry !== key)].slice(0, MAX_APPROVED_RUNTIME_PATHS)
+    await context.globalState.update(APPROVED_RUNTIME_PATHS_STATE_KEY, next)
+  }
   const runtimeLocator = new DshRuntimeLocator({
     os: platform(),
     configuredPath: () => configuration.read().runtime.executablePath,
@@ -124,17 +139,22 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
       void context.globalState.update(RUNTIME_PATH_STATE_KEY, hint)
     },
     confirmRuntimePath: async (candidate) => {
+      const key = runtimePathKey(candidate, platform())
+      const approved = readApprovedRuntimePaths(
+        context.globalState.get<unknown>(APPROVED_RUNTIME_PATHS_STATE_KEY),
+      )
+      if (approved.includes(key)) return true
       // A configured executable is run (`--version`) before any DSH identity
-      // check. Only the user can have placed a machine-scoped path, so ask
-      // once before executing it; declining leaves discovery to the normal scan.
+      // check. Ask once per path and persist the user's explicit approval.
       const action = 'Run DSH executable'
-      return (
+      const confirmed =
         (await vscode.window.showWarningMessage(
           `JaboDSH will run ${candidate} to detect the DSH runtime. Only continue if you set this path yourself.`,
           { modal: true },
           action,
         )) === action
-      )
+      if (confirmed) await rememberApprovedExecutable(candidate)
+      return confirmed
     },
     logProbeFailure: (failure) =>
       diagnostics.log('warn', 'runtime-probe-failed', {
@@ -514,6 +534,7 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
       }
     },
     verifyExecutable: async (executable) => (await runtimeLocator.inspectExecutable(executable)).supported,
+    onApprovedExecutable: rememberApprovedExecutable,
   })
   const runtimeUpdater = new DshRuntimeUpdater({
     npmExecutable: () => {

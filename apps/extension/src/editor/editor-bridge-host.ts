@@ -42,9 +42,19 @@ interface Dependencies {
   readonly requestTimeoutMs?: (() => number) | undefined
   readonly coordinator: DshConnectionCoordinator
   readonly sessionNavigation: RequestGateway['sessionNavigation']
+  readonly openSessionIds?: () => readonly string[]
   readonly context?: Pick<vscode.ExtensionContext, 'extensionUri' | 'globalStorageUri'>
   readonly reconnect?: (signal?: AbortSignal) => Promise<unknown>
 }
+
+interface CompanionSessionBinding {
+  readonly backend: DshBackend
+  readonly sessionId: string
+  readonly service: EditorCompanionService
+  provider?: EditorCompanionProvider
+}
+
+const MAX_CONCURRENT_COMPANION_SESSIONS = 16
 
 /**
  * Trusted workspaces share automatically according to persistent editor preferences.
@@ -52,7 +62,7 @@ interface Dependencies {
  */
 export class EditorBridgeHost {
   private readonly service: EditorBridgeService
-  private readonly companion: EditorCompanionService
+  private readonly companions = new Map<string, CompanionSessionBinding>()
   private readonly management: EditorCompanionManagement
   private readonly checkedUpdates = new WeakSet<DshBackend>()
   private automaticUpdatesSuppressed = false
@@ -63,7 +73,6 @@ export class EditorBridgeHost {
   private readonly workspaceAccess = new EditorWorkspaceAccess(
     () => !this.disposed && !this.suppressed && readEditorPreferences().enabled,
   )
-  private provider: EditorCompanionProvider | undefined
   private capabilities: readonly EditorCompanionCapability[] = []
   private status: vscode.StatusBarItem | undefined
   private editStatus: vscode.StatusBarItem | undefined
@@ -84,21 +93,20 @@ export class EditorBridgeHost {
   private readonly subscriptions: { dispose(): unknown }[]
 
   public constructor(private readonly deps: Dependencies) {
-    const stopped = (reason: 'requested' | 'ended' = 'requested'): void => {
+    const legacyStopped = (reason: 'requested' | 'ended' = 'requested'): void => {
       const wasActive = this.scope !== undefined
       this.scope = undefined
-      this.provider?.dispose()
-      this.provider = undefined
-      this.capabilities = []
-      this.status?.hide()
-      if (reason === 'ended' && wasActive) {
+      if (!this.companionActive) {
+        this.capabilities = []
+        this.status?.hide()
+      }
+      if (reason === 'ended' && wasActive && !this.companionActive) {
         this.phase = 'limited'
         this.reason = 'connection'
       }
       if (reason === 'ended' && wasActive && !this.disposed) this.scheduleRecovery()
     }
-    this.service = new EditorBridgeService(stopped)
-    this.companion = new EditorCompanionService(stopped)
+    this.service = new EditorBridgeService(legacyStopped)
     this.management = new EditorCompanionManagement({
       backend: () => deps.backendService.requireBackend(),
       current: (backend) => this.currentBackend(backend),
@@ -109,7 +117,7 @@ export class EditorBridgeHost {
       enable: () => this.enable(),
       stop: () => this.stopByUser(),
       halt: () => this.stop(),
-      active: () => this.service.active || this.companion.active,
+      active: () => this.service.active || this.companionActive,
       undo: () => this.undoLastEdit(),
       checkPackageManager: checkCompanionPackageManager,
     })
@@ -151,13 +159,39 @@ export class EditorBridgeHost {
       }),
       vscode.workspace.onDidGrantWorkspaceTrust(() => {
         this.workspaceAccess.reset()
-        if (this.companion.active) {
+        if (this.companionActive) {
           this.reason = this.workspaceAccess.reason()
           this.phase = this.reason === undefined ? 'ready' : 'waiting'
         }
         void this.reconcile()
       }),
     ]
+  }
+
+  private get companionActive(): boolean {
+    for (const binding of this.companions.values()) {
+      if (binding.service.active) return true
+    }
+    return false
+  }
+
+  private desiredSessionIds(): readonly string[] {
+    const ids: string[] = []
+    const active = this.deps.sessionNavigation.activeSessionId
+    if (active !== undefined) ids.push(active)
+    for (const id of this.deps.openSessionIds?.() ?? []) {
+      if (!ids.includes(id)) ids.push(id)
+      if (ids.length >= MAX_CONCURRENT_COMPANION_SESSIONS) break
+    }
+    return ids
+  }
+
+  private async stopCompanionSession(sessionId: string): Promise<void> {
+    const binding = this.companions.get(sessionId)
+    if (binding === undefined) return
+    this.companions.delete(sessionId)
+    binding.provider?.dispose()
+    await binding.service.stop()
   }
 
   public async enable(options: { silent?: boolean } = {}): Promise<boolean> {
@@ -179,12 +213,17 @@ export class EditorBridgeHost {
       return false
     }
     this.suppressed = false
-    if (this.service.active || this.companion.active) return true
+    const desired = this.desiredSessionIds()
+    if (
+      this.service.active ||
+      (desired.length > 0 && desired.every((id) => this.companions.get(id)?.service.active === true))
+    )
+      return true
     const controller = new AbortController()
     this.starting = controller
     try {
       const backend = this.deps.backendService.requireBackend()
-      const sessionId = this.deps.sessionNavigation.activeSessionId
+      const sessionId = desired[0]
       if (sessionId === undefined) {
         this.phase = 'waiting'
         this.reason = 'session'
@@ -197,12 +236,6 @@ export class EditorBridgeHost {
       }
       this.phase = 'connecting'
       this.reason = undefined
-      this.scope = { backend, sessionId }
-      const current = (): boolean =>
-        this.scope?.backend === backend &&
-        this.scope.sessionId === sessionId &&
-        this.currentBackend(backend) &&
-        this.deps.sessionNavigation.activeSessionId === sessionId
       const companion = backend.editorBridge.companion
       let description: EditorCompanionDescription | undefined
       if (companion !== undefined) {
@@ -214,33 +247,66 @@ export class EditorBridgeHost {
       }
       if (companion !== undefined && description !== undefined) {
         await verifyCompanionHost(companion, controller.signal)
-        if (!current()) throw new EditorCompanionError('cancelled')
+        controller.signal.throwIfAborted()
+        if (!this.currentBackend(backend)) throw new EditorCompanionError('cancelled')
         // Persisted workspace preferences control access without a per-session permission picker.
         this.version = description.packageVersion
         this.capabilities = description.capabilities.filter(
           (capability) => capability !== 'edit' || readEditorPreferences().allowEdits,
         )
-        // Bind before workspace access is available so the first tool can ask for it.
-        // File access is still checked by the provider against this window's trusted roots.
         const capabilities = this.capabilities
-        await this.companion.start(companion, sessionId, randomUUID(), capabilities, {
-          execute: async (request, signal) => {
-            await this.workspaceAccess.request(signal)
-            if (!current() || !readEditorPreferences().enabled || this.suppressed)
-              throw new EditorCompanionError('cancelled')
-            this.provider ??= new EditorCompanionProvider(
-              this.workspaceAccess.folders(),
-              capabilities,
-              current,
-              this.ledger,
-              (applied) => this.showEditIndicator(applied),
-            )
-            this.phase = 'ready'
-            this.reason = undefined
-            return this.provider.execute(request, signal)
-          },
-        })
+        for (const targetSessionId of desired) {
+          if (this.companions.get(targetSessionId)?.service.active === true) continue
+          const binding: CompanionSessionBinding = {
+            backend,
+            sessionId: targetSessionId,
+            service: new EditorCompanionService((reason) => {
+              const currentBinding = this.companions.get(targetSessionId)
+              if (currentBinding !== binding) return
+              this.companions.delete(targetSessionId)
+              binding.provider?.dispose()
+              binding.provider = undefined
+              if (!this.companionActive && !this.service.active) {
+                this.capabilities = []
+                this.status?.hide()
+                if (reason === 'ended') {
+                  this.phase = 'limited'
+                  this.reason = 'connection'
+                }
+              }
+              if (reason === 'ended' && !this.disposed) this.scheduleRecovery()
+            }),
+          }
+          this.companions.set(targetSessionId, binding)
+          const bindingCurrent = (): boolean =>
+            this.companions.get(targetSessionId) === binding && this.currentBackend(backend)
+          // Bind before workspace access is available so the first tool can ask for it.
+          // File access is still checked by the provider against this window's trusted roots.
+          await binding.service.start(companion, targetSessionId, randomUUID(), capabilities, {
+            execute: async (request, signal) => {
+              await this.workspaceAccess.request(signal)
+              if (!bindingCurrent() || !readEditorPreferences().enabled || this.suppressed)
+                throw new EditorCompanionError('cancelled')
+              binding.provider ??= new EditorCompanionProvider(
+                this.workspaceAccess.folders(),
+                capabilities,
+                bindingCurrent,
+                this.ledger,
+                (applied) => this.showEditIndicator(applied),
+              )
+              this.phase = 'ready'
+              this.reason = undefined
+              return binding.provider.execute(request, signal)
+            },
+          })
+        }
       } else {
+        this.scope = { backend, sessionId }
+        const current = (): boolean =>
+          this.scope?.backend === backend &&
+          this.scope.sessionId === sessionId &&
+          this.currentBackend(backend) &&
+          this.deps.sessionNavigation.activeSessionId === sessionId
         const blocked = this.workspaceAccess.reason()
         if (blocked !== undefined) {
           this.phase = 'waiting'
@@ -272,15 +338,15 @@ export class EditorBridgeHost {
         )
       }
       controller.signal.throwIfAborted()
-      if (!this.service.active && !this.companion.active) return false
+      if (!this.service.active && !this.companionActive) return false
       this.status ??= vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 10)
       this.updateStatus()
       this.recoveryAttempts = 0
-      this.reason = this.companion.active ? this.workspaceAccess.reason() : 'missing'
-      this.phase = this.companion.active ? (this.reason === undefined ? 'ready' : 'waiting') : 'limited'
+      this.reason = this.companionActive ? this.workspaceAccess.reason() : 'missing'
+      this.phase = this.companionActive ? (this.reason === undefined ? 'ready' : 'waiting') : 'limited'
       return true
     } catch (error) {
-      await Promise.all([this.service.stop(), this.companion.stop()])
+      await this.stop()
       if (!controller.signal.aborted && !this.disposed) {
         this.phase = 'limited'
         this.reason =
@@ -303,7 +369,12 @@ export class EditorBridgeHost {
   public stop(): Promise<void> {
     this.starting?.abort()
     this.scope = undefined
-    return Promise.all([this.service.stop(), this.companion.stop()]).then(() => undefined)
+    const bindings = [...this.companions.values()]
+    this.companions.clear()
+    for (const binding of bindings) binding.provider?.dispose()
+    return Promise.all([this.service.stop(), ...bindings.map((binding) => binding.service.stop())]).then(
+      () => undefined,
+    )
   }
   /** A user-initiated stop also suppresses automatic sharing until they turn it back on. */
   public stopByUser(): Promise<void> {
@@ -602,8 +673,16 @@ export class EditorBridgeHost {
         do {
           this.syncRequested = false
           if (this.disposed) break
-          const sessionId = this.deps.sessionNavigation.activeSessionId
-          if (this.scope !== undefined && this.scope.sessionId !== sessionId) await this.stop()
+          const desired = this.desiredSessionIds()
+          const desiredSet = new Set(desired)
+          const activeSessionId = this.deps.sessionNavigation.activeSessionId
+          if (this.scope !== undefined && this.scope.sessionId !== activeSessionId) {
+            this.scope = undefined
+            await this.service.stop()
+          }
+          for (const boundSessionId of [...this.companions.keys()]) {
+            if (!desiredSet.has(boundSessionId)) await this.stopCompanionSession(boundSessionId)
+          }
           await this.autoShare()
         } while (this.syncRequested)
       })
@@ -626,7 +705,13 @@ export class EditorBridgeHost {
       this.reason = undefined
       return
     }
-    if (this.starting !== undefined || this.management.busy || this.service.active || this.companion.active)
+    const desired = this.desiredSessionIds()
+    if (
+      this.starting !== undefined ||
+      this.management.busy ||
+      this.service.active ||
+      (desired.length > 0 && desired.every((id) => this.companions.get(id)?.service.active === true))
+    )
       return
     let backend: DshBackend
     try {
@@ -746,14 +831,14 @@ export class EditorBridgeHost {
   }
   private updateStatus(): void {
     if (this.status === undefined) return
-    if (!this.service.active && !this.companion.active) {
+    if (!this.service.active && !this.companionActive) {
       this.status.hide()
       return
     }
-    this.status.text = this.companion.active
+    this.status.text = this.companionActive
       ? '$(broadcast) DSH: Editor tools on'
       : '$(broadcast) DSH: Editor metadata on'
-    this.status.tooltip = this.companion.active
+    this.status.tooltip = this.companionActive
       ? `Editor tools on: ${this.capabilities.join(', ')}. Edits are undoable. Click to open editor integration settings.`
       : 'Editor metadata is on. Click to open editor integration settings.'
     this.status.command = 'dsh.manageEditorCompanion'

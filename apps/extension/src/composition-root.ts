@@ -482,8 +482,13 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     return {
       focused: context.focused,
       bell: () => {
-        if (context.surfaceId !== undefined)
-          void postEventTo(context.surfaceId, PLAY_COMPLETION_CUE_EVENT, {})
+        const targetSurfaceId =
+          context.surfaceId ??
+          surfaces.active?.surfaceId ??
+          surfaces.list().find((surface) => surface.isReady)?.surfaceId
+        if (targetSurfaceId === undefined) return false
+        void postEventTo(targetSurfaceId, PLAY_COMPLETION_CUE_EVENT, {})
+        return true
       },
     }
   }
@@ -541,6 +546,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     moveChatToSidebar,
     openDroppedSession,
     sessionNavigation,
+    openSessionIds: gateway.openSessionIds,
     surfaces,
     runtimeLocator,
     runtimeInstaller,
