@@ -30,7 +30,7 @@
     "test:contracts": "node scripts/test-changed.mjs --contracts",
     "test:billing-evidence": "vitest run --config config/vitest.billing.config.ts",
     "test:watch": "vitest",
-    "typecheck": "pnpm -r --if-present typecheck && pnpm exec tsc -p tests/tsconfig.json --noEmit && pnpm exec tsc -p tests/billing/tsconfig.json --noEmit && pnpm exec tsc -p config/tsconfig.tools.json --noEmit"
+    "typecheck": "concurrently --kill-others-on-fail -g -n packages,tests,billing,tools \"pnpm -r --no-sort --if-present typecheck\" \"tsc -p tests/tsconfig.json --noEmit\" \"tsc -p tests/billing/tsconfig.json --noEmit\" \"tsc -p config/tsconfig.tools.json --noEmit\""
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
