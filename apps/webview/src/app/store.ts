@@ -639,6 +639,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       if (state.surface?.sessionId !== sessionId) {
         // Binding is already committed. Retire the previous conversation even
         // if the new session history needs a retry, and persist the new owner.
+        void featureActions.discardEditorContextForSessionSwitch(sessionId)
         setState((current) => ({
           ...current,
           ...clearedActiveSession(current, current.activeSessionId ?? ''),

@@ -463,10 +463,11 @@ describe('App connected rendering', () => {
       activeSessionId: undefined,
       surface: { kind: 'editor', sessionId: 's1' },
     })
+    const setDrawer = vi.spyOn(currentStore, 'setDrawer')
     render(<App />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
-    expect(currentStore.setDrawer).toHaveBeenCalledWith('sessions')
+    expect(setDrawer).toHaveBeenCalledWith('sessions')
   })
 
   it('coalesces diagnostics opened from conversation tools while the conversation renders', async () => {

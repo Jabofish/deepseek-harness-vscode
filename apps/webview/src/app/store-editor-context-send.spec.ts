@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { FeatureHostEvent, FeatureRequest, HostMessage } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
 import {
@@ -7,6 +7,7 @@ import {
 } from '../test/host-window-store.js'
 
 const SESSION_ID = 'editor-context-send'
+const CREATED_SESSION_ID = 'created-session'
 const WORKSPACE_FOLDER_ID = 'workspace-editor-context'
 
 function sessionView(id: string): Record<string, unknown> {
@@ -157,6 +158,10 @@ class HostClient {
       }
       case 'session.list':
         return { items: [sessionView(SESSION_ID)] }
+      case 'session.create':
+        return sessionView(CREATED_SESSION_ID)
+      case 'surface.openInEditor':
+        return { surface: 'editor', rebound: true }
       case 'workspace.list':
         return {
           items: [
@@ -196,6 +201,29 @@ function refs(store: ReturnType<typeof createAppStore>): readonly string[] {
 }
 
 describe('AppStore editor-context admission', () => {
+  it('releases captured context when New Session reuses the editor tab', async () => {
+    const { client, store } = open()
+    try {
+      await store.refreshSessions()
+      client.emit({
+        type: 'event',
+        name: 'ui.surface.assigned',
+        sequence: 1,
+        payload: { kind: 'editor', sessionId: SESSION_ID },
+      })
+      await vi.waitFor(() => expect(store.getState().activeSessionId).toBe(SESSION_ID))
+      await store.captureEditorContext('file')
+      expect(refs(store)).toEqual(['context-1'])
+
+      await expect(store.createSession(WORKSPACE_FOLDER_ID)).resolves.toBe(CREATED_SESSION_ID)
+      expect(client.releasedContextRefs).toEqual([['context-1']])
+      await store.sendPrompt(CREATED_SESSION_ID, 'first prompt in the new session', [], 'queue')
+      expect(client.sentContextRefs).toEqual([[]])
+    } finally {
+      store.dispose()
+    }
+  })
+
   it('uses the same file context when an open-file candidate is selected', async () => {
     const { client, store } = open()
     client.openFileAsContext = true
