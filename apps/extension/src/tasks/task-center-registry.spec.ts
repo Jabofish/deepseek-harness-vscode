@@ -242,11 +242,12 @@ describe('TaskCenterRegistry', () => {
     } satisfies SessionSummary
     const foreign = { ...own, id: 'foreign', title: 'Other window', cwd: '/elsewhere' }
     const current = backend({ sessions: [own, foreign] })
+    const folders = ['folder-1']
     const registry = new TaskCenterRegistry({
       now: () => 4_000,
-      workspaceFolderIds: () => ['folder-1'],
+      workspaceFolderIds: () => folders,
       resolveSessionWorkspaceFolderId: (session) =>
-        session.cwd === '/workspace/own' ? 'folder-1' : undefined,
+        session.cwd === '/workspace/own' ? 'folder-1' : session.cwd === '/elsewhere' ? 'folder-2' : undefined,
     })
     const counts: number[] = []
     registry.onPendingInteractionsChanged((count) => counts.push(count))
@@ -261,5 +262,10 @@ describe('TaskCenterRegistry', () => {
     })
     await vi.waitFor(() => expect(counts).toEqual([1]))
     expect(registry.pendingInteractionCount).toBe(2)
+
+    // The other window's folder is added to this one.
+    folders.push('folder-2')
+    registry.workspaceFoldersChanged()
+    await vi.waitFor(() => expect(counts).toEqual([1, 2]))
   })
 })

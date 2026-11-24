@@ -122,6 +122,12 @@ export class TaskCenterRegistry implements TaskRepository {
     }
   }
 
+  /** Folders opened or closed: which sessions belong to this window may have changed. */
+  public workspaceFoldersChanged(): void {
+    this.sessionOwnership.clear()
+    this.announcePending()
+  }
+
   private announcePending(): void {
     const generation = ++this.pendingGeneration
     const sessionIds = [...this.interactions.values()].map((interaction) => interaction.sessionId)

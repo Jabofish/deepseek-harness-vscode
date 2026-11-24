@@ -161,6 +161,7 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
       deps.sessionNavigation.invalidate()
       invalidateCurrentWorkspaceSessionDetails()
+      taskRegistry.workspaceFoldersChanged()
       // This drops every captured context ref, so the availability keys have
       // to be recomputed in the same turn. They are what gates the "Add …
       // Context" menu entries, and none of the editor listeners below fires
