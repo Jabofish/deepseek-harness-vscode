@@ -557,12 +557,16 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
       event.type === 'session.status' ||
       event.type === 'message.completed'
     ) {
-      diagnostics.log('info', 'backend-event', {
-        eventName: event.type,
-        ...('turn' in event && typeof event.turn === 'number' ? { turn: event.turn } : {}),
-        ...('step' in event && typeof event.step === 'number' ? { step: event.step } : {}),
-        ...('status' in event && typeof event.status === 'string' ? { status: event.status } : {}),
-      })
+      try {
+        diagnostics.log('info', 'backend-event', {
+          eventName: event.type,
+          ...('turn' in event && typeof event.turn === 'number' ? { turn: event.turn } : {}),
+          ...('step' in event && typeof event.step === 'number' ? { step: event.step } : {}),
+          ...('status' in event && typeof event.status === 'string' ? { status: event.status } : {}),
+        })
+      } catch {
+        // Keep delivering the event if the diagnostics channel fails.
+      }
     }
     if (deps.transcript.accept(event)) return Promise.resolve(true)
     const targetSurfaces =
