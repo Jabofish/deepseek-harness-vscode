@@ -38,6 +38,34 @@ function harness(
 }
 
 describe('Host event delivery', () => {
+  it('delivers the backend event when diagnostic logging throws', async () => {
+    const backend = { connection: { backendInstanceId: 'backend-1', connectionGeneration: 1 } }
+    const accept = vi.fn(() => true)
+    const log = vi.fn(() => {
+      throw new Error('Output channel unavailable')
+    })
+    const pipeline = createHostEventPipeline({
+      transcript: { accept, dispose: vi.fn() },
+      post: () => Promise.resolve(true),
+      postTo: () => Promise.resolve(true),
+      backendService: { requireBackend: () => backend } as never,
+      diagnostics: { log } as never,
+      editorContextUseCases: {} as never,
+      featureOwner: () => ({ workspaceFolderId: 'w1', sessionId: 's1' }) as never,
+      currentWorkspaceFolders: () => [],
+      temporaryWorkspaceManager: {} as never,
+      runtimeUpdateProgress: { current: vi.fn() },
+    })
+    const event = { type: 'turn.started', sessionId: 's1', turn: 1 } as const
+    try {
+      expect(await pipeline.postBackendEvent(backend as never, event)).toBe(true)
+      expect(log).toHaveBeenCalledWith('info', 'backend-event', { eventName: event.type, turn: 1 })
+      expect(accept).toHaveBeenCalledExactlyOnceWith(event)
+    } finally {
+      pipeline.dispose()
+    }
+  })
+
   it('uses independent consumer ACKs per surface in the production path', async () => {
     const posted: Array<{ surface: string; name: string; sequence: number; payload: unknown }> = []
     const postTo: HostEventPipelineDependencies['postTo'] = (surface, message) => {

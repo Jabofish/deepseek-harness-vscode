@@ -163,4 +163,63 @@ describe('surface control consumption', () => {
       vi.useRealTimers()
     }
   })
+
+  it('reports a control frame that is posted but never acknowledged within the ACK window', async () => {
+    vi.useFakeTimers()
+    let sequence = 0
+    const stalls: { event: string; sequence: number }[] = []
+    const posted: number[] = []
+    const delivery = new ControlDelivery(
+      (_surfaceId, message) => {
+        posted.push(message.sequence)
+        return Promise.resolve(true)
+      },
+      () => ++sequence,
+      () => true,
+      256,
+      512 * 1024,
+      (_surfaceId, frame, frameSequence) => {
+        stalls.push({ event: frame.name, sequence: frameSequence })
+      },
+    )
+    try {
+      void delivery.enqueue('s', event('session.status', { status: 'idle' }))
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(stalls).toEqual([{ event: 'session.status', sequence: 1 }])
+      // The report precedes the retransmit, which reuses the same sequence.
+      expect(posted).toEqual([1, 1])
+      // One report per delivery attempt, not one per ACK window.
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(stalls).toHaveLength(1)
+    } finally {
+      delivery.dispose()
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not report a control frame acknowledged inside the ACK window', async () => {
+    vi.useFakeTimers()
+    let sequence = 0
+    const stalls: number[] = []
+    const delivery = new ControlDelivery(
+      () => Promise.resolve(true),
+      () => ++sequence,
+      () => true,
+      256,
+      512 * 1024,
+      (_surfaceId, _frame, frameSequence) => {
+        stalls.push(frameSequence)
+      },
+    )
+    try {
+      void delivery.enqueue('s', event('session.status', { status: 'idle' }))
+      await vi.advanceTimersByTimeAsync(4_000)
+      delivery.acknowledge('s', 1)
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(stalls).toEqual([])
+    } finally {
+      delivery.dispose()
+      vi.useRealTimers()
+    }
+  })
 })

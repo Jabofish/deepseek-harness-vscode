@@ -21,7 +21,13 @@ interface Surface {
   retryAttempt: number
   retryTimer?: ReturnType<typeof setTimeout>
   ackTimer?: ReturnType<typeof setTimeout>
-  active?: { readonly entry: Pending; readonly sequence: number; mayHaveDelivered: boolean }
+  active?: {
+    readonly entry: Pending
+    readonly sequence: number
+    mayHaveDelivered: boolean
+    /** At most one stall report per delivery attempt. */
+    stallReported?: boolean
+  }
 }
 
 /** Each surface consumes one control frame at a time, with a bounded ordered mailbox. */
@@ -35,6 +41,8 @@ export class ControlDelivery {
     private readonly current: (surfaceId: string) => boolean,
     private readonly maxPending = 256,
     private readonly maxChars = 512 * 1024,
+    /** A control frame posted but not ACKed within the ACK window (a likely wedge). */
+    private readonly onAckStall?: (surfaceId: string, event: Event, sequence: number) => void,
   ) {}
 
   public enqueue(surfaceId: string, event: Event, key?: string, isCurrent?: () => boolean): Promise<boolean> {
@@ -168,6 +176,14 @@ export class ControlDelivery {
       // Once IPC outcome is uncertain, reuse this sequence to deduplicate
       // late and retried delivery. A missing native receipt cannot block ACKs.
       active.mayHaveDelivered = true
+      if (active.stallReported !== true) {
+        active.stallReported = true
+        try {
+          this.onAckStall?.(surfaceId, active.entry.event, active.sequence)
+        } catch {
+          // Diagnostics must never block the recovery they observe.
+        }
+      }
       this.transmit(surfaceId, surface, active)
     }, CONTROL_ACK_RETRY_DELAY_MS)
     surface.ackTimer.unref?.()

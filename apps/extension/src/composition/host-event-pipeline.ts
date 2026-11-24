@@ -21,6 +21,7 @@ import { publicState } from './public-projection.js'
 import { featureContextKinds, type FeatureContextKind } from './editor-files.js'
 import type { TranscriptWindowService } from '../view/transcript-window.js'
 import { BoundedEventQueue, eventPayloadCharacters } from '../view/bounded-event-queue.js'
+import { SIDEBAR_SURFACE_ID } from '../constants.js'
 
 /**
  * High-volume state frames that may wait behind each other. Every other
@@ -396,6 +397,15 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
           postTo,
           () => ++sequence,
           (surfaceId) => deps.surfaceIds?.().includes(surfaceId) === true,
+          256,
+          512 * 1024,
+          (surfaceId, event, frameSequence) =>
+            diagnostics.log('warn', 'control-ack-stalled', {
+              // Editor surface ids embed the session id; log only the kind.
+              surface: surfaceId === SIDEBAR_SURFACE_ID ? 'sidebar' : 'editor',
+              eventName: event.name,
+              sequence: frameSequence,
+            }),
         )
   const eventPostQueue = new BoundedEventQueue(async (info) => {
     if (info?.priority === false || controlDelivery !== undefined) return
@@ -537,6 +547,27 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
     const activityUpdate = subagentActivity.observe(event)
     if (activityUpdate !== undefined) void postEvent('subagent.activity', activityUpdate)
     deps.onEvent?.(event.type, event)
+    // Turn boundaries and settled assistant messages are the facts that drive
+    // both the missing-response and stuck-running symptoms. Log their receipt
+    // so a later silent wedge can be split into "the Host never received it"
+    // versus "the Host received it but delivery stalled".
+    if (
+      event.type === 'turn.started' ||
+      event.type === 'turn.ended' ||
+      event.type === 'session.status' ||
+      event.type === 'message.completed'
+    ) {
+      try {
+        diagnostics.log('info', 'backend-event', {
+          eventName: event.type,
+          ...('turn' in event && typeof event.turn === 'number' ? { turn: event.turn } : {}),
+          ...('step' in event && typeof event.step === 'number' ? { step: event.step } : {}),
+          ...('status' in event && typeof event.status === 'string' ? { status: event.status } : {}),
+        })
+      } catch {
+        // Keep delivering the event if the diagnostics channel fails.
+      }
+    }
     if (deps.transcript.accept(event)) return Promise.resolve(true)
     const targetSurfaces =
       (ACTIVE_SESSION_ONLY_EVENT_NAMES.has(event.type) ||

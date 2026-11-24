@@ -131,6 +131,7 @@ export class TranscriptWindowService {
   private recoveryTimer: ReturnType<typeof setTimeout> | undefined
   private rebaseTimer: ReturnType<typeof setTimeout> | undefined
   private ackTimer: ReturnType<typeof setTimeout> | undefined
+  private ackStallReported = false
   private deliverySuspended = false
   private deliveryEpoch = 0
   private readonly recentEvents = new Map<string, true>()
@@ -162,6 +163,8 @@ export class TranscriptWindowService {
       readonly refresh?: (sessionId: string) => Promise<void>
       readonly onCapacity?: (ready: boolean) => void
       readonly report?: (failure: { readonly attempt: number; readonly retrying: boolean }) => void
+      /** A posted window/patch stayed unacknowledged past the ACK window. */
+      readonly onAckStall?: (stall: { readonly pendingAcks: number; readonly revision: number }) => void
     },
   ) {}
 
@@ -175,6 +178,7 @@ export class TranscriptWindowService {
     this.deliverySuspended = false
     if (!recovery) this.overloadBudget = { started: performance.now(), count: 0 }
     const generation = ++this.generation
+    this.ackStallReported = false
     this.deliveryEpoch++
     // Reads and invalidations are not proof that the renderer recovered.
     this.published = undefined
@@ -589,6 +593,7 @@ export class TranscriptWindowService {
         this.budgetBlocked = false
       }
     if (this.pendingAcks.size < previousPending) {
+      this.ackStallReported = false
       this.cancelAckRecovery()
       this.waitForAck()
     }
@@ -1361,6 +1366,14 @@ export class TranscriptWindowService {
       if (!this.visible || this.deliveryEpoch !== epoch || this.pendingAcks.size === 0) return
       // A successful post only confirms IPC acceptance. Recover even when the
       // final frame or its ACK was lost and no later patch can expose a gap.
+      if (!this.ackStallReported) {
+        this.ackStallReported = true
+        try {
+          this.deps.onAckStall?.({ pendingAcks: this.pendingAcks.size, revision: this.revision })
+        } catch {
+          // Diagnostics must never block the recovery they observe.
+        }
+      }
       this.deliveryEpoch++
       this.published = undefined
       this.revision++
