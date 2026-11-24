@@ -585,8 +585,51 @@
   white-space: nowrap;
 }
 
-.dsh-changes-popover__status-label {
+.dsh-changes-popover__meta {
   grid-area: 2 / 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  min-width: 0;
+  gap: 2px var(--dsh-space-2);
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-2xs);
+}
+
+.dsh-changes-popover__meta > .dsh-changes-popover__status-label {
+  max-width: none;
+  font-size: inherit;
+}
+
+.dsh-changes-popover__diff-stats {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.dsh-changes-popover__review-state {
+  white-space: nowrap;
+}
+
+.dsh-changes-popover__batch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--dsh-space-1);
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+}
+
+.dsh-changes-popover__diff-line--add {
+  color: var(--dsh-success);
+  background: color-mix(in srgb, var(--dsh-success) 14%, transparent);
+}
+
+.dsh-changes-popover__diff-line--del {
+  color: var(--dsh-danger);
+  background: color-mix(in srgb, var(--dsh-danger) 14%, transparent);
+}
+
+.dsh-changes-popover__diff-line--hunk {
+  color: var(--dsh-info);
 }
 
 .dsh-changes-popover__evidence {

@@ -586,7 +586,8 @@
 
 .dsh-session-item__copy strong,
 .dsh-session-item__copy small,
-.dsh-session-item__workspace {
+.dsh-session-item__workspace,
+.dsh-session-item__time {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -594,7 +595,8 @@
 }
 
 .dsh-session-item__copy small,
-.dsh-session-item__workspace {
+.dsh-session-item__workspace,
+.dsh-session-item__time {
   color: var(--dsh-muted);
   font-size: var(--dsh-font-size-2xs);
 }

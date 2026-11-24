@@ -206,7 +206,7 @@ export function ScheduleCreateForm({
               onClick={() => {
                 setCreateDraft({
                   ...createDraft,
-                  rrule: 'DTSTART:20261124T090000Z\nRRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR',
+                  rrule: rrulePreset('FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'),
                 })
                 setCreateError(undefined)
               }}
@@ -219,7 +219,7 @@ export function ScheduleCreateForm({
               onClick={() => {
                 setCreateDraft({
                   ...createDraft,
-                  rrule: 'DTSTART:20261101T090000Z\nRRULE:FREQ=MONTHLY;BYMONTHDAY=1',
+                  rrule: rrulePreset('FREQ=MONTHLY;BYMONTHDAY=1'),
                 })
                 setCreateError(undefined)
               }}
@@ -403,4 +403,13 @@ export function ScheduleCreateForm({
       </div>
     </form>
   )
+}
+
+/** A preset starts at the next local 09:00, expressed as the UTC DTSTART RRULE requires. */
+function rrulePreset(rule: string, now = new Date()): string {
+  const start = new Date(now)
+  start.setHours(9, 0, 0, 0)
+  if (start.getTime() <= now.getTime()) start.setDate(start.getDate() + 1)
+  const stamp = start.toISOString().replace(/[-:]/gu, '').replace(/\.\d{3}/u, '')
+  return `DTSTART:${stamp}\nRRULE:${rule}`
 }

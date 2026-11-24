@@ -29,6 +29,7 @@ import {
   type FeedbackPrepare,
   type FeedbackSubmit,
   type TimelineNodeRenderContext,
+  type TurnTerminalReason,
   type UserTextFacts,
 } from './timeline-shared.js'
 import { formatEventPayload } from './timeline-projection.js'
@@ -68,7 +69,8 @@ function renderNode(
   loadFullContent?: (nodeId: string) => Promise<string>,
   producedFiles: readonly string[] = [],
   onEditPrompt?: (text: string) => void,
-  onRetryTurn?: (reason: string) => void,
+  onRetryTurn?: (reason: TurnTerminalReason) => void,
+  retryTurnNodeId?: string,
 ): ReactElement {
   switch (node.kind) {
     case 'tool':
@@ -270,14 +272,14 @@ function renderNode(
               </span>
             )}
           </span>
-          {onRetryTurn === undefined ? null : (
+          {onRetryTurn === undefined || node.id !== retryTurnNodeId || node.reason === 'blocked' ? null : (
             <button
               type="button"
-              className="dsh-button dsh-button--secondary dsh-button--compact"
+              className="dsh-button dsh-button--secondary dsh-button--compact dsh-timeline__turn-terminal-action"
               onClick={() => onRetryTurn(node.reason)}
             >
               {t(
-                node.reason === 'max-steps' || node.reason === 'interrupted'
+                node.reason === 'interrupted' || node.reason === 'max-tokens'
                   ? 'timeline.continueTurn'
                   : 'timeline.retryTurn',
               )}
@@ -497,6 +499,7 @@ export function renderTimelineNode(
     context.producedFiles,
     context.onEditPrompt,
     context.onRetryTurn,
+    context.retryTurnNodeId,
   )
 }
 

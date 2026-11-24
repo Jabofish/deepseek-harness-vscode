@@ -15,7 +15,6 @@ import type { TimelineNode } from '@dsh-vscode/timeline'
  */
 export interface ApprovalContext {
   readonly command?: string
-  readonly cwd?: string
   readonly paths?: readonly string[]
   readonly summary?: string
 }
@@ -39,7 +38,7 @@ export function approvalCommand(
 }
 
 /**
- * Resolve structured approval context (command, cwd, affected paths, non-terminal summary)
+ * Resolve structured approval context (command, affected paths, non-terminal summary)
  * from the paired tool call node so users do not blind-approve file/MCP/network tools.
  */
 export function approvalContext(request: PermissionRequest, nodes: readonly TimelineNode[]): ApprovalContext {
@@ -50,26 +49,10 @@ export function approvalContext(request: PermissionRequest, nodes: readonly Time
       : nodes.find((entry) => entry.kind === 'tool' && entry.id === request.callId)
   if (node?.kind !== 'tool') return command === undefined ? {} : { command }
   const presentation = node.tool.presentation
-  const metadataCwd =
-    typeof node.tool.metadata.cwd === 'string' && node.tool.metadata.cwd.trim() !== ''
-      ? node.tool.metadata.cwd.trim()
-      : undefined
-  const presentationCwd =
-    typeof presentation?.metadata?.cwd === 'string' && presentation.metadata.cwd.trim() !== ''
-      ? presentation.metadata.cwd.trim()
-      : undefined
-  const cwd = metadataCwd ?? presentationCwd
 
   const pathSet = new Set<string>()
   for (const location of node.tool.locations ?? []) {
     if (location.path.trim() !== '') pathSet.add(location.path.trim())
-  }
-  if (
-    (presentation?.card === 'diff' || presentation?.card === 'file') &&
-    typeof presentation.title === 'string' &&
-    presentation.title.trim() !== ''
-  ) {
-    pathSet.add(presentation.title.trim())
   }
   const paths = pathSet.size > 0 ? [...pathSet] : undefined
 
@@ -82,7 +65,6 @@ export function approvalContext(request: PermissionRequest, nodes: readonly Time
 
   return {
     ...(command === undefined ? {} : { command }),
-    ...(cwd === undefined ? {} : { cwd }),
     ...(paths === undefined ? {} : { paths }),
     ...(summary === undefined ? {} : { summary }),
   }

@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react'
+import { useState, type ReactElement } from 'react'
 import type { Translate } from '../../i18n.js'
 import { ContentFlow } from '../../components/common/index.js'
 import { Icon } from '../../ui/Icon.js'
@@ -76,47 +76,22 @@ export function renderProducedFiles(
   t: Translate,
 ): ReactElement | null {
   if (paths.length === 0) return null
-  const visiblePaths = paths.slice(0, VISIBLE_PRODUCED_LIMIT)
-  const hiddenPaths = paths.slice(VISIBLE_PRODUCED_LIMIT)
-  const renderChip = (path: string): ReactElement => {
-    const label = producedFileLabel(path)
-    return (
-      <span className="dsh-timeline__produced-entry" key={path}>
-        {onOpenLink === undefined ? (
-          <span className="dsh-timeline__produced-chip" title={path}>
-            <Icon name="file" />
-            <ContentFlow as="span" variant="truncate">
-              {label}
-            </ContentFlow>
-          </span>
-        ) : (
-          <button
-            className="dsh-timeline__produced-chip"
-            type="button"
-            title={path}
-            aria-label={t('timeline.openProduced', { name: path })}
-            onClick={() => onOpenLink(path)}
-          >
-            <Icon name="file" />
-            <ContentFlow as="span" variant="truncate">
-              {label}
-            </ContentFlow>
-          </button>
-        )}
-        {onShowInFolder === undefined || paths.length <= 1 ? null : (
-          <button
-            className="dsh-icon-button dsh-timeline__produced-reveal"
-            type="button"
-            title={t('timeline.showFileInFolder', { name: label })}
-            aria-label={t('timeline.showFileInFolder', { name: label })}
-            onClick={() => onShowInFolder(path)}
-          >
-            <Icon name="folder" />
-          </button>
-        )}
-      </span>
-    )
-  }
+  return <ProducedFilesRow paths={paths} onOpenLink={onOpenLink} onShowInFolder={onShowInFolder} t={t} />
+}
+
+function ProducedFilesRow(props: {
+  readonly paths: readonly string[]
+  readonly onOpenLink: ((href: string) => void) | undefined
+  readonly onShowInFolder: ((href: string) => void) | undefined
+  readonly t: Translate
+}): ReactElement {
+  const { paths, onOpenLink, onShowInFolder, t } = props
+  const [expanded, setExpanded] = useState(false)
+  const visiblePaths = expanded ? paths : paths.slice(0, VISIBLE_PRODUCED_LIMIT)
+  const hiddenCount = paths.length - visiblePaths.length
+  // One file keeps the single "Show in folder" action; several files each get
+  // their own reveal button so the action never silently picks the first one.
+  const perFileReveal = onShowInFolder !== undefined && paths.length > 1
   return (
     <div
       className="dsh-timeline__produced-files"
@@ -125,14 +100,54 @@ export function renderProducedFiles(
     >
       <span className="dsh-timeline__produced-label">{t('timeline.producedFiles')}</span>
       <div className="dsh-timeline__produced-list">
-        {visiblePaths.map(renderChip)}
-        {hiddenPaths.length > 0 ? (
-          <details className="dsh-timeline__produced-overflow">
-            <summary className="dsh-timeline__produced-chip">
-              {t('timeline.producedFilesMore', { count: hiddenPaths.length })}
-            </summary>
-            <div className="dsh-timeline__produced-list">{hiddenPaths.map(renderChip)}</div>
-          </details>
+        {visiblePaths.map((path) => {
+          const label = producedFileLabel(path)
+          return (
+            <span className="dsh-timeline__produced-entry" key={path}>
+              {onOpenLink === undefined ? (
+                <span className="dsh-timeline__produced-chip" title={path}>
+                  <Icon name="file" />
+                  <ContentFlow as="span" variant="truncate">
+                    {label}
+                  </ContentFlow>
+                </span>
+              ) : (
+                <button
+                  className="dsh-timeline__produced-chip"
+                  type="button"
+                  title={path}
+                  aria-label={t('timeline.openProduced', { name: path })}
+                  onClick={() => onOpenLink(path)}
+                >
+                  <Icon name="file" />
+                  <ContentFlow as="span" variant="truncate">
+                    {label}
+                  </ContentFlow>
+                </button>
+              )}
+              {perFileReveal ? (
+                <button
+                  className="dsh-icon-button dsh-timeline__produced-reveal"
+                  type="button"
+                  title={t('timeline.showFileInFolder', { name: label })}
+                  aria-label={t('timeline.showFileInFolder', { name: label })}
+                  onClick={() => onShowInFolder?.(path)}
+                >
+                  <Icon name="folder" />
+                </button>
+              ) : null}
+            </span>
+          )
+        })}
+        {hiddenCount > 0 ? (
+          <button
+            className="dsh-timeline__produced-chip dsh-timeline__produced-more"
+            type="button"
+            aria-expanded="false"
+            onClick={() => setExpanded(true)}
+          >
+            {t('timeline.producedFilesMore', { count: hiddenCount })}
+          </button>
         ) : null}
       </div>
       <CopyButton
@@ -140,11 +155,10 @@ export function renderProducedFiles(
         className="dsh-icon-button dsh-timeline__produced-copy"
         translate={t}
       />
-      {onShowInFolder === undefined ? null : (
+      {onShowInFolder === undefined || perFileReveal ? null : (
         <button
           className="dsh-button dsh-button--secondary dsh-button--compact dsh-timeline__show-folder"
           type="button"
-          title={t('timeline.showFileInFolder', { name: producedFileLabel(paths[0]!) })}
           onClick={() => onShowInFolder(paths[0]!)}
         >
           {t('timeline.showInFolder')}

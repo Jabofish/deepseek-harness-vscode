@@ -87,13 +87,12 @@ describe('ApprovalCard', () => {
     expect(screen.getByRole('button', { name: '拒绝' })).toBeDefined()
   })
 
-  it('hides unknown risk pill and shows cwd, target paths, and non-terminal details', () => {
+  it('hides unknown risk pill and shows target paths, and non-terminal details', () => {
     render(
       <I18nProvider>
         <ApprovalCard
           request={{ ...approvalRequest(), risk: 'unknown' }}
           disabled={false}
-          cwd="/workspace/app"
           paths={['src/index.ts', 'src/app.ts']}
           summary='{"path":"src/index.ts"}'
           onRespond={vi.fn()}
@@ -102,7 +101,6 @@ describe('ApprovalCard', () => {
     )
 
     expect(screen.queryByText(/not specified by DSH/i)).toBeNull()
-    expect(screen.getByText('/workspace/app')).toBeDefined()
     expect(screen.getByText('src/index.ts, src/app.ts')).toBeDefined()
     expect(screen.getByText('{"path":"src/index.ts"}')).toBeDefined()
   })

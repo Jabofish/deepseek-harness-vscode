@@ -270,12 +270,12 @@ export function WorkspaceCard({
 }
 
 function formatSessionUpdatedAt(
-  updatedAt: number | undefined,
+  updatedAt: string,
   locale: string,
 ): { readonly short: string; readonly full: string; readonly iso: string } | undefined {
-  if (updatedAt === undefined || !Number.isFinite(updatedAt) || updatedAt <= 0) return undefined
-  const date = new Date(updatedAt)
-  if (Number.isNaN(date.getTime())) return undefined
+  const time = Date.parse(updatedAt)
+  if (!Number.isFinite(time) || time <= 0) return undefined
+  const date = new Date(time)
   const now = new Date()
   const sameDay =
     date.getFullYear() === now.getFullYear() &&

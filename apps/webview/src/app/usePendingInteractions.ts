@@ -20,7 +20,6 @@ import {
 export interface PendingApproval {
   readonly request: PermissionRequest
   readonly command?: string | undefined
-  readonly cwd?: string | undefined
   readonly paths?: readonly string[] | undefined
   readonly summary?: string | undefined
   readonly contentPending: boolean
@@ -126,7 +125,6 @@ export function usePendingInteractions({
               return {
                 request,
                 command: context.command,
-                cwd: context.cwd,
                 paths: context.paths,
                 summary: context.summary,
                 contentPending: request.callId !== undefined && fullRequests.pendingIds.has(request.callId),

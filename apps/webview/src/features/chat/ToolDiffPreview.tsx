@@ -6,8 +6,6 @@ import { useI18n } from '../../i18n.js'
 interface DiffRow {
   readonly kind: 'path' | 'ctx' | 'del' | 'add' | 'gap'
   readonly text: string
-  readonly oldLine?: number
-  readonly newLine?: number
 }
 
 interface DiffProjection {
@@ -63,17 +61,9 @@ function renderRow(row: DiffRow, index: number): ReactElement {
       key={`${row.kind}:${index}:${row.text}`}
     >
       {row.kind === 'del' || row.kind === 'add' || row.kind === 'ctx' ? (
-        <>
-          <span className="dsh-tool-diff-preview__lineno" aria-hidden="true">
-            {row.oldLine === undefined ? '' : row.oldLine}
-          </span>
-          <span className="dsh-tool-diff-preview__lineno" aria-hidden="true">
-            {row.newLine === undefined ? '' : row.newLine}
-          </span>
-          <span className="dsh-tool-diff-preview__prefix" aria-hidden="true">
-            {row.kind === 'del' ? '- ' : row.kind === 'add' ? '+ ' : '  '}
-          </span>
-        </>
+        <span className="dsh-tool-diff-preview__prefix" aria-hidden="true">
+          {row.kind === 'del' ? '- ' : row.kind === 'add' ? '+ ' : '  '}
+        </span>
       ) : null}
       <span>{row.text}</span>
     </div>
@@ -95,18 +85,10 @@ function projectDiffs(diffs: ToolDiffRenderProps['diffs']): DiffProjection {
 
     const before = diff.oldText === null ? [] : contentLines(diff.oldText)
     const after = contentLines(diff.newText)
-    let oldNo = 1
-    let newNo = 1
     for (const entry of computeLineDiff(before, after)) {
-      if (entry.kind === 'add') {
-        rows.push({ ...entry, newLine: newNo++ })
-        added += 1
-      } else if (entry.kind === 'del') {
-        rows.push({ ...entry, oldLine: oldNo++ })
-        removed += 1
-      } else {
-        rows.push({ ...entry, oldLine: oldNo++, newLine: newNo++ })
-      }
+      rows.push(entry)
+      if (entry.kind === 'add') added += 1
+      else if (entry.kind === 'del') removed += 1
     }
   }
 

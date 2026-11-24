@@ -1074,6 +1074,7 @@ const useAppControllerImpl = () => {
     composerOnSubmit,
     composerOnToggleOpenFilePicker,
     composerFocusRequest,
+    focusComposer,
     composerOnFocusHandled,
     composerStatus,
     connectionKey,

@@ -51,7 +51,7 @@ interface CompanionSessionBinding {
   readonly backend: DshBackend
   readonly sessionId: string
   readonly service: EditorCompanionService
-  provider?: EditorCompanionProvider
+  provider?: EditorCompanionProvider | undefined
 }
 
 const MAX_CONCURRENT_COMPANION_SESSIONS = 16
@@ -682,6 +682,12 @@ export class EditorBridgeHost {
           }
           for (const boundSessionId of [...this.companions.keys()]) {
             if (!desiredSet.has(boundSessionId)) await this.stopCompanionSession(boundSessionId)
+          }
+          // A deliberate unbind bypasses the per-binding stop callback, so clear
+          // the shared status once no session keeps editor tools on.
+          if (!this.companionActive && !this.service.active) {
+            this.capabilities = []
+            this.status?.hide()
           }
           await this.autoShare()
         } while (this.syncRequested)

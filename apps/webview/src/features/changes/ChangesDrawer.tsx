@@ -267,24 +267,26 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
                       {change.relativePath.replace(/(?:^|[\\/])[^\\/]*$/u, '')}
                     </small>
                   </span>
-                  {count > 1 ? (
-                    <span className="dsh-changes-popover__edits-count">
-                      {t('changes.editsCount', { count })}
+                  <span className="dsh-changes-popover__meta">
+                    <span className="dsh-changes-popover__status-label">
+                      {t(`changes.status.${change.status}`)}
                     </span>
-                  ) : null}
-                  <span className="dsh-changes-popover__status-label">
-                    {t(`changes.status.${change.status}`)}
+                    {count > 1 ? (
+                      <span className="dsh-changes-popover__edits-count">
+                        {t('changes.editsCount', { count })}
+                      </span>
+                    ) : null}
+                    {change.additions !== undefined || change.deletions !== undefined ? (
+                      <span className="dsh-changes-popover__diff-stats">
+                        {`+${change.additions ?? 0} -${change.deletions ?? 0}`}
+                      </span>
+                    ) : null}
+                    {change.reviewState !== 'unreviewed' ? (
+                      <span className="dsh-changes-popover__review-state">
+                        {t(`changes.review.${change.reviewState}`)}
+                      </span>
+                    ) : null}
                   </span>
-                  {change.additions !== undefined || change.deletions !== undefined ? (
-                    <span className="dsh-changes-popover__diff-stats">
-                      {`+${change.additions ?? 0} -${change.deletions ?? 0}`}
-                    </span>
-                  ) : null}
-                  {change.reviewState !== 'unreviewed' ? (
-                    <span className="dsh-changes-popover__review-state">
-                      {t(`changes.review.${change.reviewState}`)}
-                    </span>
-                  ) : null}
                   <span className="dsh-changes-popover__evidence">
                     {t(`changes.evidence.${change.evidence}`)}
                   </span>

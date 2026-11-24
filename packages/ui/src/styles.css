@@ -751,6 +751,32 @@
   line-height: var(--dsh-tool-detail-line-height);
 }
 
+.dsh-tool-card__section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--dsh-space-2);
+  min-width: 0;
+}
+
+.dsh-tool-card__copy {
+  flex: 0 0 auto;
+  padding: 0 var(--dsh-space-1);
+  border: 0;
+  border-radius: var(--dsh-radius-sm);
+  color: var(--dsh-muted);
+  background: transparent;
+  font: inherit;
+  font-size: var(--dsh-tool-detail-font-size);
+  cursor: pointer;
+}
+
+.dsh-tool-card__copy:hover,
+.dsh-tool-card__copy:focus-visible {
+  color: var(--dsh-text);
+  background: var(--dsh-surface-soft);
+}
+
 .dsh-tool-card__section--error,
 .dsh-tool-row__section--error {
   border: 1px solid var(--dsh-danger);

@@ -17,7 +17,6 @@ import { SubagentActivityStrip } from './features/subagents/SubagentActivityStri
 import { SessionTitlePicker } from './features/sessions/SessionTitlePicker.js'
 import { displaySessionTitle } from './features/sessions/session-title.js'
 import { ConversationActionsMenu } from './features/shell/ConversationActionsMenu.js'
-import { PromptTemplatesDrawer } from './features/prompt-templates/PromptTemplatesDrawer.js'
 import { ExportDialog } from './features/export/ExportDialog.js'
 import { GoalsTasksStrip } from './features/goals/GoalsTasksStrip.js'
 import { Timeline } from './features/chat/Timeline.js'
@@ -31,6 +30,7 @@ import type { useAppController } from './AppController.js'
 import { CONVERSATION_VIEW_IDS } from './app/conversation-view-ids.js'
 import { useConversationLayout } from './app/ConversationLayoutProvider.js'
 import { useSurfaceFocusReport } from './app/useSurfaceFocusReport.js'
+import { setDraft } from './app/draft-store.js'
 
 export function AppView(props: ReturnType<typeof useAppController>): ReactElement {
   const layoutPreference = useConversationLayout()
@@ -59,6 +59,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
     composerOnCancel,
     composerOnCaptureEditorContext,
     composerFocusRequest,
+    focusComposer,
     composerOnFocusHandled,
     composerOnCommand,
     composerOnCommandQueryChange,
@@ -381,32 +382,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                     />
                     <div className="dsh-conversation__compact-menu">
                       <ConversationActionsMenu triggerRef={conversationActionsTriggerRef}>
-                        {(closeMenu) => (
-                          <>
-                            {compactActions(closeMenu)}
-                            <PromptTemplatesDrawer
-                              onOpenLink={timelineOnOpenLink}
-                              key={`prompt-templates-pending-${state.pendingSession?.revision ?? 0}`}
-                              templates={state.promptTemplates}
-                              loading={state.promptTemplatesLoading}
-                              onRefresh={() => store.refreshPromptTemplates(undefined)}
-                              onRead={(templateId) => store.readPromptTemplate(templateId)}
-                              onInsert={(templateId, variables) =>
-                                store.insertPromptTemplate(templateId, variables)
-                              }
-                              onCreate={(draft) => store.createPromptTemplate(draft)}
-                              onUpdate={(templateId, patch) => store.updatePromptTemplate(templateId, patch)}
-                              onDelete={(templateId) => store.deletePromptTemplate(templateId)}
-                              onApply={(text) => {
-                                setDraft((current) =>
-                                  current.trim() === '' ? text : `${current}\n\n${text}`,
-                                )
-                                setError(undefined)
-                                closeMenu()
-                              }}
-                            />
-                          </>
-                        )}
+                        {compactActions}
                       </ConversationActionsMenu>
                     </div>
                   </div>
@@ -728,27 +704,28 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                           })}
                       loadFullNode={(nodeId, signal) => store.loadTranscriptNode(nodeId, signal)}
                       loadFullContent={(nodeId) => store.loadTranscriptContent(nodeId)}
-                      onEditPrompt={(text) => setDraft(text)}
+                      onEditPrompt={(text) => {
+                        setDraft(text)
+                        focusComposer(active.id)
+                      }}
                       onRetryTurn={(reason) => {
                         if (activeRunning || backend.kind !== 'connected') return
-                        if (reason === 'max-steps' || reason === 'interrupted') {
-                          void store
-                            .sendPrompt(active.id, 'Continue.', [], state.busyEnter)
-                            .catch((err: unknown) => {
-                              setError(err instanceof Error ? err.message : t('app.error.sendPrompt'))
-                            })
-                          return
-                        }
+                        // DSH exposes no structured "resume turn" request, so continuing an
+                        // interrupted/token-limited turn is an explicit follow-up prompt and a
+                        // retry resends the latest prompt text (attachments are not replayed).
                         const lastUser = [...state.timeline.nodes]
                           .reverse()
                           .find((entry) => entry.kind === 'user-message' && entry.markdown.trim() !== '')
-                        if (lastUser?.kind === 'user-message') {
-                          void store
-                            .sendPrompt(active.id, lastUser.markdown, [], state.busyEnter)
-                            .catch((err: unknown) => {
-                              setError(err instanceof Error ? err.message : t('app.error.sendPrompt'))
-                            })
-                        }
+                        const text =
+                          reason === 'interrupted' || reason === 'max-tokens'
+                            ? t('timeline.continuePrompt')
+                            : lastUser?.kind === 'user-message'
+                              ? lastUser.markdown
+                              : undefined
+                        if (text === undefined) return
+                        void store.sendPrompt(active.id, text, [], state.busyEnter).catch((err: unknown) => {
+                          setError(err instanceof Error ? err.message : t('app.error.sendPrompt'))
+                        })
                       }}
                     />
                   ) : (
@@ -849,7 +826,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                         </button>
                       )}
                       {pendingPermissions.map(
-                        ({ request, command, cwd, paths, summary, contentPending, contentFailed }) => (
+                        ({ request, command, paths, summary, contentPending, contentFailed }) => (
                           <ApprovalCard
                             key={request.id}
                             request={request}
@@ -857,7 +834,6 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                             contentPending={contentPending}
                             contentFailed={contentFailed}
                             {...(command === undefined ? {} : { command })}
-                            {...(cwd === undefined ? {} : { cwd })}
                             {...(paths === undefined ? {} : { paths })}
                             {...(summary === undefined ? {} : { summary })}
                             onRespond={approvalRespondFor(request)}
