@@ -9,14 +9,16 @@ export interface TasksDrawerProps {
   readonly tasks: readonly TaskSummary[]
   readonly loading: boolean
   readonly scope?: TaskListScope
+  readonly includeCompleted?: boolean
   readonly complete?: boolean
   readonly omittedSessions?: number
   readonly alwaysVisible?: boolean
   readonly onRefresh: () => Promise<void>
   readonly onScopeChange?: (scope: TaskListScope) => Promise<void>
+  readonly onIncludeCompletedChange?: (includeCompleted: boolean) => Promise<void>
   readonly onOpen: (task: TaskSummary) => Promise<void>
   readonly onStop: (task: TaskSummary) => Promise<void>
-  readonly onAnswer: (task: TaskSummary, answer: string) => Promise<void>
+  readonly onAnswer?: (task: TaskSummary, answer: string) => Promise<void>
 }
 
 function live(task: TaskSummary): boolean {
@@ -34,8 +36,6 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
   const complete = props.complete ?? true
   const omittedSessions = props.omittedSessions ?? 0
   const [open, setOpen] = useState(false)
-  const [answering, setAnswering] = useState<string | undefined>()
-  const [answer, setAnswer] = useState('')
   const [failure, setFailure] = useState<string | undefined>(undefined)
   const [busy, setBusy] = useState(false)
   const pendingAction = useRef(false)
@@ -51,17 +51,13 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
     align: 'end',
   })
 
-  const answeringRowRef = useRef<HTMLLIElement>(null)
   useEffect(() => {
     if (busy) menuRef.current?.focus()
   }, [busy])
 
-  /** Dismissing the center also drops the inline draft, so reopening is clean. */
   const close = (): void => {
     actionGeneration.current += 1
     setOpen(false)
-    setAnswering(undefined)
-    setAnswer('')
     setFailure(undefined)
   }
 
@@ -92,15 +88,6 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
     refs: [rootRef, menuRef],
     onDismiss: close,
     onEscape: () => {
-      if (answering !== undefined) {
-        // The inline form is the innermost layer: the first Escape discards the
-        // draft and returns focus to the row it belongs to.
-        const row = answeringRowRef.current
-        setAnswering(undefined)
-        setAnswer('')
-        row?.querySelector<HTMLButtonElement>('button')?.focus()
-        return
-      }
       close()
       triggerRef.current?.focus()
     },
@@ -125,22 +112,17 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
         ? t('tasks.count.live', { count: liveCount })
         : t('tasks.count', { count: visibleTasks.length })
 
-  const submitAnswer = async (task: TaskSummary): Promise<void> => {
-    const interactionId = task.interactionId
-    if (interactionId === undefined || answer.trim() === '') return
-    const generation = actionGeneration.current
-    await runAction(async () => {
-      await props.onAnswer(task, answer)
-      if (generation !== actionGeneration.current) return
-      setAnswer('')
-      setAnswering(undefined)
-    })
-  }
-
   const changeScope = (next: TaskListScope): void => {
     const onScopeChange = props.onScopeChange
     if (next === scope || onScopeChange === undefined) return
     void runAction(() => onScopeChange(next))
+  }
+
+  const openTaskAndClose = (task: TaskSummary): void => {
+    void runAction(async () => {
+      await props.onOpen(task)
+      close()
+    })
   }
 
   return (
@@ -153,7 +135,10 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
         aria-label={countLabel}
         onClick={() => {
           if (open) close()
-          else setOpen(true)
+          else {
+            setOpen(true)
+            void runAction(() => props.onRefresh())
+          }
         }}
       >
         {needsInputCount > 0 ? <span className="dsh-tasks-popover__dot" data-state="warning" /> : null}
@@ -204,6 +189,19 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
             >
               {t('tasks.scope.workspace')}
             </button>
+            {props.onIncludeCompletedChange === undefined ? null : (
+              <button
+                type="button"
+                className="dsh-tasks-popover__scope-button"
+                aria-pressed={props.includeCompleted === true}
+                disabled={busy || props.loading}
+                onClick={() =>
+                  void runAction(() => props.onIncludeCompletedChange!(props.includeCompleted !== true))
+                }
+              >
+                {t('tasks.includeCompleted')}
+              </button>
+            )}
           </div>
           {scope === 'workspace' && (!complete || omittedSessions > 0) ? (
             <div className="dsh-tasks-popover__notice" role="status">
@@ -224,7 +222,6 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
             {visibleTasks.map((task) => (
               <li
                 key={task.taskId}
-                ref={answering === task.taskId ? answeringRowRef : undefined}
                 className="dsh-tasks-popover__row"
                 data-needs-input={task.needsUserAction}
               >
@@ -232,7 +229,7 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
                   type="button"
                   className="dsh-tasks-popover__main"
                   disabled={busy || !task.canOpen}
-                  onClick={() => void runAction(() => props.onOpen(task))}
+                  onClick={() => openTaskAndClose(task)}
                 >
                   <span
                     className="dsh-tasks-popover__status-dot"
@@ -248,6 +245,12 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
                   <span className="dsh-tasks-popover__title" title={task.title}>
                     {task.title}
                   </span>
+                  {task.progress === undefined ? null : (
+                    <span className="dsh-tasks-popover__meta">{task.progress}</span>
+                  )}
+                  {task.modelLabel === undefined ? null : (
+                    <span className="dsh-tasks-popover__meta">{task.modelLabel}</span>
+                  )}
                   <span className="dsh-tasks-popover__status">{t(taskStatusKey(task))}</span>
                 </button>
                 {task.canSessionCancel ? (
@@ -262,39 +265,15 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
                     <Icon name="stop" />
                   </button>
                 ) : null}
-                {task.canAnswer && task.interactionId !== undefined ? (
-                  answering === task.taskId ? (
-                    <form
-                      className="dsh-tasks-popover__answer"
-                      onSubmit={(event) => {
-                        event.preventDefault()
-                        void submitAnswer(task)
-                      }}
-                    >
-                      <input
-                        autoFocus
-                        value={answer}
-                        disabled={busy}
-                        aria-label={t('tasks.answerInput')}
-                        onChange={(event) => setAnswer(event.target.value)}
-                      />
-                      <button type="submit" disabled={busy || answer.trim() === ''}>
-                        {t('tasks.answer')}
-                      </button>
-                    </form>
-                  ) : (
-                    <button
-                      type="button"
-                      className="dsh-tasks-popover__answer-button"
-                      disabled={busy}
-                      onClick={() => {
-                        setAnswering(task.taskId)
-                        setAnswer('')
-                      }}
-                    >
-                      {t('tasks.answer')}
-                    </button>
-                  )
+                {task.needsUserAction && task.canOpen ? (
+                  <button
+                    type="button"
+                    className="dsh-tasks-popover__answer-button"
+                    disabled={busy}
+                    onClick={() => openTaskAndClose(task)}
+                  >
+                    {t('tasks.reviewInSession')}
+                  </button>
                 ) : null}
               </li>
             ))}

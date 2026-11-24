@@ -115,6 +115,10 @@ export function createFeatureRequestHandler(deps: FeatureRequestHandlerDependenc
     promptTemplateUseCases,
     currentWorkspaceFolders,
   } = deps
+  const requireTrustedWorkspace = (message: string): void => {
+    if (!vscode.workspace.isTrusted)
+      throw new AppError({ code: 'PERMISSION_DENIED', message, retryable: false })
+  }
   const handleFeatureRequest = async (request: FeatureRequest, signal: AbortSignal): Promise<unknown> => {
     if (
       request.type === 'billing.settings.read' ||
@@ -274,6 +278,7 @@ export function createFeatureRequestHandler(deps: FeatureRequestHandlerDependenc
         await userQuestions.releaseWait(request.payload.sessionId, request.payload.callId)
         return { kind: 'empty' }
       }
+      requireTrustedWorkspace('Trust the workspace before responding to DSH questions.')
       const answer: TimedUserQuestionAnswer = {
         answers: request.payload.answer.answers.map((item): TimedUserQuestionAnswerItem => {
           const projected = { id: item.id, selected: item.selected }
@@ -313,6 +318,13 @@ export function createFeatureRequestHandler(deps: FeatureRequestHandlerDependenc
       request.type === 'plugin.bundle.remove' ||
       request.type === 'plugin.entry.setEnabled'
     ) {
+      if (
+        request.type === 'plugin.bundle.install' ||
+        request.type === 'plugin.bundle.setEnabled' ||
+        request.type === 'plugin.bundle.remove' ||
+        request.type === 'plugin.entry.setEnabled'
+      )
+        requireTrustedWorkspace('Trust the workspace before modifying DSH plugins.')
       const backend = backendService.requireBackend()
       const bundles = new PluginBundleUseCases(backend)
       const present = (
@@ -581,7 +593,9 @@ export function createFeatureRequestHandler(deps: FeatureRequestHandlerDependenc
       request.type === 'tasks.open' ||
       request.type === 'tasks.stop' ||
       request.type === 'tasks.answer'
-    )
+    ) {
+      if (request.type === 'tasks.answer')
+        requireTrustedWorkspace('Trust the workspace before responding to DSH interactions.')
       return handleTaskFeatureRequest(request, signal, {
         taskUseCases,
         requireCurrentWorkspaceSession,
@@ -598,6 +612,7 @@ export function createFeatureRequestHandler(deps: FeatureRequestHandlerDependenc
           taskFocus.setScope(scope)
         },
       })
+    }
     if (
       request.type === 'prompt.template.list' ||
       request.type === 'prompt.template.read' ||

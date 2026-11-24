@@ -1,4 +1,4 @@
-import { useCallback, type ReactElement } from 'react'
+import { useCallback, useState, type ReactElement } from 'react'
 import type { AppStore } from '../../app/store.js'
 import { setDraft } from '../../app/draft-store.js'
 import type { useI18n } from '../../i18n.js'
@@ -76,6 +76,7 @@ export function ConversationActionItems({
   setError,
   t,
 }: ConversationActionItemsProps): ReactElement | null {
+  const [includeCompletedTasks, setIncludeCompletedTasks] = useState(false)
   const readDiagnostics = useCallback(() => store.readDiagnostics(), [store])
   if (activeId === undefined) return null
   return (
@@ -126,11 +127,16 @@ export function ConversationActionItems({
         tasks={state.tasks}
         loading={state.tasksLoading}
         scope={state.taskScope}
+        includeCompleted={includeCompletedTasks}
         complete={state.tasksComplete}
         omittedSessions={state.tasksOmittedSessions}
         alwaysVisible
-        onRefresh={() => store.refreshTasks(activeId, false, state.taskScope)}
-        onScopeChange={(scope) => store.refreshTasks(activeId, false, scope)}
+        onRefresh={() => store.refreshTasks(activeId, includeCompletedTasks, state.taskScope)}
+        onScopeChange={(scope) => store.refreshTasks(activeId, includeCompletedTasks, scope)}
+        onIncludeCompletedChange={async (include) => {
+          setIncludeCompletedTasks(include)
+          await store.refreshTasks(activeId, include, state.taskScope)
+        }}
         onOpen={async (task) => {
           if (task.sessionId === undefined) return
           // A subagent row names the child in `sourceId`; `sessionId` is its
@@ -141,12 +147,7 @@ export function ConversationActionItems({
         }}
         onStop={async (task) => {
           await store.stopTask(task.taskId, task.taskRevision)
-          await store.refreshTasks(activeId, false, state.taskScope)
-        }}
-        onAnswer={async (task, answer) => {
-          if (task.interactionId === undefined) return
-          await store.answerTask(task.taskId, task.interactionId, answer)
-          await store.refreshTasks(activeId, false, state.taskScope)
+          await store.refreshTasks(activeId, includeCompletedTasks, state.taskScope)
         }}
       />
       <CheckpointDrawer

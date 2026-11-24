@@ -57,31 +57,27 @@ function openDrawer(name = '1 needs input'): HTMLElement {
 describe('TasksDrawer failures', () => {
   afterEach(() => cleanup())
 
-  it('locks an answer while pending, keeps failed drafts and ignores errors after dismissal', async () => {
+  it('locks actions while pending and ignores errors after dismissal', async () => {
     let reject!: (reason: Error) => void
-    const onAnswer = vi.fn(
+    const onOpen = vi.fn(
       () =>
         new Promise<void>((_resolve, fail) => {
           reject = fail
         }),
     )
-    renderDrawer({ onAnswer })
+    renderDrawer({ onOpen })
     const trigger = openDrawer()
-    fireEvent.click(screen.getByRole('button', { name: 'Answer' }))
-    fireEvent.change(screen.getByRole('textbox', { name: 'Task answer' }), {
-      target: { value: 'retry this answer' },
-    })
-    const form = document.querySelector('form')!
-    fireEvent.submit(form)
-    fireEvent.submit(form)
-    expect(onAnswer).toHaveBeenCalledTimes(1)
-    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Answer' }).disabled).toBe(true)
+    await waitFor(() =>
+      expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Refresh tasks' }).disabled).toBe(false),
+    )
+    const reviewButton = screen.getByRole('button', { name: 'Review in session' })
+    fireEvent.click(reviewButton)
+    fireEvent.click(reviewButton)
+    expect(onOpen).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Review in session' }).disabled).toBe(true)
     reject(new Error('retryable failure'))
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('retryable failure'))
-    expect(screen.getByRole<HTMLInputElement>('textbox', { name: 'Task answer' }).value).toBe(
-      'retry this answer',
-    )
-    fireEvent.submit(form)
+    fireEvent.click(screen.getByRole('button', { name: 'Review in session' }))
     fireEvent.pointerDown(document.body)
     fireEvent.click(trigger)
     reject(new Error('late failure'))
@@ -95,26 +91,26 @@ describe('TasksDrawer failures', () => {
 describe('TasksDrawer', () => {
   afterEach(() => cleanup())
 
-  it('answers an actionable task through the explicit inline form', async () => {
-    const onAnswer = vi.fn().mockResolvedValue(undefined)
+  it('routes needs-input tasks directly to the owning session and closes the popover', async () => {
+    const onOpen = vi.fn().mockResolvedValue(undefined)
+    const onRefresh = vi.fn().mockResolvedValue(undefined)
     render(
       <I18nProvider>
         <TasksDrawer
-          tasks={[task]}
+          tasks={[{ ...task, progress: 'Step 2/4', modelLabel: 'deepseek-reasoner' }]}
           loading={false}
-          onRefresh={vi.fn().mockResolvedValue(undefined)}
-          onOpen={vi.fn().mockResolvedValue(undefined)}
+          onRefresh={onRefresh}
+          onOpen={onOpen}
           onStop={vi.fn().mockResolvedValue(undefined)}
-          onAnswer={onAnswer}
         />
       </I18nProvider>,
     )
     fireEvent.click(screen.getByRole('button', { name: '1 needs input' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Answer' }))
-    fireEvent.change(screen.getByRole('textbox', { name: 'Task answer' }), {
-      target: { value: 'yes' },
-    })
-    fireEvent.click(screen.getByRole('button', { name: 'Answer' }))
-    await waitFor(() => expect(onAnswer).toHaveBeenCalledWith(task, 'yes'))
+    await waitFor(() => expect(onRefresh).toHaveBeenCalledOnce())
+    expect(screen.getByText('Step 2/4')).toBeDefined()
+    expect(screen.getByText('deepseek-reasoner')).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Review in session' }))
+    await waitFor(() => expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ taskId: task.taskId })))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   })
 })
