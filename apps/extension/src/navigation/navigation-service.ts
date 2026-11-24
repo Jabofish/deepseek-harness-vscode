@@ -143,6 +143,8 @@ const MAX_DIFF_CHARS = 262_144
 const BASELINE_SCHEME = 'jabodsh-baseline'
 const BASELINE_LABEL = 'before this change'
 const MAX_BASELINES = 8
+const BASELINE_UNAVAILABLE =
+  'This earlier version is no longer available. Use Compare in editor in the Changes list again.\n'
 
 /** Read-only, in-memory "before" documents for the diff view; never written to disk. */
 class BaselineDocuments implements vscode.TextDocumentContentProvider {
@@ -154,17 +156,24 @@ class BaselineDocuments implements vscode.TextDocumentContentProvider {
     this.registration ??= workspace.registerTextDocumentContentProvider(BASELINE_SCHEME, this)
     const id = String((this.next += 1))
     this.contents.set(id, text)
-    while (this.contents.size > MAX_BASELINES) {
-      const oldest = this.contents.keys().next().value
-      if (oldest === undefined) break
-      this.contents.delete(oldest)
+    // A diff tab that is still open may ask for its content again, so only
+    // versions no editor shows are dropped to keep the cache bounded.
+    const open = new Set(
+      (workspace.textDocuments ?? [])
+        .filter((document) => document.uri.scheme === BASELINE_SCHEME)
+        .map((document) => document.uri.query),
+    )
+    for (const candidate of [...this.contents.keys()]) {
+      if (this.contents.size <= MAX_BASELINES) break
+      if (candidate !== id && !open.has(candidate)) this.contents.delete(candidate)
     }
     // The path keeps the file name, so the diff gets the right language mode.
     return vscode.Uri.from({ scheme: BASELINE_SCHEME, path: `/${relativePath}`, query: id })
   }
 
   public provideTextDocumentContent(uri: vscode.Uri): string {
-    return this.contents.get(uri.query) ?? ''
+    // An empty document would show the whole file as added.
+    return this.contents.get(uri.query) ?? BASELINE_UNAVAILABLE
   }
 
   public dispose(): void {

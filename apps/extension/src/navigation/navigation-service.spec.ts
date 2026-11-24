@@ -75,6 +75,7 @@ interface Harness {
   readonly revealRange: ReturnType<typeof vi.fn>
   readonly lines: string[]
   readonly registerProvider: Mock<(scheme: string, provider: unknown) => { dispose(): void }>
+  readonly textDocuments: { readonly uri: { readonly scheme: string; readonly query: string } }[]
 }
 
 interface NavigationDocument {
@@ -118,6 +119,7 @@ function createHarness(
     },
     openTextDocument,
     registerTextDocumentContentProvider: registerProvider,
+    textDocuments: [] as { readonly uri: { readonly scheme: string; readonly query: string } }[],
   }
   const window = { showTextDocument }
   const service = new NavigationService({
@@ -138,6 +140,7 @@ function createHarness(
     revealRange: editor.revealRange,
     lines: [...lines],
     registerProvider,
+    textDocuments: workspace.textDocuments,
   }
 }
 
@@ -231,6 +234,29 @@ describe('NavigationService', () => {
       provideTextDocumentContent(uri: unknown): string
     }
     expect(contentProvider.provideTextDocumentContent(baselineUri)).toBe('first\nsecond\nthird\n')
+  })
+
+  it('keeps earlier versions that an open diff still shows and never serves an empty one', async () => {
+    const root = temporaryRoot()
+    writeFileSync(path.join(root, 'a.ts'), 'first\nSECOND\nthird\n')
+    const harness = createHarness(root, ['first', 'SECOND', 'third'])
+    const open = (): Promise<void> =>
+      harness.service.openChangeDiff(harness.folderId, 'a.ts', 'modified', [
+        { oldText: 'first\nsecond\nthird', newText: 'first\nSECOND\nthird' },
+      ])
+    const uris: { readonly scheme: string; readonly query: string }[] = []
+    for (let index = 0; index < 10; index += 1) {
+      await open()
+      uris.push(harness.executeCommand.mock.calls.at(-1)![1] as { scheme: string; query: string })
+      // The first diff stays open in an editor tab; the others are closed.
+      if (index === 0) harness.textDocuments.push({ uri: uris[0]! })
+    }
+    const contentProvider = harness.registerProvider.mock.calls[0]![1] as {
+      provideTextDocumentContent(uri: unknown): string
+    }
+    expect(contentProvider.provideTextDocumentContent(uris[0])).toBe('first\nsecond\nthird\n')
+    expect(contentProvider.provideTextDocumentContent(uris[9])).toBe('first\nsecond\nthird\n')
+    expect(contentProvider.provideTextDocumentContent(uris[1])).toMatch(/no longer available/u)
   })
 
   it('refuses a diff when the file no longer matches the recorded change', async () => {
