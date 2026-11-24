@@ -1209,6 +1209,7 @@
   "plugins.manager.install.version": "Installed version: {version}.",
   "plugins.manager.install.buildApproval": "DSH blocked install scripts for: {names}",
   "plugins.manager.install.approveRetry": "Review script permission and retry",
+  "plugins.manager.install.tryAnotherWay": "Try another way",
   "plugins.manager.remove": "Remove",
   "plugins.manager.remove.named": "Remove {name}",
   "plugins.manager.remove.done": "The plugin bundle was removed.",

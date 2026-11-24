@@ -1209,6 +1209,7 @@
   "plugins.manager.install.version": "实际安装版本：{version}。",
   "plugins.manager.install.buildApproval": "DSH 阻止了以下安装脚本：{names}",
   "plugins.manager.install.approveRetry": "检查脚本权限并重试",
+  "plugins.manager.install.tryAnotherWay": "试试其他方式",
   "plugins.manager.remove": "移除",
   "plugins.manager.remove.named": "移除 {name}",
   "plugins.manager.remove.done": "插件扩展包已移除。",

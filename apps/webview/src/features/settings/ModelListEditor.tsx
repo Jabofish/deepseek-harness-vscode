@@ -50,6 +50,8 @@ export function ModelListEditor(props: ModelListEditorProps): ReactElement {
   const { t } = useI18n()
   const inputField = props.inputField ?? 'inputModalities'
   const [draft, setDraft] = useState<EditableModel[]>(() => props.models.map(copyModel))
+  const nextRowKeyRef = useRef(props.models.length)
+  const [rowKeys, setRowKeys] = useState<number[]>(() => props.models.map((_model, index) => index))
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set())
   const [editingCapacity, setEditingCapacity] = useState<ReadonlyMap<string, string>>(new Map())
   const [discovering, setDiscovering] = useState(false)
@@ -74,6 +76,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactElement {
     setSaved(false)
     const next = draft.filter((_model, at) => at !== index)
     setDraft(next)
+    setRowKeys((current) => current.filter((_key, at) => at !== index))
     props.onChange?.(next.map(copyModel))
     setExpanded((current) => shiftIndexes(current, index))
     setEditingCapacity((current) => shiftCapacityBuffers(current, index))
@@ -81,6 +84,8 @@ export function ModelListEditor(props: ModelListEditorProps): ReactElement {
 
   const add = (): void => {
     setSaved(false)
+    const nextKey = nextRowKeyRef.current++
+    setRowKeys((current) => [...current, nextKey])
     replaceDraft([...draft, { id: '' }])
   }
 
@@ -133,6 +138,8 @@ export function ModelListEditor(props: ModelListEditorProps): ReactElement {
         ...(model.inputModalities === undefined ? {} : { [inputField]: [...model.inputModalities] }),
       }))
     setSaved(false)
+    const addedKeys = additions.map(() => nextRowKeyRef.current++)
+    setRowKeys((current) => [...current, ...addedKeys])
     replaceDraft([...draft, ...additions])
     closeCandidates()
   }
@@ -194,7 +201,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactElement {
           const inheritedInput = inheritedInputTypes(model, props)
           const selectedInput = explicitInput ?? inheritedInput
           return (
-            <li key={`${index}:${model.id}`} className="dsh-settings__editable-model">
+            <li key={rowKeys[index] ?? index} className="dsh-settings__editable-model">
               <div className="dsh-settings__editable-model-row">
                 <label className="dsh-settings__editable-model-id">
                   <span className="dsh-settings__visually-hidden">{t('settings.modelId')}</span>

@@ -73,4 +73,27 @@ describe('ModelListEditor state notifications', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save model list' }))
     await waitFor(() => expect(onSave).toHaveBeenCalledWith([{ id: 'vision-model' }]))
   })
+
+  it('keeps the model ID input mounted and focused across keystrokes', () => {
+    render(
+      <ModelListEditor
+        models={[{ id: '' }]}
+        writable
+        saving={false}
+        discoveryInput={{ settingsNamespace: 'llm-deepseek', providerId: 'deepseek' }}
+        onSave={vi.fn().mockResolvedValue(undefined)}
+        onDiscover={vi.fn().mockResolvedValue([])}
+      />,
+    )
+
+    const input = screen.getByLabelText<HTMLInputElement>('Model ID')
+    input.focus()
+    expect(document.activeElement).toBe(input)
+
+    fireEvent.change(input, { target: { value: 'd' } })
+    expect(document.activeElement).toBe(input)
+    fireEvent.change(input, { target: { value: 'deepseek-chat' } })
+    expect(document.activeElement).toBe(input)
+    expect(input.value).toBe('deepseek-chat')
+  })
 })

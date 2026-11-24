@@ -279,6 +279,17 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
 
   const runInstall = async (approved?: readonly string[]): Promise<void> => {
     if (busyKey !== undefined || installBusy || props.onStartInstall === undefined) return
+    const retryTarget = approved !== undefined ? installOperation?.target : undefined
+    if (retryTarget !== undefined) {
+      setNotice(undefined)
+      setInspection(undefined)
+      setDismissedRecoveryRequestId(undefined)
+      await props.onStartInstall({
+        ...retryTarget,
+        approvedBuilds: [...approved],
+      })
+      return
+    }
     const value = spec.trim()
     if (value === '' || (selectedRegistry === undefined && registryView.selected === CUSTOM_REGISTRY)) return
     setNotice(undefined)
@@ -630,7 +641,7 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
                         type="button"
                         onClick={recoverGithubInstall}
                       >
-                        {locale === 'zh' ? '试试其他方式' : 'Try another way'}
+                        {t('plugins.manager.install.tryAnotherWay')}
                       </button>
                     ) : null}
                   </div>
