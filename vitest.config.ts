@@ -60,7 +60,12 @@ export default defineConfig({
         extends: true,
         test: {
           name: 'node',
-          pool: liveRun ? 'forks' : 'threads',
+          // Host tests do real file, process and build work. Worker threads
+          // share one process-wide libuv pool with the main thread's module
+          // transforms, which on loaded Windows machines queued 10-60 ms
+          // operations past the 5 s test timeout. Child processes each get
+          // their own pool (measured: slowest affected tests 3.3 s -> 0.26 s).
+          pool: 'forks',
           sequence: { groupOrder: 2 },
           include: [
             'apps/extension/**/*.spec.ts?(x)',
