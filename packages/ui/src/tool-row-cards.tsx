@@ -179,18 +179,22 @@ function renderSearchView(
   fallback: readonly ToolDetailBlock[],
   recovery: string | undefined,
 ): ReactElement {
+  let renderedByHost = false
   const card = tryHostRenderer(
     renderSearch === undefined
       ? undefined
-      : () =>
-          renderSearch({
+      : () => {
+          const element = renderSearch({
             view,
             ...(t === undefined ? {} : { translate: t }),
             ...(recovery === undefined ? {} : { recovery }),
-          }),
+          })
+          renderedByHost = true
+          return element
+        },
     () => (view.shape === 'matches' ? renderSearchMatches(view, t) : renderSections(fallback)),
   )
-  if (recovery === undefined) return card
+  if (recovery === undefined || renderedByHost) return card
   return (
     <>
       {card}

@@ -81,6 +81,12 @@ const INTERNAL_FIELDS = new Set([
   'messageid',
   'sessionid',
   'parentsessionid',
+  'turnid',
+  'attemptid',
+  'eventid',
+  'traceid',
+  'spanid',
+  'correlationid',
   'metadata',
   'type',
   'iserror',
@@ -596,7 +602,7 @@ function label(value: string, t?: PresentationTranslate): string {
 
 function isInternalField(value: string): boolean {
   const normalized = value.replace(/[_-]/gu, '').toLocaleLowerCase()
-  return INTERNAL_FIELDS.has(normalized) || normalized.startsWith('_') || normalized.endsWith('id')
+  return INTERNAL_FIELDS.has(normalized) || normalized.startsWith('_')
 }
 
 function object(value: unknown): Readonly<Record<string, unknown>> | undefined {

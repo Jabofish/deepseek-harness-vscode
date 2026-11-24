@@ -449,6 +449,8 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                             setError(reason instanceof Error ? reason.message : t('app.error.createSession')),
                           )
                         }}
+                        onOpenSessions={() => store.setDrawer('sessions')}
+                        onOpenSettings={() => store.setDrawer('settings')}
                       />
                     ) : (
                       <RuntimeConnectionView
