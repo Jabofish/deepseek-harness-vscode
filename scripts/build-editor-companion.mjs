@@ -34,14 +34,19 @@ if (process.argv.includes('--package-only')) {
 } else {
   const staging = await mkdtemp(path.join(os.tmpdir(), 'dsh-editor-companion-build-'))
   try {
+    // pnpm names its own entry: a JavaScript file (Corepack, pnpm 11 npm
+    // package) runs under this Node, a native executable (pnpm 12, the
+    // standalone installer) runs directly. Batch shims would need a shell.
     const pnpm = process.env.npm_execpath
-    if (pnpm === undefined || !/\.(?:c?js|mjs)$/u.test(pnpm))
+    if (pnpm === undefined || !path.isAbsolute(pnpm) || /\.(?:cmd|bat|ps1)$/iu.test(pnpm))
       throw new Error('Run the build through pnpm so its executable entry is explicit.')
-    const result = spawnSync(
-      process.execPath,
-      [pnpm, '--filter', '@dsh-vscode/editor-bridge', 'pack', '--pack-destination', staging],
-      { cwd: root, shell: false, stdio: 'inherit' },
-    )
+    const script = /\.(?:c?js|mjs)$/u.test(pnpm)
+    const packArgs = ['--filter', '@dsh-vscode/editor-bridge', 'pack', '--pack-destination', staging]
+    const result = spawnSync(script ? process.execPath : pnpm, script ? [pnpm, ...packArgs] : packArgs, {
+      cwd: root,
+      shell: false,
+      stdio: 'inherit',
+    })
     if (result.error !== undefined) throw result.error
     if (result.status !== 0) throw new Error('The editor companion bundle could not be packed.')
     const resources = path.join(root, 'apps/extension/resources')
