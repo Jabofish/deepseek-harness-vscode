@@ -35,6 +35,10 @@ export default defineConfig({
     ...(liveRun ? { fileParallelism: false } : {}),
     exclude,
     tags: [{ name: 'stress', skip: true }],
+    // Reuse transformed modules from the previous run. The cache is keyed by
+    // each file's content and the config, so it is safe across edits; on a
+    // warm cache a full Windows run spends 44 s instead of 168 s transforming.
+    experimental: { fsModuleCache: true, fsModuleCachePath: 'node_modules/.cache/vitest' },
     projects: [
       {
         extends: true,
