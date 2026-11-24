@@ -1301,4 +1301,40 @@ describe('App connected rendering', () => {
     )
     expect(sendPrompt).not.toHaveBeenCalled()
   })
+
+  it('keeps the attachment retry warning with the conversation that raised it', async () => {
+    const state = connectedState(true)
+    const withPrompt: AppState = {
+      ...state,
+      sessions: [
+        ...state.sessions,
+        {
+          id: 's2',
+          title: 'Another',
+          workspaceId: 'w1',
+          blank: false,
+          status: 'idle' as const,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      workspaces: [{ ...state.workspaces[0]!, sessionIds: ['s1', 's2'], sessionCount: 2 }],
+      timeline: {
+        ...state.timeline,
+        nodes: [
+          {
+            kind: 'user-message',
+            id: 'user-1',
+            markdown: 'summarise the report',
+            attachments: [{ name: 'report.pdf', mimeType: 'application/pdf' }],
+          },
+        ],
+      },
+    }
+    const { updateState } = renderWithMutableState(withPrompt)
+    fireEvent.click(screen.getByRole('button', { name: 'Mock retry turn' }))
+    expect(await screen.findByText(/cannot be resent automatically/u)).toBeDefined()
+    updateState({ ...withPrompt, activeSessionId: 's2' })
+    await waitFor(() => expect(screen.queryByText(/cannot be resent automatically/u)).toBeNull())
+  })
 })

@@ -173,7 +173,8 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
   useSurfaceFocusReport(store.reportSurfaceFocus)
   const readDiagnostics = useCallback(() => store.readDiagnostics(), [store])
   const [inspectorOpenRequestId, setInspectorOpenRequestId] = useState<string>()
-  const [retryNotice, setRetryNotice] = useState<string>()
+  // Belongs to the conversation whose retry raised it; another chat never shows it.
+  const [retryNotice, setRetryNotice] = useState<{ readonly sessionId: string; readonly message: string }>()
   // Recalling a prompt reads the conversation's own durable messages; a new
   // draft has no transcript yet, so its history stays empty.
   const promptHistoryOwner = `${state.connectionEpoch}:${state.timeline.sessionId ?? ''}`
@@ -263,11 +264,11 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
       onDismiss: () => setError(undefined),
     })
   }
-  if (retryNotice !== undefined) {
+  if (retryNotice !== undefined && retryNotice.sessionId === state.activeSessionId) {
     notices.push({
       id: 'retry-attachments',
       tone: 'warning',
-      title: retryNotice,
+      title: retryNotice.message,
       dismissLabel: t('app.dismissError'),
       onDismiss: () => setRetryNotice(undefined),
     })
@@ -772,7 +773,10 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                           // question; hand the text back so the user can re-attach.
                           setDraft(text)
                           focusComposer(active.id)
-                          setRetryNotice(t('timeline.retryNeedsAttachments'))
+                          setRetryNotice({
+                            sessionId: active.id,
+                            message: t('timeline.retryNeedsAttachments'),
+                          })
                           return
                         }
                         void store.sendPrompt(active.id, text, [], state.busyEnter).catch((err: unknown) => {
