@@ -16,7 +16,14 @@ import './billing.css'
 import { BillingRulesEditor, type BillingRules } from './BillingRulesEditor.js'
 import { BillingModelList } from './BillingModelList.js'
 import { Icon } from '../../ui/Icon.js'
+import { SelectMenu } from '../../components/common/SelectMenu.js'
 import { billingDateLabel } from './billing-time.js'
+import {
+  BILLING_CURRENCY_OPTIONS,
+  useBillingCurrencyPreference,
+  writeBillingCurrencyPreference,
+  type BillingCurrencyPreference,
+} from './billing-currency-preference.js'
 
 type Draft = {
   [
@@ -58,20 +65,57 @@ function draftPrice(draft: Draft, rules: BillingRules): BillingPrice | undefined
   return value.success ? value.data : undefined
 }
 
+const DRAFT_FIELDS = [
+  'providerId',
+  'modelId',
+  'currency',
+  'input',
+  'output',
+  'cacheRead',
+  'cacheWrite',
+  'reasoning',
+] as const
+/** Draft fields the price schema rejects, in form order; `rules` covers the rest. */
+function draftIssues(draft: Draft, rules: BillingRules): readonly string[] {
+  const value = billingPriceSchema.safeParse({
+    ...draft,
+    ...rules,
+    cacheRead: draft.cacheRead === '' ? undefined : draft.cacheRead,
+    cacheWrite: draft.cacheWrite === '' ? undefined : draft.cacheWrite,
+    reasoning: draft.reasoning === '' ? undefined : draft.reasoning,
+  })
+  if (value.success) return []
+  const fields = new Set(value.error.issues.map((issue) => String(issue.path[0] ?? '')))
+  const known = DRAFT_FIELDS.filter((field) => fields.has(field))
+  return known.length < fields.size ? [...known, 'rules'] : known
+}
+function fieldLabel(field: string, t: (key: string) => string): string {
+  if (field === 'providerId' || field === 'modelId' || field === 'currency') return t(`billing.${field}`)
+  if (field === 'rules') return t('billing.invalidRules')
+  return t(`billing.rate.${field}`)
+}
+
 export function BillingSettings(props: {
   readonly request: BillingClient
   readonly models: readonly ModelDescriptor[]
 }): ReactElement {
   const { t } = useI18n()
-  const [open, setOpen] = useState(false)
+  // Mount on first open and keep the editor afterwards, so collapsing the
+  // section never discards a price the user has not saved yet.
+  const [opened, setOpened] = useState(false)
   return (
-    <details className="dsh-billing" onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <details
+      className="dsh-billing"
+      onToggle={(event) => {
+        if (event.currentTarget.open) setOpened(true)
+      }}
+    >
       <summary className="dsh-billing__summary">
         <Icon name="wallet" />
         <span>{t('billing.settings')}</span>
         <Icon name="chevron-down" />
       </summary>
-      {open ? <BillingPriceEditor {...props} /> : null}
+      {opened ? <BillingPriceEditor {...props} /> : null}
     </details>
   )
 }
@@ -81,6 +125,7 @@ function BillingPriceEditor(props: {
   readonly models: readonly ModelDescriptor[]
 }): ReactElement {
   const { t, locale } = useI18n()
+  const currencyPreference = useBillingCurrencyPreference()
   const { send, isAlive } = useBillingClient(props.request)
   const [snapshot, setSnapshot] = useState<BillingSettingsResponse>()
   const [enabled, setEnabled] = useState(false)
@@ -104,6 +149,7 @@ function BillingPriceEditor(props: {
   const [referenceTime, setReferenceTime] = useState<string>()
   const providersId = useId()
   const modelsId = useId()
+  const issuesId = useId()
   const operation = useRef(0)
   const catalogOperation = useRef(0)
   const appliedQuery = useRef('')
@@ -236,6 +282,15 @@ function BillingPriceEditor(props: {
     }
   }
   const price = draftPrice(draft, rules)
+  const currencyLabel = (option: BillingCurrencyPreference): string =>
+    option === 'auto' ? t('billing.displayCurrency.auto') : option
+  const issues = price === undefined ? draftIssues(draft, rules) : []
+  // Live search: a short pause after typing reloads the catalog.
+  useEffect(() => {
+    if (snapshot === undefined || query === appliedQuery.current) return
+    const timer = window.setTimeout(() => void loadCatalog(snapshot, 0, query), 250)
+    return () => window.clearTimeout(timer)
+  }, [loadCatalog, query, snapshot])
   const prices = snapshot?.settings.prices ?? []
   const withoutDraft = prices.filter(
     (p) =>
@@ -306,6 +361,22 @@ function BillingPriceEditor(props: {
           />
           {t('billing.automatic')}
         </label>
+        <div className="dsh-billing__currency">
+          <span>{t('billing.displayCurrency')}</span>
+          <SelectMenu
+            icon="wallet"
+            density="regular"
+            label={currencyLabel(currencyPreference)}
+            ariaLabel={t('billing.displayCurrency')}
+            title={t('billing.displayCurrency')}
+            value={currencyPreference}
+            options={BILLING_CURRENCY_OPTIONS.map((option) => ({
+              value: option,
+              label: currencyLabel(option),
+            }))}
+            onChange={(value) => writeBillingCurrencyPreference(value as BillingCurrencyPreference)}
+          />
+        </div>
         <div className="dsh-billing__control-actions">
           {configurationChanged ? (
             <button
@@ -331,6 +402,7 @@ function BillingPriceEditor(props: {
           </button>
         </div>
       </fieldset>
+      <p className="dsh-billing__message">{t('billing.scopeNote')}</p>
       <fieldset className="dsh-billing__content" disabled={busy || snapshot === undefined}>
         {editorOpen ? (
           <form
@@ -470,10 +542,18 @@ function BillingPriceEditor(props: {
                 </p>
               )}
             </details>
+            {issues.length === 0 ? null : (
+              <p className="dsh-billing__error" id={issuesId}>
+                {t('billing.invalidFields', {
+                  fields: issues.map((field) => fieldLabel(field, t)).join(t('settings.listSeparator')),
+                })}
+              </p>
+            )}
             <div className="dsh-billing__form-actions">
               <button
                 className="dsh-billing__primary"
                 type="submit"
+                aria-describedby={issues.length === 0 ? undefined : issuesId}
                 disabled={price === undefined || withoutDraft.length >= 256}
               >
                 <Icon name="check" />
@@ -502,21 +582,13 @@ function BillingPriceEditor(props: {
             >
               <Icon name="search" />
               <input
+                type="search"
                 aria-label={t('billing.searchModels')}
                 placeholder={t('billing.searchModels')}
                 value={query}
                 maxLength={128}
                 onChange={(event) => setQuery(event.target.value)}
               />
-              <button
-                className="dsh-billing__icon-button"
-                type="submit"
-                disabled={catalogBusy}
-                aria-label={t('billing.refreshModels')}
-                title={t('billing.refreshModels')}
-              >
-                <Icon name="refresh" />
-              </button>
             </form>
             {catalogFailed ? (
               <p className="dsh-billing__error" role="alert">

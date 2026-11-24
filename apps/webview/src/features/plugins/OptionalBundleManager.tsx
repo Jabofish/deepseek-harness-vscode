@@ -213,7 +213,7 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
     [locale, normalizedSearch, standalonePlugins],
   )
   const availableRegistries = registryOptions(registryView.catalog)
-  const registryMenuOptions = registryChoices(availableRegistries, registryView, t, locale)
+  const registryMenuOptions = registryChoices(availableRegistries, registryView, t)
   const registryMenuLabel =
     registryMenuOptions.find((option) => option.value === registryView.selected)?.label ??
     t('plugins.manager.registry.label')

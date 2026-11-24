@@ -6,6 +6,7 @@ import {
 } from '@dsh-vscode/domain'
 import { type BillingEstimateResponse, type FeatureHostEvent } from '@dsh-vscode/webview-protocol'
 import { useI18n } from '../../i18n.js'
+import { resolveBillingCurrency, useBillingCurrencyPreference } from './billing-currency-preference.js'
 import { StatsPopover } from '../chat/StatsPopover.js'
 import type { BillingClient } from './billing-client.js'
 import { useBillingEstimate } from './billing-estimate-cache.js'
@@ -33,7 +34,8 @@ export function BillingCost(props: {
   readonly cacheScope?: string
 }): ReactElement | null {
   const { t, locale } = useI18n()
-  const currency: BillingDisplayCurrency = locale === 'zh' ? 'CNY' : 'USD'
+  const currencyPreference = useBillingCurrencyPreference()
+  const currency: BillingDisplayCurrency = resolveBillingCurrency(currencyPreference, locale)
   const { request, subscribe, sessionId, usageKey } = props
   const { estimate, failed, refreshing, refresh, refreshIfStale } = useBillingEstimate(
     request,

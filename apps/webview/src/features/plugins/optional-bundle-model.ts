@@ -165,7 +165,6 @@ export function registryChoices(
   registries: readonly PluginRegistry[],
   view: RegistryView,
   t: Translate,
-  locale: string,
 ): readonly SelectMenuOption[] {
   return [
     ...registries.map((registry) => ({
@@ -176,35 +175,31 @@ export function registryChoices(
               name:
                 view.catalog?.resolved === null || view.catalog === null
                   ? t('plugins.manager.registry.current')
-                  : registrySourceLabel(view.catalog.resolved, locale),
+                  : registrySourceLabel(view.catalog.resolved, t),
             })
-          : registrySourceLabel(registry, locale),
+          : registrySourceLabel(registry, t),
     })),
     { value: CUSTOM_REGISTRY, label: t('plugins.manager.registry.custom') },
   ]
 }
 
 /** Give well-known sources their own names and keep private registry paths out of the picker. */
-export function registrySourceLabel(value: string, locale: string): string {
+export function registrySourceLabel(value: string, t: Translate): string {
   let host: string
   try {
     host = new URL(value).host
   } catch {
-    return locale === 'zh' ? '其他注册源' : 'Other registry'
+    return t('plugins.manager.registry.other')
   }
   const normalizedHost = host.toLowerCase()
   const name =
     normalizedHost === 'registry.npmjs.org'
-      ? locale === 'zh'
-        ? 'npm 官方源'
-        : 'Official npm registry'
+      ? t('plugins.manager.registry.npm')
       : normalizedHost === 'registry.npmmirror.com'
-        ? locale === 'zh'
-          ? '中国大陆镜像源'
-          : 'Mainland China mirror'
+        ? t('plugins.manager.registry.mirror')
         : undefined
   if (name === undefined) return host
-  return locale === 'zh' ? `${name}（${host}）` : `${name} (${host})`
+  return t('plugins.manager.registry.named', { name, host })
 }
 
 export function isGithubSpec(spec: string): boolean {
