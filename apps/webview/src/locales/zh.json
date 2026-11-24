@@ -1540,6 +1540,7 @@
   "timeline.cancelOpen": "取消",
   "timeline.retryOpen": "重试",
   "timeline.retryTurn": "重试",
+  "timeline.retryNeedsAttachments": "上一条消息带有附件，附件无法自动重发。文字已放回输入框，请重新添加附件后发送。",
   "timeline.continueTurn": "继续",
   "timeline.continuePrompt": "继续。",
   "message.actions": "消息操作",

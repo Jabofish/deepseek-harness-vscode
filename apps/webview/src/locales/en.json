@@ -1540,6 +1540,7 @@
   "timeline.cancelOpen": "Cancel",
   "timeline.retryOpen": "Retry",
   "timeline.retryTurn": "Retry",
+  "timeline.retryNeedsAttachments": "The last prompt had attachments, which cannot be resent automatically. Its text is back in the input box: add the files again, then send.",
   "timeline.continueTurn": "Continue",
   "timeline.continuePrompt": "Continue.",
   "message.actions": "Message actions",

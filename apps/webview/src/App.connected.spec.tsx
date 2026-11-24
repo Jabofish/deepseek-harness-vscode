@@ -19,6 +19,7 @@ vi.mock('./features/chat/Timeline.js', () => ({
     readonly transcriptView?: string
     readonly performanceUsage?: string
     readonly codingToolsEnabled?: boolean
+    readonly onRetryTurn?: (reason: 'failed') => void
   }) => (
     <div
       data-testid="timeline"
@@ -27,6 +28,11 @@ vi.mock('./features/chat/Timeline.js', () => ({
       data-coding-tools-enabled={props.codingToolsEnabled}
     >
       Timeline
+      {props.onRetryTurn === undefined ? null : (
+        <button type="button" onClick={() => props.onRetryTurn?.('failed')}>
+          Mock retry turn
+        </button>
+      )}
     </div>
   ),
 }))
@@ -1259,5 +1265,39 @@ describe('App connected rendering', () => {
     // The request itself names the tool, not the command: what the user is
     // authorizing only exists on the paired call.
     expect(screen.getByText(command)).toBeDefined()
+  })
+
+  it('resends a failed text prompt but hands an attachment prompt back to the composer', async () => {
+    const sendPrompt = vi.fn().mockResolvedValue(undefined)
+    const state = connectedState(true)
+    const withPrompt = (attachments: boolean): AppState => ({
+      ...state,
+      timeline: {
+        ...state.timeline,
+        nodes: [
+          {
+            kind: 'user-message',
+            id: 'user-1',
+            markdown: 'summarise the report',
+            ...(attachments ? { attachments: [{ name: 'report.pdf', mimeType: 'application/pdf' }] } : {}),
+          },
+        ],
+      },
+    })
+    currentStore = { ...storeFor(withPrompt(false)), sendPrompt }
+    const plain = render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Mock retry turn' }))
+    await waitFor(() => expect(sendPrompt).toHaveBeenCalledWith('s1', 'summarise the report', [], 'queue'))
+    plain.unmount()
+
+    sendPrompt.mockClear()
+    currentStore = { ...storeFor(withPrompt(true)), sendPrompt }
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Mock retry turn' }))
+    expect(await screen.findByText(/cannot be resent automatically/u)).toBeDefined()
+    expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' }).value).toBe(
+      'summarise the report',
+    )
+    expect(sendPrompt).not.toHaveBeenCalled()
   })
 })

@@ -173,6 +173,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
   useSurfaceFocusReport(store.reportSurfaceFocus)
   const readDiagnostics = useCallback(() => store.readDiagnostics(), [store])
   const [inspectorOpenRequestId, setInspectorOpenRequestId] = useState<string>()
+  const [retryNotice, setRetryNotice] = useState<string>()
   // Recalling a prompt reads the conversation's own durable messages; a new
   // draft has no transcript yet, so its history stays empty.
   const promptHistoryOwner = `${state.connectionEpoch}:${state.timeline.sessionId ?? ''}`
@@ -260,6 +261,15 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
       title: error,
       dismissLabel: t('app.dismissError'),
       onDismiss: () => setError(undefined),
+    })
+  }
+  if (retryNotice !== undefined) {
+    notices.push({
+      id: 'retry-attachments',
+      tone: 'warning',
+      title: retryNotice,
+      dismissLabel: t('app.dismissError'),
+      onDismiss: () => setRetryNotice(undefined),
     })
   }
   if (showConnectionAlert) {
@@ -740,7 +750,8 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                         if (activeRunning || backend.kind !== 'connected') return
                         // DSH exposes no structured "resume turn" request, so continuing an
                         // interrupted/token-limited turn is an explicit follow-up prompt and a
-                        // retry resends the latest prompt text (attachments are not replayed).
+                        // retry resends the latest prompt text. Attachments are recorded by name
+                        // only and cannot be replayed, so such a prompt returns to the composer.
                         const lastUser = [...state.timeline.nodes]
                           .reverse()
                           .find((entry) => entry.kind === 'user-message' && entry.markdown.trim() !== '')
@@ -751,6 +762,19 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                               ? lastUser.markdown
                               : undefined
                         if (text === undefined) return
+                        const hadAttachments =
+                          reason !== 'interrupted' &&
+                          reason !== 'max-tokens' &&
+                          lastUser?.kind === 'user-message' &&
+                          ((lastUser.attachments?.length ?? 0) > 0 || (lastUser.images?.length ?? 0) > 0)
+                        if (hadAttachments) {
+                          // A resend without its files would silently answer a different
+                          // question; hand the text back so the user can re-attach.
+                          setDraft(text)
+                          focusComposer(active.id)
+                          setRetryNotice(t('timeline.retryNeedsAttachments'))
+                          return
+                        }
                         void store.sendPrompt(active.id, text, [], state.busyEnter).catch((err: unknown) => {
                           setError(err instanceof Error ? err.message : t('app.error.sendPrompt'))
                         })
