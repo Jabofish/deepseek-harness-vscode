@@ -90,4 +90,22 @@ describe('composer draft persistence', () => {
     expect(readDraft()).toBe('other chat')
     store.dispose()
   })
+
+  it('keeps the most recently edited drafts when more conversations have one than are saved', () => {
+    vi.useFakeTimers()
+    const store = createAppStore(client)
+    adoptSavedDrafts(() => store.takeSavedDrafts?.() ?? {})
+    for (let index = 0; index < 21; index += 1) {
+      activateDraftOwner(`session-${index}`)
+      setDraft(`draft ${index}`)
+    }
+    activateDraftOwner('session-0')
+    setDraft('draft 0, still being written')
+    vi.advanceTimersByTime(300)
+    const saved = (vscodeState.value as { drafts: Record<string, string> }).drafts
+    expect(Object.keys(saved)).toHaveLength(20)
+    expect(saved['session-0']).toBe('draft 0, still being written')
+    expect(saved['session-1']).toBeUndefined()
+    store.dispose()
+  })
 })

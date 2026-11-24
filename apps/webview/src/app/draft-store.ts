@@ -56,6 +56,12 @@ function createDraftStore(): DraftStore {
     }
     return key
   }
+  // Re-inserting moves an edited draft to the end, so the saved set keeps the
+  // most recently edited conversations when it has to drop some.
+  const write = (key: string, text: string): void => {
+    drafts.delete(key)
+    if (text !== '') drafts.set(key, text)
+  }
   const announce = (): void => {
     for (const listener of listeners) listener()
   }
@@ -65,9 +71,7 @@ function createDraftStore(): DraftStore {
       const next = typeof action === 'function' ? action(current) : action
       if (next === current) return
       current = next
-      const key = keyFor(activeOwner)
-      if (next === '') drafts.delete(key)
-      else drafts.set(key, next)
+      write(keyFor(activeOwner), next)
       announce()
     },
     subscribe: (listener) => {
@@ -86,8 +90,7 @@ function createDraftStore(): DraftStore {
       const base = target === activeOwner ? current : (drafts.get(key) ?? '')
       const next = typeof action === 'function' ? action(base) : action
       if (next === base) return
-      if (next === '') drafts.delete(key)
-      else drafts.set(key, next)
+      write(key, next)
       if (target === activeOwner) current = next
       announce()
     },
