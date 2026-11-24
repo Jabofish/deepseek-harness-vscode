@@ -35,4 +35,14 @@ describe('reconstructChangeBaseline', () => {
     ).toBeUndefined()
     expect(reconstructChangeBaseline('a\n', 'modified', [])).toBeUndefined()
   })
+
+  it('undoes edits applied in sequence even when a later edit sits above an earlier one', () => {
+    // Edit 1 changed line 5, edit 2 then changed line 1 of the result.
+    const current = 'ONE\n2\n3\n4\nFIVE\n'
+    const diffs = [
+      { oldText: '5', newText: 'FIVE' },
+      { oldText: '1', newText: 'ONE' },
+    ]
+    expect(reconstructChangeBaseline(current, 'modified', diffs)).toBe('1\n2\n3\n4\n5\n')
+  })
 })

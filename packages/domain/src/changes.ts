@@ -226,11 +226,16 @@ export function reconstructChangeBaseline(
     const newText = normalize(diff.newText)
     if (newText === '') return undefined
     if (diff.oldText === null && newText === text) return undefined
-    if (newText.length > searchEnd) return undefined
-    const at = text.lastIndexOf(newText, searchEnd - newText.length)
+    // Hunks of one diff are in file order, so each lies before the next.
+    // Edits a multi-edit tool applied in sequence need not be; once that
+    // order fails, undo the rest against the whole text, latest edit first.
+    let at = newText.length > searchEnd ? -1 : text.lastIndexOf(newText, searchEnd - newText.length)
+    const ordered = at >= 0
+    if (!ordered) at = text.lastIndexOf(newText)
     if (at < 0) return undefined
-    text = `${text.slice(0, at)}${diff.oldText === null ? '' : normalize(diff.oldText)}${text.slice(at + newText.length)}`
-    searchEnd = at
+    const oldText = diff.oldText === null ? '' : normalize(diff.oldText)
+    text = `${text.slice(0, at)}${oldText}${text.slice(at + newText.length)}`
+    searchEnd = ordered ? at : text.length
   }
   return text
 }
