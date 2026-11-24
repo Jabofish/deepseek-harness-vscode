@@ -467,8 +467,14 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
       if (request.payload.replaceCurrent === true) {
         if (surfaceId === undefined || surfaces.get(surfaceId)?.kind !== 'editor')
           throw surfaceRoutesUnavailable()
-        manager.bind(surfaceId, request.payload.sessionId, editorTabTitle(request.payload.title))
-        selectDisplayedSession(surfaceId, request.payload.sessionId)
+        const surface = manager.bind(
+          surfaceId,
+          request.payload.sessionId,
+          editorTabTitle(request.payload.title),
+        )
+        selectDisplayedSession(surface.surfaceId, request.payload.sessionId)
+        sessionNavigation.select(request.payload.sessionId)
+        return { surface: 'editor' as const, rebound: surface.surfaceId === surfaceId }
       } else {
         const surface = manager.open(request.payload.sessionId, editorTabTitle(request.payload.title))
         selectDisplayedSession(surface.surfaceId, request.payload.sessionId)
@@ -516,7 +522,12 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
         'id' in result &&
         typeof result.id === 'string'
       ) {
-        if (currentSelection) {
+        // The editor's creation receipt may refer to a session in another tab.
+        // Its binding request will select the tab that actually shows it.
+        if (
+          currentSelection &&
+          (request.type !== 'session.create' || surfaces.get(targetSurface)?.kind !== 'editor')
+        ) {
           selectDisplayedSession(targetSurface, result.id)
           sessionNavigation.select(result.id)
         }

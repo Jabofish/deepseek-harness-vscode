@@ -5,6 +5,7 @@ const host = vi.hoisted(() => {
   const panels: {
     readonly title: string
     disposeCount: number
+    revealCount: number
     receive(message: unknown): void
     setVisible(visible: boolean): void
   }[] = []
@@ -19,6 +20,7 @@ const host = vi.hoisted(() => {
     sessionGate: undefined as Promise<void> | undefined,
     createGate: undefined as Promise<void> | undefined,
     createStarted: false,
+    reuseBlank: false,
     connectCount: 0,
     windowFocused: false,
     responseRendered: vi.fn(() => ({ bell: true })),
@@ -48,6 +50,7 @@ vi.mock('vscode', () => ({
       const panel = {
         title,
         disposeCount: 0,
+        revealCount: 0,
         visible: true,
         webview: {
           options: undefined,
@@ -73,7 +76,9 @@ vi.mock('vscode', () => ({
           panel.visible = visible
           for (const listener of visibilityListeners) listener()
         },
-        reveal: () => undefined,
+        reveal: () => {
+          panel.revealCount += 1
+        },
         dispose: () => {
           panel.disposeCount += 1
           for (const listener of [...listeners]) listener()
@@ -157,6 +162,7 @@ function buildGateway(): Harness {
   host.sessionGate = undefined
   host.createGate = undefined
   host.createStarted = false
+  host.reuseBlank = false
   host.connectCount = 0
   host.windowFocused = false
   host.responseRendered.mockClear()
@@ -180,6 +186,13 @@ function buildGateway(): Harness {
   const watchReleased: string[] = []
   const watchVisibility: { readonly surfaceId: string; readonly visible: boolean }[] = []
   let sidebarVisible: ((visible: boolean) => void) | undefined
+  const backend = {
+    get connection() {
+      return { capabilities: { blankSessionReuse: host.reuseBlank } }
+    },
+    sessions: { rename: () => Promise.resolve(host.renamedTitle) },
+    subagents: { parentOf: (id: string) => (id === 'child-1' ? 'session-1' : undefined) },
+  }
   const gateway = createRequestGateway({
     responseRendered: host.responseRendered,
     transcript,
@@ -224,10 +237,7 @@ function buildGateway(): Harness {
     },
     backendService: {
       replayEvents: () => [],
-      requireBackend: () => ({
-        sessions: { rename: () => Promise.resolve(host.renamedTitle) },
-        subagents: { parentOf: (id: string) => (id === 'child-1' ? 'session-1' : undefined) },
-      }),
+      requireBackend: () => backend,
     },
     editorContextProvider: { dispose: () => teardowns.push('editor-context') },
     connect: () => {
@@ -240,10 +250,10 @@ function buildGateway(): Harness {
     ensureCurrentWorkspace: () => Promise.resolve({ id: 'w1' }),
     modelUseCases: { resolveSessionConfiguration: () => Promise.resolve(detail('new').configuration) },
     sessionUseCases: {
-      create: async () => {
+      create: async (input: { readonly sessionId?: string }) => {
         host.createStarted = true
         await host.createGate
-        return detail('created')
+        return detail(host.reuseBlank ? (input.sessionId ?? 'created') : 'created')
       },
     },
     requireCurrentWorkspaceSession: (sessionId: string) =>
@@ -598,6 +608,49 @@ describe('request gateway editor surface routes', () => {
     harness.gateway.editorSurfaces.closeAll()
     expect(harness.gateway.editorSurfaces.forSession('session-2')).toBeUndefined()
     expect(harness.gateway.editorSurfaces.forSession('session-1')).toBeUndefined()
+  })
+
+  it('reveals a reused blank session in its existing editor and preserves the originating tab', async () => {
+    host.reuseBlank = true
+    for (const sessionId of ['session-1', 'session-2'])
+      await harness.gateway.router.handle(
+        request('surface.openInEditor', `open-${sessionId}`, { sessionId }),
+        'sidebar',
+      )
+
+    const source = harness.gateway.editorSurfaces.forSession('session-1')!
+    const destination = harness.gateway.editorSurfaces.forSession('session-2')!
+    const watchCount = harness.watchShown.length
+    await harness.gateway.router.handle(
+      request('session.create', 'reuse', {
+        workspaceId: 'w1',
+        sessionId: 'session-2',
+        configuration: detail('session-2').configuration,
+      }),
+      source.surfaceId,
+    )
+    expect(harness.sent.find((entry) => entry.requestId === 'reuse')).toMatchObject({
+      ok: true,
+      payload: { id: 'session-2' },
+    })
+    await harness.gateway.router.handle(
+      request('surface.openInEditor', 'bind-reused', { sessionId: 'session-2', replaceCurrent: true }),
+      source.surfaceId,
+    )
+
+    expect(harness.sent.find((entry) => entry.requestId === 'bind-reused')).toMatchObject({
+      ok: true,
+      payload: { surface: 'editor', rebound: false },
+    })
+    expect(harness.gateway.editorSurfaces.forSession('session-1')).toBe(source)
+    expect(harness.gateway.editorSurfaces.forSession('session-2')).toBe(destination)
+    expect(host.panels.map(({ disposeCount, revealCount }) => ({ disposeCount, revealCount }))).toEqual([
+      { disposeCount: 0, revealCount: 0 },
+      { disposeCount: 0, revealCount: 1 },
+    ])
+    expect(harness.watchShown.slice(watchCount)).toEqual([
+      { surfaceId: destination.surfaceId, sessionId: 'session-2' },
+    ])
   })
 
   it('announces parentSessionId when an editor tab is assigned to a known subagent', async () => {

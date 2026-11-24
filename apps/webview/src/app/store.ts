@@ -619,11 +619,12 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   }
   const openCreatedSession = async (sessionId: string): Promise<void> => {
     if (state.surface?.kind === 'editor') {
-      await client.request<unknown>({
+      const result = await client.request<unknown>({
         type: 'surface.openInEditor',
         requestId: requestId(),
         payload: { sessionId, replaceCurrent: true },
       })
+      if (object(result)?.rebound === false) return
       setState((current) => ({ ...current, surface: { kind: 'editor', sessionId } }))
       await open(sessionId)
     } else await openSession(sessionId)

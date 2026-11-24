@@ -44,6 +44,16 @@ const session = {
   updatedAt: '2026-09-16T00:00:00.000Z',
 } as const
 
+const blank = { ...session, id: 's2', title: 'Blank session', blank: true }
+const workspace = {
+  id: 'workspace-1',
+  name: 'Workspace',
+  sessionIds: ['s1', 's2'],
+  sessionCount: 2,
+  createdAt: session.createdAt,
+  updatedAt: session.updatedAt,
+}
+
 function surfaceResponse(request: WebviewRequest): unknown {
   switch (request.type) {
     case 'session.open':
@@ -85,6 +95,78 @@ function requestsOfType(client: SurfaceClient, type: WebviewRequest['type']): re
 /** Let queued microtasks and the zero-delay retry timers settle. */
 
 describe('AppStore surface identity', () => {
+  it('keeps the originating editor unchanged when New Session reveals another editor', async () => {
+    const client = new SurfaceClient((request) => {
+      if (request.type === 'workspace.list') return [workspace]
+      if (request.type === 'session.list') return { items: [blank, session] }
+      if (request.type === 'session.create') return blank
+      if (request.type === 'surface.openInEditor') return { surface: 'editor', rebound: false }
+      return surfaceResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+    try {
+      client.emit('connection.snapshot', {
+        kind: 'connected',
+        dshVersion: '0.2.2-rc.3',
+        blankSessionReuse: true,
+      })
+      await store.refreshSessions()
+      client.emit('ui.surface.assigned', { kind: 'editor', sessionId: 's1' })
+      await vi.waitFor(() => expect(store.getState().activeSessionId).toBe('s1'))
+
+      await expect(store.createSession(workspace.id)).resolves.toBe('s2')
+
+      expect(requestsOfType(client, 'session.create')).toEqual([
+        expect.objectContaining({ payload: expect.objectContaining({ sessionId: 's2' }) }),
+      ])
+      expect(requestsOfType(client, 'surface.openInEditor')).toEqual([
+        expect.objectContaining({ payload: { sessionId: 's2', replaceCurrent: true } }),
+      ])
+      expect(requestsOfType(client, 'session.open')).toEqual([
+        expect.objectContaining({ payload: { sessionId: 's1' } }),
+      ])
+      expect(store.getState().surface).toEqual({ kind: 'editor', sessionId: 's1' })
+      expect(store.getState().activeSessionId).toBe('s1')
+    } finally {
+      store.dispose()
+    }
+  })
+
+  it.each(['0.1.1-rc.1', '0.1.1-rc.2'])(
+    'creates a local first-message session in an editor on DSH %s',
+    async (version) => {
+      const client = new SurfaceClient((request) => {
+        if (request.type === 'workspace.list') return [workspace]
+        if (request.type === 'session.list') return { items: [blank, session] }
+        if (request.type === 'session.create') return { id: 'new' }
+        if (request.type === 'surface.openInEditor') return { surface: 'editor', rebound: true }
+        return surfaceResponse(request)
+      })
+      const store = createAppStore(client as unknown as ProtocolClient)
+      try {
+        client.emit('connection.snapshot', { kind: 'connected', dshVersion: version })
+        await store.refreshSessions()
+        client.emit('ui.surface.assigned', { kind: 'editor', sessionId: 's1' })
+        await vi.waitFor(() => expect(store.getState().activeSessionId).toBe('s1'))
+        await store.stageSession(workspace.id)
+
+        await store.sendPendingPrompt('First message', [], 'queue')
+
+        const creations = requestsOfType(client, 'session.create')
+        expect(creations).toHaveLength(1)
+        expect(creations[0]).not.toHaveProperty('payload.sessionId')
+        expect(requestsOfType(client, 'session.sendPrompt')).toEqual([
+          expect.objectContaining({
+            payload: expect.objectContaining({ sessionId: 'new', text: 'First message' }),
+          }),
+        ])
+        expect(store.getState().surface).toEqual({ kind: 'editor', sessionId: 'new' })
+      } finally {
+        store.dispose()
+      }
+    },
+  )
+
   it('creates and sends a first message in an editor after updating the Host binding', async () => {
     const client = new SurfaceClient((request) => {
       if (request.type === 'workspace.list')

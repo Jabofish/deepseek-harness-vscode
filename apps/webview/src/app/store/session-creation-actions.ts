@@ -232,10 +232,16 @@ export function createSessionCreationActions(
         if (sessionId === undefined) {
           const state = getState()
           const workspace = state.workspaces.find((entry) => entry.id === pending.workspaceId)
+          // A deferred first send must open in the composer that owns its
+          // draft. Reuse only the originating tab's blank in an editor.
+          const candidates =
+            state.surface?.kind === 'editor'
+              ? state.sessions.filter((session) => session.id === state.surface?.sessionId)
+              : state.sessions
           const reusableBlank =
             workspace === undefined
               ? undefined
-              : findReusableBlankSession(state.sessions, state.archivedSessionIds, workspace)
+              : findReusableBlankSession(candidates, state.archivedSessionIds, workspace)
           if (state.connectedDshVersion === DSH_RC12_VERSION && reusableBlank !== undefined) {
             sessionId = reusableBlank.id
           } else {

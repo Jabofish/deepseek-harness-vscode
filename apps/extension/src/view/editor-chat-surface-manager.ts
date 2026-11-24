@@ -60,18 +60,21 @@ export class EditorChatSurfaceManager implements vscode.Disposable {
     return surfaceId === undefined ? undefined : this.surfaces.get(surfaceId)
   }
 
-  /** A newly created session replaces the draft in the originating editor. */
-  public bind(surfaceId: string, sessionId: string, title?: string): void {
+  /** Bind the originating editor or reveal the tab that already owns the session. */
+  public bind(surfaceId: string, sessionId: string, title?: string): DshWebviewPanelSurface {
     this.requireActive()
     const surface = this.surfaces.get(surfaceId)
     if (surface === undefined) throw new Error('The originating editor chat is closed.')
     const existing = this.forSession(sessionId)
-    if (existing !== undefined && existing !== surface)
-      throw new Error('This session already has an editor chat.')
+    if (existing !== undefined && existing !== surface) {
+      void existing.reveal(false)
+      return existing
+    }
     if (surface.sessionId !== undefined) this.surfaceIdBySession.delete(surface.sessionId)
     surface.sessionId = sessionId
     this.surfaceIdBySession.set(sessionId, surfaceId)
     surface.setTitle(title ?? DEFAULT_EDITOR_CHAT_TITLE)
+    return surface
   }
 
   /** Create the session's editor tab, or reveal the existing one. */
