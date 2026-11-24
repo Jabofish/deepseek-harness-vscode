@@ -49,12 +49,11 @@ jobs:
           node-version: 22.19.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
-      - name: Audit the dependency graph for known vulnerabilities
-        # Report-only: the graph currently carries known advisories (e.g. a HIGH
-        # undici runtime dep). Keep this non-blocking until they are remediated,
-        # then flip to a hard gate.
-        continue-on-error: true
-        run: pnpm audit --audit-level high
+      - name: Audit the shipped dependency graph for known vulnerabilities
+        # Blocking gate for what actually ships in the VSIX. Dev-only tooling
+        # advisories (vitest/vite/jsdom chain) do not reach users, so the gate
+        # is scoped to the production graph; they are not covered elsewhere yet.
+        run: pnpm audit --prod --audit-level high
 
   static:
     name: Format & typecheck

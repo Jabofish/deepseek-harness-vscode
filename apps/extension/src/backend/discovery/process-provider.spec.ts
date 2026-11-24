@@ -162,4 +162,76 @@ describe('OS process discovery parsing', () => {
     expect(resolved).toEqual([])
     expect(readManifest).not.toHaveBeenCalled()
   })
+
+  it.each([
+    [
+      'UNC share',
+      '25140 node "\\\\attacker\\share\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js" --profile web --port 0',
+    ],
+    [
+      'device prefix',
+      '25140 node "\\\\?\\C:\\dsh\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js" --profile web --port 0',
+    ],
+    [
+      'UNC device prefix',
+      '25140 node "\\\\?\\UNC\\attacker\\share\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js" --profile web --port 0',
+    ],
+    [
+      'mixed-separator UNC share',
+      '25140 node "\\\\attacker/share/node_modules/@deepseek-ai/dsh/lib/bin.js" --profile web --port 0',
+    ],
+    [
+      'forward-slash UNC share',
+      '25140 node "//attacker/share/node_modules/@deepseek-ai/dsh/lib/bin.js" --profile web --port 0',
+    ],
+    [
+      'forward-slash device prefix',
+      '25140 node "//?/C:/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js" --profile web --port 0',
+    ],
+  ])('does not read a %s manifest path during discovery', async (_label, processOutput) => {
+    const candidates = parseDshProcessCandidates(
+      processOutput,
+      '  TCP    127.0.0.1:12982    0.0.0.0:0    LISTENING    25140',
+    )
+    expect(candidates).toEqual([])
+
+    const readManifest = vi.fn(() =>
+      Promise.resolve(JSON.stringify({ name: '@deepseek-ai/dsh', version: '0.1.7-rc.1' })),
+    )
+    await expect(resolveDshProcessRuntimeVersions(candidates, readManifest)).resolves.toEqual([])
+    expect(readManifest).not.toHaveBeenCalled()
+  })
+
+  it('never reads a manifest when a scanned candidate names a network path', async () => {
+    // Guard the no-read invariant independently of candidate admission: even if
+    // a future scanner admits the process, its manifest path must stay unread.
+    const candidate = {
+      endpoint: { host: '127.0.0.1', port: 12982, baseUrl: 'http://127.0.0.1:12982' },
+      source: 'process-scan',
+      confidence: 70,
+      pid: 25140,
+      commandLine: 'node "//attacker/share/node_modules/@deepseek-ai/dsh/lib/bin.js" --profile web',
+    } as const
+    const readManifest = vi.fn(() =>
+      Promise.resolve(JSON.stringify({ name: '@deepseek-ai/dsh', version: '0.1.7-rc.1' })),
+    )
+
+    const [resolved] = await resolveDshProcessRuntimeVersions([candidate], readManifest)
+    expect(readManifest).not.toHaveBeenCalled()
+    expect(resolved?.runtimeVersion).toBeUndefined()
+  })
+
+  it('still admits a forward-slash drive path to a local install', async () => {
+    const [candidate] = parseDshProcessCandidates(
+      '25140 node "C:/npm/node_modules/@deepseek-ai/dsh/lib/bin.js" --profile web --port 0',
+      '  TCP    127.0.0.1:12982    0.0.0.0:0    LISTENING    25140',
+    )
+    const readManifest = vi.fn(() =>
+      Promise.resolve(JSON.stringify({ name: '@deepseek-ai/dsh', version: '0.1.7-rc.1' })),
+    )
+
+    const [resolved] = await resolveDshProcessRuntimeVersions([candidate!], readManifest)
+    expect(readManifest).toHaveBeenCalledOnce()
+    expect(resolved?.runtimeVersion).toBe('0.1.7-rc.1')
+  })
 })

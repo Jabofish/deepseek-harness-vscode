@@ -75,9 +75,9 @@
     "@dsh-vscode/timeline": "workspace:*",
     "@dsh-vscode/webview-protocol": "workspace:*",
     "llm-pricing": "0.20.0",
-    "undici": "7.29.0",
+    "undici": "7.30.1",
     "ws": "8.21.3",
-    "zod": "4.4.3"
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@types/vscode": "1.125.0",
@@ -646,7 +646,8 @@
         "dsh.connection.runtimeVersion": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Optional explicit DSH wire version for an external instance whose runtime version cannot be discovered (for example a containerized DSH such as `0.2.1-alpha.2`). Bypasses the compatibility-fallback probe and selects the exact matching adapter. Leave empty to auto-detect."
+          "scope": "machine",
+          "markdownDescription": "Optional explicit DSH wire version for an external instance whose runtime version cannot be discovered (for example a containerized DSH such as `0.2.1-alpha.2`). Must be an exact package version; any other value is ignored. Bypasses the compatibility-fallback probe and selects the exact matching adapter. Leave empty to auto-detect."
         },
         "dsh.connection.attachPorts": {
           "type": "array",

@@ -483,6 +483,19 @@ export function createFeatureRequestHandler(deps: FeatureRequestHandlerDependenc
       ensureConnection()
       return result
     }
+    if (
+      !vscode.workspace.isTrusted &&
+      (request.type === 'editor.context.capture' ||
+        request.type === 'editor.context.list' ||
+        request.type === 'editor.context.preview' ||
+        request.type === 'editor.context.release' ||
+        request.type === 'navigation.open')
+    )
+      throw new AppError({
+        code: 'PERMISSION_DENIED',
+        message: 'Trust the workspace before using editor context or navigation.',
+        retryable: false,
+      })
     if (request.type === 'editor.context.capture') {
       const owner = featureContextOwner(request.payload.workspaceFolderId)
       const item = await editorContextUseCases.capture(

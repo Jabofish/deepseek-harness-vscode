@@ -48,6 +48,32 @@ describe('DSH connection configuration', () => {
     })
   })
 
+  it.each(['0.2.2-rc.5', '0.2.1-alpha.2'])(
+    'passes an exact runtime version override through: %s',
+    (version) => {
+      const source = new VsCodeConfigurationSource({
+        getConfiguration: () => ({
+          get: (key: string, fallback: unknown) => (key === 'connection.runtimeVersion' ? version : fallback),
+        }),
+      } as never)
+
+      expect(source.read().connection.runtimeVersion).toBe(version)
+    },
+  )
+
+  it.each(['foo<script>', '../etc/passwd', '0.2.2-rc.5 trailing', 'unknown'])(
+    'drops a runtime version override that is not an exact package version: %s',
+    (value) => {
+      const source = new VsCodeConfigurationSource({
+        getConfiguration: () => ({
+          get: (key: string, fallback: unknown) => (key === 'connection.runtimeVersion' ? value : fallback),
+        }),
+      } as never)
+
+      expect(source.read().connection.runtimeVersion).toBeUndefined()
+    },
+  )
+
   it('accepts remote and https endpoints and derives default ports', () => {
     expect(normalizeServerUrl('http://192.168.1.10:4310')).toBe('http://192.168.1.10:4310')
     expect(normalizeServerUrl('https://dsh.example.com')).toBe('https://dsh.example.com:443')

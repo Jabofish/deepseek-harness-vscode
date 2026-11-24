@@ -1,5 +1,6 @@
 import type * as vscode from 'vscode'
 import type { ExtensionSettings } from '@dsh-vscode/domain'
+import { isDshPackageVersion } from '@dsh-vscode/dsh-adapter/contracts'
 import { AppError, parseServerOrigin, type AgentConfiguration } from '@dsh-vscode/domain'
 import { isLocalRuntimePath } from '../backend/runtime-paths.js'
 
@@ -50,6 +51,11 @@ export class VsCodeConfigurationSource {
       config.get<unknown>('connection.runtimeVersion', ''),
       'connection.runtimeVersion',
     )
+    // A wire version is identity evidence, so only an exact package version may
+    // reach adapter selection or the compatibility banner. Anything else is
+    // ignored instead of being echoed as trusted text.
+    const exactRuntimeVersion =
+      runtimeVersion !== undefined && isDshPackageVersion(runtimeVersion) ? runtimeVersion : undefined
     const executablePath = readOptionalPath(config.get<unknown>('runtime.executablePath', ''))
     const preset = readString(config.get<unknown>('agent.defaultPreset', 'standard'), 'agent.defaultPreset')
     const toolMode = readEnum(
@@ -75,7 +81,7 @@ export class VsCodeConfigurationSource {
       connection: {
         mode,
         ...(serverUrl === undefined ? {} : { serverUrl }),
-        ...(runtimeVersion === undefined ? {} : { runtimeVersion }),
+        ...(exactRuntimeVersion === undefined ? {} : { runtimeVersion: exactRuntimeVersion }),
         managedPort,
         attachPorts,
         ...(attachPortsConfigured ? { attachPortsConfigured: true } : {}),
