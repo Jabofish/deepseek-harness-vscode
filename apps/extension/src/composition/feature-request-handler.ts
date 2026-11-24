@@ -625,6 +625,7 @@ export function createFeatureRequestHandler(deps: FeatureRequestHandlerDependenc
         promptTemplateUseCases,
         requireCurrentWorkspaceSession,
         featureWorkspaceFolderId,
+        resolveVariables: (session) => resolvePromptTemplateVariables(session, currentWorkspaceFolders()),
       })
     if (
       request.type === 'changes.list' ||
@@ -647,4 +648,69 @@ export function createFeatureRequestHandler(deps: FeatureRequestHandlerDependenc
     })
   }
   return { handleFeatureRequest }
+}
+
+const MAX_TEMPLATE_VARIABLE_CHARS = 32_768
+
+async function resolvePromptTemplateVariables(
+  session: SessionDetail,
+  folders: readonly vscode.WorkspaceFolder[],
+): Promise<Readonly<Record<string, string>>> {
+  const values: Record<string, string> = {}
+  const sessionTitle = session.title.trim()
+  if (sessionTitle !== '') values.sessionTitle = sessionTitle
+  const activeEditor = vscode.window.activeTextEditor
+  const activeFolder =
+    activeEditor === undefined
+      ? folders[0]
+      : (vscode.workspace.getWorkspaceFolder(activeEditor.document.uri) ?? folders[0])
+  if (activeFolder !== undefined) values.workspaceName = activeFolder.name
+  if (activeEditor === undefined) return values
+  const ownedFolder = vscode.workspace.getWorkspaceFolder(activeEditor.document.uri)
+  if (ownedFolder === undefined) return values
+  const relativePath = vscode.workspace.asRelativePath(activeEditor.document.uri, false)
+  if (relativePath !== '') values.currentFile = relativePath
+  if (!activeEditor.selection.isEmpty) {
+    const selectedText = activeEditor.document.getText(activeEditor.selection)
+    if (selectedText.trim() !== '') values.selection = selectedText.slice(0, MAX_TEMPLATE_VARIABLE_CHARS)
+  }
+  const diagnostics = vscode.languages.getDiagnostics(activeEditor.document.uri)
+  if (diagnostics.length > 0) {
+    const formatted = diagnostics
+      .slice(0, 20)
+      .map(
+        (diag) =>
+          `${relativePath}:${diag.range.start.line + 1}:${diag.range.start.character + 1} ${diag.message}`,
+      )
+      .join('\n')
+    if (formatted !== '') values.currentDiagnostics = formatted.slice(0, MAX_TEMPLATE_VARIABLE_CHARS)
+  }
+  try {
+    const symbols = await vscode.commands.executeCommand<
+      readonly (vscode.DocumentSymbol | vscode.SymbolInformation)[]
+    >('vscode.executeDocumentSymbolProvider', activeEditor.document.uri)
+    const symbolName = enclosingSymbolName(symbols, activeEditor.selection.active)
+    if (symbolName !== undefined) values.currentSymbol = symbolName
+  } catch {
+    // Language services are optional; leave currentSymbol unset when unavailable.
+  }
+  return values
+}
+
+function enclosingSymbolName(
+  symbols: readonly (vscode.DocumentSymbol | vscode.SymbolInformation)[] | undefined,
+  position: vscode.Position,
+): string | undefined {
+  if (symbols === undefined) return undefined
+  for (const symbol of symbols) {
+    if ('range' in symbol) {
+      if (symbol.range.contains(position)) {
+        const nested = enclosingSymbolName(symbol.children, position)
+        return nested ?? symbol.name
+      }
+    } else if (symbol.location.range.contains(position)) {
+      return symbol.name
+    }
+  }
+  return undefined
 }
