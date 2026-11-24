@@ -968,3 +968,10 @@
   overflow: auto;
   overscroll-behavior: contain;
 }
+
+.dsh-approval__meta {
+  margin: var(--dsh-space-1) 0;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+  overflow-wrap: anywhere;
+}

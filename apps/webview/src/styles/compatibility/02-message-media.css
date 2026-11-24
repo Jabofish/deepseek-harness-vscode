@@ -468,3 +468,10 @@
   max-width: 360px;
   opacity: 1;
 }
+
+.dsh-empty-session__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--dsh-space-2);
+}

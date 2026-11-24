@@ -214,6 +214,7 @@
 .dsh-settings__summary,
 .dsh-settings__note,
 .dsh-settings__empty,
+.dsh-settings__description,
 .dsh-settings__runtime-update-notice,
 .dsh-settings__connection-notice {
   color: var(--dsh-muted);
