@@ -8,6 +8,7 @@ import { requireCatalogOwnedSession } from './session-scope.js'
 import type { RequestGatewayDependencies } from './request-gateway-dependencies.js'
 import type { TranscriptWindowService } from '../view/transcript-window.js'
 import { unsupportedRequest } from './request-routing.js'
+import { exportFileBaseName } from './export-file-name.js'
 
 type SessionRequest = Extract<WebviewRequest, { type: `session.${string}` }>
 type SessionDependencies = Pick<
@@ -369,13 +370,7 @@ export function createSessionRequestHandler(
           : request.payload.format === 'zip'
             ? 'ZIP Archive'
             : 'JSON'
-      const baseName =
-        Array.from(session.title.trim(), (char) => (char.charCodeAt(0) < 32 ? '-' : char))
-          .join('')
-          .replace(/[<>:"/\\|?*]+/gu, '-')
-          .replace(/-+/gu, '-')
-          .replace(/^-|-$/gu, '')
-          .slice(0, 80) || 'dsh-session'
+      const baseName = exportFileBaseName(session.title)
       const folderUri = currentWorkspaceFolders()[0]?.uri
       const defaultUri =
         folderUri === undefined ? undefined : vscode.Uri.joinPath(folderUri, `${baseName}.${extension}`)
