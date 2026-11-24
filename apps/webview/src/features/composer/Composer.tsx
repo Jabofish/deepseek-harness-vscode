@@ -832,7 +832,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
           {renderSessionControls('permission')}
           <span
             id={hintId}
-            className={focused ? 'dsh-sr-only' : 'dsh-composer__hint'}
+            className={focused && !props.running ? 'dsh-sr-only' : 'dsh-composer__hint'}
             title={props.running ? t('composer.runningHint') : t('composer.idleHint')}
           >
             {props.running ? t('composer.runningHintShort') : t('composer.idleHintShort')}
@@ -842,6 +842,22 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
           <div className="dsh-composer__toolbar-controls">{renderSessionControls('model')}</div>
         )}
         <span className="dsh-composer__toolbar-balance" aria-hidden="true" />
+        {props.running && !sending && (props.draft.trim() !== '' || props.attachments.length > 0) ? (
+          <button
+            className="dsh-button dsh-button--primary dsh-composer__submit"
+            type="button"
+            aria-label={t('composer.sendMessage')}
+            title={t('composer.runningHint')}
+            disabled={props.disabled || inputBlocked}
+            onClick={() => {
+              submit(props.busyEnter === 'steer' ? 'steer' : 'queue')
+              textareaRef.current?.focus({ preventScroll: true })
+            }}
+          >
+            <Icon name={focused ? 'arrow-up' : 'send'} />
+            <span className="dsh-composer__send-label">{t('composer.send')}</span>
+          </button>
+        ) : null}
         {props.running && sending && !isDirectSubmitting ? (
           <button
             className="dsh-button dsh-button--danger"

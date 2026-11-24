@@ -26,13 +26,11 @@ import { ApprovalCard } from './features/interactions/ApprovalCard.js'
 import { UserQuestionCard } from './features/interactions/UserQuestionCard.js'
 import { Icon } from './ui/Icon.js'
 import { rememberWelcomeDismissal, rememberRuntimeUpdateDismissal } from './app/dismissed-notices.js'
-import type { OpenFileCandidate } from './app/store.js'
 import type { useAppController } from './AppController.js'
 import { CONVERSATION_VIEW_IDS } from './app/conversation-view-ids.js'
 import { useConversationLayout } from './app/ConversationLayoutProvider.js'
 import { useSurfaceFocusReport } from './app/useSurfaceFocusReport.js'
 
-const EMPTY_OPEN_FILE_CANDIDATES: readonly OpenFileCandidate[] = []
 export function AppView(props: ReturnType<typeof useAppController>): ReactElement {
   const layoutPreference = useConversationLayout()
   const {
@@ -404,6 +402,12 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                       onFocusRequestHandled={composerOnFocusHandled}
                       running={false}
                       attachments={attachments}
+                      editorContext={state.editorContext}
+                      editorContextAvailableKinds={state.editorContextAvailableKinds}
+                      editorContextLoading={state.editorContextLoading}
+                      onCaptureEditorContext={composerOnCaptureEditorContext}
+                      onRemoveEditorContext={composerOnRemoveEditorContext}
+                      onPreviewEditorContext={composerOnPreviewEditorContext}
                       configuration={state.pendingSession.configuration}
                       configurationDraft
                       permissionPresets={state.newSessionPermissionPresets ?? []}
@@ -415,15 +419,33 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                       {...(newSessionPresetSelectionEnabled === undefined
                         ? {}
                         : { presetSelectionEnabled: newSessionPresetSelectionEnabled })}
+                      commands={state.commands}
+                      popupSelects={popupSelects}
+                      references={visibleReferenceCandidates}
+                      referenceLoading={visibleReferenceLoading}
+                      {...(imageLimits === undefined ? {} : { imageLimits })}
+                      promptMode={state.promptMode}
                       onConfigurationChange={(configuration) => store.configurePendingSession(configuration)}
+                      onPromptModeChange={composerOnPromptModeChange}
+                      onCommand={composerOnCommand}
+                      onPopupSelect={composerOnPopupSelect}
+                      onCommandQueryChange={composerOnCommandQueryChange}
+                      onReferenceQueryChange={composerOnReferenceQueryChange}
                       onPickAttachment={composerOnPickAttachment}
                       onIngestFiles={composerOnIngestFiles}
-                      openFileCandidates={EMPTY_OPEN_FILE_CANDIDATES}
-                      openFilePickerOpen={false}
-                      openFilePickerLoading={false}
-                      attachedOpenFileIds={[]}
-                      onToggleOpenFilePicker={() => undefined}
-                      onSelectOpenFile={() => undefined}
+                      attachmentPreviews={attachmentPreviews}
+                      attachmentPreviewFailures={attachmentPreviewFailures}
+                      openFileCandidates={visibleOpenFileCandidates}
+                      openFilePickerOpen={visibleOpenFilePickerOpen}
+                      openFilePickerLoading={visibleOpenFilePickerLoading}
+                      {...(state.preferredOpenFileId === undefined
+                        ? {}
+                        : { preferredOpenFileId: state.preferredOpenFileId })}
+                      attachedOpenFileIds={attachedOpenFileIds}
+                      {...(attachingOpenFileId === undefined ? {} : { attachingOpenFileId })}
+                      onToggleOpenFilePicker={composerOnToggleOpenFilePicker}
+                      onExtrasOpenChange={composerOnExtrasOpenChange}
+                      onSelectOpenFile={composerOnSelectOpenFile}
                       onRemoveAttachment={composerOnRemoveAttachment}
                       onSubmit={composerOnSubmit}
                       onCancel={() => undefined}

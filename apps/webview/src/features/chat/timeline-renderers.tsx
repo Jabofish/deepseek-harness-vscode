@@ -563,7 +563,7 @@ function renderAssistantTurn(
   loadFullContent?: (nodeId: string) => Promise<string>,
 ): ReactElement {
   const inProgress = assistantNodeInProgress(node)
-  const actionsUnavailable = inProgress || (node.turn !== undefined && node.turnCompleted !== true)
+  const turnSettled = node.turn === undefined || node.turnCompleted === true
   const producedFiles = producedFilePaths(node.tools)
   const contentBlocks = node.blocks.length === 0 ? assistantBlocksFromAggregates(node) : node.blocks
   const messageBlocks = contentBlocks.filter((block) => block.kind === 'message')
@@ -575,7 +575,9 @@ function renderAssistantTurn(
   const turnUsage =
     performanceUsage === 'detailed' && node.turnCompleted === true ? node.turnUsage : undefined
   const detailLabel =
-    transcriptView === 'detailed' && node.turn !== undefined && node.step !== undefined
+    (transcriptView === 'detailed' || transcriptView === 'verbose') &&
+    node.turn !== undefined &&
+    node.step !== undefined
       ? t('timeline.stepMetadata', { turn: node.turn, step: node.step })
       : undefined
   return (
@@ -607,7 +609,7 @@ function renderAssistantTurn(
         {renderProducedFiles(producedFiles, onOpenLink, onShowInFolder, t)}
       </article>
       {turnUsage === undefined ? null : <TurnUsageDisclosure usage={turnUsage} translate={t} />}
-      {node.markdown.trim() === '' || actionsUnavailable ? null : (
+      {node.markdown.trim() === '' || inProgress ? null : (
         <MessageActions
           text={node.markdown}
           truncated={truncated}
@@ -620,18 +622,20 @@ function renderAssistantTurn(
                 },
               }
             : {})}
-          {...feedbackActionProps(
-            assistantMessageId(node),
-            feedback,
-            onFeedback,
-            onFeedbackSubmit,
-            onFeedbackPrepare,
-            feedbackUnavailable,
-          )}
-          {...(onBranch === undefined
-            ? {}
-            : { onBranch: node.sequence === undefined ? () => undefined : () => onBranch(node.sequence!) })}
-          branchUnavailable={branchUnavailable}
+          {...(turnSettled
+            ? feedbackActionProps(
+                assistantMessageId(node),
+                feedback,
+                onFeedback,
+                onFeedbackSubmit,
+                onFeedbackPrepare,
+                feedbackUnavailable,
+              )
+            : {})}
+          {...(turnSettled && onBranch !== undefined
+            ? { onBranch: node.sequence === undefined ? () => undefined : () => onBranch(node.sequence!) }
+            : {})}
+          branchUnavailable={!turnSettled || branchUnavailable}
           translate={t}
         />
       )}
@@ -662,7 +666,7 @@ function renderAssistantMessage(
   loadFullContent?: (nodeId: string) => Promise<string>,
 ): ReactElement {
   const inProgress = assistantNodeInProgress(node)
-  const actionsUnavailable = inProgress || (node.turn !== undefined && node.turnCompleted !== true)
+  const turnSettled = node.turn === undefined || node.turnCompleted === true
   const truncated = truncatedNodeIds.has(node.id)
   const metricsLabel =
     performanceUsage === 'detailed' && (!focused || focusedPresentationPolicy(transcriptView).requestMetrics)
@@ -671,7 +675,9 @@ function renderAssistantMessage(
   const turnUsage =
     performanceUsage === 'detailed' && node.turnCompleted === true ? node.turnUsage : undefined
   const detailLabel =
-    transcriptView === 'detailed' && node.turn !== undefined && node.step !== undefined
+    (transcriptView === 'detailed' || transcriptView === 'verbose') &&
+    node.turn !== undefined &&
+    node.step !== undefined
       ? t('timeline.stepMetadata', { turn: node.turn, step: node.step })
       : undefined
   return (
@@ -715,25 +721,27 @@ function renderAssistantMessage(
         )}
       </article>
       {turnUsage === undefined ? null : <TurnUsageDisclosure usage={turnUsage} translate={t} />}
-      {node.markdown.trim() === '' || actionsUnavailable ? null : (
+      {node.markdown.trim() === '' || inProgress ? null : (
         <MessageActions
           text={node.markdown}
           truncated={truncated}
           {...(truncated && loadFullContent !== undefined
             ? { loadFullText: () => loadFullContent(node.id) }
             : {})}
-          {...feedbackActionProps(
-            node.id,
-            feedback,
-            onFeedback,
-            onFeedbackSubmit,
-            onFeedbackPrepare,
-            feedbackUnavailable,
-          )}
-          {...(onBranch === undefined
-            ? {}
-            : { onBranch: node.sequence === undefined ? () => undefined : () => onBranch(node.sequence!) })}
-          branchUnavailable={branchUnavailable}
+          {...(turnSettled
+            ? feedbackActionProps(
+                node.id,
+                feedback,
+                onFeedback,
+                onFeedbackSubmit,
+                onFeedbackPrepare,
+                feedbackUnavailable,
+              )
+            : {})}
+          {...(turnSettled && onBranch !== undefined
+            ? { onBranch: node.sequence === undefined ? () => undefined : () => onBranch(node.sequence!) }
+            : {})}
+          branchUnavailable={!turnSettled || branchUnavailable}
           translate={t}
         />
       )}

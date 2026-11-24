@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { useState, type ReactElement } from 'react'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AgentConfiguration, DynamicCommand, PromptAttachment } from '@dsh-vscode/domain'
 
@@ -414,6 +414,21 @@ describe('Composer model availability notice', () => {
     fireEvent.change(textarea, { target: { value: 'previous prompt edited' } })
     fireEvent.keyDown(textarea, { key: 'ArrowUp' })
     expect(textarea.value).toBe('previous prompt edited')
+  })
+
+  it('offers an explicit Send button alongside Stop when typing a follow-up while running', async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined)
+    const onCancel = vi.fn()
+    render(<Composer {...baseProps()} running draft="follow up" onSubmit={onSubmit} onCancel={onCancel} />)
+
+    const sendButton = screen.getByRole('button', { name: 'Send message' })
+    const stopButton = screen.getByRole('button', { name: 'Stop response' })
+    expect(sendButton).toBeDefined()
+    expect(stopButton).toBeDefined()
+
+    fireEvent.click(sendButton)
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce())
+    expect(onCancel).not.toHaveBeenCalled()
   })
 })
 

@@ -93,7 +93,7 @@ export function ComposerAttachmentsRail({
                   </span>
                 )}
                 <span className="dsh-composer__attachment-name" title={attachment.name}>
-                  file: {attachment.name}
+                  {attachment.name}
                 </span>
               </span>
               <button

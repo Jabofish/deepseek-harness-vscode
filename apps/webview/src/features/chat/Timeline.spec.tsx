@@ -221,7 +221,7 @@ describe('Timeline', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: 'Expand Read details' }))
-    fireEvent.click(screen.getByTitle('src/feature.ts'))
+    fireEvent.click(screen.getByTitle('src/feature.ts#L11'))
     await waitFor(() => expect(screen.getByRole('dialog')).toBeDefined())
     expect(screen.getByText('The editor refused this path.')).toBeDefined()
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
