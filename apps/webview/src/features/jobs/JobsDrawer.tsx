@@ -4,6 +4,7 @@ import { useI18n } from '../../i18n.js'
 import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 import { useViewportMenuPosition } from '../../components/common/useViewportMenuPosition.js'
 import { Icon } from '../../ui/Icon.js'
+import { CopyButton } from '../chat/CopyButton.js'
 import type { JobFollowState } from '../../app/store.js'
 
 export interface JobsPopoverProps {
@@ -70,7 +71,7 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
   const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const [now, setNow] = useState(() => Date.now())
-  const [actionFailed, setActionFailed] = useState(false)
+  const [actionError, setActionError] = useState<string | undefined>(undefined)
   const [pending, setPending] = useState<ReadonlySet<string>>(new Set())
   const pendingActions = useRef(new Set<string>())
   const actionGeneration = useRef(0)
@@ -172,16 +173,23 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
     pendingActions.current.add(key)
     setPending(new Set(pendingActions.current))
     const generation = actionGeneration.current
-    setActionFailed(false)
+    setActionError(undefined)
     void action()
-      .catch(() => {
-        if (generation === actionGeneration.current) setActionFailed(true)
+      .catch((reason: unknown) => {
+        if (generation === actionGeneration.current)
+          setActionError(
+            reason instanceof Error && reason.message.trim() !== ''
+              ? reason.message
+              : t('jobs.operationFailed'),
+          )
       })
       .finally(() => {
         pendingActions.current.delete(key)
         setPending(new Set(pendingActions.current))
       })
   }
+
+  const followedJob = following === undefined ? undefined : rows.find((job) => job.id === following.jobId)
 
   return (
     <div ref={rootRef} className="dsh-jobs-popover">
@@ -194,7 +202,7 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
         onClick={() => {
           setNow(Date.now())
           actionGeneration.current += 1
-          setActionFailed(false)
+          setActionError(undefined)
           setOpen((current) => !current)
         }}
       >
@@ -212,10 +220,10 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
           className="dsh-jobs-popover__menu"
           aria-label={t('jobs.list.aria')}
         >
-          {actionFailed ? (
+          {actionError !== undefined ? (
             <li>
               <p className="dsh-jobs-popover__error" role="alert">
-                {t('jobs.operationFailed')}
+                {actionError}
               </p>
             </li>
           ) : null}
@@ -273,10 +281,41 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
           {following !== undefined ? (
             <li className="dsh-jobs-popover__output">
               <section aria-label={t('jobs.output.aria')}>
+                <div className="dsh-jobs-popover__output-header">
+                  <strong>{followedJob?.label ?? following.jobId}</strong>
+                  <div className="dsh-jobs-popover__output-actions">
+                    {followingOutput === '' ? null : (
+                      <CopyButton text={followingOutput} className="dsh-icon-button" translate={t} />
+                    )}
+                    <button
+                      type="button"
+                      className="dsh-icon-button"
+                      aria-label={t('common.close')}
+                      title={t('common.close')}
+                      disabled={pending.has('stop-follow')}
+                      onClick={() => runAction('stop-follow', () => props.onStopFollowing())}
+                    >
+                      <Icon name="close" />
+                    </button>
+                  </div>
+                </div>
                 {following.error === 'stream-failed' ? <p role="alert">{t('jobs.followFailed')}</p> : null}
                 {following.lossy ? <p>{t('jobs.output.lossy')}</p> : null}
-                <pre role="log" aria-live="polite">
-                  {followingOutput || t('jobs.output.empty')}
+                <pre role="log" aria-live="polite" tabIndex={0}>
+                  {following.chunks.length === 0
+                    ? t('jobs.output.empty')
+                    : following.chunks.map((chunk, index) => (
+                        <span
+                          key={`${chunk.at}:${index}`}
+                          className={
+                            chunk.channel === 'stderr' ? 'dsh-jobs-popover__chunk--stderr' : undefined
+                          }
+                          data-channel={chunk.channel}
+                        >
+                          {chunk.gapBefore ? '\n…\n' : ''}
+                          {chunk.text}
+                        </span>
+                      ))}
                 </pre>
               </section>
             </li>

@@ -9,6 +9,12 @@ interface LineageEntry {
   readonly subagent: boolean
 }
 
+export interface SessionLineageSubagent {
+  readonly id: string
+  readonly label?: string
+  readonly parentSessionId?: string
+}
+
 export interface SessionLineageProps {
   readonly active: SessionSummary
   readonly activeSubagent?: {
@@ -17,6 +23,7 @@ export interface SessionLineageProps {
     readonly parentSessionId: string
   }
   readonly sessions: readonly SessionSummary[]
+  readonly subagents?: readonly SessionLineageSubagent[]
   readonly onOpenSession: (sessionId: string) => void
 }
 
@@ -60,6 +67,7 @@ export const SessionLineage = memo(function SessionLineage(props: SessionLineage
 
 function deriveLineage(props: SessionLineageProps, t: Translate): readonly LineageEntry[] {
   const summaries = new Map(props.sessions.map((session) => [session.id, session]))
+  const subagents = new Map((props.subagents ?? []).map((entry) => [entry.id, entry]))
   const activeSubagent = props.activeSubagent
   const result: LineageEntry[] = [
     activeSubagent === undefined
@@ -78,14 +86,25 @@ function deriveLineage(props: SessionLineageProps, t: Translate): readonly Linea
   let parentId = activeSubagent?.parentSessionId ?? props.active.parentSessionId
   while (parentId !== undefined && !seen.has(parentId)) {
     const parent = summaries.get(parentId)
-    if (parent === undefined) break
+    if (parent !== undefined) {
+      result.unshift({
+        id: parent.id,
+        title: displaySessionTitle(parent.title, t),
+        subagent: parent.origin === 'subagent',
+      })
+      seen.add(parent.id)
+      parentId = parent.origin === 'subagent' ? parent.parentSessionId : undefined
+      continue
+    }
+    const subagentParent = subagents.get(parentId)
+    if (subagentParent === undefined) break
     result.unshift({
-      id: parent.id,
-      title: displaySessionTitle(parent.title, t),
-      subagent: parent.origin === 'subagent',
+      id: subagentParent.id,
+      title: displaySessionTitle(subagentParent.label ?? '', t),
+      subagent: true,
     })
-    seen.add(parent.id)
-    parentId = parent.origin === 'subagent' ? parent.parentSessionId : undefined
+    seen.add(subagentParent.id)
+    parentId = subagentParent.parentSessionId
   }
   return result
 }

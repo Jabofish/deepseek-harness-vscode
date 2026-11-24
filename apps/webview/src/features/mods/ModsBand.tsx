@@ -103,6 +103,32 @@ function SessionModsBand(props: {
         setPending(false)
       })
   }
+  const pressHotkey = useStableCallback(press)
+  useEffect(() => {
+    const tree = snapshot?.tree
+    if (tree === null || tree === undefined || pending || failed) return
+    const hotkeys = collectHotkeys(tree)
+    if (hotkeys.size === 0) return
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.defaultPrevented || event.isComposing || event.ctrlKey || event.metaKey || event.altKey)
+        return
+      const target = event.target
+      if (
+        target instanceof HTMLElement &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable)
+      )
+        return
+      const actionId = hotkeys.get(event.key.toLowerCase())
+      if (actionId === undefined) return
+      event.preventDefault()
+      pressHotkey(actionId)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [failed, pending, pressHotkey, snapshot])
   if (!failed && (snapshot === null || snapshot.tree === null)) return null
   return (
     <div className="dsh-mods-band" role="group" aria-label={t('mods.band')}>
@@ -181,4 +207,19 @@ function BandNode({
       {children}
     </div>
   )
+}
+
+function collectHotkeys(nodes: readonly ModsBandNode[], out = new Map<string, string>()): Map<string, string> {
+  for (const node of nodes) {
+    if (typeof node === 'string') continue
+    if (node.kind === 'button') {
+      if (!node.disabled && node.actionId !== undefined && node.hotkey !== undefined && node.hotkey.trim() !== '') {
+        const key = node.hotkey.trim().toLowerCase()
+        if (!out.has(key)) out.set(key, node.actionId)
+      }
+      continue
+    }
+    collectHotkeys(node.children, out)
+  }
+  return out
 }

@@ -563,6 +563,19 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                           ? {}
                           : { activeSubagent: lineageActiveSubagent })}
                         sessions={state.sessions}
+                        subagents={state.subagents.entries.flatMap((entry) =>
+                          entry.kind === 'child'
+                            ? [
+                                {
+                                  id: entry.id,
+                                  ...(entry.label === undefined ? {} : { label: entry.label }),
+                                  ...(state.subagents.parentSessionId === undefined
+                                    ? {}
+                                    : { parentSessionId: state.subagents.parentSessionId }),
+                                },
+                              ]
+                            : [],
+                        )}
                         onOpenSession={lineageOnOpenSession}
                       />
                     ) : null}
