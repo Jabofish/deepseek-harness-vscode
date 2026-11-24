@@ -373,6 +373,30 @@ describe('Host transcript windows', () => {
     }
   })
 
+  it('reports an unacknowledged transcript window once per stall episode', async () => {
+    vi.useFakeTimers()
+    const read = vi.fn(() => Promise.resolve({ events: [], hasMore: false }))
+    const stalls: { pendingAcks: number; revision: number }[] = []
+    const service = new TranscriptWindowService({
+      read,
+      publicValue: (value) => value,
+      post: () => Promise.resolve(true),
+      onAckStall: (stall) => stalls.push(stall),
+    })
+    try {
+      service.installPage(sessionId, { events: [], hasMore: false }, service.begin(sessionId))
+      service.accept(message(1).event)
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(stalls).toHaveLength(1)
+      expect(stalls[0]?.pendingAcks).toBeGreaterThan(0)
+      // One report per episode, not one per recovery.
+      await vi.advanceTimersByTimeAsync(20_000)
+      expect(stalls).toHaveLength(1)
+    } finally {
+      service.dispose()
+    }
+  })
+
   it('retries failed durable recovery even after the last event', async () => {
     vi.useFakeTimers()
     const page = { events: [message(1), message(2), message(3)], hasMore: false }

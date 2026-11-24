@@ -125,6 +125,30 @@ describe('RedactedDiagnostics', () => {
     diagnostics.dispose()
   })
 
+  it('keeps the delivery-stall event names and their structured fields', () => {
+    const { lines, channel } = fakeChannel()
+    const diagnostics = new RedactedDiagnostics(channel)
+    diagnostics.log('warn', 'control-ack-stalled', {
+      surface: 'sidebar',
+      eventName: 'session.status',
+      sequence: 42,
+    })
+    diagnostics.log('warn', 'transcript-ack-stalled', { pendingAcks: 7, revision: 130 })
+    diagnostics.log('info', 'backend-event', { eventName: 'turn.ended', turn: 3, step: 2, status: 'idle' })
+
+    expect(lines).toHaveLength(3)
+    const control = JSON.parse(lines[0] ?? '') as { event: string; fields: Record<string, unknown> }
+    expect(control.event).toBe('control-ack-stalled')
+    expect(control.fields).toEqual({ surface: 'sidebar', eventName: 'session.status', sequence: 42 })
+    const transcript = JSON.parse(lines[1] ?? '') as { event: string; fields: Record<string, unknown> }
+    expect(transcript.event).toBe('transcript-ack-stalled')
+    expect(transcript.fields).toEqual({ pendingAcks: 7, revision: 130 })
+    const backend = JSON.parse(lines[2] ?? '') as { event: string; fields: Record<string, unknown> }
+    expect(backend.event).toBe('backend-event')
+    expect(backend.fields).toEqual({ eventName: 'turn.ended', turn: 3, step: 2, status: 'idle' })
+    diagnostics.dispose()
+  })
+
   it('keeps a bounded recent ring without exposing secrets', () => {
     const { channel } = fakeChannel()
     const diagnostics = new RedactedDiagnostics(channel)

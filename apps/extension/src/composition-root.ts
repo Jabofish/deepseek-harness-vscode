@@ -236,6 +236,11 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
             attempt,
             retrying,
           }),
+        onAckStall: ({ pendingAcks, revision }) =>
+          diagnostics.log('warn', 'transcript-ack-stalled', {
+            pendingAcks,
+            revision,
+          }),
       }),
     (surfaceId) => {
       const surface = surfaces.get(surfaceId)

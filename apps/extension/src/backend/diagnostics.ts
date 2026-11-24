@@ -109,7 +109,7 @@ export class RedactedDiagnostics implements vscode.Disposable {
 }
 
 const SAFE_FIELD =
-  /^(code|phase|candidateSource|latencyBucket|hostVersion|method|status|attempt|count|durationMs|ownership|requestType|rpcMethod|state|eventLoopLagMs|decision|mode|turn|ageMs|native|kind|delivered|focused)$/
+  /^(code|phase|candidateSource|latencyBucket|hostVersion|method|status|attempt|count|durationMs|ownership|requestType|rpcMethod|state|eventLoopLagMs|decision|mode|turn|ageMs|native|kind|delivered|focused|eventName|surface|sequence|revision|pendingAcks|step)$/
 /** Free-text fields never pass through raw; they get the shared scrubber below. */
 const REDACTED_TEXT_FIELD = /^(message|stack|detail|name|reason)$/
 const RECENT_EVENT_FIELDS = new Set([
@@ -151,6 +151,9 @@ const DIAGNOSTIC_EVENTS = new Set([
   'webview-message-unhandled',
   'transcript-delivery-failed',
   'completion-cue',
+  'control-ack-stalled',
+  'transcript-ack-stalled',
+  'backend-event',
 ])
 const ERROR_CATEGORIES = new Set([
   'Error',
