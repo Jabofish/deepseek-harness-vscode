@@ -284,7 +284,9 @@ function BillingPriceEditor(props: {
   const price = draftPrice(draft, rules)
   const currencyLabel = (option: BillingCurrencyPreference): string =>
     option === 'auto' ? t('billing.displayCurrency.auto') : option
-  const issues = price === undefined ? draftIssues(draft, rules) : []
+  // An untouched form is not an error: report problems once the user has typed.
+  const pristine = (Object.keys(empty) as (keyof Draft)[]).every((field) => draft[field] === empty[field])
+  const issues = price === undefined && !pristine ? draftIssues(draft, rules) : []
   // Live search: a short pause after typing reloads the catalog.
   useEffect(() => {
     if (snapshot === undefined || query === appliedQuery.current) return

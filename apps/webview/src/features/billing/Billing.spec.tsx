@@ -240,6 +240,8 @@ it('keeps an unsaved price across collapse, names invalid fields and searches as
     ),
   )
   fireEvent.click(screen.getByRole('button', { name: 'Add price' }))
+  // A form the user has not touched yet reports nothing as invalid.
+  expect(screen.queryByText(/^Check these fields/u)).toBeNull()
   fireEvent.change(screen.getByLabelText('Provider ID'), { target: { value: 'local-route' } })
   fireEvent.change(screen.getByLabelText('Model ID'), { target: { value: 'local-model' } })
   fireEvent.change(screen.getByLabelText('Uncached input'), { target: { value: 'abc' } })
