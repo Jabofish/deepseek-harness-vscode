@@ -188,7 +188,12 @@ export function SessionInspector(props: {
           </button>
         </span>
       ) : null}
-      <Drawer title={t('inspector.title')} open={open} onClose={() => setOpen(false)}>
+      <Drawer
+        title={t('inspector.title')}
+        closeLabel={t('common.close')}
+        open={open}
+        onClose={() => setOpen(false)}
+      >
         {open ? (
           <div className="dsh-session-inspector">
             <div className="dsh-session-inspector__filters">
