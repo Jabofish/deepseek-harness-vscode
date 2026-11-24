@@ -58,7 +58,10 @@
     "onCommand:dsh.installEditorCompanion",
     "onCommand:dsh.undoEditorEdit",
     "onView:dsh.sessionList",
-    "onCommand:dsh.openSessionList"
+    "onCommand:dsh.openSessionList",
+    "onCommand:dsh.openInSecondarySidebar",
+    "onCommand:dsh.authorizeExternalConnection",
+    "onCommand:dsh.clearExternalCredentials"
   ],
   "scripts": {
     "build": "node esbuild.mjs",
@@ -243,13 +246,11 @@
       },
       {
         "command": "dsh.authorizeExternalConnection",
-        "title": "Authorize External Connection",
-        "category": "DSH"
+        "title": "JaboDSH: Authorize External Connection"
       },
       {
         "command": "dsh.clearExternalCredentials",
-        "title": "Clear External Connection Credentials",
-        "category": "DSH"
+        "title": "JaboDSH: Clear External Connection Credentials"
       },
       {
         "command": "dsh.sessions.open",
@@ -469,8 +470,7 @@
           "when": "false"
         },
         {
-          "command": "dsh.openInSecondarySidebar",
-          "when": "false"
+          "command": "dsh.openInSecondarySidebar"
         },
         {
           "command": "dsh.openChatInEditor"
@@ -524,12 +524,10 @@
           "command": "dsh.undoEditorEdit"
         },
         {
-          "command": "dsh.authorizeExternalConnection",
-          "when": "false"
+          "command": "dsh.authorizeExternalConnection"
         },
         {
-          "command": "dsh.clearExternalCredentials",
-          "when": "false"
+          "command": "dsh.clearExternalCredentials"
         },
         {
           "command": "dsh.sessions.open",
@@ -556,8 +554,7 @@
           "when": "false"
         },
         {
-          "command": "dsh.openSessionList",
-          "when": "false"
+          "command": "dsh.openSessionList"
         }
       ]
     },

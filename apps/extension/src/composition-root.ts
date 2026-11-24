@@ -594,11 +594,14 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
 
 function selectedCustomEndpoint(configuration: VsCodeConfigurationSource): BackendEndpoint {
   const connection = configuration.read().connection
-  const endpoint = connection.mode === 'custom' ? endpointFromServerUrl(connection.serverUrl) : undefined
+  const endpoint =
+    connection.mode === 'custom' || connection.mode === 'auto' || connection.mode === 'attach-only'
+      ? endpointFromServerUrl(connection.serverUrl)
+      : undefined
   if (endpoint === undefined)
     throw new AppError({
       code: 'INVALID_CONFIGURATION',
-      message: 'Select a custom DSH endpoint before configuring connection credentials.',
+      message: 'Configure dsh.connection.serverUrl before managing external connection credentials.',
       retryable: false,
     })
   return endpoint

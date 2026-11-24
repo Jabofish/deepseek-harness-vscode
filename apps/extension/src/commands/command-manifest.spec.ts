@@ -47,4 +47,20 @@ describe('command manifest contributions', () => {
     for (const command of ['dsh.openChatInEditor', 'dsh.moveChatToSidebar'])
       expect(activationEvents.has(`onCommand:${command}`), `missing activation for ${command}`).toBe(true)
   })
+
+  it('keeps documented external auth and sidebar layout commands visible in the Command Palette', () => {
+    const palette = new Map(
+      (manifest.contributes?.menus?.commandPalette ?? []).map((entry) => [entry.command, entry.when]),
+    )
+    for (const command of [
+      'dsh.authorizeExternalConnection',
+      'dsh.clearExternalCredentials',
+      'dsh.openInSecondarySidebar',
+      'dsh.openSessionList',
+    ]) {
+      expect(palette.get(command), `${command} should remain reachable from the Command Palette`).not.toBe(
+        'false',
+      )
+    }
+  })
 })

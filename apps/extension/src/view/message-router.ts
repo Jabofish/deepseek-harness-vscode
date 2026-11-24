@@ -565,6 +565,14 @@ function publicErrorMessage(
     INTERNAL_ERROR: 'DSH returned an internal error.',
   }
   const base = fallback[code] ?? `DSH operation failed (${code}).`
+  if (requestType === 'connection.configure' || requestType === 'connection.retry') {
+    if (code === 'AUTH_REQUIRED')
+      return 'DSH authentication failed. Run JaboDSH: Authorize External Connection and try again.'
+    if (code === 'INVALID_ENDPOINT')
+      return 'Enter a valid HTTP(S) DSH origin without path, query, or embedded credentials.'
+    if (code === 'PERMISSION_DENIED')
+      return 'Authorize this external DSH endpoint in a trusted workspace before connecting.'
+  }
   if (requestType === 'command.execute') return withFailureDetail(base, context, message)
   // Settings and model configuration failures are actionable in the drawer.
   // Keep the same bounded/redacted diagnostic used for commands; otherwise a
