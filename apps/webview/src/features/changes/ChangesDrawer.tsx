@@ -228,6 +228,16 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
                   <span className="dsh-changes-popover__status-label">
                     {t(`changes.status.${change.status}`)}
                   </span>
+                  {change.additions !== undefined || change.deletions !== undefined ? (
+                    <span className="dsh-changes-popover__diff-stats">
+                      {`+${change.additions ?? 0} -${change.deletions ?? 0}`}
+                    </span>
+                  ) : null}
+                  {change.reviewState !== 'unreviewed' ? (
+                    <span className="dsh-changes-popover__review-state">
+                      {t(`changes.review.${change.reviewState}`)}
+                    </span>
+                  ) : null}
                   <span className="dsh-changes-popover__evidence">
                     {t(`changes.evidence.${change.evidence}`)}
                   </span>
@@ -281,6 +291,7 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
                 <span>{t(`changes.review.${detail.reviewState}`)}</span>
               </div>
               <pre tabIndex={0}>{detail.redactedDiff ?? t('changes.noDiff')}</pre>
+              <p className="dsh-changes-popover__review-note">{t('changes.reviewNote')}</p>
               <div
                 className="dsh-changes-popover__review-actions"
                 role="group"
@@ -296,7 +307,7 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
                 </button>
                 <button
                   type="button"
-                  className="dsh-button dsh-button--danger dsh-button--compact"
+                  className="dsh-button dsh-button--secondary dsh-button--compact"
                   disabled={reviewing !== undefined}
                   onClick={() => markDetailReviewed('rejected')}
                 >

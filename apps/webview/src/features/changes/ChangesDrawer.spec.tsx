@@ -74,6 +74,7 @@ describe('ChangesDrawer', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '1 changes' }))
     expect(screen.getByText('src/main.ts')).toBeDefined()
+    expect(screen.getByText('+2 -1')).toBeDefined()
     expect(screen.getByText('Proposed change')).toBeDefined()
     fireEvent.click(screen.getByRole('button', { name: 'Review src/main.ts' }))
     await waitFor(() => expect(document.querySelector('pre')?.textContent).toBe('--- old\nold\n+++ new\nnew'))
@@ -91,7 +92,9 @@ describe('ChangesDrawer', () => {
     fireEvent.click(screen.getByRole('button', { name: '1 changes' }))
     fireEvent.click(screen.getByRole('button', { name: 'Review src/main.ts' }))
     await waitFor(() => expect(screen.getByRole('region', { name: 'Change detail' })).toBeDefined())
-    fireEvent.click(screen.getByRole('button', { name: 'Reject' }))
+    const flagButton = screen.getByRole('button', { name: 'Flag issue' })
+    expect(flagButton.className).not.toContain('dsh-button--danger')
+    fireEvent.click(flagButton)
 
     await waitFor(() =>
       expect(screen.getByRole('alert').textContent).toBe('The review decision could not be saved.'),
