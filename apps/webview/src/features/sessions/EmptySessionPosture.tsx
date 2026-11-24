@@ -107,20 +107,12 @@ export function EmptySessionPosture(props: {
           {t('app.newSessionInWorkspace')}
         </button>
         {!props.empty && props.onOpenSessions !== undefined ? (
-          <button
-            className="dsh-button dsh-button--secondary"
-            type="button"
-            onClick={props.onOpenSessions}
-          >
+          <button className="dsh-button dsh-button--secondary" type="button" onClick={props.onOpenSessions}>
             {t('sessions.title')}
           </button>
         ) : null}
         {props.onOpenSettings !== undefined ? (
-          <button
-            className="dsh-button dsh-button--secondary"
-            type="button"
-            onClick={props.onOpenSettings}
-          >
+          <button className="dsh-button dsh-button--secondary" type="button" onClick={props.onOpenSettings}>
             {t('settings.title')}
           </button>
         ) : null}

@@ -279,13 +279,12 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
 
   const runInstall = async (approved?: readonly string[]): Promise<void> => {
     if (busyKey !== undefined || installBusy || props.onStartInstall === undefined) return
-    const retryTarget = approved !== undefined ? installOperation?.target : undefined
-    if (retryTarget !== undefined) {
+    if (approved !== undefined && installOperation?.target !== undefined) {
       setNotice(undefined)
       setInspection(undefined)
       setDismissedRecoveryRequestId(undefined)
       await props.onStartInstall({
-        ...retryTarget,
+        ...installOperation.target,
         approvedBuilds: [...approved],
       })
       return

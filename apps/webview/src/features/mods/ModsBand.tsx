@@ -209,11 +209,19 @@ function BandNode({
   )
 }
 
-function collectHotkeys(nodes: readonly ModsBandNode[], out = new Map<string, string>()): Map<string, string> {
+function collectHotkeys(
+  nodes: readonly ModsBandNode[],
+  out = new Map<string, string>(),
+): Map<string, string> {
   for (const node of nodes) {
     if (typeof node === 'string') continue
     if (node.kind === 'button') {
-      if (!node.disabled && node.actionId !== undefined && node.hotkey !== undefined && node.hotkey.trim() !== '') {
+      if (
+        !node.disabled &&
+        node.actionId !== undefined &&
+        node.hotkey !== undefined &&
+        node.hotkey.trim() !== ''
+      ) {
         const key = node.hotkey.trim().toLowerCase()
         if (!out.has(key)) out.set(key, node.actionId)
       }

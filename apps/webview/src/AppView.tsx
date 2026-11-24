@@ -569,9 +569,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                                 {
                                   id: entry.id,
                                   ...(entry.label === undefined ? {} : { label: entry.label }),
-                                  ...(state.subagents.parentSessionId === undefined
-                                    ? {}
-                                    : { parentSessionId: state.subagents.parentSessionId }),
+                                  parentSessionId: entry.parentSessionId,
                                 },
                               ]
                             : [],

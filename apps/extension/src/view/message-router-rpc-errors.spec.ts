@@ -59,7 +59,9 @@ describe('RPC diagnostic to Webview boundary', () => {
         return Promise.resolve(true)
       },
       handleRequest: () =>
-        Promise.reject(new AppError({ code, message: 'private detail https://secret.example', retryable: true })),
+        Promise.reject(
+          new AppError({ code, message: 'private detail https://secret.example', retryable: true }),
+        ),
     })
 
     await router.handle({

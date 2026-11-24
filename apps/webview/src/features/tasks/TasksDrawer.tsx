@@ -246,7 +246,9 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
                     {task.title}
                   </span>
                   {task.progress === undefined ? null : (
-                    <span className="dsh-tasks-popover__meta">{task.progress}</span>
+                    <span className="dsh-tasks-popover__meta">
+                      {`${Math.round(Math.max(0, Math.min(1, task.progress)) * 100)}%`}
+                    </span>
                   )}
                   {task.modelLabel === undefined ? null : (
                     <span className="dsh-tasks-popover__meta">{task.modelLabel}</span>

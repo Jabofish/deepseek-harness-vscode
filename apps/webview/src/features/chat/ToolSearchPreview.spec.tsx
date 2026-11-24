@@ -72,7 +72,14 @@ describe('ToolSearchPreview', () => {
     cleanup()
     render(
       <ToolSearchPreview
-        view={{ phase: 'result', card: 'search', shape: 'paths', paths: ['src/index.ts'], total: 1, truncated: false }}
+        view={{
+          phase: 'result',
+          card: 'search',
+          shape: 'paths',
+          paths: ['src/index.ts'],
+          total: 1,
+          truncated: false,
+        }}
         onOpenLink={onOpenLink}
       />,
     )

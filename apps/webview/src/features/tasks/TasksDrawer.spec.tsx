@@ -97,7 +97,7 @@ describe('TasksDrawer', () => {
     render(
       <I18nProvider>
         <TasksDrawer
-          tasks={[{ ...task, progress: 'Step 2/4', modelLabel: 'deepseek-reasoner' }]}
+          tasks={[{ ...task, progress: 0.5, modelLabel: 'deepseek-reasoner' }]}
           loading={false}
           onRefresh={onRefresh}
           onOpen={onOpen}
@@ -107,7 +107,7 @@ describe('TasksDrawer', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: '1 needs input' }))
     await waitFor(() => expect(onRefresh).toHaveBeenCalledOnce())
-    expect(screen.getByText('Step 2/4')).toBeDefined()
+    expect(screen.getByText('50%')).toBeDefined()
     expect(screen.getByText('deepseek-reasoner')).toBeDefined()
     fireEvent.click(screen.getByRole('button', { name: 'Review in session' }))
     await waitFor(() => expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ taskId: task.taskId })))

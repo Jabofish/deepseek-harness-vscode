@@ -49,7 +49,9 @@ export class PluginInstallRecoveryController {
       ...(input.officialBundle === true ? { officialBundle: true } : {}),
       ...(input.registry === undefined ? {} : { registry: input.registry }),
     }
-    if (!this.begin({ requestId, phase: 'installing', cancelRequested: false, waiting: false, target }, false))
+    if (
+      !this.begin({ requestId, phase: 'installing', cancelRequested: false, waiting: false, target }, false)
+    )
       return Promise.resolve()
     return this.runInstall(requestId, input)
   }

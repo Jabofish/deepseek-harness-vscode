@@ -370,9 +370,9 @@ export function createSessionRequestHandler(
             ? 'ZIP Archive'
             : 'JSON'
       const baseName =
-        session.title
-          .trim()
-          .replace(/[<>:"/\\|?*\u0000-\u001f]+/gu, '-')
+        Array.from(session.title.trim(), (char) => (char.charCodeAt(0) < 32 ? '-' : char))
+          .join('')
+          .replace(/[<>:"/\\|?*]+/gu, '-')
           .replace(/-+/gu, '-')
           .replace(/^-|-$/gu, '')
           .slice(0, 80) || 'dsh-session'
@@ -403,8 +403,7 @@ export function createSessionRequestHandler(
       const actionLabel = request.payload.format === 'zip' ? 'Reveal File' : 'Open File'
       void vscode.window.showInformationMessage('DSH session exported.', actionLabel).then((picked) => {
         if (picked !== actionLabel) return
-        if (request.payload.format === 'zip')
-          void vscode.commands.executeCommand('revealFileInOS', uri)
+        if (request.payload.format === 'zip') void vscode.commands.executeCommand('revealFileInOS', uri)
         else
           void vscode.workspace
             .openTextDocument(uri)
