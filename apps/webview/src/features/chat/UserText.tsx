@@ -26,6 +26,34 @@ const TRAILING_PUNCTUATION_RE = /[.,;:!?，。；：！？]+$/u
 const USER_REFERENCE_RE = /(^|\s)(@"[^"\n]+"|@[^\s]+)/gu
 const CODE_SPAN_RE = /```[\s\S]*?```|`[^`\n]+`/gu
 const FILE_EXTENSION_RE = /\.[A-Za-z0-9]{1,10}(?::\d+(?::\d+)?)?$/u
+/** Well-known files without an extension; the composer inserts them unquoted. */
+const EXTENSIONLESS_FILE_NAMES = new Set(
+  [
+    'makefile',
+    'gnumakefile',
+    'dockerfile',
+    'containerfile',
+    'jenkinsfile',
+    'vagrantfile',
+    'procfile',
+    'gemfile',
+    'rakefile',
+    'brewfile',
+    'podfile',
+    'justfile',
+    'license',
+    'licence',
+    'copying',
+    'notice',
+    'readme',
+    'changelog',
+    'authors',
+    'contributing',
+    'codeowners',
+    'owners',
+  ].map((name) => name.toLowerCase()),
+)
+const LINE_SUFFIX_RE = /(?::\d+(?::\d+)?)$/u
 
 function isFileMentionToken(label: string): boolean {
   if (label.startsWith('@"') && label.endsWith('"') && label.length > 3) return true
@@ -33,6 +61,8 @@ function isFileMentionToken(label: string): boolean {
   if (raw === '' || /[()<>`"']/u.test(raw)) return false
   if (raw.endsWith('/') || raw.endsWith('\\')) return true
   if (FILE_EXTENSION_RE.test(raw)) return true
+  const name = raw.replace(LINE_SUFFIX_RE, '').split(/[\\/]/u).pop() ?? ''
+  if (EXTENSIONLESS_FILE_NAMES.has(name.toLowerCase())) return true
   return raw.startsWith('./') || raw.startsWith('../')
 }
 

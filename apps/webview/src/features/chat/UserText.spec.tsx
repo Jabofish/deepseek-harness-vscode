@@ -51,4 +51,13 @@ describe('UserText', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Past session' }))
     expect(openSession).toHaveBeenCalledWith('s-42')
   })
+
+  it('treats composer mentions of well-known extensionless files as file references', () => {
+    expect(containsUserTextReferences('Fix @Makefile and @docker/Dockerfile:3')).toBe(true)
+    expect(containsUserTextReferences('Ping @maintainers about @Override')).toBe(false)
+    const openFile = vi.fn()
+    render(<div>{projectUserText('Update @LICENSE now', [], { openFile })}</div>)
+    fireEvent.click(screen.getByRole('button', { name: /LICENSE/u }))
+    expect(openFile).toHaveBeenCalledWith('LICENSE')
+  })
 })
