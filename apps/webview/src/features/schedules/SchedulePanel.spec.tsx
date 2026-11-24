@@ -596,4 +596,91 @@ describe('native Schedule management', () => {
     expect(requests.filter((request) => request.type === 'schedule.create')).toHaveLength(1)
     expect(start).not.toHaveBeenCalled()
   })
+
+  it('preserves weekly weekdays and cron expression when entering edit mode and shows Cancel before edits', async () => {
+    const weeklyTask: ScheduleCatalogEntry = {
+      id: 'schedule-weekly',
+      title: 'Tri-weekly sync',
+      prompt: 'Check status',
+      kind: 'weekly',
+      time: '09:30',
+      timeZone: 'UTC',
+      weekdays: [1, 3, 5],
+      scheduledAt: '2099-11-04T09:30:00.000Z',
+      status: 'active',
+    }
+    const cronTask: ScheduleCatalogEntry = {
+      id: 'schedule-cron',
+      title: 'Quarter-hour watch',
+      prompt: 'Check queue',
+      kind: 'cron',
+      expression: '*/15 9-17 * * 1-5',
+      timeZone: 'UTC',
+      scheduledAt: '2099-11-04T09:15:00.000Z',
+      status: 'active',
+    }
+    mountPanel({ items: [weeklyTask, cronTask] })
+
+    fireEvent.click(await screen.findByRole('button', { name: /Tri-weekly sync/u }))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    // Cancel is available immediately even before modifying fields.
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeDefined()
+
+    fireEvent.click(screen.getByRole('button', { name: /Quarter-hour watch/u }))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    fireEvent.click(screen.getByRole('button', { name: /Timing/u }))
+    fireEvent.click(screen.getByRole('option', { name: 'Cron rule' }))
+    expect(screen.getByLabelText<HTMLInputElement>('Cron expression').value).toBe('*/15 9-17 * * 1-5')
+  })
+
+  it('disables edit and hides resume/next for ended schedules, and links run sessions in history', async () => {
+    const open = vi.fn()
+    const endedNative: ScheduleCatalogEntry = {
+      id: 'schedule-ended-native',
+      title: 'Finished native task',
+      prompt: 'Done',
+      kind: 'at',
+      scheduledAt: '2026-01-01T00:00:00.000Z',
+      status: 'ended',
+      target: { kind: 'new' },
+    }
+    mountPanel({
+      onOpenLinkedSession: open,
+      resolve: (request) => {
+        if (request.type === 'schedule.catalog') return catalog([endedNative])
+        if (request.type === 'schedule.history')
+          return {
+            kind: 'schedule.history',
+            result: {
+              id: endedNative.id,
+              records: [
+                {
+                  messageId: 'm-run-1',
+                  scheduledAt: '2026-01-01T00:00:00.000Z',
+                  deliveredAt: '2026-01-01T00:00:05.000Z',
+                  targetSessionId: 'session-run-1',
+                  prompt: 'Done',
+                },
+              ],
+              earlierRecordsUnavailable: false,
+              earlierRecordsPruned: false,
+              retention: { days: 30, records: 500 },
+            },
+          }
+        return undefined
+      },
+    })
+
+    fireEvent.click(await screen.findByRole('button', { name: /Finished native task/u }))
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Edit' }).disabled).toBe(true)
+    expect(screen.queryByText('Next run')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'More task actions' }))
+    expect(screen.queryByRole('button', { name: 'Resume' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Delivery history' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Open run session' }))
+    expect(open).toHaveBeenCalledWith('session-run-1')
+  })
 })

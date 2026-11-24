@@ -185,15 +185,22 @@ export function ScheduleCreateForm({
         />
       </label>
       {createDraft.timing === 'rrule' ? (
-        <label>
-          <span>{t('schedules.kind.rrule')}</span>
-          <textarea
-            value={createDraft.rrule ?? ''}
-            rows={4}
-            maxLength={64_000}
-            onChange={(event) => setCreateDraft({ ...createDraft, rrule: event.target.value })}
-          />
-        </label>
+        <div className="dsh-schedule-panel__create-fields">
+          <label>
+            <span>{t('schedules.kind.rrule')}</span>
+            <textarea
+              value={createDraft.rrule ?? ''}
+              rows={4}
+              maxLength={64_000}
+              placeholder="DTSTART:20261124T090000Z&#10;RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR"
+              onChange={(event) => {
+                setCreateDraft({ ...createDraft, rrule: event.target.value })
+                setCreateError(undefined)
+              }}
+            />
+          </label>
+          <p className="dsh-schedule-panel__muted">{t('schedules.create.rruleHelp')}</p>
+        </div>
       ) : null}
       {createDraft.timing === 'after' || createDraft.timing === 'every' ? (
         <div className="dsh-schedule-panel__create-fields">

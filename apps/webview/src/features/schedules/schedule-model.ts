@@ -540,17 +540,25 @@ export function initialDraft(record: ScheduleCatalogEntry): EditDraft {
       : 1
   const weekday = dateWeekday === 0 ? 7 : dateWeekday
   const occurrence = parseWallClock('2000-01-01', parts.time)
+  const time = 'time' in record ? record.time : parts.time
+  const weekdays = 'weekdays' in record && record.weekdays.length > 0 ? [...record.weekdays] : [weekday]
+  const expression =
+    'expression' in record
+      ? record.expression
+      : occurrence === undefined
+        ? '0 9 * * *'
+        : `${occurrence.minute} ${occurrence.hour} * * *`
   return {
     title: record.title,
     prompt: record.prompt,
     timing: 'keep',
     ...(record.kind === 'rrule' ? { rrule: record.rrule } : {}),
     date: parts.date,
-    time: parts.time,
+    time,
     timeZone,
     seconds: 'everySeconds' in record ? String(record.everySeconds) : '60',
-    weekdays: [weekday],
-    expression: occurrence === undefined ? '0 9 * * *' : `${occurrence.minute} ${occurrence.hour} * * *`,
+    weekdays,
+    expression,
   }
 }
 
