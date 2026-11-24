@@ -11,6 +11,8 @@ export interface PersistedWebviewState {
   readonly version: 1
   readonly composerPreferences?: ComposerPreferences
   readonly activeSessionId?: string
+  /** Unsent composer text by conversation, so a rebuilt Webview keeps it. */
+  readonly drafts?: Readonly<Record<string, string>>
 }
 
 export const EMPTY_SUBAGENT_CATALOG: SubagentCatalog = { entries: [], parentAvailable: false }

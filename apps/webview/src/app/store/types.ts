@@ -296,6 +296,8 @@ export interface AppActions {
   acknowledgeAccountBonus(orderId: string): Promise<boolean>
   openAccountPage(page: 'usage' | 'top-up'): Promise<void>
   initialize(): Promise<void>
+  /** Drafts an earlier Webview instance saved; the first call hands them over. */
+  takeSavedDrafts?(): Readonly<Record<string, string>>
   reconnect(): Promise<void>
   readDiagnostics(): Promise<DiagnosticsSnapshot | undefined>
   showDiagnostics(): Promise<void>

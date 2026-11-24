@@ -31,6 +31,8 @@ export interface DraftStore {
   readonly setFor: (owner: string | undefined, action: SetStateAction<string>) => void
   readonly clearIf: (owner: string | undefined, text: string) => void
   readonly reset: () => void
+  readonly snapshot: () => Readonly<Record<string, string>>
+  readonly restore: (entries: Readonly<Record<string, string>>) => void
 }
 
 const UNSCOPED_OWNER = ''
@@ -125,6 +127,14 @@ function createDraftStore(): DraftStore {
       current = ''
       announce()
     },
+    snapshot: () => Object.fromEntries(drafts),
+    restore: (entries) => {
+      for (const [owner, text] of Object.entries(entries)) if (text !== '') drafts.set(owner, text)
+      const next = drafts.get(keyFor(activeOwner)) ?? ''
+      if (next === current) return
+      current = next
+      announce()
+    },
   }
 }
 
@@ -167,4 +177,18 @@ export function clearDraftIf(owner: string | undefined, text: string): void {
 
 export function resetDraft(): void {
   store.reset()
+}
+
+/** Every unsent draft, keyed by owner; the pending composer uses the empty key. */
+export function draftSnapshot(): Readonly<Record<string, string>> {
+  return store.snapshot()
+}
+
+/** Seed drafts saved by an earlier Webview instance; current text wins. */
+export function restoreDrafts(entries: Readonly<Record<string, string>>): void {
+  store.restore(entries)
+}
+
+export function subscribeDrafts(listener: () => void): () => void {
+  return store.subscribe(listener)
 }

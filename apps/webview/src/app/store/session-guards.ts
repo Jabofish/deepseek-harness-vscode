@@ -143,5 +143,26 @@ export function readPersistedWebviewState(value: unknown): PersistedWebviewState
     ...(typeof root?.activeSessionId === 'string' && root.activeSessionId.trim() !== ''
       ? { activeSessionId: root.activeSessionId }
       : {}),
+    ...(() => {
+      const drafts = persistableDrafts(object(root?.drafts) ?? {})
+      return Object.keys(drafts).length === 0 ? {} : { drafts }
+    })(),
   }
+}
+
+export const MAX_PERSISTED_DRAFTS = 20
+export const MAX_PERSISTED_DRAFT_CHARS = 100_000
+
+/** Bound what Webview state keeps: string drafts only, newest owners last. */
+export function persistableDrafts(
+  value: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, string>> {
+  const entries = Object.entries(value).filter(
+    (entry): entry is [string, string] =>
+      entry[0].length <= 256 &&
+      typeof entry[1] === 'string' &&
+      entry[1].trim() !== '' &&
+      entry[1].length <= MAX_PERSISTED_DRAFT_CHARS,
+  )
+  return Object.fromEntries(entries.slice(-MAX_PERSISTED_DRAFTS))
 }
