@@ -116,9 +116,9 @@ describe('AppStore surface identity', () => {
 
       await expect(store.createSession(workspace.id)).resolves.toBe('s2')
 
-      expect(requestsOfType(client, 'session.create')).toEqual([
-        expect.objectContaining({ payload: expect.objectContaining({ sessionId: 's2' }) }),
-      ])
+      const creations = requestsOfType(client, 'session.create')
+      expect(creations).toHaveLength(1)
+      expect(creations[0]).toHaveProperty('payload.sessionId', 's2')
       expect(requestsOfType(client, 'surface.openInEditor')).toEqual([
         expect.objectContaining({ payload: { sessionId: 's2', replaceCurrent: true } }),
       ])
@@ -155,11 +155,9 @@ describe('AppStore surface identity', () => {
         const creations = requestsOfType(client, 'session.create')
         expect(creations).toHaveLength(1)
         expect(creations[0]).not.toHaveProperty('payload.sessionId')
-        expect(requestsOfType(client, 'session.sendPrompt')).toEqual([
-          expect.objectContaining({
-            payload: expect.objectContaining({ sessionId: 'new', text: 'First message' }),
-          }),
-        ])
+        const prompts = requestsOfType(client, 'session.sendPrompt')
+        expect(prompts).toHaveLength(1)
+        expect(prompts[0]).toMatchObject({ payload: { sessionId: 'new', text: 'First message' } })
         expect(store.getState().surface).toEqual({ kind: 'editor', sessionId: 'new' })
       } finally {
         store.dispose()
