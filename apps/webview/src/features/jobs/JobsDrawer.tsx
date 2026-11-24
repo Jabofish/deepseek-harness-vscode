@@ -79,12 +79,19 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLUListElement>(null)
   const outputRef = useRef<HTMLPreElement>(null)
+  // Follow new output only while the reader is at the end; scrolling up to
+  // read earlier lines must not be undone by the next chunk.
+  const followOutput = useRef(true)
+  const followedJobId = following?.jobId
   const followingChunkCount = following?.chunks.length ?? 0
   useEffect(() => {
+    followOutput.current = true
+  }, [followedJobId])
+  useEffect(() => {
     const element = outputRef.current
-    if (element === null) return
+    if (element === null || !followOutput.current) return
     element.scrollTop = element.scrollHeight
-  }, [following?.jobId, followingChunkCount])
+  }, [followedJobId, followingChunkCount])
   const menuPosition = useViewportMenuPosition({
     open,
     anchorRef: triggerRef,
@@ -308,7 +315,17 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
                 </div>
                 {following.error === 'stream-failed' ? <p role="alert">{t('jobs.followFailed')}</p> : null}
                 {following.lossy ? <p>{t('jobs.output.lossy')}</p> : null}
-                <pre ref={outputRef} role="log" aria-live="polite" tabIndex={0}>
+                <pre
+                  ref={outputRef}
+                  role="log"
+                  aria-live="polite"
+                  tabIndex={0}
+                  onScroll={(event) => {
+                    const element = event.currentTarget
+                    followOutput.current =
+                      element.scrollHeight - element.scrollTop - element.clientHeight < 24
+                  }}
+                >
                   {following.chunks.length === 0
                     ? t('jobs.output.empty')
                     : following.chunks.map((chunk, index) => (

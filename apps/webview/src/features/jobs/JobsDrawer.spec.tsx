@@ -82,4 +82,47 @@ describe('JobsDrawer popover', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Follow output' }))
     expect(onFollow).toHaveBeenCalledWith('alpha-job')
   })
+
+  it('follows new output only while the reader stays at the end of the log', () => {
+    const jobs = [job({ id: 'alpha-job', label: 'server', status: 'running', startedAt: 1_000 })]
+    const following = (count: number): JobFollowState => ({
+      jobId: 'alpha-job',
+      followId: 'follow-1',
+      next: count,
+      chunks: Array.from({ length: count }, (_value, index) => ({ at: index, text: `line ${index}\n` })),
+      lossy: false,
+    })
+    const view = renderJobs(jobs, { jobControllerAvailable: true, following: following(2) })
+    fireEvent.click(screen.getByRole('button', { name: '1 running' }))
+    const log = screen.getByRole('log')
+    Object.defineProperty(log, 'scrollHeight', { configurable: true, value: 1_000 })
+    Object.defineProperty(log, 'clientHeight', { configurable: true, value: 100 })
+
+    view.rerender(
+      <JobsDrawer
+        jobs={jobs}
+        jobControllerAvailable
+        following={following(3)}
+        onFollow={() => Promise.resolve()}
+        onStopFollowing={() => Promise.resolve()}
+        onKill={() => Promise.resolve('requested')}
+      />,
+    )
+    expect(log.scrollTop).toBe(1_000)
+
+    // The reader scrolls up to an earlier line; new chunks leave it there.
+    log.scrollTop = 200
+    fireEvent.scroll(log)
+    view.rerender(
+      <JobsDrawer
+        jobs={jobs}
+        jobControllerAvailable
+        following={following(4)}
+        onFollow={() => Promise.resolve()}
+        onStopFollowing={() => Promise.resolve()}
+        onKill={() => Promise.resolve('requested')}
+      />,
+    )
+    expect(log.scrollTop).toBe(200)
+  })
 })
