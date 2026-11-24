@@ -202,3 +202,35 @@ export interface WorkspaceChangeSource {
   >
   diff(sessionId: string, sequence: number, index: number, signal?: AbortSignal): Promise<string | undefined>
 }
+
+/**
+ * Rebuild the text a change started from by undoing its hunks on the file's
+ * current text, last hunk first. Each hunk carries context lines, so it is
+ * located by its whole `newText`. Returns undefined when the file has moved on
+ * (a hunk no longer matches) or when a hunk cannot be undone unambiguously,
+ * such as an overwrite whose previous text was never seen.
+ */
+export function reconstructChangeBaseline(
+  current: string,
+  status: ChangeFileStatus,
+  diffs: readonly ChangeDiff[],
+): string | undefined {
+  if (diffs.length === 0) return undefined
+  if (status === 'added' && diffs.every((diff) => diff.oldText === null)) return ''
+  const eol = current.includes('\r\n') ? '\r\n' : '\n'
+  const normalize = (text: string): string => text.replace(/\r?\n/gu, eol)
+  let text = current
+  let searchEnd = text.length
+  for (let index = diffs.length - 1; index >= 0; index -= 1) {
+    const diff = diffs[index]!
+    const newText = normalize(diff.newText)
+    if (newText === '') return undefined
+    if (diff.oldText === null && newText === text) return undefined
+    if (newText.length > searchEnd) return undefined
+    const at = text.lastIndexOf(newText, searchEnd - newText.length)
+    if (at < 0) return undefined
+    text = `${text.slice(0, at)}${diff.oldText === null ? '' : normalize(diff.oldText)}${text.slice(at + newText.length)}`
+    searchEnd = at
+  }
+  return text
+}

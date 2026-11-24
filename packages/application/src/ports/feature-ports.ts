@@ -1,5 +1,7 @@
 import type {
   ChangeDetail,
+  ChangeDiff,
+  ChangeFileStatus,
   ChangeListQuery,
   ChangeRepository,
   ChangeReviewState,
@@ -47,11 +49,12 @@ export interface NavigationPort {
     signal?: AbortSignal,
   ): Promise<void>
   showInExplorer(workspaceFolderId: string, relativePath: string, signal?: AbortSignal): Promise<void>
-  openDiff(
+  /** Show a recorded change in the editor's diff view, against the file as it is now. */
+  openChangeDiff(
     workspaceFolderId: string,
     relativePath: string,
-    before: string,
-    after?: string,
+    status: ChangeFileStatus,
+    diffs: readonly ChangeDiff[],
     signal?: AbortSignal,
   ): Promise<void>
 }

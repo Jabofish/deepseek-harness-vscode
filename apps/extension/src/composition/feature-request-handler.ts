@@ -637,7 +637,8 @@ export function createFeatureRequestHandler(deps: FeatureRequestHandlerDependenc
     if (
       request.type === 'changes.list' ||
       request.type === 'changes.detail' ||
-      request.type === 'changes.markReviewed'
+      request.type === 'changes.markReviewed' ||
+      request.type === 'changes.openDiff'
     )
       return handleChangeFeatureRequest(request, signal, {
         changeUseCases,
@@ -647,6 +648,14 @@ export function createFeatureRequestHandler(deps: FeatureRequestHandlerDependenc
         featureWorkspaceFolderId,
         isOpenWorkspaceFolderId: (id) =>
           currentWorkspaceFolders().some((folder) => workspaceFolderId(folder) === id),
+        openChangeDiff: (change, abortSignal) =>
+          navigationUseCases.openChangeDiff(
+            change.workspaceFolderId,
+            change.relativePath,
+            change.status,
+            change.diffs ?? [],
+            abortSignal,
+          ),
       })
     throw new AppError({
       code: 'FEATURE_DISABLED',

@@ -1,4 +1,10 @@
-import { AppError, type ChangeSetFile, type DshBackend, type SessionDetail } from '@dsh-vscode/domain'
+import {
+  AppError,
+  type ChangeDetail,
+  type ChangeSetFile,
+  type DshBackend,
+  type SessionDetail,
+} from '@dsh-vscode/domain'
 import type { ChangeUseCases } from '@dsh-vscode/application'
 import { redactMultilineText } from '@dsh-vscode/dsh-adapter/redaction'
 import type { FeatureHostEvent, FeatureRequest } from '@dsh-vscode/webview-protocol'
@@ -6,7 +12,9 @@ import type { ChangeSetTracker } from './change-set-tracker.js'
 
 type ChangeFeatureRequest = Extract<
   FeatureRequest,
-  { readonly type: 'changes.list' | 'changes.detail' | 'changes.markReviewed' }
+  {
+    readonly type: 'changes.list' | 'changes.detail' | 'changes.markReviewed' | 'changes.openDiff'
+  }
 >
 
 interface ChangeFeatureDependencies {
@@ -19,6 +27,7 @@ interface ChangeFeatureDependencies {
     session: SessionDetail | undefined,
   ) => string
   readonly isOpenWorkspaceFolderId: (workspaceFolderId: string) => boolean
+  readonly openChangeDiff?: (change: ChangeDetail, signal: AbortSignal) => Promise<void>
 }
 
 export async function handleChangeFeatureRequest(
@@ -77,6 +86,25 @@ export async function handleChangeFeatureRequest(
         : { redactedDiff: redactMultilineText(detail.redactedDiff, 262_144) }),
       truncated: detail.diffTruncated,
     }
+  }
+  if (request.type === 'changes.openDiff') {
+    const detail = await changeUseCases.get(request.payload.changeId, signal)
+    if (!isOpenWorkspaceFolderId(detail.workspaceFolderId))
+      throw new AppError({
+        code: 'RESOURCE_NOT_OWNED',
+        message: 'The requested change is not owned by this workspace.',
+        retryable: false,
+      })
+    const session = await requireCurrentWorkspaceSession(detail.sessionId, signal)
+    featureWorkspaceFolderId(detail.workspaceFolderId, session)
+    if (dependencies.openChangeDiff === undefined || detail.diffs === undefined || detail.diffs.length === 0)
+      throw new AppError({
+        code: 'CHANGE_INCOMPLETE',
+        message: 'This change has no recorded diff.',
+        retryable: false,
+      })
+    await dependencies.openChangeDiff(detail, signal)
+    return { kind: 'operation', operationId: request.requestId, state: 'completed' }
   }
   if (request.type === 'changes.markReviewed') {
     const current = await changeUseCases.get(request.payload.changeId, signal)

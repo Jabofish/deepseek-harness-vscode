@@ -13,6 +13,8 @@ export interface ChangesDrawerProps {
   readonly refreshFailed?: boolean
   readonly onRefresh: () => Promise<void>
   readonly onOpen: (changeId: string) => Promise<void>
+  /** Opens VS Code's diff view of this change against the current file. */
+  readonly onOpenDiff?: (changeId: string) => Promise<void>
   readonly onDetail: (changeId: string) => Promise<ChangeDetail | undefined>
   readonly onMarkReviewed: (
     changeId: string,
@@ -30,6 +32,7 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
   const [reviewing, setReviewing] = useState<ChangeReviewState | undefined>()
   const [reviewError, setReviewError] = useState(false)
   const [openError, setOpenError] = useState(false)
+  const [diffError, setDiffError] = useState<'stale' | 'failed'>()
   const [refreshError, setRefreshError] = useState(false)
   const [detailError, setDetailError] = useState(false)
   const detailRequestGeneration = useRef(0)
@@ -331,6 +334,30 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
                   >
                     {t('changes.openFile')}
                   </button>
+                  {props.onOpenDiff === undefined ||
+                  !detail.diffAvailable ||
+                  detail.status === 'deleted' ? null : (
+                    <button
+                      className="dsh-button dsh-button--secondary dsh-button--compact"
+                      type="button"
+                      onClick={() => {
+                        setDiffError(undefined)
+                        void props
+                          .onOpenDiff?.(detail.changeId)
+                          .catch((reason: unknown) =>
+                            setDiffError(
+                              typeof reason === 'object' &&
+                                reason !== null &&
+                                (reason as { readonly code?: unknown }).code === 'CHANGE_INCOMPLETE'
+                                ? 'stale'
+                                : 'failed',
+                            ),
+                          )
+                      }}
+                    >
+                      {t('changes.openDiff')}
+                    </button>
+                  )}
                   {detail.redactedDiff === undefined ? null : (
                     <CopyButton text={detail.redactedDiff} className="dsh-icon-button" translate={t} />
                   )}
@@ -344,6 +371,11 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
                   </button>
                 </div>
               </div>
+              {diffError === undefined ? null : (
+                <div className="dsh-changes-popover__error" role="alert">
+                  {t(diffError === 'stale' ? 'changes.openDiffStale' : 'changes.openDiffFailed')}
+                </div>
+              )}
               <div className="dsh-changes-popover__detail-meta">
                 <span>{t(`changes.evidence.${detail.evidence}`)}</span>
                 <span>{t(`changes.application.${detail.applicationState}`)}</span>

@@ -116,4 +116,17 @@ describe('ChangesDrawer', () => {
     fireEvent.click(copyBtn)
     expect(writeText).toHaveBeenCalledWith(diffText)
   })
+
+  it('opens the change in the editor diff and explains a diff that can no longer be rebuilt', async () => {
+    const onOpenDiff = vi
+      .fn()
+      .mockRejectedValue(Object.assign(new Error('stale'), { code: 'CHANGE_INCOMPLETE' }))
+    renderDrawer({ onOpenDiff })
+
+    fireEvent.click(screen.getByRole('button', { name: '1 changes' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Review src/main.ts' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Compare in editor' }))
+    expect(onOpenDiff).toHaveBeenCalledWith('change-1')
+    expect((await screen.findByRole('alert')).textContent).toContain('cannot be rebuilt')
+  })
 })

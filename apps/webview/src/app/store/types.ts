@@ -404,6 +404,7 @@ export interface AppActions {
   getChangeDetail(changeId: string): Promise<ChangeDetail | undefined>
   markChangeReviewed(changeId: string, reviewState: ChangeReviewState): Promise<ChangeSetFile | undefined>
   openChange(changeId: string): Promise<void>
+  openChangeDiff(changeId: string): Promise<void>
   refreshTasks(sessionId?: string, includeCompleted?: boolean, scope?: TaskListScope): Promise<void>
   getTask(taskId: string): Promise<TaskSummary | undefined>
   stopTask(taskId: string, taskRevision: number): Promise<TaskSummary | undefined>

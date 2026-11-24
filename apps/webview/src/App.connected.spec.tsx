@@ -340,6 +340,7 @@ function storeFor(state: AppState): AppStore {
     getChangeDetail: vi.fn().mockResolvedValue(undefined),
     markChangeReviewed: vi.fn().mockResolvedValue(undefined),
     openChange: vi.fn().mockResolvedValue(undefined),
+    openChangeDiff: vi.fn().mockResolvedValue(undefined),
     refreshTasks: vi.fn().mockResolvedValue(undefined),
     getTask: vi.fn().mockResolvedValue(undefined),
     stopTask: vi.fn().mockResolvedValue(undefined),

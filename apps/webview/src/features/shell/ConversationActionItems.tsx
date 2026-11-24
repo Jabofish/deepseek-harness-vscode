@@ -119,6 +119,7 @@ export function ConversationActionItems({
           refreshFailed={state.changesRefreshFailed}
           onRefresh={() => store.refreshChanges(activeId)}
           onOpen={(changeId) => store.openChange(changeId)}
+          onOpenDiff={(changeId) => store.openChangeDiff(changeId)}
           onDetail={(changeId) => store.getChangeDetail(changeId)}
           onMarkReviewed={(changeId, reviewState) => store.markChangeReviewed(changeId, reviewState)}
         />

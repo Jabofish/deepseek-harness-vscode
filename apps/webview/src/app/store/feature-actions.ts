@@ -43,6 +43,7 @@ export type FeatureActionMethods = Pick<
   | 'getChangeDetail'
   | 'markChangeReviewed'
   | 'openChange'
+  | 'openChangeDiff'
   | 'refreshTasks'
   | 'getTask'
   | 'stopTask'
@@ -539,6 +540,14 @@ export function createFeatureActions(host: FeatureActionHost): FeatureActions {
           changes: current.changes.map((entry) => (entry.changeId === change.changeId ? change : entry)),
         }))
       return change
+    },
+    openChangeDiff: async (changeId) => {
+      if (typeof client.featureRequest !== 'function') return
+      await client.featureRequest<unknown>({
+        type: 'changes.openDiff',
+        requestId: requestId(),
+        payload: { changeId },
+      })
     },
     openChange: async (changeId) => {
       if (typeof client.featureRequest !== 'function') return

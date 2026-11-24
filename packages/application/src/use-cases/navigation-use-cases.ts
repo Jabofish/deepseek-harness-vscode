@@ -1,4 +1,4 @@
-import type { EditorContextRange } from '@dsh-vscode/domain'
+import type { ChangeDiff, ChangeFileStatus, EditorContextRange } from '@dsh-vscode/domain'
 
 import type { NavigationPort } from '../ports/feature-ports.js'
 
@@ -33,13 +33,13 @@ export class NavigationUseCases {
     return this.navigation.showInExplorer(workspaceFolderId, relativePath, signal)
   }
 
-  public openDiff(
+  public openChangeDiff(
     workspaceFolderId: string,
     relativePath: string,
-    before: string,
-    after?: string,
+    status: ChangeFileStatus,
+    diffs: readonly ChangeDiff[],
     signal?: AbortSignal,
   ): Promise<void> {
-    return this.navigation.openDiff(workspaceFolderId, relativePath, before, after, signal)
+    return this.navigation.openChangeDiff(workspaceFolderId, relativePath, status, diffs, signal)
   }
 }
