@@ -394,6 +394,7 @@
   "question.refuse": "拒绝",
   "question.approve": "批准",
   "question.cancel": "取消整组问题",
+  "question.dismiss": "关闭",
   "question.timeRemaining": "还有 {seconds} 秒可回答",
   "question.timeRemainingOne": "还有 1 秒可回答",
   "question.waitConnecting": "正在确认问题状态…",

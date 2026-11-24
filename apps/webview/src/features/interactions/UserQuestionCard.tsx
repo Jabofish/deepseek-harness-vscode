@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, useState, type ReactElement } from 'react'
 import type { QuestionAnswer, QuestionChoice, UserQuestion, UserQuestionItem } from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
 import { ContentFlow } from '../../components/common/ContentFlow.js'
+import { MarkdownContent } from '../chat/MarkdownContent.js'
 
 export interface UserQuestionCardProps {
   readonly question: UserQuestion
@@ -35,7 +36,9 @@ interface TimedWaitState {
  */
 // A pending card docks above the composer while the conversation streams;
 // memo keeps those frames from re-rendering the card.
-export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuestionCardProps): ReactElement {
+export const UserQuestionCard = memo(function UserQuestionCard(
+  props: UserQuestionCardProps,
+): ReactElement | null {
   const { t } = useI18n()
   const items = questionItems(props.question)
   const planReview = isPlanReview(items)
@@ -43,6 +46,8 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
   const [drafts, setDrafts] = useState<readonly ItemDraft[]>(() =>
     items.map(() => ({ selected: [], custom: '', customSelected: false, skipped: false })),
   )
+  const [dismissedKey, setDismissedKey] = useState<string | undefined>(undefined)
+  const questionKey = `${props.question.sessionId}\u0000${props.question.id}\u0000${props.question.callId ?? ''}`
   const composing = useRef(false)
   const submitting = useRef(false)
   const [waitState, setWaitState] = useState<TimedWaitState | undefined>(undefined)
@@ -137,6 +142,7 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
       submitting.current = false
     }
   }
+  if (props.question.state === 'continued' && dismissedKey === questionKey) return null
   return (
     <section
       className={`dsh-interaction dsh-interaction--question${planReview ? ' dsh-interaction--plan-review' : ''}`}
@@ -222,12 +228,16 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
                 {item.prompt}
               </ContentFlow>
             )}
-            {item.detail === undefined ? null : (
+            {item.detail === undefined ? null : planReview ? (
+              <div className="dsh-question__detail">
+                <MarkdownContent markdown={item.detail} />
+              </div>
+            ) : (
               <ContentFlow as="p" className="dsh-question__detail">
                 {item.detail}
               </ContentFlow>
             )}
-            {item.choices === undefined || item.choices.length === 0 ? null : (
+            {planReview || item.choices === undefined || item.choices.length === 0 ? null : (
               <div className="dsh-question__choices" role="group" aria-label={item.prompt}>
                 {item.choices.map((choice) => {
                   const checked = drafts[index]?.selected.includes(choice.id) === true
@@ -334,7 +344,9 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
                   setDrafts((current) =>
                     current.map((draft, position) =>
                       position === index
-                        ? { selected: [], custom: '', customSelected: false, skipped: true }
+                        ? draft.skipped
+                          ? { ...draft, skipped: false }
+                          : { selected: [], custom: '', customSelected: false, skipped: true }
                         : draft,
                     ),
                   )
@@ -350,7 +362,9 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
         <PlanDecisionRow
           item={items[0]!}
           disabled={submitDisabled}
-          {...(props.question.state === 'continued' ? {} : { onChat: props.onCancel })}
+          {...(props.question.state === 'continued'
+            ? { onDismiss: () => setDismissedKey(questionKey) }
+            : { onChat: props.onCancel })}
           onRespond={(choice) => {
             // Upstream settles an intent against option LABELS: the asker
             // validates `intent.approve` against `option.label`, and answers
@@ -372,7 +386,15 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
             >
               {t('question.cancel')}
             </button>
-          ) : null}
+          ) : (
+            <button
+              className="dsh-button dsh-button--secondary dsh-button--compact"
+              type="button"
+              onClick={() => setDismissedKey(questionKey)}
+            >
+              {t('question.dismiss')}
+            </button>
+          )}
           {replyQueued ? (
             <span className="dsh-question__wait" role="status">
               {t('question.replyQueued')}
@@ -481,6 +503,7 @@ function PlanDecisionRow(props: {
   readonly item: UserQuestionItem
   readonly disabled: boolean
   readonly onChat?: () => void
+  readonly onDismiss?: () => void
   readonly onRespond: (choice: QuestionChoice) => void
 }): ReactElement {
   const { t } = useI18n()
@@ -500,6 +523,15 @@ function PlanDecisionRow(props: {
           onClick={props.onChat}
         >
           {t('question.discuss')}
+        </button>
+      )}
+      {props.onDismiss === undefined ? null : (
+        <button
+          className="dsh-button dsh-button--secondary dsh-button--compact"
+          type="button"
+          onClick={props.onDismiss}
+        >
+          {t('question.dismiss')}
         </button>
       )}
       <button

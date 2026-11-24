@@ -394,6 +394,7 @@
   "question.refuse": "Refuse",
   "question.approve": "Approve",
   "question.cancel": "Cancel questions",
+  "question.dismiss": "Dismiss",
   "question.timeRemaining": "You have {seconds} seconds to answer",
   "question.timeRemainingOne": "You have 1 second to answer",
   "question.waitConnecting": "Checking question status…",
