@@ -482,6 +482,17 @@ function unexpectedErrorEntry(requestType: string, error: unknown): UnexpectedEr
  * The standard sentence for each public error code. The Webview translates
  * these exact sentences (keys `hostError.<CODE>`), so keep both in sync.
  */
+/**
+ * Connection-specific wording for codes a connection attempt commonly returns.
+ * Each sentence has a `hostError.connection.<CODE>` Webview key so the UI can
+ * show it in its own language.
+ */
+export const CONNECTION_ERROR_MESSAGES: Readonly<Record<string, string>> = {
+  AUTH_REQUIRED: 'DSH authentication failed. Run JaboDSH: Authorize External Connection and try again.',
+  INVALID_ENDPOINT: 'Enter a valid HTTP(S) DSH origin without path, query, or embedded credentials.',
+  PERMISSION_DENIED: 'Authorize this external DSH endpoint in a trusted workspace before connecting.',
+}
+
 export const PUBLIC_ERROR_FALLBACKS: Readonly<Record<string, string>> = {
   DSH_NOT_FOUND: 'DeepSeek Harness was not found.',
   DSH_INCOMPATIBLE: 'The installed DeepSeek Harness version is not supported.',
@@ -572,12 +583,8 @@ function publicErrorMessage(
   const fallback = PUBLIC_ERROR_FALLBACKS
   const base = fallback[code] ?? `DSH operation failed (${code}).`
   if (requestType === 'connection.configure' || requestType === 'connection.retry') {
-    if (code === 'AUTH_REQUIRED')
-      return 'DSH authentication failed. Run JaboDSH: Authorize External Connection and try again.'
-    if (code === 'INVALID_ENDPOINT')
-      return 'Enter a valid HTTP(S) DSH origin without path, query, or embedded credentials.'
-    if (code === 'PERMISSION_DENIED')
-      return 'Authorize this external DSH endpoint in a trusted workspace before connecting.'
+    const connectionMessage = CONNECTION_ERROR_MESSAGES[code]
+    if (connectionMessage !== undefined) return connectionMessage
   }
   if (requestType === 'command.execute') return withFailureDetail(base, context, message)
   // Settings and model configuration failures are actionable in the drawer.
