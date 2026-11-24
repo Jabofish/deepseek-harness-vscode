@@ -598,10 +598,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                     </ConversationActionsMenu>
                   </div>
                   {state.transcript?.historical !== true ? null : (
-                    <div
-                      className="dsh-timeline__history-more"
-                      style={{ position: 'absolute', right: '1rem', bottom: '6rem', zIndex: 2 }}
-                    >
+                    <div className="dsh-timeline__history-more dsh-timeline__history-more--inline">
                       <button
                         type="button"
                         className="dsh-button dsh-button--secondary dsh-button--compact"
@@ -705,6 +702,28 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                           })}
                       loadFullNode={(nodeId, signal) => store.loadTranscriptNode(nodeId, signal)}
                       loadFullContent={(nodeId) => store.loadTranscriptContent(nodeId)}
+                      onEditPrompt={(text) => setDraft(text)}
+                      onRetryTurn={(reason) => {
+                        if (activeRunning || backend.kind !== 'connected') return
+                        if (reason === 'max-steps' || reason === 'interrupted') {
+                          void store
+                            .sendPrompt(active.id, 'Continue.', [], state.busyEnter)
+                            .catch((err: unknown) => {
+                              setError(err instanceof Error ? err.message : t('app.error.sendPrompt'))
+                            })
+                          return
+                        }
+                        const lastUser = [...state.timeline.nodes]
+                          .reverse()
+                          .find((entry) => entry.kind === 'user-message' && entry.markdown.trim() !== '')
+                        if (lastUser?.kind === 'user-message') {
+                          void store
+                            .sendPrompt(active.id, lastUser.markdown, [], state.busyEnter)
+                            .catch((err: unknown) => {
+                              setError(err instanceof Error ? err.message : t('app.error.sendPrompt'))
+                            })
+                        }
+                      }}
                     />
                   ) : (
                     <TrajectoryView

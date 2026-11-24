@@ -96,7 +96,17 @@ export function ToolCard(props: ToolCardProps): ReactElement {
               key={`request:${block.label}:${index}`}
               aria-label={block.label}
             >
-              <h4>{block.label}</h4>
+              <div className="dsh-tool-card__section-header">
+                <h4>{block.label}</h4>
+                <button
+                  type="button"
+                  className="dsh-tool-card__copy"
+                  aria-label={props.translate === undefined ? 'Copy' : props.translate('message.copy')}
+                  onClick={() => void navigator.clipboard?.writeText(block.content)}
+                >
+                  {props.translate === undefined ? 'Copy' : props.translate('message.copy')}
+                </button>
+              </div>
               <p tabIndex={0}>{block.content}</p>
             </section>
           ))}
@@ -106,7 +116,17 @@ export function ToolCard(props: ToolCardProps): ReactElement {
               key={`response:${block.label}:${index}`}
               aria-label={block.label}
             >
-              <h4>{block.label}</h4>
+              <div className="dsh-tool-card__section-header">
+                <h4>{block.label}</h4>
+                <button
+                  type="button"
+                  className="dsh-tool-card__copy"
+                  aria-label={props.translate === undefined ? 'Copy' : props.translate('message.copy')}
+                  onClick={() => void navigator.clipboard?.writeText(block.content)}
+                >
+                  {props.translate === undefined ? 'Copy' : props.translate('message.copy')}
+                </button>
+              </div>
               <p tabIndex={0}>{block.content}</p>
             </section>
           ))}
@@ -130,7 +150,17 @@ export function ToolCard(props: ToolCardProps): ReactElement {
           )}
           {props.tool.error === undefined ? null : (
             <section className="dsh-tool-card__section dsh-tool-card__section--error" role="alert">
-              <h4>{errorLabel}</h4>
+              <div className="dsh-tool-card__section-header">
+                <h4>{errorLabel}</h4>
+                <button
+                  type="button"
+                  className="dsh-tool-card__copy"
+                  aria-label={props.translate === undefined ? 'Copy' : props.translate('message.copy')}
+                  onClick={() => void navigator.clipboard?.writeText(errorText)}
+                >
+                  {props.translate === undefined ? 'Copy' : props.translate('message.copy')}
+                </button>
+              </div>
               <p tabIndex={0}>{errorText}</p>
             </section>
           )}

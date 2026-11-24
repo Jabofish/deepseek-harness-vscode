@@ -93,6 +93,8 @@ export interface TimelineProps {
   readonly contentVersions?: Readonly<Record<string, string>>
   readonly loadFullNode?: (nodeId: string, signal?: AbortSignal) => Promise<TimelineNode>
   readonly loadFullContent?: (nodeId: string) => Promise<string>
+  readonly onEditPrompt?: (text: string) => void
+  readonly onRetryTurn?: (reason: string) => void
   /** Receipt after the settled turn's current full bodies have committed. */
   readonly onResponseRendered?: (sessionId: string, turn: number, focused?: boolean) => Promise<boolean>
   /** Whether an older DSH history window is available. */
@@ -906,6 +908,8 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
       onFeedbackPrepare: props.onFeedbackPrepare === undefined ? undefined : stableOnFeedbackPrepare,
       truncatedNodeIds,
       loadFullContent: props.loadFullContent === undefined ? undefined : stableLoadFullContent,
+      onEditPrompt: props.onEditPrompt,
+      onRetryTurn: props.onRetryTurn,
       requestOpenLink,
       t,
     }),
@@ -926,6 +930,8 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
       props.feedbackUnavailable,
       performanceUsage,
       props.loadFullContent,
+      props.onEditPrompt,
+      props.onRetryTurn,
       props.onFeedbackSubmit,
       props.onFeedbackPrepare,
       requestOpenLink,

@@ -18,6 +18,7 @@ const FEEDBACK_CATEGORIES = [
 
 export interface MessageActionsProps {
   readonly text: string
+  readonly onEditPrompt?: (() => void) | undefined
   readonly onBranch?: (() => void) | undefined
   readonly branchUnavailable?: boolean | undefined
   readonly feedbackRating?: MessageFeedbackRating | undefined
@@ -213,6 +214,17 @@ export function MessageActions(props: MessageActionsProps): ReactElement {
           className="dsh-message-actions__button"
           translate={translate}
         />
+        {props.onEditPrompt === undefined ? null : (
+          <button
+            className="dsh-message-actions__button"
+            type="button"
+            aria-label={translate('message.editPrompt')}
+            title={translate('message.editPrompt')}
+            onClick={props.onEditPrompt}
+          >
+            <Icon name="edit" />
+          </button>
+        )}
         {hasFeedback ? (
           <>
             <button

@@ -137,10 +137,14 @@ export function FocusedTurn(props: {
       return next
     })
   }, [collapsedId, expandedDetails, foldable, keepLiveOpen, processId, setExpandedDetails])
+  const producedFiles = producedFilePaths(
+    node.nodes.flatMap((member) => (member.kind === 'tool' ? [member] : [])),
+  )
+  const toolOnlyTurn = answer === undefined && work.length > 0
   const open =
     revealed ||
     (!context.expandedDetails.has(collapsedId) &&
-      (!foldable || keepLiveOpen || context.expandedDetails.has(processId)))
+      (!foldable || toolOnlyTurn || keepLiveOpen || context.expandedDetails.has(processId)))
   const process: ReactElement[] = []
   if (open)
     for (let index = 0; index < work.length; index++) {
@@ -220,10 +224,12 @@ export function FocusedTurn(props: {
         </>
       )}
       {answer === undefined ? null : (
-        <div className="dsh-focused-turn__answer">{renderTimelineNode(answer, context)}</div>
+        <div className="dsh-focused-turn__answer">
+          {renderTimelineNode(answer, { ...context, producedFiles })}
+        </div>
       )}
       {renderProducedFiles(
-        producedFilePaths(node.nodes.flatMap((member) => (member.kind === 'tool' ? [member] : []))),
+        producedFiles,
         context.onOpenLink === undefined ? undefined : context.requestOpenLink,
         context.onShowInFolder,
         context.t,

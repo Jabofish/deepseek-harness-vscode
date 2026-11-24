@@ -66,6 +66,9 @@ function renderNode(
   focused = false,
   truncatedNodeIds: ReadonlySet<string> = new Set(),
   loadFullContent?: (nodeId: string) => Promise<string>,
+  producedFiles: readonly string[] = [],
+  onEditPrompt?: (text: string) => void,
+  onRetryTurn?: (reason: string) => void,
 ): ReactElement {
   switch (node.kind) {
     case 'tool':
@@ -267,6 +270,19 @@ function renderNode(
               </span>
             )}
           </span>
+          {onRetryTurn === undefined ? null : (
+            <button
+              type="button"
+              className="dsh-button dsh-button--secondary dsh-button--compact"
+              onClick={() => onRetryTurn(node.reason)}
+            >
+              {t(
+                node.reason === 'max-steps' || node.reason === 'interrupted'
+                  ? 'timeline.continueTurn'
+                  : 'timeline.retryTurn',
+              )}
+            </button>
+          )}
         </p>
       )
     case 'event-group':
@@ -379,6 +395,7 @@ function renderNode(
               text={node.markdown}
               truncated={truncatedNodeIds.has(node.id)}
               {...(loadFullContent === undefined ? {} : { loadFullText: () => loadFullContent(node.id) })}
+              {...(onEditPrompt === undefined ? {} : { onEditPrompt: () => onEditPrompt(node.markdown) })}
               translate={t}
             />
           )}
@@ -407,6 +424,7 @@ function renderNode(
         focused,
         truncatedNodeIds,
         loadFullContent,
+        producedFiles,
       )
     case 'reasoning':
       return renderAssistantTurn(
@@ -476,6 +494,9 @@ export function renderTimelineNode(
     context.conversationLayout === 'focused',
     context.truncatedNodeIds,
     context.loadFullContent,
+    context.producedFiles,
+    context.onEditPrompt,
+    context.onRetryTurn,
   )
 }
 
@@ -677,6 +698,7 @@ function renderAssistantMessage(
   focused = false,
   truncatedNodeIds: ReadonlySet<string> = new Set(),
   loadFullContent?: (nodeId: string) => Promise<string>,
+  producedFiles: readonly string[] = [],
 ): ReactElement {
   const inProgress = assistantNodeInProgress(node)
   const turnSettled = node.turn === undefined || node.turnCompleted === true
@@ -730,7 +752,12 @@ function renderAssistantMessage(
           translate={t}
         />
         {node.markdown.trim() === '' ? null : (
-          <MarkdownContent markdown={node.markdown} streaming={node.streaming} onOpenLink={onOpenLink} />
+          <MarkdownContent
+            markdown={node.markdown}
+            streaming={node.streaming}
+            onOpenLink={onOpenLink}
+            producedFiles={producedFiles}
+          />
         )}
       </article>
       {turnUsage === undefined ? null : <TurnUsageDisclosure usage={turnUsage} translate={t} />}

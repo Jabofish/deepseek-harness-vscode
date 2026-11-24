@@ -105,22 +105,41 @@ export const QueuePanel = memo(function QueuePanel(props: QueuePanelProps): Reac
 
   const expanded = multiple && !collapsed
   const listVisible = items.length === 1 || expanded
+  const steerableIds =
+    props.running && props.onModeChange !== undefined
+      ? props.items
+          .filter((item) => item.mode === 'queue' && !removingIds.has(item.id))
+          .map((item) => item.id)
+      : []
 
   return (
     <section className="dsh-queue" aria-label={t('queue.title')}>
       {multiple ? (
-        <button
-          className="dsh-queue__header"
-          type="button"
-          aria-controls={listId}
-          aria-expanded={expanded}
-          onClick={() => setCollapsed((current) => !current)}
-        >
-          <Icon name="list" className="dsh-queue__header-icon" />
-          <span className="dsh-queue__header-label">{t('queue.title')}</span>
-          <span className="dsh-queue__count">{items.length}</span>
-          <Icon name={expanded ? 'chevron-down' : 'chevron-right'} className="dsh-queue__header-chevron" />
-        </button>
+        <div className="dsh-queue__header-row">
+          <button
+            className="dsh-queue__header"
+            type="button"
+            aria-controls={listId}
+            aria-expanded={expanded}
+            onClick={() => setCollapsed((current) => !current)}
+          >
+            <Icon name="list" className="dsh-queue__header-icon" />
+            <span className="dsh-queue__header-label">{t('queue.title')}</span>
+            <span className="dsh-queue__count">{items.length}</span>
+            <Icon name={expanded ? 'chevron-down' : 'chevron-right'} className="dsh-queue__header-chevron" />
+          </button>
+          {steerableIds.length > 0 ? (
+            <button
+              type="button"
+              className="dsh-button dsh-button--secondary dsh-button--compact"
+              onClick={() => {
+                for (const id of steerableIds) void props.onModeChange?.(id, 'steer')
+              }}
+            >
+              {t('queue.steerAll')}
+            </button>
+          ) : null}
+        </div>
       ) : null}
       <ol id={listId} className="dsh-queue__list" hidden={!listVisible}>
         {listVisible

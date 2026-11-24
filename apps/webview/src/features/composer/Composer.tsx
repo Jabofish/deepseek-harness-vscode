@@ -255,6 +255,30 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
     onFocusRequestHandled?.(focusRequest.token)
   }, [focusRequest, onFocusRequestHandled, props.draftKey])
 
+  const referenceDebounceRef = useRef<number | undefined>(undefined)
+  const onReferenceQueryChangeRef = useRef(props.onReferenceQueryChange)
+  onReferenceQueryChangeRef.current = props.onReferenceQueryChange
+  const scheduleReferenceQuery = (query: string | undefined, quoted: boolean): void => {
+    if (referenceDebounceRef.current !== undefined) {
+      window.clearTimeout(referenceDebounceRef.current)
+      referenceDebounceRef.current = undefined
+    }
+    if (query === undefined) {
+      onReferenceQueryChangeRef.current?.(undefined, false)
+      return
+    }
+    referenceDebounceRef.current = window.setTimeout(() => {
+      referenceDebounceRef.current = undefined
+      onReferenceQueryChangeRef.current?.(query, quoted)
+    }, 150)
+  }
+  useEffect(
+    () => () => {
+      if (referenceDebounceRef.current !== undefined) window.clearTimeout(referenceDebounceRef.current)
+    },
+    [],
+  )
+
   const ingestFiles = (files: readonly File[] | FileList | undefined): void => {
     if (props.attachmentsDisabled === true) return
     const list = files === undefined ? [] : Array.from(files)
@@ -724,13 +748,13 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
             props.onDraftChange(value)
             props.onCommandQueryChange?.(slashCommandQuery(value))
             const token = referenceQueryToken(value, cursor)
-            props.onReferenceQueryChange?.(token?.query, token?.quoted ?? false)
+            scheduleReferenceQuery(token?.query, token?.quoted ?? false)
           }}
           onSelect={(event) => {
             const cursor = event.currentTarget.selectionStart
             setReferenceCursor(cursor)
             const token = referenceQueryToken(event.currentTarget.value, cursor)
-            props.onReferenceQueryChange?.(token?.query, token?.quoted ?? false)
+            scheduleReferenceQuery(token?.query, token?.quoted ?? false)
           }}
           onKeyDown={onKeyDown}
           onBeforeInput={deleteEmbeddedReferenceBeforeInput}

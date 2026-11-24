@@ -550,10 +550,25 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
                                   }
                                   aria-checked={isSelected}
                                   aria-disabled={applying}
-                                  title={model.label}
+                                  aria-label={model.label}
+                                  title={`${model.label} (${model.id})`}
                                   onClick={() => selectModel(model)}
                                 >
-                                  <span>{model.label}</span>
+                                  <span className="dsh-model-picker__option-copy">
+                                    <span>{model.label}</span>
+                                    <span className="dsh-model-picker__option-meta">
+                                      {model.id !== model.label ? <code>{model.id}</code> : null}
+                                      {model.contextWindow !== undefined && model.contextWindow > 0 ? (
+                                        <span>{formatContextWindow(model.contextWindow)}</span>
+                                      ) : null}
+                                      {model.supportsReasoning ? (
+                                        <span>{t('model.badge.reasoning')}</span>
+                                      ) : null}
+                                      {model.inputModalities?.includes('image') === true ? (
+                                        <span>{t('model.badge.vision')}</span>
+                                      ) : null}
+                                    </span>
+                                  </span>
                                   {isSelected ? <Icon name="check" /> : null}
                                 </button>
                               )
@@ -647,4 +662,10 @@ function groupModels(models: readonly ModelDescriptor[]): readonly ProviderGroup
     }
   }
   return groups
+}
+
+function formatContextWindow(tokens: number): string {
+  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(tokens % 1_000_000 === 0 ? 0 : 1)}M`
+  if (tokens >= 1_000) return `${Math.round(tokens / 1_000)}K`
+  return `${tokens}`
 }

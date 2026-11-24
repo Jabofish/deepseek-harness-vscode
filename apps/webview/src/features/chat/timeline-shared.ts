@@ -118,6 +118,9 @@ export interface TimelineNodeRenderContext {
   readonly onFeedbackPrepare: FeedbackPrepare | undefined
   readonly truncatedNodeIds: ReadonlySet<string>
   readonly loadFullContent: ((nodeId: string) => Promise<string>) | undefined
+  readonly producedFiles?: readonly string[]
+  readonly onEditPrompt?: ((text: string) => void) | undefined
+  readonly onRetryTurn?: ((reason: string) => void) | undefined
   readonly t: Translate
 }
 
