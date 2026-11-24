@@ -40,6 +40,7 @@ export default defineConfig({
           name: 'webview',
           pool: 'vmThreads',
           vmMemoryLimit: '512MB',
+          setupFiles: ['apps/webview/src/test/locale-reset.ts'],
           sequence: { groupOrder: 0 },
           include: ['apps/webview/**/*.spec.ts?(x)', 'packages/ui/**/*.spec.ts?(x)'],
           exclude: [...exclude, nativeBuildTest],
