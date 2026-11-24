@@ -360,8 +360,30 @@ export function createSessionRequestHandler(
     }
 
     if (request.type === 'session.export') {
-      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
-      const uri = await vscode.window.showSaveDialog({ saveLabel: 'Export DSH session' })
+      const session = await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      const extension =
+        request.payload.format === 'markdown' ? 'md' : request.payload.format === 'zip' ? 'zip' : 'json'
+      const filterLabel =
+        request.payload.format === 'markdown'
+          ? 'Markdown'
+          : request.payload.format === 'zip'
+            ? 'ZIP Archive'
+            : 'JSON'
+      const baseName =
+        session.title
+          .trim()
+          .replace(/[<>:"/\\|?*\u0000-\u001f]+/gu, '-')
+          .replace(/-+/gu, '-')
+          .replace(/^-|-$/gu, '')
+          .slice(0, 80) || 'dsh-session'
+      const folderUri = currentWorkspaceFolders()[0]?.uri
+      const defaultUri =
+        folderUri === undefined ? undefined : vscode.Uri.joinPath(folderUri, `${baseName}.${extension}`)
+      const uri = await vscode.window.showSaveDialog({
+        saveLabel: 'Export DSH session',
+        filters: { [filterLabel]: [extension] },
+        ...(defaultUri === undefined ? {} : { defaultUri }),
+      })
       if (uri === undefined) return { cancelled: true }
       const destinationExists = await pathExists(uri.fsPath)
       if (destinationExists) {
@@ -372,7 +394,23 @@ export function createSessionRequestHandler(
         )
         if (choice !== 'Overwrite') return { cancelled: true }
       }
-      return exportUseCases.exportSession(request.payload, uri.fsPath, signal, destinationExists)
+      const exported = await exportUseCases.exportSession(
+        request.payload,
+        uri.fsPath,
+        signal,
+        destinationExists,
+      )
+      const actionLabel = request.payload.format === 'zip' ? 'Reveal File' : 'Open File'
+      void vscode.window.showInformationMessage('DSH session exported.', actionLabel).then((picked) => {
+        if (picked !== actionLabel) return
+        if (request.payload.format === 'zip')
+          void vscode.commands.executeCommand('revealFileInOS', uri)
+        else
+          void vscode.workspace
+            .openTextDocument(uri)
+            .then((document) => vscode.window.showTextDocument(document, { preview: true }))
+      })
+      return exported
     }
     return unsupportedRequest(request)
   }

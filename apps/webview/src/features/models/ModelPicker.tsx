@@ -90,7 +90,7 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
   const selected = props.models.find(
     (model) => model.providerId === props.value.providerId && model.id === props.value.modelId,
   )
-  const showSearch = focused && props.models.length > 4
+  const showSearch = props.models.length > 4
   const groups = useMemo(
     () =>
       groupModels(props.models)
@@ -98,7 +98,10 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
           ...group,
           models: showSearch
             ? rankByName(
-                group.models.map((model) => ({ ...model, name: model.id })),
+                group.models.map((model) => ({
+                  ...model,
+                  name: `${model.label} ${model.id} ${model.providerId}`,
+                })),
                 search.query.trim(),
               )
             : group.models,

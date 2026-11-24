@@ -404,8 +404,13 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
       .finally(() => setMutationBusy(false))
   }
 
-  const moveWorkspace = (workspaceId: string, beforeWorkspaceId: string): void => {
+  const moveWorkspace = (workspaceId: string, targetWorkspaceId: string): void => {
     if (sorting !== 'manual' || mutationBusy || removingSessionId !== undefined) return
+    const ordered = props.workspaces.map((item) => item.id)
+    const source = ordered.indexOf(workspaceId)
+    const target = ordered.indexOf(targetWorkspaceId)
+    if (source === target) return
+    const beforeWorkspaceId = source < target ? ordered[target + 1] : targetWorkspaceId
     setMoveError(undefined)
     setMutationBusy(true)
     void props
