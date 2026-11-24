@@ -45,7 +45,6 @@ const TRANSPORT_CONFIGURATION_KEYS = [
   'dsh.connection.runtimeVersion',
   'dsh.connection.managedPort',
   'dsh.connection.attachPorts',
-  'dsh.connection.discoveryTimeoutMs',
   'dsh.connection.requestTimeoutMs',
 ] as const
 

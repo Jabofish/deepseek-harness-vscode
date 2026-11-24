@@ -229,14 +229,6 @@ export function GeneralSettingsTab(input: GeneralSettingsTabProps): ReactElement
                     {props.connectedDshVersion ??
                       t(props.connected ? 'settings.versionUnavailable' : 'settings.notConnected')}
                   </dd>
-                  <dt>{t('settings.permissionPreset')}</dt>
-                  <dd>{settings.security.defaultPermissionPreset}</dd>
-                  <dt>{t('settings.defaultAgent')}</dt>
-                  <dd>
-                    {[settings.defaultAgent.model.providerId, settings.defaultAgent.model.modelId]
-                      .filter(Boolean)
-                      .join('/') || t('settings.automatic')}
-                  </dd>
                 </dl>
               </details>
               <SettingCard

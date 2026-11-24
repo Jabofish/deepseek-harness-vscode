@@ -987,8 +987,6 @@
   "settings.dshUpdateVerified": "DSH {version} 已安装，版本验证通过。",
   "settings.dshUpdateProgressFailed": "DSH 更新失败。",
   "settings.dshUpdateRestart": "安装包已更新，请重新连接并检查 DSH 版本。外部启动的 DSH 需单独重启。",
-  "settings.permissionPreset": "权限预设",
-  "settings.defaultAgent": "默认模型",
   "settings.environmentDetails": "环境信息",
   "settings.conversationAppearance": "对话外观",
   "settings.conversationFontSize": "对话字体大小",

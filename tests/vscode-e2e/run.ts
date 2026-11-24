@@ -139,7 +139,6 @@ export async function run(): Promise<void> {
           'dsh.connection.mode': connectionMode,
           // An explicit port list limits discovery and disables automatic launch.
           ...(startsRuntime ? {} : { 'dsh.connection.attachPorts': [address.port] }),
-          'dsh.connection.discoveryTimeoutMs': 3_000,
           'dsh.connection.requestTimeoutMs': 5_000,
           'dsh.runtime.autoStart': startsRuntime,
           ...(executablePathSetting === undefined

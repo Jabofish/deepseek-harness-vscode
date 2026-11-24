@@ -274,7 +274,6 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
   const supervisor = new DshProcessSupervisor({
     managedPort: () => (usesDevelopmentRuntime(context) ? 0 : configuration.read().connection.managedPort),
     workingDirectory: () => currentWorkspaceFolder()?.uri.fsPath ?? process.cwd(),
-    toolMode: () => configuration.read().defaultAgent.toolMode,
     additionalArguments: async (_runtime, signal) => {
       const manager = await resolveCompanionPackageManager(signal)
       companionPackageManagerDirectory = manager.directory

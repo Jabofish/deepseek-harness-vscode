@@ -987,8 +987,6 @@
   "settings.dshUpdateVerified": "DSH {version} installed and verified.",
   "settings.dshUpdateProgressFailed": "DSH update failed.",
   "settings.dshUpdateRestart": "The package is updated. Reconnect and check the DSH version. An externally started DSH must be restarted separately.",
-  "settings.permissionPreset": "Permission preset",
-  "settings.defaultAgent": "Default model",
   "settings.environmentDetails": "Environment details",
   "settings.conversationAppearance": "Conversation appearance",
   "settings.conversationFontSize": "Conversation font size",
