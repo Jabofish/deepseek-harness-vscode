@@ -469,6 +469,13 @@
   max-width: 100%;
 }
 
+/* Progress, model and time details take a full row of their own (below the
+ * session line when there is one) instead of widening the status-dot column. */
+.dsh-tasks-popover__meta {
+  grid-column: 1 / -1;
+  max-width: 100%;
+}
+
 /* Domain `CheckpointState`: metadata-only | content-ready | stale | corrupt |
  * partial-restore | deleted. `deleted` keeps the neutral dot from the base rule. */
 .dsh-checkpoints-popover__state[data-state='content-ready'] {
