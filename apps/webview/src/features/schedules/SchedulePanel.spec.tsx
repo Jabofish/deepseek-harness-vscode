@@ -623,6 +623,12 @@ describe('native Schedule management', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: /Tri-weekly sync/u }))
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    fireEvent.click(screen.getByRole('button', { name: /Timing/u }))
+    fireEvent.click(screen.getByRole('option', { name: 'Weekly' }))
+    const checkedDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].filter(
+      (day) => screen.getByRole<HTMLInputElement>('checkbox', { name: day }).checked,
+    )
+    expect(checkedDays).toEqual(['Monday', 'Wednesday', 'Friday'])
     // Cancel is available immediately even before modifying fields.
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeDefined()
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
