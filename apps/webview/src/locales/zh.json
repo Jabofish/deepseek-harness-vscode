@@ -34,6 +34,7 @@
   "billing.match.official": "官方参考价",
   "billing.referenceFailed": "未能加载参考价格。",
   "billing.retryReference": "重新读取参考价格",
+  "billing.retryCatalog": "重新读取模型目录",
   "billing.referenceMissing": "未找到这个参考模型可用的价格。",
   "billing.referenceUnsupported": "这个参考模型的部分计价规则暂不支持。",
   "billing.retrievedAt": "获取时间：{time}",

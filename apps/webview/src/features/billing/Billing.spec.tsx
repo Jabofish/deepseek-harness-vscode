@@ -268,3 +268,33 @@ it('shows costs in the chosen currency regardless of the UI language', () => {
   fireEvent.click(screen.getByRole('option', { name: 'Follow UI language' }))
   expect(window.localStorage.getItem('dsh-webview-billing-currency')).toBeNull()
 })
+
+it('retries a model catalog that could not be loaded', async () => {
+  let catalogReads = 0
+  const request: BillingClient = <T,>(input: FeatureRequest): Promise<T> => {
+    if (input.type === 'billing.catalog.read') {
+      catalogReads += 1
+      if (catalogReads === 1) return Promise.reject(new Error('offline'))
+      return Promise.resolve({
+        kind: 'billing.catalog',
+        scopeId: 'scope',
+        revision: 3,
+        entries: [],
+        hasMore: false,
+        nextOffset: 0,
+      } as T)
+    }
+    return Promise.resolve({
+      kind: 'billing.settings',
+      scopeId: 'scope',
+      settings: { revision: 3, enabled: true, prices: [] },
+    } as T)
+  }
+  render(<BillingSettings request={request} models={[]} />)
+  open('Model billing')
+  const retry = await screen.findByRole('button', { name: 'Retry model catalog' })
+  fireEvent.click(retry)
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry model catalog' })).toBeNull())
+  expect(catalogReads).toBe(2)
+  expect(screen.queryByText(/model catalog could not be loaded/u)).toBeNull()
+})

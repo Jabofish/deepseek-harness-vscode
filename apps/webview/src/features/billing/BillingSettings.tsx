@@ -593,9 +593,18 @@ function BillingPriceEditor(props: {
               />
             </form>
             {catalogFailed ? (
-              <p className="dsh-billing__error" role="alert">
-                {t('billing.catalogFailed')}
-              </p>
+              <div className="dsh-billing__error" role="alert">
+                <p>{t('billing.catalogFailed')}</p>
+                <button
+                  type="button"
+                  disabled={catalogBusy || snapshot === undefined}
+                  onClick={() => {
+                    if (snapshot !== undefined) void loadCatalog(snapshot, 0, query)
+                  }}
+                >
+                  {t('billing.retryCatalog')}
+                </button>
+              </div>
             ) : null}
             {catalogBusy ? (
               <p className="dsh-billing__message" role="status">

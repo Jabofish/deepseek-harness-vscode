@@ -386,6 +386,12 @@
 .dsh-billing__error {
   color: var(--vscode-errorForeground);
 }
+.dsh-billing__error > p {
+  margin: 0 0 0.375rem;
+}
+.dsh-billing__error > button {
+  color: var(--vscode-foreground);
+}
 .dsh-billing .dsh-billing__more {
   display: flex;
   width: calc(100% - 1.25rem);

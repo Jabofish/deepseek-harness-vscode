@@ -34,6 +34,7 @@
   "billing.match.official": "Official reference",
   "billing.referenceFailed": "Reference prices could not be loaded.",
   "billing.retryReference": "Retry reference prices",
+  "billing.retryCatalog": "Retry model catalog",
   "billing.referenceMissing": "No usable prices were found for this reference.",
   "billing.referenceUnsupported": "This reference has pricing rules that are not yet supported.",
   "billing.retrievedAt": "Retrieved: {time}",
