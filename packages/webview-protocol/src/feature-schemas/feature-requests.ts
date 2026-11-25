@@ -198,7 +198,7 @@ export const featureRequestSchema = z.discriminatedUnion('type', [
       payload: z
         .object({
           changeId: id,
-          reviewState: z.enum(['viewed', 'accepted', 'rejected', 'needs-attention']),
+          reviewState: z.enum(['unreviewed', 'viewed', 'accepted', 'rejected', 'needs-attention']),
         })
         .strict(),
     })

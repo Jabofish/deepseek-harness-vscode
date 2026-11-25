@@ -532,7 +532,7 @@ export function createFeatureActions(host: FeatureActionHost): FeatureActions {
       const result = await client.featureRequest<unknown>({
         type: 'changes.markReviewed',
         requestId: requestId(),
-        payload: { changeId, reviewState: reviewState === 'unreviewed' ? 'viewed' : reviewState },
+        payload: { changeId, reviewState },
       })
       const changes = parseFeatureChangesResult(result)
       const change = changes?.[0]

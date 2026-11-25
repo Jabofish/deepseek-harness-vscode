@@ -196,7 +196,7 @@ function fromFeatureChangeStatus(
 }
 
 function fromFeatureReviewState(
-  state: 'viewed' | 'accepted' | 'rejected' | 'needs-attention',
+  state: 'unreviewed' | 'viewed' | 'accepted' | 'rejected' | 'needs-attention',
 ): ChangeSetFile['reviewState'] {
   return state
 }
