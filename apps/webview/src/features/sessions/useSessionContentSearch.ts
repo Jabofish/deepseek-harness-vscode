@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { SessionSummary } from '@dsh-vscode/domain'
 
 const SEARCH_RESULT_LIMIT = 20
+const RAPID_SEARCH_DEBOUNCE_MS = 120
 
 /**
- * Dispatch content searches as soon as the query changes. Retired requests
- * cannot replace the current results or publish errors after the drawer closes.
+ * Dispatch content searches immediately on a quiet input and debounce rapid
+ * consecutive keystrokes so typing does not flood the Host with RPCs. Retired
+ * requests cannot replace the current results or publish errors after closing.
  */
 export function useSessionContentSearch(options: {
   open: boolean
@@ -34,12 +36,17 @@ export function useSessionContentSearch(options: {
     readonly searchHasMore: boolean
     readonly unavailable: boolean
   }>()
+  const lastDispatchRef = useRef<{ readonly at: number; readonly query: string } | undefined>(undefined)
   const enabled = open && query !== '' && archiveFilter !== 'archived'
 
   useEffect(() => {
-    if (!enabled) return
+    if (!enabled) {
+      lastDispatchRef.current = undefined
+      return
+    }
     let retired = false
     const search = async (): Promise<void> => {
+      lastDispatchRef.current = { at: Date.now(), query: request.query }
       try {
         const page = await request.onSearch(request.query)
         if (retired) return
@@ -57,9 +64,23 @@ export function useSessionContentSearch(options: {
         setResult({ request, matches: [], searchHasMore: false, unavailable: true })
       }
     }
-    void search()
+    const previous = lastDispatchRef.current
+    const rapidFollowup =
+      previous !== undefined &&
+      previous.query !== request.query &&
+      Date.now() - previous.at < RAPID_SEARCH_DEBOUNCE_MS
+    if (!rapidFollowup) {
+      void search()
+      return () => {
+        retired = true
+      }
+    }
+    const timer = window.setTimeout(() => {
+      void search()
+    }, RAPID_SEARCH_DEBOUNCE_MS)
     return () => {
       retired = true
+      window.clearTimeout(timer)
     }
   }, [enabled, request])
 

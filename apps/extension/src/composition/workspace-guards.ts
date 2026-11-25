@@ -47,6 +47,7 @@ export function requiresTrustedWorkspace(type: WebviewRequest['type']): boolean 
     case 'attachment.pick':
     case 'attachment.ingest':
     case 'attachment.preview':
+    case 'attachment.openText':
     case 'attachment.open.list':
     case 'attachment.open.attach':
     case 'attachment.read':
@@ -68,6 +69,8 @@ export function requiresTrustedWorkspace(type: WebviewRequest['type']): boolean 
     case 'settings.mutate':
     case 'settings.openDocument':
     case 'settings.openKeyboardShortcuts':
+    case 'settings.openExtensionSettings':
+    case 'connection.clearCredentials':
     case 'goal.list':
     case 'goal.update':
     case 'goal.clear':

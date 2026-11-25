@@ -71,6 +71,7 @@ export const STATE_VIEW_KEYS_C = [
   'tasks',
   'tasksLoading',
   'taskScope',
+  'taskIncludeCompleted',
   'tasksComplete',
   'tasksOmittedSessions',
   'checkpoints',

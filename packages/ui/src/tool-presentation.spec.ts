@@ -107,6 +107,26 @@ describe('toolPresentation', () => {
     expect(presentation.response[0]?.content).toContain('yes')
     expect(presentation.response[0]?.content).not.toContain('{"answers"')
   })
+
+  it('preserves user-facing fields whose names end in id (such as valid, pid, issue_id)', () => {
+    const presentation = toolPresentation(
+      tool({
+        name: 'issue_lookup',
+        title: 'Issue lookup',
+        inputSummary: JSON.stringify({ issue_id: 'BUG-42', requestId: 'hidden-req' }),
+        outputSummary: JSON.stringify({ valid: true, pid: 1234, commit_id: 'abc123', callId: 'hidden-call' }),
+      }),
+    )
+
+    expect(presentation.request).toEqual([{ label: 'Issue id', content: 'BUG-42' }])
+    expect(presentation.response).toEqual([
+      { label: 'Valid', content: 'true' },
+      { label: 'Pid', content: '1234' },
+      { label: 'Commit id', content: 'abc123' },
+    ])
+    expect(JSON.stringify(presentation)).not.toContain('hidden-req')
+    expect(JSON.stringify(presentation)).not.toContain('hidden-call')
+  })
 })
 
 describe('formatToolText', () => {

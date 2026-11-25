@@ -43,6 +43,32 @@ describe('ExportDialog', () => {
     expect(screen.getByRole('button', { name: /Markdown/i })).toBeTruthy()
   })
 
+  it('falls back from a stored ZIP choice and hides ZIP when the runtime cannot export it', () => {
+    window.localStorage.setItem(STORAGE_KEY, 'zip')
+    render(
+      <I18nProvider>
+        <ExportDialog sessionId="session-1" zipAvailable={false} onExport={vi.fn()} onClose={vi.fn()} />
+      </I18nProvider>,
+    )
+    expect(screen.getByRole('button', { name: /Markdown/i })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /^Format:/iu }))
+    expect(screen.queryByRole('option', { name: /ZIP/i })).toBeNull()
+    expect(screen.getByText(/cannot export ZIP/iu)).toBeTruthy()
+  })
+
+  it('stays open in an exporting state until the export settles', async () => {
+    let finish: () => void = () => undefined
+    const onExport = vi.fn(() => new Promise<void>((resolve) => (finish = resolve)))
+    renderDialog(onExport)
+    fireEvent.click(screen.getByRole('button', { name: /Export/i }))
+    const busy = screen.getByRole('button', { name: /Exporting/i })
+    expect((busy as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(busy)
+    expect(onExport).toHaveBeenCalledTimes(1)
+    finish()
+    expect(await screen.findByRole('button', { name: /Choose destination/i })).toBeTruthy()
+  })
+
   it('persists the chosen format on submit', () => {
     const onExport = vi.fn()
     renderDialog(onExport)

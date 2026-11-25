@@ -61,7 +61,8 @@ interface Draft {
 
 export function PluginConfiguration(props: PluginConfigurationProps): ReactElement {
   const { t } = useI18n()
-  const [sectionOpen, setSectionOpen] = useState(false)
+  const [sectionOpen, setSectionOpen] = useState(true)
+  const [showBuiltIn, setShowBuiltIn] = useState(false)
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set())
   const [drafts, setDrafts] = useState<Readonly<Record<string, Draft>>>({})
   const [saving, setSaving] = useState<string | undefined>()
@@ -70,7 +71,17 @@ export function PluginConfiguration(props: PluginConfigurationProps): ReactEleme
   const snapshot = props.snapshot
   const sectionBodyId = useId()
 
-  const cards = useMemo(() => (snapshot === undefined ? [] : availablePlugins(snapshot)), [snapshot])
+  const allCards = useMemo(() => (snapshot === undefined ? [] : availablePlugins(snapshot)), [snapshot])
+  // Built-in namespaces already have their own controls in General, Models
+  // and Billing; listing them as plugins buries the real plugin settings.
+  const builtInCount = useMemo(
+    () => allCards.filter((plugin) => isBuiltInNamespace(plugin.namespace)).length,
+    [allCards],
+  )
+  const cards = useMemo(
+    () => (showBuiltIn ? allCards : allCards.filter((plugin) => !isBuiltInNamespace(plugin.namespace))),
+    [allCards, showBuiltIn],
+  )
 
   const toggle = (namespace: string): void => {
     setExpanded((current) => {
@@ -211,6 +222,16 @@ export function PluginConfiguration(props: PluginConfigurationProps): ReactEleme
       </div>
       {sectionOpen ? (
         <div className="dsh-plugin-configuration__section-body" id={sectionBodyId}>
+          {builtInCount === 0 ? null : (
+            <label className="dsh-plugin-configuration__builtin-toggle">
+              <input
+                type="checkbox"
+                checked={showBuiltIn}
+                onChange={(event) => setShowBuiltIn(event.currentTarget.checked)}
+              />
+              <span>{t('plugins.config.showBuiltIn', { count: builtInCount })}</span>
+            </label>
+          )}
           {cards.length === 0 ? (
             <p className="dsh-settings__empty">{t('plugins.config.empty')}</p>
           ) : (
@@ -316,6 +337,33 @@ export function PluginConfiguration(props: PluginConfigurationProps): ReactEleme
                                     stage(namespace, field.field, event.currentTarget.value)
                                   }
                                 />
+                              ) : field.kind === 'boolean' ? (
+                                <span className="dsh-plugin-configuration__switch">
+                                  <input
+                                    id={inputId}
+                                    type="checkbox"
+                                    role="switch"
+                                    checked={text === 'true'}
+                                    aria-checked={text === 'true'}
+                                    disabled={!snapshot.schema.writable || busy}
+                                    onChange={(event) =>
+                                      stage(
+                                        namespace,
+                                        field.field,
+                                        event.currentTarget.checked ? 'true' : 'false',
+                                      )
+                                    }
+                                  />
+                                  <span>
+                                    {t(
+                                      text === ''
+                                        ? 'plugins.config.default'
+                                        : text === 'true'
+                                          ? 'plugins.config.on'
+                                          : 'plugins.config.off',
+                                    )}
+                                  </span>
+                                </span>
                               ) : field.options === undefined ? (
                                 <input
                                   id={inputId}
@@ -627,4 +675,19 @@ function withoutNamespace(
   namespace: string,
 ): Readonly<Record<string, Draft>> {
   return Object.fromEntries(Object.entries(drafts).filter(([key]) => !key.startsWith(`${namespace}.`)))
+}
+
+const BUILT_IN_NAMESPACES = new Set([
+  'agent-presets',
+  'billing',
+  'locale',
+  'permission',
+  'models',
+  'providers',
+  'presets',
+])
+
+/** Namespaces the settings drawer edits on its own tabs. */
+function isBuiltInNamespace(namespace: string): boolean {
+  return BUILT_IN_NAMESPACES.has(namespace) || namespace.startsWith('ui-') || namespace.startsWith('llm-')
 }

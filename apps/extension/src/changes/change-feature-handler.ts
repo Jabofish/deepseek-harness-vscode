@@ -1,4 +1,11 @@
-import { AppError, type ChangeSetFile, type DshBackend, type SessionDetail } from '@dsh-vscode/domain'
+import {
+  AppError,
+  hasChangeBaselineHunks,
+  type ChangeDetail,
+  type ChangeSetFile,
+  type DshBackend,
+  type SessionDetail,
+} from '@dsh-vscode/domain'
 import type { ChangeUseCases } from '@dsh-vscode/application'
 import { redactMultilineText } from '@dsh-vscode/dsh-adapter/redaction'
 import type { FeatureHostEvent, FeatureRequest } from '@dsh-vscode/webview-protocol'
@@ -6,7 +13,9 @@ import type { ChangeSetTracker } from './change-set-tracker.js'
 
 type ChangeFeatureRequest = Extract<
   FeatureRequest,
-  { readonly type: 'changes.list' | 'changes.detail' | 'changes.markReviewed' }
+  {
+    readonly type: 'changes.list' | 'changes.detail' | 'changes.markReviewed' | 'changes.openDiff'
+  }
 >
 
 interface ChangeFeatureDependencies {
@@ -19,6 +28,7 @@ interface ChangeFeatureDependencies {
     session: SessionDetail | undefined,
   ) => string
   readonly isOpenWorkspaceFolderId: (workspaceFolderId: string) => boolean
+  readonly openChangeDiff?: (change: ChangeDetail, signal: AbortSignal) => Promise<void>
 }
 
 export async function handleChangeFeatureRequest(
@@ -70,6 +80,8 @@ export async function handleChangeFeatureRequest(
     return {
       kind: 'change.detail',
       change: featureChangeSummary(detail),
+      comparisonAvailable:
+        dependencies.openChangeDiff !== undefined && hasChangeBaselineHunks(detail.status, detail.diffs),
       // The diff renders inside a `<pre>`; folding its whitespace would join
       // every hunk into one line.
       ...(detail.redactedDiff === undefined
@@ -77,6 +89,25 @@ export async function handleChangeFeatureRequest(
         : { redactedDiff: redactMultilineText(detail.redactedDiff, 262_144) }),
       truncated: detail.diffTruncated,
     }
+  }
+  if (request.type === 'changes.openDiff') {
+    const detail = await changeUseCases.get(request.payload.changeId, signal)
+    if (!isOpenWorkspaceFolderId(detail.workspaceFolderId))
+      throw new AppError({
+        code: 'RESOURCE_NOT_OWNED',
+        message: 'The requested change is not owned by this workspace.',
+        retryable: false,
+      })
+    const session = await requireCurrentWorkspaceSession(detail.sessionId, signal)
+    featureWorkspaceFolderId(detail.workspaceFolderId, session)
+    if (dependencies.openChangeDiff === undefined || !hasChangeBaselineHunks(detail.status, detail.diffs))
+      throw new AppError({
+        code: 'CHANGE_INCOMPLETE',
+        message: 'This change has no reconstructable baseline.',
+        retryable: false,
+      })
+    await dependencies.openChangeDiff(detail, signal)
+    return { kind: 'operation', operationId: request.requestId, state: 'completed' }
   }
   if (request.type === 'changes.markReviewed') {
     const current = await changeUseCases.get(request.payload.changeId, signal)
@@ -168,7 +199,7 @@ function fromFeatureChangeStatus(
 }
 
 function fromFeatureReviewState(
-  state: 'viewed' | 'accepted' | 'rejected' | 'needs-attention',
+  state: 'unreviewed' | 'viewed' | 'accepted' | 'rejected' | 'needs-attention',
 ): ChangeSetFile['reviewState'] {
   return state
 }

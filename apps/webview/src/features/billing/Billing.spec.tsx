@@ -198,3 +198,103 @@ it('isolates connections and keeps the last amount visible while a failed refres
   await act(() => vi.advanceTimersByTimeAsync(200))
   expect(screen.getByText('Cost ≈ USD 5')).toBeDefined()
 })
+
+it('keeps an unsaved price across collapse, names invalid fields and searches as the user types', async () => {
+  const calls: FeatureRequest[] = []
+  const request: BillingClient = <T,>(input: FeatureRequest): Promise<T> => {
+    calls.push(input)
+    if (input.type === 'billing.catalog.read')
+      return Promise.resolve({
+        kind: 'billing.catalog',
+        scopeId: 'scope',
+        revision: 3,
+        entries: [],
+        hasMore: false,
+        nextOffset: 0,
+      } as T)
+    return Promise.resolve({
+      kind: 'billing.settings',
+      scopeId: 'scope',
+      settings: { revision: 3, enabled: true, prices: [] },
+    } as T)
+  }
+  render(<BillingSettings request={request} models={[]} />)
+  open('Model billing')
+  await waitFor(() =>
+    expect(
+      screen.getByRole('checkbox', { name: 'Enable cost estimates' }).closest('fieldset')?.disabled,
+    ).toBe(false),
+  )
+  expect(screen.getByText(/Prices are saved per connection/u)).toBeDefined()
+  vi.useFakeTimers()
+  fireEvent.change(screen.getByRole('searchbox', { name: 'Find a provider or model' }), {
+    target: { value: 'qwen' },
+  })
+  act(() => {
+    vi.advanceTimersByTime(300)
+  })
+  vi.useRealTimers()
+  await waitFor(() =>
+    expect(calls).toContainEqual(
+      expect.objectContaining({ type: 'billing.catalog.read', payload: { offset: 0, query: 'qwen' } }),
+    ),
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Add price' }))
+  // A form the user has not touched yet reports nothing as invalid.
+  expect(screen.queryByText(/^Check these fields/u)).toBeNull()
+  fireEvent.change(screen.getByLabelText('Provider ID'), { target: { value: 'local-route' } })
+  fireEvent.change(screen.getByLabelText('Model ID'), { target: { value: 'local-model' } })
+  fireEvent.change(screen.getByLabelText('Uncached input'), { target: { value: 'abc' } })
+  expect(screen.getByText(/^Check these fields: Uncached input, Output\.$/u)).toBeDefined()
+  open('Model billing', false)
+  open('Model billing')
+  expect(screen.getByLabelText<HTMLInputElement>('Provider ID').value).toBe('local-route')
+})
+
+it('shows costs in the chosen currency regardless of the UI language', () => {
+  const request: BillingClient = <T,>(): Promise<T> =>
+    Promise.resolve({
+      kind: 'billing.settings',
+      scopeId: 'scope',
+      settings: { revision: 1, enabled: true, prices: [] },
+    } as T)
+  render(<BillingSettings request={request} models={[]} />)
+  open('Model billing')
+  fireEvent.click(screen.getByRole('button', { name: 'Show costs in: Follow UI language' }))
+  fireEvent.click(screen.getByRole('option', { name: 'CNY' }))
+  expect(screen.getByRole('button', { name: 'Show costs in: CNY' })).toBeDefined()
+  expect(window.localStorage.getItem('dsh-webview-billing-currency')).toBe('CNY')
+  fireEvent.click(screen.getByRole('button', { name: 'Show costs in: CNY' }))
+  fireEvent.click(screen.getByRole('option', { name: 'Follow UI language' }))
+  expect(window.localStorage.getItem('dsh-webview-billing-currency')).toBeNull()
+})
+
+it('retries a model catalog that could not be loaded', async () => {
+  let catalogReads = 0
+  const request: BillingClient = <T,>(input: FeatureRequest): Promise<T> => {
+    if (input.type === 'billing.catalog.read') {
+      catalogReads += 1
+      if (catalogReads === 1) return Promise.reject(new Error('offline'))
+      return Promise.resolve({
+        kind: 'billing.catalog',
+        scopeId: 'scope',
+        revision: 3,
+        entries: [],
+        hasMore: false,
+        nextOffset: 0,
+      } as T)
+    }
+    return Promise.resolve({
+      kind: 'billing.settings',
+      scopeId: 'scope',
+      settings: { revision: 3, enabled: true, prices: [] },
+    } as T)
+  }
+  render(<BillingSettings request={request} models={[]} />)
+  open('Model billing')
+  const retry = await screen.findByRole('button', { name: 'Retry model catalog' })
+  fireEvent.click(retry)
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry model catalog' })).toBeNull())
+  expect(catalogReads).toBe(2)
+  expect(screen.queryByText(/model catalog could not be loaded/u)).toBeNull()
+})

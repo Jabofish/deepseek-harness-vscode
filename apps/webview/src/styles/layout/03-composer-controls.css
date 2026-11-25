@@ -361,9 +361,14 @@
   white-space: nowrap;
 }
 
-.dsh-unified-composer .dsh-composer__submit {
+.dsh-unified-composer .dsh-composer__toolbar-actions {
+  display: flex;
   grid-area: submit;
-  align-self: center;
+  align-items: center;
+  gap: var(--dsh-space-1);
+}
+
+.dsh-unified-composer .dsh-composer__submit {
   min-width: 2.25rem;
   min-height: 2.25rem;
   padding: var(--dsh-space-2);

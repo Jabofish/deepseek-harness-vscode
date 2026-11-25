@@ -112,4 +112,21 @@ describe('task invalidation reads', () => {
     h.requests[2]!.resolve({ ...snapshot, scope: 'workspace', source: 'workspace-composed' })
     await vi.waitFor(() => expect(h.getState().tasksLoading).toBe(false))
   })
+
+  it('keeps the chosen include-completed filter for event-driven refreshes', async () => {
+    const h = harness()
+    const chosen = h.features.methods.refreshTasks('session-1', true, 'current-session')
+    h.requests[0]!.resolve(snapshot)
+    await chosen
+    expect(h.getState().taskIncludeCompleted).toBe(true)
+
+    h.features.applyFeatureEvent(h.invalidated())
+    await vi.waitFor(() => expect(h.featureRequest).toHaveBeenCalledTimes(2))
+    const lastCall = h.featureRequest.mock.lastCall as unknown as readonly [
+      { readonly payload: { readonly includeCompleted?: boolean } },
+    ]
+    expect(lastCall[0].payload.includeCompleted).toBe(true)
+    h.requests[1]!.resolve(snapshot)
+    await vi.waitFor(() => expect(h.getState().tasksLoading).toBe(false))
+  })
 })

@@ -584,3 +584,18 @@
     flex-wrap: wrap;
   }
 }
+
+.dsh-schedule-panel__session-link {
+  margin-inline-start: var(--dsh-space-2);
+  padding: 0;
+  border: 0;
+  color: var(--vscode-textLink-foreground, var(--dsh-info));
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.dsh-schedule-panel__session-link:hover,
+.dsh-schedule-panel__session-link:focus-visible {
+  text-decoration: underline;
+}

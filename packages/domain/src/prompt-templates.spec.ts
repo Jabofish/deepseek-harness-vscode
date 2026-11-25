@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  MAX_PROMPT_TEMPLATE_VARIABLE_BYTES,
   expandPromptTemplate,
+  fitPromptTemplateVariableValue,
   normalizePromptTemplateDraft,
   type PromptTemplateDraft,
 } from './prompt-templates.js'
@@ -54,5 +56,19 @@ describe('prompt template domain', () => {
     )
     expect(result.text).toContain('<script>ignored</script>')
     expect(result.unresolvedVariables).toEqual(['selection'])
+  })
+
+  it('fits an oversized context value so the template still expands', () => {
+    const selection = `${'a'.repeat(MAX_PROMPT_TEMPLATE_VARIABLE_BYTES - 1)}中tail`
+    const fitted = fitPromptTemplateVariableValue(selection)
+    expect(new TextEncoder().encode(fitted).length).toBeLessThanOrEqual(MAX_PROMPT_TEMPLATE_VARIABLE_BYTES)
+    expect(fitted).toBe('a'.repeat(MAX_PROMPT_TEMPLATE_VARIABLE_BYTES - 1))
+    expect(fitPromptTemplateVariableValue('short')).toBe('short')
+    expect(() =>
+      expandPromptTemplate(
+        { templateId: 't', templateText: 'Fix {{selection}}', variables: ['selection'] },
+        { selection: fitted, currentDiagnostics: fitPromptTemplateVariableValue('x'.repeat(50_000)) },
+      ),
+    ).not.toThrow()
   })
 })

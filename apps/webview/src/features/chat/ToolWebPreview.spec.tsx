@@ -113,4 +113,15 @@ describe('ToolWebPreview', () => {
     const copyButton = screen.getByRole('button', { name: 'Copy' })
     expect(copyButton).toBeDefined()
   })
+
+  it('displays fetched page content and a copy button in web_fetch cards', () => {
+    render(
+      <ToolWebPreview
+        {...fetchProps({ url: 'https://example.test/doc', statusCode: 200, truncated: false })}
+        content="# Hello from fetched page"
+      />,
+    )
+    expect(screen.getByText('# Hello from fetched page')).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Copy' })).toBeDefined()
+  })
 })

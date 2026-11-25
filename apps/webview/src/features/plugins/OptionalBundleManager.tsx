@@ -77,7 +77,8 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
   })
   const [catalogLoadState, setCatalogLoadState] = useState<CatalogLoadState>()
   const [refreshToken, setRefreshToken] = useState(0)
-  const [sectionOpen, setSectionOpen] = useState(false)
+  // The Plugins tab is opened to manage plugins; its sections start expanded.
+  const [sectionOpen, setSectionOpen] = useState(true)
   const [openBundles, setOpenBundles] = useState<ReadonlySet<string>>(EMPTY_OPEN_BUNDLES)
   const [standaloneOpen, setStandaloneOpen] = useState(false)
   const [busyKey, setBusyKey] = useState<string>()
@@ -212,7 +213,7 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
     [locale, normalizedSearch, standalonePlugins],
   )
   const availableRegistries = registryOptions(registryView.catalog)
-  const registryMenuOptions = registryChoices(availableRegistries, registryView, t, locale)
+  const registryMenuOptions = registryChoices(availableRegistries, registryView, t)
   const registryMenuLabel =
     registryMenuOptions.find((option) => option.value === registryView.selected)?.label ??
     t('plugins.manager.registry.label')
@@ -279,6 +280,16 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
 
   const runInstall = async (approved?: readonly string[]): Promise<void> => {
     if (busyKey !== undefined || installBusy || props.onStartInstall === undefined) return
+    if (approved !== undefined && installOperation?.target !== undefined) {
+      setNotice(undefined)
+      setInspection(undefined)
+      setDismissedRecoveryRequestId(undefined)
+      await props.onStartInstall({
+        ...installOperation.target,
+        approvedBuilds: [...approved],
+      })
+      return
+    }
     const value = spec.trim()
     if (value === '' || (selectedRegistry === undefined && registryView.selected === CUSTOM_REGISTRY)) return
     setNotice(undefined)
@@ -630,7 +641,7 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
                         type="button"
                         onClick={recoverGithubInstall}
                       >
-                        {locale === 'zh' ? '试试其他方式' : 'Try another way'}
+                        {t('plugins.manager.install.tryAnotherWay')}
                       </button>
                     ) : null}
                   </div>

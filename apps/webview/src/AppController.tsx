@@ -33,7 +33,7 @@ import { createAppStore, type AppState, type AppStore } from './app/store.js'
 import { sameShallowSelection, useAppStoreSelector } from './app/useAppStoreSelector.js'
 import { selectAppViewState, APP_VIEW_SUBSCRIPTION } from './app/store/view-state.js'
 import { selectSessionModels } from './app/store/model-directory-state.js'
-import { activateDraftOwner, clearDraftIf, readDraft, resetDraft } from './app/draft-store.js'
+import { activateDraftOwner, adoptSavedDrafts, clearDraftIf, readDraft } from './app/draft-store.js'
 import { publicProtocolErrorMessage } from './app/protocol-client.js'
 import { useDshSettings } from './app/useDshSettings.js'
 import { useComposerAttachments } from './app/useComposerAttachments.js'
@@ -75,12 +75,13 @@ const useAppControllerImpl = () => {
   useEffect(() => {
     mountedRef.current = true
     // A remount (error-boundary recovery, test render) must not inherit the
-    // previous mount's composer text.
-    resetDraft()
+    // previous mount's in-memory text; it starts from the drafts the Webview
+    // state saved, so a rebuilt view keeps unsent prompts.
+    adoptSavedDrafts(() => store.takeSavedDrafts?.() ?? {})
     return () => {
       mountedRef.current = false
     }
-  }, [])
+  }, [store])
   useEffect(() => {
     if (state.accountLifecycleAvailable && state.drawer === 'settings' && state.accountLifecycle === null)
       void store.loadAccountLifecycle()
@@ -477,6 +478,7 @@ const useAppControllerImpl = () => {
     composerOnExtrasOpenChange,
     composerOnSelectOpenFile,
     composerOnRemoveAttachment,
+    composerOnOpenAttachmentText,
     composerOnSubmit,
   } = useComposerAttachments({
     store,
@@ -1068,12 +1070,14 @@ const useAppControllerImpl = () => {
     composerOnPromptModeChange,
     composerOnReferenceQueryChange,
     composerOnRemoveAttachment,
+    composerOnOpenAttachmentText,
     composerOnRemoveEditorContext,
     composerOnSelectOpenFile,
     composerOnSteerQueue,
     composerOnSubmit,
     composerOnToggleOpenFilePicker,
     composerFocusRequest,
+    focusComposer,
     composerOnFocusHandled,
     composerStatus,
     connectionKey,

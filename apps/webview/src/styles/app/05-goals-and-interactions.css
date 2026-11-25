@@ -249,6 +249,20 @@
   width: 100%;
 }
 
+.dsh-goal-bar__rounds {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: var(--dsh-space-1);
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+  white-space: nowrap;
+}
+
+.dsh-goal-bar__rounds-input {
+  width: 4.5em;
+}
+
 .dsh-goal-bar__error,
 .dsh-settings__error,
 .dsh-plugin-configuration__error,
@@ -586,7 +600,8 @@
 
 .dsh-session-item__copy strong,
 .dsh-session-item__copy small,
-.dsh-session-item__workspace {
+.dsh-session-item__workspace,
+.dsh-session-item__time {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -594,7 +609,8 @@
 }
 
 .dsh-session-item__copy small,
-.dsh-session-item__workspace {
+.dsh-session-item__workspace,
+.dsh-session-item__time {
   color: var(--dsh-muted);
   font-size: var(--dsh-font-size-2xs);
 }
@@ -951,4 +967,11 @@
   max-height: min(45vh, 20rem);
   overflow: auto;
   overscroll-behavior: contain;
+}
+
+.dsh-approval__meta {
+  margin: var(--dsh-space-1) 0;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+  overflow-wrap: anywhere;
 }

@@ -93,6 +93,21 @@ export const settingsRequestSchemas = [
   z.object({ type: z.literal('settings.read'), ...requestBase }).strict(),
   z.object({ type: z.literal('settings.openDocument'), ...requestBase }).strict(),
   z.object({ type: z.literal('settings.openKeyboardShortcuts'), ...requestBase }).strict(),
+  z
+    .object({
+      type: z.literal('settings.openExtensionSettings'),
+      ...requestBase,
+      payload: z
+        .object({
+          section: z
+            .enum(['all', 'checkpoints', 'connection', 'completionCue', 'runtime', 'webUi', 'editor'])
+            .optional(),
+        })
+        .strict()
+        .optional(),
+    })
+    .strict(),
+  z.object({ type: z.literal('connection.clearCredentials'), ...requestBase }).strict(),
   // Extension-local facts (connection/runtime defaults). The DSH host settings
   // snapshot travels on settings.read; the two must not be conflated.
   z.object({ type: z.literal('extensionSettings.read'), ...requestBase }).strict(),

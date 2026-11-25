@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import type { ChangeDetail, ChangeReviewState, ChangeSetFile } from '@dsh-vscode/domain'
 
 import { useI18n } from '../../i18n.js'
@@ -13,6 +13,8 @@ export interface ChangesDrawerProps {
   readonly refreshFailed?: boolean
   readonly onRefresh: () => Promise<void>
   readonly onOpen: (changeId: string) => Promise<void>
+  /** Opens VS Code's diff view of this change against the current file. */
+  readonly onOpenDiff?: (changeId: string) => Promise<void>
   readonly onDetail: (changeId: string) => Promise<ChangeDetail | undefined>
   readonly onMarkReviewed: (
     changeId: string,
@@ -30,6 +32,7 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
   const [reviewing, setReviewing] = useState<ChangeReviewState | undefined>()
   const [reviewError, setReviewError] = useState(false)
   const [openError, setOpenError] = useState(false)
+  const [diffError, setDiffError] = useState<'stale' | 'failed'>()
   const [refreshError, setRefreshError] = useState(false)
   const [detailError, setDetailError] = useState(false)
   const detailRequestGeneration = useRef(0)
@@ -129,14 +132,15 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
     reviewState: Extract<ChangeReviewState, 'accepted' | 'rejected' | 'needs-attention'>,
   ): void => {
     if (detail === undefined || reviewing !== undefined) return
+    const { changeId } = detail
     setReviewing(reviewState)
     setReviewError(false)
     menuRef.current?.focus({ preventScroll: true })
     void props
-      .onMarkReviewed(detail.changeId, reviewState)
+      .onMarkReviewed(changeId, reviewState)
       .then((next) => {
         if (next !== undefined)
-          setDetail((current) => (current === undefined ? current : { ...current, ...next }))
+          setDetail((current) => (current?.changeId === changeId ? { ...current, ...next } : current))
         else setReviewError(true)
       })
       .catch(() => setReviewError(true))
@@ -202,50 +206,116 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
           {props.changes.length === 0 && !props.loading ? (
             <div className="dsh-changes-popover__status">{t('changes.empty')}</div>
           ) : null}
-          <ul className="dsh-changes-popover__rows">
-            {props.changes.map((change) => (
-              <li key={change.changeId} className="dsh-changes-popover__row">
+          {props.changes.length > 1 ? (
+            <div className="dsh-changes-popover__batch-actions">
+              <button
+                type="button"
+                className="dsh-button dsh-button--secondary dsh-button--compact"
+                disabled={reviewing !== undefined}
+                onClick={() => {
+                  setReviewError(false)
+                  setReviewing('accepted')
+                  void Promise.all(
+                    props.changes
+                      .filter((entry) => entry.reviewState !== 'accepted')
+                      .map((entry) => props.onMarkReviewed(entry.changeId, 'accepted')),
+                  )
+                    .catch(() => setReviewError(true))
+                    .finally(() => setReviewing(undefined))
+                }}
+              >
+                {t('changes.markAllReviewed')}
+              </button>
+              {props.changes.some((entry) => entry.reviewState !== 'unreviewed') ? (
                 <button
                   type="button"
-                  className="dsh-changes-popover__row-main"
-                  title={change.relativePath}
+                  className="dsh-button dsh-button--secondary dsh-button--compact"
+                  disabled={reviewing !== undefined}
                   onClick={() => {
-                    setOpenError(false)
                     setReviewError(false)
-                    void props.onOpen(change.changeId).catch(() => setOpenError(true))
-                    if (change.reviewState === 'unreviewed')
-                      void props.onMarkReviewed(change.changeId, 'viewed').catch(() => setReviewError(true))
+                    setReviewing('unreviewed')
+                    void Promise.all(
+                      props.changes
+                        .filter((entry) => entry.reviewState !== 'unreviewed')
+                        .map((entry) => props.onMarkReviewed(entry.changeId, 'unreviewed')),
+                    )
+                      .catch(() => setReviewError(true))
+                      .finally(() => setReviewing(undefined))
                   }}
                 >
-                  <Icon name={change.applicationState === 'failed' ? 'alert' : 'file'} />
-                  <span className="dsh-changes-popover__path">
-                    <span className="dsh-sr-only">{change.relativePath}</span>
-                    <strong aria-hidden="true">{change.relativePath.split(/[\\/]/u).at(-1)}</strong>
-                    <small aria-hidden="true">
-                      {change.relativePath.replace(/(?:^|[\\/])[^\\/]*$/u, '')}
-                    </small>
-                  </span>
-                  <span className="dsh-changes-popover__status-label">
-                    {t(`changes.status.${change.status}`)}
-                  </span>
-                  <span className="dsh-changes-popover__evidence">
-                    {t(`changes.evidence.${change.evidence}`)}
-                  </span>
+                  {t('changes.resetMarks')}
                 </button>
-                <button
-                  type="button"
-                  className="dsh-icon-button"
-                  aria-label={t('changes.detail', { path: change.relativePath })}
-                  title={t('changes.detail', { path: change.relativePath })}
-                  onClick={(event) => {
-                    detailTriggerRef.current = event.currentTarget
-                    openDetail(change.changeId)
-                  }}
-                >
-                  <Icon name="search" />
-                </button>
-              </li>
-            ))}
+              ) : null}
+            </div>
+          ) : null}
+          <ul className="dsh-changes-popover__rows">
+            {groupChangesByPath(props.changes).map(({ change, number, count }) => {
+              const path = change.relativePath
+              const detailLabel =
+                count > 1
+                  ? t('changes.detailVersion', { path, number, count })
+                  : t('changes.detail', { path })
+              return (
+                <li key={change.changeId} className="dsh-changes-popover__row">
+                  <button
+                    type="button"
+                    className="dsh-changes-popover__row-main"
+                    title={change.relativePath}
+                    onClick={() => {
+                      setOpenError(false)
+                      setReviewError(false)
+                      void props.onOpen(change.changeId).catch(() => setOpenError(true))
+                      if (change.reviewState === 'unreviewed')
+                        void props.onMarkReviewed(change.changeId, 'viewed').catch(() => setReviewError(true))
+                    }}
+                  >
+                    <Icon name={change.applicationState === 'failed' ? 'alert' : 'file'} />
+                    <span className="dsh-changes-popover__path">
+                      <span className="dsh-sr-only">{change.relativePath}</span>
+                      <strong aria-hidden="true">{change.relativePath.split(/[\\/]/u).at(-1)}</strong>
+                      <small aria-hidden="true">
+                        {change.relativePath.replace(/(?:^|[\\/])[^\\/]*$/u, '')}
+                      </small>
+                    </span>
+                    <span className="dsh-changes-popover__meta">
+                      <span className="dsh-changes-popover__status-label">
+                        {t(`changes.status.${change.status}`)}
+                      </span>
+                      {count > 1 ? (
+                        <span className="dsh-changes-popover__edits-count">
+                          {t('changes.editVersion', { number, count })}
+                        </span>
+                      ) : null}
+                      {change.additions !== undefined || change.deletions !== undefined ? (
+                        <span className="dsh-changes-popover__diff-stats">
+                          {`+${change.additions ?? 0} -${change.deletions ?? 0}`}
+                        </span>
+                      ) : null}
+                      {change.reviewState !== 'unreviewed' ? (
+                        <span className="dsh-changes-popover__review-state">
+                          {t(`changes.review.${change.reviewState}`)}
+                        </span>
+                      ) : null}
+                    </span>
+                    <span className="dsh-changes-popover__evidence">
+                      {t(`changes.evidence.${change.evidence}`)}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="dsh-icon-button"
+                    aria-label={detailLabel}
+                    title={detailLabel}
+                    onClick={(event) => {
+                      detailTriggerRef.current = event.currentTarget
+                      openDetail(change.changeId)
+                    }}
+                  >
+                    <Icon name="search" />
+                  </button>
+                </li>
+              )
+            })}
           </ul>
           {detailLoading ? (
             <div className="dsh-changes-popover__status" role="status">
@@ -262,6 +332,38 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
               <div className="dsh-changes-popover__detail-header">
                 <strong>{detail.relativePath}</strong>
                 <div className="dsh-changes-popover__detail-header-actions">
+                  <button
+                    className="dsh-button dsh-button--secondary dsh-button--compact"
+                    type="button"
+                    onClick={() => {
+                      setOpenError(false)
+                      void props.onOpen(detail.changeId).catch(() => setOpenError(true))
+                    }}
+                  >
+                    {t('changes.openFile')}
+                  </button>
+                  {props.onOpenDiff === undefined || detail.comparisonAvailable !== true ? null : (
+                    <button
+                      className="dsh-button dsh-button--secondary dsh-button--compact"
+                      type="button"
+                      onClick={() => {
+                        setDiffError(undefined)
+                        void props
+                          .onOpenDiff?.(detail.changeId)
+                          .catch((reason: unknown) =>
+                            setDiffError(
+                              typeof reason === 'object' &&
+                                reason !== null &&
+                                (reason as { readonly code?: unknown }).code === 'CHANGE_INCOMPLETE'
+                                ? 'stale'
+                                : 'failed',
+                            ),
+                          )
+                      }}
+                    >
+                      {t('changes.openDiff')}
+                    </button>
+                  )}
                   {detail.redactedDiff === undefined ? null : (
                     <CopyButton text={detail.redactedDiff} className="dsh-icon-button" translate={t} />
                   )}
@@ -275,12 +377,22 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
                   </button>
                 </div>
               </div>
+              {diffError === undefined ? null : (
+                <div className="dsh-changes-popover__error" role="alert">
+                  {t(diffError === 'stale' ? 'changes.openDiffStale' : 'changes.openDiffFailed')}
+                </div>
+              )}
               <div className="dsh-changes-popover__detail-meta">
                 <span>{t(`changes.evidence.${detail.evidence}`)}</span>
                 <span>{t(`changes.application.${detail.applicationState}`)}</span>
                 <span>{t(`changes.review.${detail.reviewState}`)}</span>
               </div>
-              <pre tabIndex={0}>{detail.redactedDiff ?? t('changes.noDiff')}</pre>
+              <pre tabIndex={0}>
+                {detail.redactedDiff === undefined
+                  ? t('changes.noDiff')
+                  : renderColorizedDiffLines(detail.redactedDiff)}
+              </pre>
+              <p className="dsh-changes-popover__review-note">{t('changes.reviewNote')}</p>
               <div
                 className="dsh-changes-popover__review-actions"
                 role="group"
@@ -296,7 +408,7 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
                 </button>
                 <button
                   type="button"
-                  className="dsh-button dsh-button--danger dsh-button--compact"
+                  className="dsh-button dsh-button--secondary dsh-button--compact"
                   disabled={reviewing !== undefined}
                   onClick={() => markDetailReviewed('rejected')}
                 >
@@ -327,4 +439,46 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
       ) : null}
     </div>
   )
+}
+
+function groupChangesByPath(
+  changes: readonly ChangeSetFile[],
+): readonly { readonly change: ChangeSetFile; readonly number: number; readonly count: number }[] {
+  const byPath = new Map<string, ChangeSetFile[]>()
+  for (const entry of changes) {
+    const key = `${entry.workspaceFolderId}\u0000${entry.relativePath}`
+    const existing = byPath.get(key)
+    if (existing === undefined) byPath.set(key, [entry])
+    else existing.push(entry)
+  }
+  return [...byPath.values()].flatMap((group) =>
+    group
+      .sort((a, b) => b.lastSeenAt - a.lastSeenAt)
+      .map((change, index) => ({
+        change,
+        number: group.length - index,
+        count: group.length,
+      })),
+  )
+}
+
+function renderColorizedDiffLines(diff: string): ReactNode {
+  const lines = diff.split('\n')
+  return lines.map((line, index) => {
+    const kind = line.startsWith('@@')
+      ? 'hunk'
+      : line.startsWith('+') && !line.startsWith('+++')
+        ? 'add'
+        : line.startsWith('-') && !line.startsWith('---')
+          ? 'del'
+          : 'ctx'
+    return (
+      <Fragment key={index}>
+        <span className={`dsh-changes-popover__diff-line dsh-changes-popover__diff-line--${kind}`}>
+          {line}
+        </span>
+        {index < lines.length - 1 ? '\n' : null}
+      </Fragment>
+    )
+  })
 }

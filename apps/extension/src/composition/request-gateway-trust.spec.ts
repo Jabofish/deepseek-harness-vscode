@@ -10,7 +10,7 @@ const { Rc6InteractionRepository } = await vi.importActual<{
   }
 }>('../../../../packages/dsh-adapter/src/repositories/interaction-repository.js')
 
-const host = vi.hoisted(() => ({ isTrusted: true, commands: [] as string[] }))
+const host = vi.hoisted(() => ({ isTrusted: true, commands: [] as string[], args: [] as unknown[][] }))
 
 vi.mock('vscode', () => ({
   workspace: {
@@ -19,8 +19,9 @@ vi.mock('vscode', () => ({
     },
   },
   commands: {
-    executeCommand: (command: string) => {
+    executeCommand: (command: string, ...args: unknown[]) => {
       host.commands.push(command)
+      host.args.push(args)
       return Promise.resolve(undefined)
     },
   },
@@ -47,6 +48,7 @@ function buildGateway(isTrusted: boolean): {
 } {
   host.isTrusted = isTrusted
   host.commands = []
+  host.args = []
   const sent: Sent[] = []
   const retries: number[] = []
   const controls: string[] = []
@@ -160,6 +162,23 @@ describe('request gateway workspace trust refusal', () => {
 
     expect(host.commands).toEqual(['workbench.action.openGlobalKeybindings'])
     expect(trusted.sent[0]?.ok).toBe(true)
+  })
+
+  it('opens VS Code settings filtered to the requested extension section', async () => {
+    const trusted = buildGateway(true)
+    await trusted.gateway.router.handle({
+      protocolVersion: 1,
+      message: {
+        type: 'settings.openExtensionSettings',
+        requestId: 'r4',
+        payload: { section: 'checkpoints' },
+      },
+    })
+    await trusted.gateway.router.handle(envelope('settings.openExtensionSettings', 'r5'))
+
+    expect(host.commands).toEqual(['workbench.action.openSettings', 'workbench.action.openSettings'])
+    expect(host.args).toEqual([['dsh.checkpoints'], ['@ext:jabofish.jabodsh']])
+    expect(trusted.sent.every((message) => message.ok === true)).toBe(true)
   })
 
   it('rejects a question mutation if its repository is replaced during ownership validation', async () => {

@@ -24,6 +24,7 @@ export interface CheckpointDrawerProps {
     previewId: string,
     conflictPolicy: CheckpointConflictPolicy,
   ) => Promise<'completed' | 'partial' | undefined>
+  readonly onOpenSettings?: () => void
 }
 
 type DialogState =
@@ -305,7 +306,19 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
             </div>
           ) : null}
           {props.checkpoints.length === 0 && !props.loading ? (
-            <div className="dsh-checkpoints-popover__status">{t('checkpoints.empty')}</div>
+            <div className="dsh-checkpoints-popover__status">
+              <p>{t('checkpoints.empty')}</p>
+              <p className="dsh-checkpoints-popover__hint">{t('checkpoints.setupHint')}</p>
+              {props.onOpenSettings === undefined ? null : (
+                <button
+                  type="button"
+                  className="dsh-button dsh-button--secondary dsh-button--compact"
+                  onClick={props.onOpenSettings}
+                >
+                  {t('checkpoints.openSettings')}
+                </button>
+              )}
+            </div>
           ) : null}
           <ul className="dsh-checkpoints-popover__rows">
             {props.checkpoints.map((checkpoint) => (
@@ -330,6 +343,9 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
                   <span className="dsh-checkpoints-popover__time">
                     {new Date(checkpoint.createdAt).toLocaleString()}
                   </span>
+                  {!checkpoint.contentEnabled || checkpoint.state === 'metadata-only' ? (
+                    <span className="dsh-checkpoints-popover__hint">{t('checkpoints.metadataOnlyHint')}</span>
+                  ) : null}
                 </div>
                 <div className="dsh-checkpoints-popover__row-actions">
                   {checkpoint.restoreAllowed && checkpoint.expectedRevision !== undefined ? (

@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useReducer, useRef, type PropsWithChildren, type ReactElement } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useReducer,
+  useRef,
+  type PropsWithChildren,
+  type ReactElement,
+} from 'react'
 import { useDismissibleLayer } from '../useDismissibleLayer.js'
 
 export interface DrawerProps extends PropsWithChildren {
@@ -6,6 +14,8 @@ export interface DrawerProps extends PropsWithChildren {
   readonly open: boolean
   readonly side?: 'left' | 'right'
   readonly onClose: () => void
+  /** Accessible name of the close button, in the surface language. */
+  readonly closeLabel?: string
 }
 
 // The fallback is intentionally a little longer than the slow entrance token:
@@ -19,6 +29,7 @@ type DrawerAction = { readonly type: 'sync'; readonly open: boolean } | { readon
 
 export function Drawer(props: DrawerProps): ReactElement | null {
   const { open, onClose } = props
+  const titleId = useId()
   const [phase, dispatch] = useReducer(drawerReducer, open ? 'open' : 'closed')
   // The prop determines visibility immediately. The phase only keeps an
   // already-mounted surface alive for its exit animation.
@@ -76,7 +87,7 @@ export function Drawer(props: DrawerProps): ReactElement | null {
         className={`dsh-drawer dsh-drawer--${props.side ?? 'right'}`}
         role="dialog"
         aria-modal="true"
-        aria-labelledby="dsh-drawer-title"
+        aria-labelledby={titleId}
         aria-hidden={closing || undefined}
         tabIndex={-1}
         onAnimationEnd={(event) => {
@@ -84,8 +95,8 @@ export function Drawer(props: DrawerProps): ReactElement | null {
         }}
       >
         <header className="dsh-drawer__header">
-          <h2 id="dsh-drawer-title">{props.title}</h2>
-          <button type="button" aria-label="Close" onClick={props.onClose}>
+          <h2 id={titleId}>{props.title}</h2>
+          <button type="button" aria-label={props.closeLabel ?? 'Close'} onClick={props.onClose}>
             ×
           </button>
         </header>

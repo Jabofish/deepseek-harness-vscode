@@ -25,15 +25,16 @@ type NavigationDependencies = DirectoryDependencies &
     readonly retitleEditorTab?: (sessionId: string, title: string) => void
   }
 
+/** `surfaces`: a chat surface closed, so the set of displayed sessions changed. */
+export type SessionNavigationChange = 'selection' | 'directory' | 'connection' | 'surfaces'
+
 export interface SessionNavigation {
   readonly activeSessionId: string | undefined
   readonly connected: boolean
   invalidate(this: void): void
   select(this: void, sessionId: string): void
-  onDidChange(
-    this: void,
-    listener: (change: 'selection' | 'directory' | 'connection') => void,
-  ): vscode.Disposable
+  surfacesChanged(this: void): void
+  onDidChange(this: void, listener: (change: SessionNavigationChange) => void): vscode.Disposable
   read(this: void, signal: AbortSignal): Promise<SessionDirectoryView>
   readTitle(this: void, sessionId: string, signal: AbortSignal): Promise<string>
   open(this: void, sessionId: string, editor: boolean, signal: AbortSignal): Promise<void>
@@ -49,7 +50,7 @@ export function createSessionNavigation(
   request: (request: WebviewRequest, signal: AbortSignal) => Promise<unknown>,
   openInEditor: (id: string, column: vscode.ViewColumn | undefined, signal: AbortSignal) => Promise<void>,
 ): SessionNavigation {
-  const listeners = new Set<(change: 'selection' | 'directory' | 'connection') => void>()
+  const listeners = new Set<(change: SessionNavigationChange) => void>()
   let activeSessionId: string | undefined
   let observedKind: unknown
   let observedBackend: DshBackend | undefined
@@ -102,9 +103,10 @@ export function createSessionNavigation(
       activeSessionId = sessionId
       for (const listener of listeners) listener('selection')
     },
-    onDidChange: (
-      listener: (change: 'selection' | 'directory' | 'connection') => void,
-    ): vscode.Disposable => {
+    surfacesChanged: (): void => {
+      for (const listener of listeners) listener('surfaces')
+    },
+    onDidChange: (listener: (change: SessionNavigationChange) => void): vscode.Disposable => {
       listeners.add(listener)
       return {
         dispose: () => {

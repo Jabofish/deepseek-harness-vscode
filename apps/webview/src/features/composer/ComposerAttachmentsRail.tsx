@@ -16,6 +16,7 @@ export function ComposerAttachmentsRail({
   railRef,
   scrollable,
   onOpenPreview,
+  onOpenText,
   onRemove,
   onRequestFocus,
 }: {
@@ -24,6 +25,8 @@ export function ComposerAttachmentsRail({
   readonly railRef: RefObject<HTMLUListElement | null>
   readonly scrollable: boolean
   readonly onOpenPreview: (uri: string, trigger: HTMLButtonElement) => void
+  /** Open a text attachment's content in the editor; absent hides the action. */
+  readonly onOpenText?: ((uri: string) => void) | undefined
   readonly onRemove: (uri: string) => void
   readonly onRequestFocus?: (() => void) | undefined
 }): ReactElement | null {
@@ -87,13 +90,23 @@ export function ComposerAttachmentsRail({
                       <img src={preview} alt="" aria-hidden="true" />
                     )}
                   </button>
+                ) : onOpenText !== undefined && isTextAttachment(attachment.mimeType) ? (
+                  <button
+                    className="dsh-composer__attachment-thumb"
+                    type="button"
+                    aria-label={t('composer.openAttachment', { name: attachment.name })}
+                    title={t('composer.openAttachment', { name: attachment.name })}
+                    onClick={() => onOpenText(attachment.uri)}
+                  >
+                    <Icon name="file" />
+                  </button>
                 ) : (
                   <span className="dsh-composer__attachment-preview" aria-hidden="true">
                     <Icon name="file" />
                   </span>
                 )}
                 <span className="dsh-composer__attachment-name" title={attachment.name}>
-                  file: {attachment.name}
+                  {attachment.name}
                 </span>
               </span>
               <button
@@ -123,4 +136,28 @@ export function ComposerAttachmentsRail({
       ) : null}
     </div>
   )
+}
+
+/** Non-`text/` types the Host stores text attachments as (see the attachment codec). */
+const TEXT_APPLICATION_TYPES = new Set([
+  'application/javascript',
+  'application/json',
+  'application/sql',
+  'application/toml',
+  'application/typescript',
+  'application/x-sh',
+  'application/x-yaml',
+  'application/xml',
+  'application/yaml',
+])
+
+/**
+ * Text attachments can be opened from the composer. Binaries (PDF, archives,
+ * audio, video), which runtimes with file uploads accept, have no text view:
+ * the Host would decline and the button would do nothing.
+ */
+function isTextAttachment(mimeType: string | undefined): boolean {
+  if (mimeType === undefined) return false
+  const type = mimeType.split(';')[0]?.trim().toLowerCase() ?? ''
+  return type.startsWith('text/') || TEXT_APPLICATION_TYPES.has(type) || /\+(?:json|xml)$/u.test(type)
 }

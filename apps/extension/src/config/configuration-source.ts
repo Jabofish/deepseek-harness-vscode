@@ -34,12 +34,7 @@ export class VsCodeConfigurationSource {
         portSetting.workspaceLanguageValue,
         portSetting.workspaceFolderLanguageValue,
       ].some((value) => value !== undefined)
-    const discoveryTimeoutMs = readInteger(
-      config.get<unknown>('connection.discoveryTimeoutMs', 1500),
-      100,
-      30_000,
-      'connection.discoveryTimeoutMs',
-    )
+    const discoveryTimeoutMs = 1500
     const requestTimeoutMs = readInteger(
       config.get<unknown>('connection.requestTimeoutMs', 30_000),
       1_000,
@@ -57,25 +52,13 @@ export class VsCodeConfigurationSource {
     const exactRuntimeVersion =
       runtimeVersion !== undefined && isDshPackageVersion(runtimeVersion) ? runtimeVersion : undefined
     const executablePath = readOptionalPath(config.get<unknown>('runtime.executablePath', ''))
-    const preset = readString(config.get<unknown>('agent.defaultPreset', 'standard'), 'agent.defaultPreset')
-    const toolMode = readEnum(
-      config.get<unknown>('agent.toolMode', 'native'),
-      ['native', 'ptc', 'code', 'both'] as const,
-      'agent.toolMode',
-    )
-    const permissionPreset = readString(
-      config.get<unknown>('agent.permissionPreset', 'workspace-write'),
-      'agent.permissionPreset',
-    )
-    const providerId = readString(config.get<unknown>('model.provider', ''), 'model.provider')
-    const modelId = readString(config.get<unknown>('model.id', ''), 'model.id')
-    const reasoningLevel = readString(config.get<unknown>('model.reasoningLevel', ''), 'model.reasoningLevel')
+    const permissionPreset = 'workspace-write'
     const defaultAgent: AgentConfiguration = {
-      preset,
-      toolMode,
+      preset: 'standard',
+      toolMode: 'native',
       permissionPreset,
-      planMode: readBoolean(config.get<unknown>('agent.planMode', false), 'agent.planMode'),
-      model: { providerId, modelId, ...(reasoningLevel === '' ? {} : { reasoningLevel }) },
+      planMode: false,
+      model: { providerId: '', modelId: '' },
     }
     return {
       connection: {
@@ -108,11 +91,6 @@ export class VsCodeConfigurationSource {
       if (event.affectsConfiguration('dsh')) listener((section) => event.affectsConfiguration(section))
     })
   }
-}
-
-function readString(value: unknown, key: string): string {
-  if (typeof value !== 'string') invalid(key, 'a string')
-  return value
 }
 
 function readOptionalString(value: unknown, key: string): string | undefined {

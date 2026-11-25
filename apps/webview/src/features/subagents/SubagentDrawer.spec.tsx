@@ -134,4 +134,24 @@ describe('SubagentDrawer tree', () => {
     expect(onOpenInEditor).toHaveBeenCalledWith(entry)
     expect(onOpenChild).not.toHaveBeenCalled()
   })
+
+  it('stops a running child from the tree and reports a refused stop', async () => {
+    const onOpenChild = vi.fn()
+    const onInterruptChild = vi.fn().mockRejectedValueOnce(new Error('Stop refused.'))
+    const entry = child({ id: 'c1', label: 'Researcher', activity: 'running', mode: 'one-shot' })
+    render(
+      <SubagentDrawer
+        parentSessionId="root"
+        catalog={catalog([entry])}
+        onLoadChildren={vi.fn().mockResolvedValue(catalog([entry]))}
+        onOpenChild={onOpenChild}
+        onInterruptChild={onInterruptChild}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Subagents: 1, 1 running' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Stop Researcher' }))
+    expect(onInterruptChild).toHaveBeenCalledWith(entry)
+    expect(onOpenChild).not.toHaveBeenCalled()
+    expect((await screen.findByRole('alert')).textContent).toBe('Stop refused.')
+  })
 })

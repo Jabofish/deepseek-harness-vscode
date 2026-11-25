@@ -181,11 +181,16 @@
 }
 
 .dsh-timeline__turn-terminal-detail {
-  max-width: 100%;
-  overflow: auto;
+  display: grid;
+  grid-column: 2 / -1;
+  grid-row: 2;
+  gap: var(--dsh-space-1);
   white-space: pre-wrap;
-  overflow-wrap: break-word;
-  word-break: normal;
+  overflow-wrap: anywhere;
+}
+
+.dsh-timeline__turn-terminal-detail > code {
+  white-space: inherit;
 }
 
 .dsh-timeline__notice,
@@ -306,6 +311,18 @@
 .dsh-timeline__turn-terminal--max-tokens {
   color: var(--dsh-warning);
   background: var(--dsh-warning-bg);
+}
+
+.dsh-timeline__turn-terminal {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--dsh-space-1) var(--dsh-space-2);
+}
+
+.dsh-timeline__turn-terminal-action {
+  grid-column: 3;
+  grid-row: 1;
 }
 
 .dsh-timeline__notice--error,
@@ -539,6 +556,19 @@
   text-overflow: ellipsis;
 }
 
+.dsh-timeline__produced-entry {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: min(18rem, 100%);
+  gap: 2px;
+}
+
+.dsh-timeline__produced-more {
+  color: var(--dsh-muted);
+}
+
 .dsh-timeline__produced-chip > span {
   min-width: 0;
   overflow: hidden;
@@ -630,6 +660,22 @@
   display: block;
   padding: var(--dsh-space-1) 0;
   overflow: hidden;
+}
+
+.dsh-queue__header-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--dsh-space-1);
+}
+
+.dsh-queue__header-row > .dsh-queue__header {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.dsh-queue__header-row > .dsh-button {
+  flex: 0 0 auto;
 }
 
 .dsh-queue__header {

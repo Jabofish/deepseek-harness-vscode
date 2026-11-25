@@ -25,6 +25,7 @@ import {
   flattenSubagentCatalog,
   formatSubagentDuration,
   formatTokens,
+  isSubagentRunning,
   subagentActivityHeading,
   subagentDisplayLabel,
   subagentDotState,
@@ -54,6 +55,8 @@ export interface SubagentCatalogProps {
   readonly onOpenChild: (entry: SubagentView, parentAvailable: boolean) => void
   /** Open one child session in a separate editor panel without leaving the parent. */
   readonly onOpenInEditor?: (entry: SubagentView) => void
+  /** Interrupt one running child session directly (`subagent.interrupt`). */
+  readonly onInterruptChild?: (entry: SubagentView) => Promise<void>
 }
 
 interface FloatingMenuPosition {
@@ -77,6 +80,8 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
   const [catalogs, setCatalogs] = useState<Record<string, SubagentCatalog>>({})
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set())
   const [busy, setBusy] = useState<ReadonlySet<string>>(() => new Set())
+  const [stoppingIds, setStoppingIds] = useState<ReadonlySet<string>>(() => new Set())
+  const [stopError, setStopError] = useState<string>()
   const [loadErrors, setLoadErrors] = useState<ReadonlySet<string>>(() => new Set())
   const [menuPosition, setMenuPosition] = useState<FloatingMenuPosition | undefined>()
   const [now, setNow] = useState(() => Date.now())
@@ -259,7 +264,38 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
           aria-label={t('subagents.tree.aria')}
           style={floatingMenuStyle(menuPosition)}
         >
-          {loadErrors.has(props.parentSessionId) ? <div role="alert">{t('subagents.loadFailed')}</div> : null}
+          {loadErrors.has(props.parentSessionId) ? (
+            <div role="alert" className="dsh-subagent-tree__error">
+              <span>{t('subagents.loadFailedPlain')}</span>{' '}
+              <button
+                type="button"
+                className="dsh-button dsh-button--secondary dsh-button--compact"
+                onClick={() => {
+                  setLoadErrors((current) => {
+                    const next = new Set(current)
+                    next.delete(props.parentSessionId)
+                    return next
+                  })
+                  void props
+                    .onLoadChildren(props.parentSessionId)
+                    .then((loaded) => {
+                      if (loaded === undefined) throw new Error('Subagent catalog is unavailable.')
+                      setCatalogs((current) => ({ ...current, [props.parentSessionId]: loaded }))
+                    })
+                    .catch(() => {
+                      setLoadErrors((current) => new Set(current).add(props.parentSessionId))
+                    })
+                }}
+              >
+                {t('subagents.retry')}
+              </button>
+            </div>
+          ) : null}
+          {stopError === undefined ? null : (
+            <div role="alert" className="dsh-subagent-tree__error">
+              {stopError}
+            </div>
+          )}
           {rows.map(({ entry, level, parentAvailable }) => {
             if (entry.kind === 'diagnostic') {
               const reason = t(`subagents.diagnostic.${entry.reason}`)
@@ -373,6 +409,40 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
                     {metrics}
                   </span>
                 )}
+                {entry.mode !== 'external' &&
+                isSubagentRunning(entry) &&
+                props.onInterruptChild !== undefined ? (
+                  <button
+                    type="button"
+                    tabIndex={entry.id === tabStopId ? 0 : -1}
+                    className="dsh-icon-button dsh-subagent-tree__action"
+                    aria-label={t('subagents.stop', { label: entryLabel })}
+                    title={t('subagents.stop', { label: entryLabel })}
+                    disabled={stoppingIds.has(entry.id)}
+                    onClick={(event) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      setStoppingIds((current) => new Set(current).add(entry.id))
+                      setStopError(undefined)
+                      void props
+                        .onInterruptChild?.(entry)
+                        .catch((reason: unknown) => {
+                          setStopError(
+                            reason instanceof Error ? reason.message : t('subagents.interruptFailed'),
+                          )
+                        })
+                        .finally(() => {
+                          setStoppingIds((current) => {
+                            const next = new Set(current)
+                            next.delete(entry.id)
+                            return next
+                          })
+                        })
+                    }}
+                  >
+                    <Icon name="stop" />
+                  </button>
+                ) : null}
                 {entry.mode !== 'external' && props.onOpenInEditor !== undefined ? (
                   <button
                     type="button"

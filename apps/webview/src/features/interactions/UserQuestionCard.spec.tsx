@@ -226,5 +226,52 @@ describe('UserQuestionCard', () => {
     expect(screen.queryByRole('button', { name: 'Chat about it' })).toBeNull()
     expect(screen.getByRole('button', { name: 'Approve' })).toBeDefined()
     expect(onCancel).not.toHaveBeenCalled()
+
+    // Dismiss hides an expired continued card locally without calling onCancel.
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
+    expect(onCancel).not.toHaveBeenCalled()
+  })
+
+  it('renders plan review detail as Markdown and omits inert radio inputs', () => {
+    const question = batchQuestion()
+    const reviewItem = {
+      ...question.items![0]!,
+      detail: '## Migration Plan\n\n- Update **schema**\n- Run `pnpm check`',
+    }
+    render(
+      <UserQuestionCard
+        question={{ ...question, items: [reviewItem] }}
+        disabled={false}
+        onRespond={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByRole('heading', { name: 'Migration Plan' })).toBeDefined()
+    expect(screen.queryAllByRole('radio')).toHaveLength(0)
+  })
+
+  it('toggles skip off when the Skipped button is clicked again', () => {
+    render(
+      <UserQuestionCard
+        question={{
+          id: 'q1',
+          sessionId: 's1',
+          prompt: 'Pick one',
+          choices: [{ id: 'a', label: 'Option A' }],
+          allowFreeText: false,
+        }}
+        disabled={false}
+        onRespond={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Skip this question' }))
+    expect(submitButton().disabled).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: 'Skipped' }))
+    expect(screen.getByRole('button', { name: 'Skip this question' })).toBeDefined()
+    expect(submitButton().disabled).toBe(true)
   })
 })

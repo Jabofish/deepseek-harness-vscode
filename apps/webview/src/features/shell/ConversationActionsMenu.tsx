@@ -10,6 +10,10 @@ export interface ConversationActionsMenuProps {
   readonly children: ReactNode | ((closeAndFocus: () => void) => ReactNode)
   readonly onClose?: () => void
   readonly triggerRef?: RefObject<HTMLButtonElement | null>
+  /** Tasks/approvals waiting for the user; shown as a count on the trigger. */
+  readonly attentionCount?: number
+  /** Running tasks/jobs; shown as a dot when nothing needs attention. */
+  readonly runningCount?: number
 }
 
 /**
@@ -62,14 +66,21 @@ export const ConversationActionsMenu = memo(function ConversationActionsMenu(
     },
   })
 
+  const attention = props.attentionCount ?? 0
+  const actionsLabel =
+    attention > 0
+      ? t('app.conversationActionsAttention', { count: attention })
+      : (props.runningCount ?? 0) > 0
+        ? t('app.conversationActionsRunning', { count: props.runningCount ?? 0 })
+        : t('app.conversationActions')
   return (
     <div ref={rootRef} className="dsh-conversation__actions">
       <button
         ref={triggerRef}
         className="dsh-icon-button dsh-conversation__actions-trigger"
         type="button"
-        aria-label={t('app.conversationActions')}
-        title={t('app.conversationActions')}
+        aria-label={actionsLabel}
+        title={actionsLabel}
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => {
@@ -78,6 +89,19 @@ export const ConversationActionsMenu = memo(function ConversationActionsMenu(
         }}
       >
         <Icon name="more" />
+        {(props.attentionCount ?? 0) > 0 ? (
+          <span
+            className="dsh-conversation__actions-badge dsh-conversation__actions-badge--attention"
+            aria-hidden="true"
+          >
+            {props.attentionCount}
+          </span>
+        ) : (props.runningCount ?? 0) > 0 ? (
+          <span
+            className="dsh-conversation__actions-badge dsh-conversation__actions-badge--running"
+            aria-hidden="true"
+          />
+        ) : null}
       </button>
       {open ? (
         <PopoverCard

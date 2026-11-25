@@ -22,6 +22,7 @@ export type FeedbackPrepare = (
 ) => Promise<MessageFeedbackItem | undefined> | MessageFeedbackItem | undefined
 
 export type DshEventNode = Extract<TimelineNode, { readonly kind: 'event' }>
+export type TurnTerminalReason = Extract<TimelineNode, { readonly kind: 'turn-terminal' }>['reason']
 
 export interface DshEventGroupNode {
   readonly kind: 'event-group'
@@ -118,6 +119,11 @@ export interface TimelineNodeRenderContext {
   readonly onFeedbackPrepare: FeedbackPrepare | undefined
   readonly truncatedNodeIds: ReadonlySet<string>
   readonly loadFullContent: ((nodeId: string) => Promise<string>) | undefined
+  readonly producedFiles?: readonly string[]
+  readonly onEditPrompt?: ((text: string) => void) | undefined
+  readonly onRetryTurn?: ((reason: TurnTerminalReason) => void) | undefined
+  /** The one turn ending that may offer retry/continue: the latest, with no prompt after it. */
+  readonly retryTurnNodeId?: string | undefined
   readonly t: Translate
 }
 

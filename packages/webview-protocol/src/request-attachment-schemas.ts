@@ -30,6 +30,13 @@ export const attachmentRequestSchemas = [
     .strict(),
   z
     .object({
+      type: z.literal('attachment.openText'),
+      ...requestBase,
+      payload: z.object({ uri: attachmentUri }).strict(),
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal('attachment.release'),
       ...requestBase,
       payload: z.object({ uris: z.array(attachmentUri).min(1).max(MAX_PROMPT_ATTACHMENTS) }).strict(),

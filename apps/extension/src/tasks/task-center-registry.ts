@@ -17,6 +17,8 @@ import {
 const MAX_TASKS = 200
 const MAX_WORKSPACE_SESSIONS = 64
 const SESSION_READ_CONCURRENCY = 4
+/** How long a session whose ownership lookup failed counts as another window's. */
+const OWNERSHIP_RETRY_MS = 30_000
 
 export interface TaskCenterRegistryOptions {
   readonly now?: () => number
@@ -66,6 +68,12 @@ export class TaskCenterRegistry implements TaskRepository {
   private currentSessionId: string | undefined
   private attachmentGeneration = 0
   private readonly workspaceTaskIds = new Set<string>()
+  private readonly pendingListeners = new Set<(count: number) => void>()
+  private announcedPending = 0
+  private pendingGeneration = 0
+  /** Whether a session belongs to a folder open in this window, per attachment. */
+  private readonly sessionOwnership = new Map<string, Promise<boolean>>()
+  private readonly sessionOwnershipFailedAt = new Map<string, number>()
 
   public constructor(options: TaskCenterRegistryOptions = {}) {
     this.now = options.now ?? (() => Date.now())
@@ -96,6 +104,75 @@ export class TaskCenterRegistry implements TaskRepository {
     this.entries.clear()
     this.interactions.clear()
     this.workspaceTaskIds.clear()
+    this.sessionOwnership.clear()
+    this.sessionOwnershipFailedAt.clear()
+    this.announcePending()
+  }
+
+  /** Approvals and questions the registry has seen waiting, in any session. */
+  public get pendingInteractionCount(): number {
+    return this.interactions.size
+  }
+
+  /**
+   * Called whenever the number of approvals/questions waiting in sessions this
+   * window owns changes. A shared DSH also reports other windows' requests,
+   * which this window can neither show nor answer.
+   */
+  public onPendingInteractionsChanged(listener: (count: number) => void): () => void {
+    this.pendingListeners.add(listener)
+    return () => {
+      this.pendingListeners.delete(listener)
+    }
+  }
+
+  /** Folders opened or closed: which sessions belong to this window may have changed. */
+  public workspaceFoldersChanged(): void {
+    this.sessionOwnership.clear()
+    this.sessionOwnershipFailedAt.clear()
+    this.announcePending()
+  }
+
+  private announcePending(): void {
+    const generation = ++this.pendingGeneration
+    const sessionIds = [...this.interactions.values()].map((interaction) => interaction.sessionId)
+    void Promise.all(sessionIds.map((sessionId) => this.ownsSession(sessionId))).then((owned) => {
+      if (generation !== this.pendingGeneration) return
+      const count = owned.filter(Boolean).length
+      if (count === this.announcedPending) return
+      this.announcedPending = count
+      for (const listener of this.pendingListeners) listener(count)
+    })
+  }
+
+  private ownsSession(sessionId: string): Promise<boolean> {
+    const backend = this.backend
+    const resolve = this.resolveSessionWorkspaceFolderId
+    const folders = this.workspaceFolderIds?.() ?? []
+    // Without folder information (tests, a folderless window) every request
+    // the backend routes here is this window's to answer.
+    if (backend === undefined || resolve === undefined || folders.length === 0) return Promise.resolve(true)
+    const cached = this.sessionOwnership.get(sessionId)
+    const failedAt = this.sessionOwnershipFailedAt.get(sessionId)
+    // Every backend event recounts the badge: retrying a failed lookup at
+    // once would send one session read per event while the backend cannot
+    // answer it.
+    if (cached !== undefined && (failedAt === undefined || this.now() - failedAt < OWNERSHIP_RETRY_MS))
+      return cached
+    this.sessionOwnershipFailedAt.delete(sessionId)
+    const owned = backend.sessions
+      .get(sessionId)
+      .then((session) => {
+        const folder = resolve(session)
+        return folder !== undefined && (this.isWorkspaceFolderOpen?.(folder) ?? folders.includes(folder))
+      })
+      .catch(() => {
+        if (this.sessionOwnership.get(sessionId) === owned)
+          this.sessionOwnershipFailedAt.set(sessionId, this.now())
+        return false
+      })
+    this.sessionOwnership.set(sessionId, owned)
+    return owned
   }
 
   public dispose(): void {
@@ -366,6 +443,7 @@ export class TaskCenterRegistry implements TaskRepository {
       await this.requireBackend().interactions.respondToPermission(interaction.interactionId, answer, signal)
     else await this.requireBackend().interactions.respondToQuestion(interaction.interactionId, answer, signal)
     this.interactions.delete(taskId)
+    this.announcePending()
     const { interactionId, ...taskWithoutInteraction } = task
     void interactionId
     const next: TaskSummary = {
@@ -622,6 +700,7 @@ export class TaskCenterRegistry implements TaskRepository {
       for (const [taskId, interaction] of this.interactions)
         if (interaction.sessionId === event.sessionId) this.interactions.delete(taskId)
     }
+    this.announcePending()
     // Transcript chunks do not change a task's status, ownership or actions.
     // Re-reading every repository here turns a token stream into a task/list
     // and session/history request storm, followed by another Webview reread.

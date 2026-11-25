@@ -205,4 +205,106 @@ describe('TaskCenterRegistry', () => {
       (await registry.list({ sessionId: 'session-1' })).some((task) => task.interactionId === 'q-1'),
     ).toBe(false)
   })
+
+  it('announces how many approvals and questions are waiting', async () => {
+    const current = backend()
+    const registry = new TaskCenterRegistry({ now: () => 4_000 })
+    const counts: number[] = []
+    registry.onPendingInteractionsChanged((count) => counts.push(count))
+    registry.attach(current, () => 'folder-1')
+    registry.setCurrentSession('session-1')
+    current.events.emit({
+      type: 'question.requested',
+      question: { id: 'q-1', sessionId: 'session-1', prompt: 'Continue?', allowFreeText: true },
+    })
+    current.events.emit({
+      type: 'question.requested',
+      question: { id: 'q-2', sessionId: 'session-1', prompt: 'Again?', allowFreeText: true },
+    })
+    expect(registry.pendingInteractionCount).toBe(2)
+    await vi.waitFor(() => expect(counts).toEqual([2]))
+    await registry.answer('interaction:question:q-1', 'q-1', 'yes')
+    await vi.waitFor(() => expect(counts).toEqual([2, 1]))
+    registry.detach()
+    await vi.waitFor(() => expect(counts).toEqual([2, 1, 0]))
+  })
+
+  it('counts only waiting requests from sessions in this window', async () => {
+    const own = {
+      id: 'own',
+      workspaceId: 'dsh-workspace-1',
+      title: 'Own',
+      blank: false,
+      status: 'awaiting-input',
+      createdAt: '2026-08-29T00:00:00.000Z',
+      updatedAt: '2026-08-29T00:01:00.000Z',
+      cwd: '/workspace/own',
+    } satisfies SessionSummary
+    const foreign = { ...own, id: 'foreign', title: 'Other window', cwd: '/elsewhere' }
+    const current = backend({ sessions: [own, foreign] })
+    const folders = ['folder-1']
+    const registry = new TaskCenterRegistry({
+      now: () => 4_000,
+      workspaceFolderIds: () => folders,
+      resolveSessionWorkspaceFolderId: (session) =>
+        session.cwd === '/workspace/own' ? 'folder-1' : session.cwd === '/elsewhere' ? 'folder-2' : undefined,
+    })
+    const counts: number[] = []
+    registry.onPendingInteractionsChanged((count) => counts.push(count))
+    registry.attach(current, () => 'folder-1')
+    current.events.emit({
+      type: 'question.requested',
+      question: { id: 'q-own', sessionId: 'own', prompt: 'Yours?', allowFreeText: true },
+    })
+    current.events.emit({
+      type: 'question.requested',
+      question: { id: 'q-foreign', sessionId: 'foreign', prompt: 'Theirs?', allowFreeText: true },
+    })
+    await vi.waitFor(() => expect(counts).toEqual([1]))
+    expect(registry.pendingInteractionCount).toBe(2)
+
+    // The other window's folder is added to this one.
+    folders.push('folder-2')
+    registry.workspaceFoldersChanged()
+    await vi.waitFor(() => expect(counts).toEqual([1, 2]))
+  })
+
+  it('does not reread a session whose ownership lookup failed on every event', async () => {
+    const base = backend()
+    const getSession = vi.fn().mockRejectedValue(new Error('unreadable'))
+    const current: TestBackend = { ...base, sessions: { ...base.sessions, get: getSession } }
+    let now = 10_000
+    const registry = new TaskCenterRegistry({
+      now: () => now,
+      workspaceFolderIds: () => ['folder-1'],
+      resolveSessionWorkspaceFolderId: () => 'folder-1',
+    })
+    registry.attach(current, () => 'folder-1')
+    current.events.emit({
+      type: 'question.requested',
+      question: { id: 'q-1', sessionId: 'session-1', prompt: 'Yours?', allowFreeText: true },
+    })
+    await vi.waitFor(() => expect(getSession).toHaveBeenCalledTimes(1))
+    await Promise.resolve()
+    for (let index = 0; index < 5; index++)
+      current.events.emit({ type: 'session.status', sessionId: 'session-1', status: 'running' })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(getSession).toHaveBeenCalledTimes(1)
+
+    now += 30_000
+    getSession.mockResolvedValue({
+      id: 'session-1',
+      workspaceId: 'dsh-workspace-1',
+      title: 'Main session',
+      blank: false,
+      status: 'running',
+      createdAt: '2026-08-29T00:00:00.000Z',
+      updatedAt: '2026-08-29T00:01:00.000Z',
+    } satisfies SessionSummary)
+    const counts: number[] = []
+    registry.onPendingInteractionsChanged((count) => counts.push(count))
+    current.events.emit({ type: 'session.status', sessionId: 'session-1', status: 'running' })
+    await vi.waitFor(() => expect(counts).toEqual([1]))
+    expect(getSession).toHaveBeenCalledTimes(2)
+  })
 })

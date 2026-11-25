@@ -29,6 +29,7 @@ import {
   type FeedbackPrepare,
   type FeedbackSubmit,
   type TimelineNodeRenderContext,
+  type TurnTerminalReason,
   type UserTextFacts,
 } from './timeline-shared.js'
 import { formatEventPayload } from './timeline-projection.js'
@@ -42,6 +43,9 @@ import {
   reasoningExpandedChange,
   turnTerminalLabel,
 } from './timeline-labels.js'
+
+/** Shared so a memoized message does not see a new empty list on every render. */
+const NO_PRODUCED_FILES: readonly string[] = []
 
 function renderNode(
   node: DisplayTimelineNode,
@@ -66,6 +70,10 @@ function renderNode(
   focused = false,
   truncatedNodeIds: ReadonlySet<string> = new Set(),
   loadFullContent?: (nodeId: string) => Promise<string>,
+  producedFiles: readonly string[] = NO_PRODUCED_FILES,
+  onEditPrompt?: (text: string) => void,
+  onRetryTurn?: (reason: TurnTerminalReason) => void,
+  retryTurnNodeId?: string,
 ): ReactElement {
   switch (node.kind) {
     case 'tool':
@@ -137,6 +145,9 @@ function renderNode(
                 <span className={`dsh-status-pill dsh-status-pill--${goal.status}`}>
                   {t(`goal.status.${goal.status}`)}
                 </span>
+                {goal.blockedReason === undefined ? null : (
+                  <span className="dsh-timeline__card-meta">{goal.blockedReason.message}</span>
+                )}
               </li>
             ))}
           </ul>
@@ -194,6 +205,14 @@ function renderNode(
             : node.attempt > 1
               ? t('timeline.retryingAttempt', { attempt: node.attempt })
               : t('timeline.retryConnectionLost')
+      const retryMetaParts: string[] = []
+      if (node.maxRetries !== undefined && node.maxRetries > 0)
+        retryMetaParts.push(t('timeline.retryAttemptOf', { attempt: node.attempt, max: node.maxRetries }))
+      if (node.state === 'scheduled' && node.delayMs !== undefined && node.delayMs > 0)
+        retryMetaParts.push(
+          t('timeline.retryDelaySeconds', { seconds: Math.max(1, Math.round(node.delayMs / 1000)) }),
+        )
+      const retryMeta = retryMetaParts.length > 0 ? ` (${retryMetaParts.join(' · ')})` : ''
       return (
         <p
           className={`dsh-timeline__retry${
@@ -207,7 +226,9 @@ function renderNode(
             aria-hidden="true"
           />
           <span className="dsh-timeline__retry-message">
-            {node.message === undefined ? retryLabel : `${retryLabel} — ${node.message}`}
+            {node.message === undefined
+              ? `${retryLabel}${retryMeta}`
+              : `${retryLabel}${retryMeta} — ${node.message}`}
           </span>
         </p>
       )
@@ -245,15 +266,26 @@ function renderNode(
           role="status"
         >
           <Icon name="alert" />
-          <span className="dsh-timeline__turn-terminal-message">
-            <span>{turnTerminalLabel(node.reason, t)}</span>
-            {node.failure === undefined ? null : (
-              <span className="dsh-timeline__turn-terminal-detail">
-                {node.failure.code === undefined ? null : <code>{node.failure.code}</code>}
-                <span>{node.failure.message}</span>
-              </span>
-            )}
-          </span>
+          <span className="dsh-timeline__turn-terminal-message">{turnTerminalLabel(node.reason, t)}</span>
+          {node.failure === undefined ? null : (
+            <span className="dsh-timeline__turn-terminal-detail">
+              {node.failure.code === undefined ? null : <code>{node.failure.code}</code>}
+              <span>{node.failure.message}</span>
+            </span>
+          )}
+          {onRetryTurn === undefined || node.id !== retryTurnNodeId || node.reason === 'blocked' ? null : (
+            <button
+              type="button"
+              className="dsh-button dsh-button--secondary dsh-button--compact dsh-timeline__turn-terminal-action"
+              onClick={() => onRetryTurn(node.reason)}
+            >
+              {t(
+                node.reason === 'interrupted' || node.reason === 'max-tokens'
+                  ? 'timeline.continueTurn'
+                  : 'timeline.retryTurn',
+              )}
+            </button>
+          )}
         </p>
       )
     case 'event-group':
@@ -344,7 +376,12 @@ function renderNode(
                 {projectUserText(
                   node.markdown,
                   sessionReferenceLabels,
-                  onOpenLink === undefined ? undefined : { openFile: onOpenLink },
+                  onOpenLink === undefined && onOpenSession === undefined
+                    ? undefined
+                    : {
+                        ...(onOpenLink === undefined ? {} : { openFile: onOpenLink }),
+                        ...(onOpenSession === undefined ? {} : { openSession: onOpenSession }),
+                      },
                 )}
               </div>
             ) : (
@@ -361,6 +398,18 @@ function renderNode(
               text={node.markdown}
               truncated={truncatedNodeIds.has(node.id)}
               {...(loadFullContent === undefined ? {} : { loadFullText: () => loadFullContent(node.id) })}
+              {...(onEditPrompt === undefined
+                ? {}
+                : {
+                    onEditPrompt: () => {
+                      // A shortened long prompt must be edited as the full text it stands for.
+                      if (!truncatedNodeIds.has(node.id) || loadFullContent === undefined) {
+                        onEditPrompt(node.markdown)
+                        return
+                      }
+                      void loadFullContent(node.id).then(onEditPrompt, () => undefined)
+                    },
+                  })}
               translate={t}
             />
           )}
@@ -389,6 +438,7 @@ function renderNode(
         focused,
         truncatedNodeIds,
         loadFullContent,
+        producedFiles,
       )
     case 'reasoning':
       return renderAssistantTurn(
@@ -458,6 +508,10 @@ export function renderTimelineNode(
     context.conversationLayout === 'focused',
     context.truncatedNodeIds,
     context.loadFullContent,
+    context.producedFiles,
+    context.onEditPrompt,
+    context.onRetryTurn,
+    context.retryTurnNodeId,
   )
 }
 
@@ -558,7 +612,7 @@ function renderAssistantTurn(
   loadFullContent?: (nodeId: string) => Promise<string>,
 ): ReactElement {
   const inProgress = assistantNodeInProgress(node)
-  const actionsUnavailable = inProgress || (node.turn !== undefined && node.turnCompleted !== true)
+  const turnSettled = node.turn === undefined || node.turnCompleted === true
   const producedFiles = producedFilePaths(node.tools)
   const contentBlocks = node.blocks.length === 0 ? assistantBlocksFromAggregates(node) : node.blocks
   const messageBlocks = contentBlocks.filter((block) => block.kind === 'message')
@@ -570,7 +624,9 @@ function renderAssistantTurn(
   const turnUsage =
     performanceUsage === 'detailed' && node.turnCompleted === true ? node.turnUsage : undefined
   const detailLabel =
-    transcriptView === 'detailed' && node.turn !== undefined && node.step !== undefined
+    (transcriptView === 'detailed' || transcriptView === 'verbose') &&
+    node.turn !== undefined &&
+    node.step !== undefined
       ? t('timeline.stepMetadata', { turn: node.turn, step: node.step })
       : undefined
   return (
@@ -602,7 +658,7 @@ function renderAssistantTurn(
         {renderProducedFiles(producedFiles, onOpenLink, onShowInFolder, t)}
       </article>
       {turnUsage === undefined ? null : <TurnUsageDisclosure usage={turnUsage} translate={t} />}
-      {node.markdown.trim() === '' || actionsUnavailable ? null : (
+      {node.markdown.trim() === '' || inProgress ? null : (
         <MessageActions
           text={node.markdown}
           truncated={truncated}
@@ -615,18 +671,20 @@ function renderAssistantTurn(
                 },
               }
             : {})}
-          {...feedbackActionProps(
-            assistantMessageId(node),
-            feedback,
-            onFeedback,
-            onFeedbackSubmit,
-            onFeedbackPrepare,
-            feedbackUnavailable,
-          )}
-          {...(onBranch === undefined
-            ? {}
-            : { onBranch: node.sequence === undefined ? () => undefined : () => onBranch(node.sequence!) })}
-          branchUnavailable={branchUnavailable}
+          {...(turnSettled
+            ? feedbackActionProps(
+                assistantMessageId(node),
+                feedback,
+                onFeedback,
+                onFeedbackSubmit,
+                onFeedbackPrepare,
+                feedbackUnavailable,
+              )
+            : {})}
+          {...(turnSettled && onBranch !== undefined
+            ? { onBranch: node.sequence === undefined ? () => undefined : () => onBranch(node.sequence!) }
+            : {})}
+          branchUnavailable={!turnSettled || branchUnavailable}
           translate={t}
         />
       )}
@@ -655,9 +713,10 @@ function renderAssistantMessage(
   focused = false,
   truncatedNodeIds: ReadonlySet<string> = new Set(),
   loadFullContent?: (nodeId: string) => Promise<string>,
+  producedFiles: readonly string[] = NO_PRODUCED_FILES,
 ): ReactElement {
   const inProgress = assistantNodeInProgress(node)
-  const actionsUnavailable = inProgress || (node.turn !== undefined && node.turnCompleted !== true)
+  const turnSettled = node.turn === undefined || node.turnCompleted === true
   const truncated = truncatedNodeIds.has(node.id)
   const metricsLabel =
     performanceUsage === 'detailed' && (!focused || focusedPresentationPolicy(transcriptView).requestMetrics)
@@ -666,7 +725,9 @@ function renderAssistantMessage(
   const turnUsage =
     performanceUsage === 'detailed' && node.turnCompleted === true ? node.turnUsage : undefined
   const detailLabel =
-    transcriptView === 'detailed' && node.turn !== undefined && node.step !== undefined
+    (transcriptView === 'detailed' || transcriptView === 'verbose') &&
+    node.turn !== undefined &&
+    node.step !== undefined
       ? t('timeline.stepMetadata', { turn: node.turn, step: node.step })
       : undefined
   return (
@@ -706,29 +767,36 @@ function renderAssistantMessage(
           translate={t}
         />
         {node.markdown.trim() === '' ? null : (
-          <MarkdownContent markdown={node.markdown} streaming={node.streaming} onOpenLink={onOpenLink} />
+          <MarkdownContent
+            markdown={node.markdown}
+            streaming={node.streaming}
+            onOpenLink={onOpenLink}
+            producedFiles={producedFiles}
+          />
         )}
       </article>
       {turnUsage === undefined ? null : <TurnUsageDisclosure usage={turnUsage} translate={t} />}
-      {node.markdown.trim() === '' || actionsUnavailable ? null : (
+      {node.markdown.trim() === '' || inProgress ? null : (
         <MessageActions
           text={node.markdown}
           truncated={truncated}
           {...(truncated && loadFullContent !== undefined
             ? { loadFullText: () => loadFullContent(node.id) }
             : {})}
-          {...feedbackActionProps(
-            node.id,
-            feedback,
-            onFeedback,
-            onFeedbackSubmit,
-            onFeedbackPrepare,
-            feedbackUnavailable,
-          )}
-          {...(onBranch === undefined
-            ? {}
-            : { onBranch: node.sequence === undefined ? () => undefined : () => onBranch(node.sequence!) })}
-          branchUnavailable={branchUnavailable}
+          {...(turnSettled
+            ? feedbackActionProps(
+                node.id,
+                feedback,
+                onFeedback,
+                onFeedbackSubmit,
+                onFeedbackPrepare,
+                feedbackUnavailable,
+              )
+            : {})}
+          {...(turnSettled && onBranch !== undefined
+            ? { onBranch: node.sequence === undefined ? () => undefined : () => onBranch(node.sequence!) }
+            : {})}
+          branchUnavailable={!turnSettled || branchUnavailable}
           translate={t}
         />
       )}

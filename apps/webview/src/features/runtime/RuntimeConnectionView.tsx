@@ -1,8 +1,9 @@
 import { useLayoutEffect, useRef, useState, type ReactElement } from 'react'
-import type { ConnectionLogEntry } from '@dsh-vscode/domain'
+import type { ConnectionLogEntry, DiagnosticsSnapshot } from '@dsh-vscode/domain'
 import type { WebviewBackendState } from '../../app/store.js'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
+import { DiagnosticsDrawer } from '../diagnostics/DiagnosticsDrawer.js'
 
 export interface RuntimeConnectionViewProps {
   readonly state: WebviewBackendState
@@ -11,6 +12,10 @@ export interface RuntimeConnectionViewProps {
   readonly onRetry?: () => void
   readonly onOpenSettings?: () => void
   readonly onShowDiagnosticsOutput?: () => Promise<void>
+  /** A failed or conflicting connection offers the redacted diagnostics report. */
+  readonly onReadDiagnostics?: () => Promise<DiagnosticsSnapshot | undefined>
+  readonly onReconnectDiagnostics?: () => Promise<void>
+  readonly connectionEpoch?: number
 }
 
 export function RuntimeConnectionView(props: RuntimeConnectionViewProps): ReactElement {
@@ -147,14 +152,27 @@ export function RuntimeConnectionView(props: RuntimeConnectionViewProps): ReactE
           )}
           {props.onOpenSettings === undefined ? null : (
             <button
-              className="dsh-icon-button"
+              className={failure ? 'dsh-button dsh-button--ghost' : 'dsh-icon-button'}
               type="button"
-              aria-label={t('runtime.openConnectionSettings')}
+              aria-label={failure ? undefined : t('runtime.openConnectionSettings')}
               title={t('runtime.openConnectionSettings')}
               onClick={props.onOpenSettings}
             >
               <Icon name="settings" />
+              {/* A failed connection has few ways forward; name this one. */}
+              {failure ? t('runtime.openConnectionSettings') : null}
             </button>
+          )}
+          {!failure ||
+          props.onReadDiagnostics === undefined ||
+          props.onReconnectDiagnostics === undefined ||
+          props.onShowDiagnosticsOutput === undefined ? null : (
+            <DiagnosticsDrawer
+              key={props.connectionEpoch ?? 0}
+              onRead={props.onReadDiagnostics}
+              onReconnect={props.onReconnectDiagnostics}
+              onShowOutput={props.onShowDiagnosticsOutput}
+            />
           )}
         </div>
       </section>

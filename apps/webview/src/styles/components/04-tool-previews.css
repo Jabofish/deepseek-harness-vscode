@@ -370,3 +370,51 @@
   flex: none;
   color: var(--dsh-muted);
 }
+
+/* A search hit that opens its file: keep the monospace row, drop button chrome. */
+.dsh-tool-search-preview__line--interactive {
+  display: block;
+  width: 100%;
+  min-width: max-content;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.dsh-tool-search-preview__line--interactive:hover,
+.dsh-tool-search-preview__line--interactive:focus-visible {
+  color: var(--dsh-text);
+  background: var(--dsh-surface-hover);
+  outline: none;
+}
+
+.dsh-tool-search-preview__line--interactive:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--dsh-focus);
+}
+
+/* The command a terminal result ran, above its output. */
+.dsh-tool-terminal-preview__command-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-1) var(--dsh-space-2) var(--dsh-space-1) var(--dsh-space-3);
+  border-bottom: var(--dsh-border);
+}
+
+.dsh-tool-terminal-preview__command {
+  flex: 1;
+  min-width: 0;
+  max-height: 8rem;
+  margin: 0;
+  overflow: auto;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: var(--dsh-tool-detail-font-size);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

@@ -141,4 +141,25 @@ describe('TrajectoryView', () => {
     fireEvent.change(search, { target: { value: 'no-such-needle' } })
     expect(screen.getByText('0 matches')).toBeDefined()
   })
+
+  it('filters by record kind within turn sections and loads older history', async () => {
+    const onLoadOlderHistory = vi.fn(() => Promise.resolve())
+    render(
+      <TrajectoryView
+        sessionId="s1"
+        nodes={nodes}
+        streaming={false}
+        hasMoreHistory
+        onLoadOlderHistory={onLoadOlderHistory}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Tools' }))
+    expect(screen.getByRole('button', { name: 'Tools' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.queryByText('I will inspect the test first.')).toBeNull()
+    expect(screen.getAllByText('shell: pnpm test').length).toBeGreaterThan(0)
+    fireEvent.click(screen.getByRole('button', { name: 'Errors' }))
+    expect(screen.getByText('No records of this kind.')).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Load earlier' }))
+    await waitFor(() => expect(onLoadOlderHistory).toHaveBeenCalledTimes(1))
+  })
 })

@@ -262,3 +262,15 @@
   width: 100%;
   max-width: none;
 }
+
+/* Fetched page text: bounded and wrapped inside the overflow-hidden card. */
+.dsh-tool-web-preview__content {
+  max-height: var(--dsh-tool-detail-max-height, 18rem);
+  margin: var(--dsh-space-2) 0 0;
+  overflow: auto;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: var(--dsh-tool-detail-font-size);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

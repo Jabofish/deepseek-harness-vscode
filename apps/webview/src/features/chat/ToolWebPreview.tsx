@@ -69,6 +69,7 @@ function renderFetch(
 ): ReactElement {
   const view = props.view
   if (view.kind !== 'fetch') return <></>
+  const content = props.content?.trim()
   return (
     <div className="dsh-tool-web-preview dsh-tool-web-preview--fetch" data-web="fetch">
       {renderLink(view.url, view.url, props.onOpenLink, true)}
@@ -81,7 +82,15 @@ function renderFetch(
             {translate('toolrow.presentation.contentTruncated')}
           </span>
         ) : null}
+        {content !== undefined && content !== '' ? (
+          <CopyButton text={content} className="dsh-tool-web-preview__copy" translate={translate} />
+        ) : null}
       </div>
+      {content !== undefined && content !== '' ? (
+        <pre className="dsh-tool-web-preview__content" tabIndex={0}>
+          {content}
+        </pre>
+      ) : null}
     </div>
   )
 }

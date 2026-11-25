@@ -203,16 +203,18 @@ export function ScheduleDetail(input: ScheduleDetailProps): ReactElement {
                     >
                       {t('schedules.run.now')}
                     </button>
-                    <button
-                      type="button"
-                      disabled={busy || catalogStatus !== 'ready' || !selectedInCatalog}
-                      onClick={() => {
-                        setMoreActionsOpen(false)
-                        toggleSelected()
-                      }}
-                    >
-                      {t(selected.status === 'active' ? 'schedules.pause' : 'schedules.resume')}
-                    </button>
+                    {selected.status === 'ended' ? null : (
+                      <button
+                        type="button"
+                        disabled={busy || catalogStatus !== 'ready' || !selectedInCatalog}
+                        onClick={() => {
+                          setMoreActionsOpen(false)
+                          toggleSelected()
+                        }}
+                      >
+                        {t(selected.status === 'active' ? 'schedules.pause' : 'schedules.resume')}
+                      </button>
+                    )}
                   </>
                 ) : null}
                 <button
@@ -525,19 +527,19 @@ export function ScheduleDetail(input: ScheduleDetailProps): ReactElement {
                 </div>
               ) : null}
             </fieldset>
-            {draftDirty ? (
-              <div className="dsh-schedule-panel__actions dsh-schedule-panel__editor-save-bar">
-                <p role="status">{t('schedules.update.unsaved')}</p>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => {
-                    setEditState({ editing: false })
-                    setOperationError(undefined)
-                  }}
-                >
-                  {t('schedules.cancel')}
-                </button>
+            <div className="dsh-schedule-panel__actions dsh-schedule-panel__editor-save-bar">
+              {draftDirty ? <p role="status">{t('schedules.update.unsaved')}</p> : null}
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  setEditState({ editing: false })
+                  setOperationError(undefined)
+                }}
+              >
+                {t('schedules.cancel')}
+              </button>
+              {draftDirty ? (
                 <button
                   type="submit"
                   className="dsh-schedule-panel__primary"
@@ -545,17 +547,19 @@ export function ScheduleDetail(input: ScheduleDetailProps): ReactElement {
                     busy ||
                     catalogStatus !== 'ready' ||
                     !selectedInCatalog ||
+                    selected.status === 'ended' ||
                     (selected.status !== 'active' && selected.target === undefined) ||
                     draft.title.trim() === '' ||
                     draft.title.trim().length > 120 ||
                     draft.prompt.trim() === '' ||
-                    (draft.timing === 'weekly' && draft.weekdays.length === 0)
+                    (draft.timing === 'weekly' && draft.weekdays.length === 0) ||
+                    (draft.timing === 'rrule' && (draft.rrule ?? '').trim() === '')
                   }
                 >
                   {busy ? t('schedules.update.saving') : t('schedules.save')}
                 </button>
-              </div>
-            ) : null}
+              ) : null}
+            </div>
           </form>
         ) : (
           <div className="dsh-schedule-panel__rule">
@@ -572,14 +576,16 @@ export function ScheduleDetail(input: ScheduleDetailProps): ReactElement {
                 <dt>{t('schedules.field.timing')}</dt>
                 <dd>{formatRule(selected, t)}</dd>
               </div>
-              <div>
-                <dt>{t('schedules.field.next')}</dt>
-                <dd>
-                  <time dateTime={selected.scheduledAt}>
-                    {new Date(selected.scheduledAt).toLocaleString()}
-                  </time>
-                </dd>
-              </div>
+              {selected.status === 'inactive' || selected.status === 'ended' ? null : (
+                <div>
+                  <dt>{t('schedules.field.next')}</dt>
+                  <dd>
+                    <time dateTime={selected.scheduledAt}>
+                      {new Date(selected.scheduledAt).toLocaleString()}
+                    </time>
+                  </dd>
+                </div>
+              )}
               {selected.lastDelivery !== undefined ? (
                 <div>
                   <dt>{t('schedules.field.lastDelivery')}</dt>
@@ -591,7 +597,7 @@ export function ScheduleDetail(input: ScheduleDetailProps): ReactElement {
                 </div>
               ) : null}
             </dl>
-            {selected.status === 'inactive' ? (
+            {selected.status === 'inactive' || selected.status === 'ended' ? (
               <p className="dsh-schedule-panel__muted">{t('schedules.inactiveNotice')}</p>
             ) : null}
             <div className="dsh-schedule-panel__actions">
@@ -602,6 +608,7 @@ export function ScheduleDetail(input: ScheduleDetailProps): ReactElement {
                   busy ||
                   catalogStatus === 'loading' ||
                   !selectedInCatalog ||
+                  selected.status === 'ended' ||
                   (selected.status !== 'active' && selected.target === undefined)
                 }
                 onClick={beginEdit}
@@ -657,7 +664,24 @@ export function ScheduleDetail(input: ScheduleDetailProps): ReactElement {
                 <time dateTime={delivery.scheduledAt}>
                   {formatDeliveryOccurrence(delivery.scheduledAt, selected, locale)}
                 </time>
+                {delivery.deliveredAt !== delivery.scheduledAt ? (
+                  <span className="dsh-schedule-panel__muted">
+                    {' · '}
+                    {t('schedules.history.deliveredAt', {
+                      time: formatDeliveryOccurrence(delivery.deliveredAt, selected, locale),
+                    })}
+                  </span>
+                ) : null}
               </span>
+              {delivery.targetSessionId === undefined ? null : (
+                <button
+                  type="button"
+                  className="dsh-schedule-panel__session-link"
+                  onClick={() => props.onOpenLinkedSession(delivery.targetSessionId!)}
+                >
+                  {t('schedules.history.openSession')}
+                </button>
+              )}
               {delivery.prompt === undefined ? null : <p>{delivery.prompt}</p>}
             </li>
           ))}

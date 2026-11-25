@@ -170,6 +170,8 @@ export interface AppState extends SessionModelDirectoryState {
   /** True only when the selected pinned adapter accepts inline subagent images. */
   readonly subagentImagePrompts: boolean
   readonly sessionRestore?: boolean
+  /** False only when the connected adapter cannot export a session ZIP archive. */
+  readonly sessionZipExport?: boolean
   readonly blankSessionReuse?: boolean
   readonly jobControllerAvailable: boolean
   /** Safe compatibility warning for an unknown/fallback DSH runtime. */
@@ -252,6 +254,8 @@ export interface AppState extends SessionModelDirectoryState {
   readonly tasks: readonly TaskSummary[]
   readonly tasksLoading: boolean
   readonly taskScope: TaskListScope
+  /** The task center's "include completed" filter; a list preference kept across sessions. */
+  readonly taskIncludeCompleted: boolean
   readonly tasksComplete: boolean
   readonly tasksOmittedSessions: number
   readonly checkpoints: readonly CheckpointSummary[]
@@ -294,6 +298,8 @@ export interface AppActions {
   acknowledgeAccountBonus(orderId: string): Promise<boolean>
   openAccountPage(page: 'usage' | 'top-up'): Promise<void>
   initialize(): Promise<void>
+  /** Drafts an earlier Webview instance saved; the first call hands them over. */
+  takeSavedDrafts?(): Readonly<Record<string, string>>
   reconnect(): Promise<void>
   readDiagnostics(): Promise<DiagnosticsSnapshot | undefined>
   showDiagnostics(): Promise<void>
@@ -386,9 +392,12 @@ export interface AppActions {
     identity?: QuestionRequestIdentity,
   ): Promise<void>
   cancelQuestion(questionId: string, identity?: QuestionRequestIdentity): Promise<void>
-  pickAttachment(): Promise<PromptAttachment | undefined>
+  /** Native multi-file picker; empty when cancelled. */
+  pickAttachments(): Promise<readonly PromptAttachment[]>
   ingestAttachment(input: IngestedFile): Promise<PromptAttachment | undefined>
   previewAttachment(uri: string): Promise<string | undefined>
+  /** Open a pending text attachment's content in an untitled editor; false when unavailable. */
+  openAttachmentText?(uri: string): Promise<boolean>
   readSessionAttachment(sessionId: string, image: MessageImageReference): Promise<string | undefined>
   releaseAttachments(uris: readonly string[]): Promise<void>
   captureEditorContext(kind: EditorContextKind, workspaceFolderId?: string): Promise<void>
@@ -399,6 +408,7 @@ export interface AppActions {
   getChangeDetail(changeId: string): Promise<ChangeDetail | undefined>
   markChangeReviewed(changeId: string, reviewState: ChangeReviewState): Promise<ChangeSetFile | undefined>
   openChange(changeId: string): Promise<void>
+  openChangeDiff(changeId: string): Promise<void>
   refreshTasks(sessionId?: string, includeCompleted?: boolean, scope?: TaskListScope): Promise<void>
   getTask(taskId: string): Promise<TaskSummary | undefined>
   stopTask(taskId: string, taskRevision: number): Promise<TaskSummary | undefined>
@@ -441,6 +451,10 @@ export interface AppActions {
   readDshSettings(): Promise<DshSettingsSnapshot | undefined>
   openDshSettingsDocument(): Promise<void>
   openKeyboardShortcuts(): Promise<void>
+  openExtensionSettings?(
+    section?: 'all' | 'checkpoints' | 'connection' | 'completionCue' | 'runtime' | 'webUi' | 'editor',
+  ): Promise<void>
+  clearExternalCredentials?(): Promise<void>
   updateDshSetting(path: string, value: unknown, expectedRevision: number): Promise<void>
   unsetDshSetting(path: string, expectedRevision: number): Promise<void>
   mutateDshSettings(

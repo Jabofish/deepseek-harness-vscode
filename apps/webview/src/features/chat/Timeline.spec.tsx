@@ -105,6 +105,51 @@ describe('Timeline', () => {
     expect(screen.getByText('agent/inbox/spliced')).toBeDefined()
   })
 
+  it('offers Retry only on the latest turn ending, also after the conversation moves on', () => {
+    const onRetryTurn = vi.fn()
+    const first: readonly TimelineNode[] = [
+      { kind: 'user-message', id: 'user-1', markdown: 'First prompt', source: 'user' },
+      { kind: 'turn-terminal', id: 'turn-terminal:1', turn: 1, sequence: 3, reason: 'error' },
+    ]
+    const { rerender } = render(
+      <Timeline sessionId="session-1" nodes={first} streaming={false} onRetryTurn={onRetryTurn} />,
+    )
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeDefined()
+
+    rerender(<Timeline sessionId="session-1" nodes={first} streaming onRetryTurn={onRetryTurn} />)
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+    rerender(<Timeline sessionId="session-1" nodes={first} streaming={false} onRetryTurn={onRetryTurn} />)
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeDefined()
+
+    const next: readonly TimelineNode[] = [
+      ...first,
+      { kind: 'user-message', id: 'user-2', markdown: 'Second prompt', source: 'user' },
+      { kind: 'assistant-message', id: 'assistant-2', markdown: 'Done.', streaming: false },
+    ]
+    rerender(<Timeline sessionId="session-1" nodes={next} streaming={false} onRetryTurn={onRetryTurn} />)
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+    expect(onRetryTurn).not.toHaveBeenCalled()
+  })
+
+  it('edits a shortened long prompt as its full text', async () => {
+    const onEditPrompt = vi.fn()
+    const loadFullContent = vi.fn(() => Promise.resolve('The whole long prompt'))
+    render(
+      <Timeline
+        sessionId="session-1"
+        nodes={[{ kind: 'user-message', id: 'user-1', markdown: 'The whole…', source: 'user' }]}
+        omittedNodeIds={['user-1']}
+        loadFullContent={loadFullContent}
+        streaming={false}
+        onEditPrompt={onEditPrompt}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Edit & resend' }))
+    await waitFor(() => expect(onEditPrompt).toHaveBeenCalledWith('The whole long prompt'))
+    expect(loadFullContent).toHaveBeenCalledWith('user-1')
+    expect(onEditPrompt).toHaveBeenCalledTimes(1)
+  })
+
   it('renders the structured terminal failure beside the generic turn label', () => {
     render(
       <Timeline
@@ -221,7 +266,7 @@ describe('Timeline', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: 'Expand Read details' }))
-    fireEvent.click(screen.getByTitle('src/feature.ts'))
+    fireEvent.click(screen.getByTitle('src/feature.ts#L11'))
     await waitFor(() => expect(screen.getByRole('dialog')).toBeDefined())
     expect(screen.getByText('The editor refused this path.')).toBeDefined()
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))

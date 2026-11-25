@@ -36,6 +36,7 @@ function detail(sessionId: string): Record<string, unknown> {
 class Client {
   public readonly requests: WebviewRequest[] = []
   public open: ((sessionId: string) => Promise<unknown>) | undefined
+  public content: Promise<{ readonly content: string }> | undefined
   private readonly listeners = new Set<(message: HostMessage) => void>()
   public request<T>(request: WebviewRequest): Promise<T> {
     this.requests.push(request)
@@ -60,7 +61,8 @@ class Client {
           streaming: true,
         },
       }
-    if (request.type === 'session.transcript.content') result = { content: 'Complete reply' }
+    if (request.type === 'session.transcript.content')
+      return (this.content ?? Promise.resolve({ content: 'Complete reply' })) as Promise<T>
     return Promise.resolve(result as T)
   }
   public subscribe(listener: (message: HostMessage) => void): () => void {
@@ -108,6 +110,25 @@ describe('Webview installs Host windows', () => {
         type: 'session.transcript.node',
         payload: { sessionId: 's', revision: 1, nodeId: 'reply-s' },
       })
+    } finally {
+      store.dispose()
+    }
+  })
+
+  it('rejects full content from an earlier open even after the same session is visible again', async () => {
+    const client = new Client()
+    let finish!: (value: { content: string }) => void
+    client.content = new Promise((resolve) => {
+      finish = resolve
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+    try {
+      await store.openSession('s')
+      const reading = store.loadTranscriptContent('reply-s')
+      await store.openSession('other')
+      await store.openSession('s')
+      finish({ content: 'Complete reply' })
+      await expect(reading).rejects.toMatchObject({ name: 'AbortError' })
     } finally {
       store.dispose()
     }

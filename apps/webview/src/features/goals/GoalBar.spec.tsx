@@ -78,4 +78,35 @@ describe('GoalBar', () => {
       expect(screen.getByRole<HTMLInputElement>('textbox', { name: 'Goal objective' }).value).toBe('Ship v2')
     })
   })
+
+  it('edits the round budget and offers retry and completion for a blocked goal', async () => {
+    const onUpdate = vi.fn(() => Promise.resolve())
+    const blocked: GoalView = {
+      ...goal,
+      status: 'blocked',
+      maxGoalRounds: 5,
+      blockedReason: { code: 'needs-input', message: 'Waiting for credentials' },
+    }
+    render(<GoalBar goals={[blocked]} onUpdate={onUpdate} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Retry blocked goal' }))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(onUpdate).toHaveBeenLastCalledWith('g1', { status: 'in-progress' })
+    fireEvent.click(screen.getByRole('button', { name: 'Edit goal' }))
+    const rounds = screen.getByRole('spinbutton', { name: 'Max rounds' })
+    fireEvent.change(rounds, { target: { value: '0' } })
+    expect(screen.getByRole('button', { name: 'Save goal' }).hasAttribute('disabled')).toBe(true)
+    fireEvent.change(rounds, { target: { value: '8' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save goal' }))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(onUpdate).toHaveBeenLastCalledWith('g1', { maxGoalRounds: 8 })
+    fireEvent.click(screen.getByRole('button', { name: 'Mark goal complete' }))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(onUpdate).toHaveBeenLastCalledWith('g1', { status: 'completed' })
+  })
 })

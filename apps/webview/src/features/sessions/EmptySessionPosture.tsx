@@ -5,6 +5,7 @@ import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
 import { SelectMenu } from '../../components/common/SelectMenu.js'
 import { presetDisplayName } from '../settings/preset-display.js'
+import { workspaceDisplayName } from './session-drawer-model.js'
 
 export function EmptySessionPosture(props: {
   readonly workspaces: readonly WorkspaceSummary[]
@@ -12,6 +13,8 @@ export function EmptySessionPosture(props: {
   readonly presetSelectionEnabled?: boolean
   readonly empty: boolean
   readonly onCreate: (workspaceId: string, presetId?: string) => void
+  readonly onOpenSessions?: () => void
+  readonly onOpenSettings?: () => void
 }): ReactElement {
   const { t } = useI18n()
   const hostDefaultPresetId = props.presets.find((preset) => preset.isDefault)?.id
@@ -56,13 +59,13 @@ export function EmptySessionPosture(props: {
           density="regular"
           displayLabel
           menuMode="flow"
-          label={selected?.name ?? t('app.workspacePicker')}
+          label={selected === undefined ? t('app.workspacePicker') : workspaceDisplayName(selected.name, t)}
           ariaLabel={t('app.workspacePicker')}
           title={t('app.workspacePicker')}
           value={selected?.id ?? ''}
           options={props.workspaces.map((workspace) => ({
             value: workspace.id,
-            label: workspace.name,
+            label: workspaceDisplayName(workspace.name, t),
           }))}
           onChange={setSelectedWorkspaceId}
         />
@@ -89,19 +92,31 @@ export function EmptySessionPosture(props: {
         </div>
       )}
       {missingHostDefaultPreset ? <p role="status">{t('app.presetDefaultMissing')}</p> : null}
-      <button
-        className="dsh-button dsh-button--primary"
-        type="button"
-        disabled={selected === undefined || missingHostDefaultPreset}
-        onClick={() => {
-          if (selected !== undefined && !missingHostDefaultPreset) {
-            const presetId = props.presetSelectionEnabled === false ? undefined : oneShotPresetId
-            props.onCreate(selected.id, presetId)
-          }
-        }}
-      >
-        {t('app.newSessionInWorkspace')}
-      </button>
+      <div className="dsh-empty-session__actions">
+        <button
+          className="dsh-button dsh-button--primary"
+          type="button"
+          disabled={selected === undefined || missingHostDefaultPreset}
+          onClick={() => {
+            if (selected !== undefined && !missingHostDefaultPreset) {
+              const presetId = props.presetSelectionEnabled === false ? undefined : oneShotPresetId
+              props.onCreate(selected.id, presetId)
+            }
+          }}
+        >
+          {t('app.newSessionInWorkspace')}
+        </button>
+        {!props.empty && props.onOpenSessions !== undefined ? (
+          <button className="dsh-button dsh-button--secondary" type="button" onClick={props.onOpenSessions}>
+            {t('sessions.title')}
+          </button>
+        ) : null}
+        {props.onOpenSettings !== undefined ? (
+          <button className="dsh-button dsh-button--secondary" type="button" onClick={props.onOpenSettings}>
+            {t('settings.title')}
+          </button>
+        ) : null}
+      </div>
     </section>
   )
 }

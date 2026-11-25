@@ -25,6 +25,8 @@ export interface QueuePanelProps {
   readonly onEdit: (id: string, text: string) => void | Promise<void>
   readonly onRemove: (id: string) => void | Promise<void>
   readonly onModeChange: (id: string, mode: RunningInputMode) => void
+  /** Steer every queued row into the running turn, oldest first, as one action. */
+  readonly onSteerAll?: () => void | Promise<void>
   readonly onDismissPending: (id: string) => void
   readonly onLoadImage?: (image: MessageImageReference) => Promise<string | undefined>
 }
@@ -33,6 +35,7 @@ export const QueuePanel = memo(function QueuePanel(props: QueuePanelProps): Reac
   const { t } = useI18n()
   const listId = useId()
   const [collapsed, setCollapsed] = useState(false)
+  const [steeringAll, setSteeringAll] = useState(false)
   const removingRef = useRef<Set<string>>(new Set())
   const [removingIds, setRemovingIds] = useState<ReadonlySet<string>>(() => new Set())
   const queueItems = useMemo(
@@ -105,22 +108,43 @@ export const QueuePanel = memo(function QueuePanel(props: QueuePanelProps): Reac
 
   const expanded = multiple && !collapsed
   const listVisible = items.length === 1 || expanded
+  const steerableCount =
+    props.running && props.onSteerAll !== undefined
+      ? props.items.filter((item) => item.mode === 'queue' && !removingIds.has(item.id)).length
+      : 0
 
   return (
     <section className="dsh-queue" aria-label={t('queue.title')}>
       {multiple ? (
-        <button
-          className="dsh-queue__header"
-          type="button"
-          aria-controls={listId}
-          aria-expanded={expanded}
-          onClick={() => setCollapsed((current) => !current)}
-        >
-          <Icon name="list" className="dsh-queue__header-icon" />
-          <span className="dsh-queue__header-label">{t('queue.title')}</span>
-          <span className="dsh-queue__count">{items.length}</span>
-          <Icon name={expanded ? 'chevron-down' : 'chevron-right'} className="dsh-queue__header-chevron" />
-        </button>
+        <div className="dsh-queue__header-row">
+          <button
+            className="dsh-queue__header"
+            type="button"
+            aria-controls={listId}
+            aria-expanded={expanded}
+            onClick={() => setCollapsed((current) => !current)}
+          >
+            <Icon name="list" className="dsh-queue__header-icon" />
+            <span className="dsh-queue__header-label">{t('queue.title')}</span>
+            <span className="dsh-queue__count">{items.length}</span>
+            <Icon name={expanded ? 'chevron-down' : 'chevron-right'} className="dsh-queue__header-chevron" />
+          </button>
+          {steerableCount > 0 ? (
+            <button
+              type="button"
+              className="dsh-button dsh-button--secondary dsh-button--compact"
+              disabled={steeringAll}
+              onClick={() => {
+                // One store action steers FIFO and reports a single failure;
+                // per-row requests in parallel could admit rows out of order.
+                setSteeringAll(true)
+                void Promise.resolve(props.onSteerAll?.()).finally(() => setSteeringAll(false))
+              }}
+            >
+              {t('queue.steerAll')}
+            </button>
+          ) : null}
+        </div>
       ) : null}
       <ol id={listId} className="dsh-queue__list" hidden={!listVisible}>
         {listVisible

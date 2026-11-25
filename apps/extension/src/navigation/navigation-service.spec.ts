@@ -39,6 +39,7 @@ vi.mock('vscode', () => {
     Selection,
     TextEditorRevealType: { InCenterIfOutsideViewport: 2 },
     Uri: {
+      from: (parts: { scheme: string; path: string; query: string }) => ({ ...parts }),
       file: (fsPath: string) => ({ scheme: 'file', fsPath, toString: () => `file://${fsPath}` }),
       parse: (value: string) => ({
         scheme: value.slice(0, value.indexOf(':')),
@@ -73,10 +74,13 @@ interface Harness {
   readonly executeCommand: ReturnType<typeof vi.fn>
   readonly revealRange: ReturnType<typeof vi.fn>
   readonly lines: string[]
+  readonly registerProvider: Mock<(scheme: string, provider: unknown) => { dispose(): void }>
+  readonly textDocuments: { readonly uri: { readonly scheme: string; readonly query: string } }[]
 }
 
 interface NavigationDocument {
   readonly lineCount: number
+  getText(): string
   lineAt(line: number): { readonly text: string }
 }
 
@@ -94,6 +98,7 @@ function createHarness(
   const document = {
     lineCount: lines.length,
     lineAt: (line: number) => ({ text: lines[line] ?? '' }),
+    getText: () => `${lines.join('\n')}\n`,
   }
   const editor: { selection?: unknown; revealRange: ReturnType<typeof vi.fn> } = {
     revealRange: vi.fn(),
@@ -102,6 +107,7 @@ function createHarness(
   const openTextDocument = vi.fn(() => Promise.resolve(document))
   const executeCommand = vi.fn(() => Promise.resolve())
   const stat = vi.fn(() => Promise.resolve({ type: statType }))
+  const registerProvider = vi.fn((_scheme: string, _provider: unknown) => ({ dispose: vi.fn() }))
   const workspace = {
     workspaceFolders: [folder],
     fs: {
@@ -112,6 +118,8 @@ function createHarness(
       rename: vi.fn(),
     },
     openTextDocument,
+    registerTextDocumentContentProvider: registerProvider,
+    textDocuments: [] as { readonly uri: { readonly scheme: string; readonly query: string } }[],
   }
   const window = { showTextDocument }
   const service = new NavigationService({
@@ -131,6 +139,8 @@ function createHarness(
     executeCommand,
     revealRange: editor.revealRange,
     lines: [...lines],
+    registerProvider,
+    textDocuments: workspace.textDocuments,
   }
 }
 
@@ -200,25 +210,76 @@ describe('NavigationService', () => {
     expect(directoryHarness.showTextDocument).not.toHaveBeenCalled()
   })
 
-  it('opens a diff against the current file and bounds the before text', async () => {
+  it('opens a recorded change as a diff against an in-memory earlier version', async () => {
+    const root = temporaryRoot()
+    writeFileSync(path.join(root, 'a.ts'), 'first\nSECOND\nthird\n')
+    const harness = createHarness(root, ['first', 'SECOND', 'third'])
+    const provider = harness.registerProvider
+
+    await harness.service.openChangeDiff(harness.folderId, 'a.ts', 'modified', [
+      { oldText: 'first\nsecond\nthird', newText: 'first\nSECOND\nthird' },
+    ])
+
+    expect(provider).toHaveBeenCalledWith('jabodsh-baseline', expect.anything())
+    const [baselineUri, fileUri, title] = harness.executeCommand.mock.calls[0]!.slice(1) as [
+      { readonly scheme: string; readonly path: string; readonly query: string },
+      { readonly fsPath: string },
+      string,
+    ]
+    expect(harness.executeCommand.mock.calls[0]![0]).toBe('vscode.diff')
+    expect(baselineUri).toMatchObject({ scheme: 'jabodsh-baseline', path: '/a.ts' })
+    expect(fileUri.fsPath).toBe(path.join(root, 'a.ts'))
+    expect(title).toBe('a.ts (before this change)')
+    const contentProvider = provider.mock.calls[0]![1] as {
+      provideTextDocumentContent(uri: unknown): string
+    }
+    expect(contentProvider.provideTextDocumentContent(baselineUri)).toBe('first\nsecond\nthird\n')
+  })
+
+  it('keeps earlier versions that an open diff still shows and never serves an empty one', async () => {
+    const root = temporaryRoot()
+    writeFileSync(path.join(root, 'a.ts'), 'first\nSECOND\nthird\n')
+    const harness = createHarness(root, ['first', 'SECOND', 'third'])
+    const open = (): Promise<void> =>
+      harness.service.openChangeDiff(harness.folderId, 'a.ts', 'modified', [
+        { oldText: 'first\nsecond\nthird', newText: 'first\nSECOND\nthird' },
+      ])
+    const uris: { readonly scheme: string; readonly query: string }[] = []
+    for (let index = 0; index < 10; index += 1) {
+      await open()
+      uris.push(harness.executeCommand.mock.calls.at(-1)![1] as { scheme: string; query: string })
+      // The first diff stays open in an editor tab; the others are closed.
+      if (index === 0) harness.textDocuments.push({ uri: uris[0]! })
+    }
+    const contentProvider = harness.registerProvider.mock.calls[0]![1] as {
+      provideTextDocumentContent(uri: unknown): string
+    }
+    expect(contentProvider.provideTextDocumentContent(uris[0])).toBe('first\nsecond\nthird\n')
+    expect(contentProvider.provideTextDocumentContent(uris[9])).toBe('first\nsecond\nthird\n')
+    expect(contentProvider.provideTextDocumentContent(uris[1])).toMatch(/no longer available/u)
+  })
+
+  it('refuses a diff when the file no longer matches the recorded change', async () => {
     const root = temporaryRoot()
     writeFileSync(path.join(root, 'a.ts'), 'first\n')
-    const harness = createHarness(root)
-
-    await harness.service.openDiff(harness.folderId, 'a.ts', 'before\ntext')
-
-    expect(harness.executeCommand).toHaveBeenCalledWith(
-      'vscode.diff',
-      expect.objectContaining({ scheme: 'data' }),
-      expect.objectContaining({ fsPath: path.join(root, 'a.ts') }),
-      'a.ts',
-    )
-
-    const oversized = createHarness(root)
+    const harness = createHarness(root, ['first'])
     await expect(
-      oversized.service.openDiff(oversized.folderId, 'a.ts', 'x'.repeat(262_145)),
+      harness.service.openChangeDiff(harness.folderId, 'a.ts', 'modified', [
+        { oldText: 'x', newText: 'not here' },
+      ]),
+    ).rejects.toMatchObject({ code: 'CHANGE_INCOMPLETE' })
+    expect(harness.executeCommand).not.toHaveBeenCalled()
+  })
+
+  it('refuses a diff of a file too large to open safely', async () => {
+    const root = temporaryRoot()
+    writeFileSync(path.join(root, 'a.ts'), 'first\n')
+    const harness = createHarness(root, ['x'.repeat(262_144)])
+    await expect(
+      harness.service.openChangeDiff(harness.folderId, 'a.ts', 'modified', [{ oldText: 'y', newText: 'x' }]),
     ).rejects.toMatchObject({ code: 'CONTEXT_LIMIT' })
-    expect(oversized.executeCommand).not.toHaveBeenCalled()
+    expect(harness.registerProvider).not.toHaveBeenCalled()
+    expect(harness.executeCommand).not.toHaveBeenCalled()
   })
 
   it('refuses work after disposal and when the caller aborted', async () => {

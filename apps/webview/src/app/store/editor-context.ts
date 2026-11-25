@@ -164,6 +164,20 @@ export function attachmentFromResult(resultValue: unknown): PromptAttachment | u
   }
 }
 
+/** Every attachment of a multi-file pick; a single pick carries only `attachment`. */
+export function attachmentsFromResult(resultValue: unknown): readonly PromptAttachment[] {
+  const result = object(resultValue)
+  if (result?.cancelled === true) return []
+  if (!Array.isArray(result?.attachments)) {
+    const single = attachmentFromResult(resultValue)
+    return single === undefined ? [] : [single]
+  }
+  return result.attachments.flatMap((entry: unknown) => {
+    const attachment = attachmentFromResult({ cancelled: false, attachment: entry })
+    return attachment === undefined ? [] : [attachment]
+  })
+}
+
 export function imageDataUri(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined
   const uri = value.trim()

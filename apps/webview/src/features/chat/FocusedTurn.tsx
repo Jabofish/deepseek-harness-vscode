@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type ReactElement } from 'react'
+import { useEffect, useId, useMemo, useState, type ReactElement } from 'react'
 import { Icon } from '../../ui/Icon.js'
 import { renderTimelineNode } from './timeline-renderers.js'
 import { assistantBlocksFromAggregates, type TimelineNodeRenderContext } from './timeline-shared.js'
@@ -137,10 +137,16 @@ export function FocusedTurn(props: {
       return next
     })
   }, [collapsedId, expandedDetails, foldable, keepLiveOpen, processId, setExpandedDetails])
+  // producedFilePaths caches by list identity, so the tool list must be stable.
+  const producedFiles = useMemo(
+    () => producedFilePaths(node.nodes.flatMap((member) => (member.kind === 'tool' ? [member] : []))),
+    [node.nodes],
+  )
+  const toolOnlyTurn = answer === undefined && work.length > 0
   const open =
     revealed ||
     (!context.expandedDetails.has(collapsedId) &&
-      (!foldable || keepLiveOpen || context.expandedDetails.has(processId)))
+      (!foldable || toolOnlyTurn || keepLiveOpen || context.expandedDetails.has(processId)))
   const process: ReactElement[] = []
   if (open)
     for (let index = 0; index < work.length; index++) {
@@ -220,10 +226,12 @@ export function FocusedTurn(props: {
         </>
       )}
       {answer === undefined ? null : (
-        <div className="dsh-focused-turn__answer">{renderTimelineNode(answer, context)}</div>
+        <div className="dsh-focused-turn__answer">
+          {renderTimelineNode(answer, { ...context, producedFiles })}
+        </div>
       )}
       {renderProducedFiles(
-        producedFilePaths(node.nodes.flatMap((member) => (member.kind === 'tool' ? [member] : []))),
+        producedFiles,
         context.onOpenLink === undefined ? undefined : context.requestOpenLink,
         context.onShowInFolder,
         context.t,

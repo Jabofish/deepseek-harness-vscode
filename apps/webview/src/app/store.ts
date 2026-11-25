@@ -51,7 +51,8 @@ import {
 import { confirmPendingPrompts } from './store/pending-prompts.js'
 import { normalizedModelSelection } from './store/model-catalog.js'
 import { parsePluginInventory } from './store/plugin-parsers.js'
-import { isSessionSummary, readPersistedWebviewState } from './store/session-guards.js'
+import { isSessionSummary, persistableDrafts, readPersistedWebviewState } from './store/session-guards.js'
+import { draftSnapshot, subscribeDrafts } from './draft-store.js'
 import { clearedActiveSession, type ProjectionSequenceIndex } from './store/session-projection.js'
 import { refreshSessions, selectStartupSessionId } from './store/session-registry.js'
 import { isSubagentView, parseSubagentCatalog } from './store/subagent.js'
@@ -85,6 +86,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   const vscodeApi = getVsCodeApi()
   let persistedWebviewState = readPersistedWebviewState(vscodeApi.getState())
   let composerPreferences = persistedWebviewState.composerPreferences ?? {}
+  const savedDrafts = persistedWebviewState.drafts ?? {}
+  let savedDraftsTaken = false
   let state = createInitialState(composerPreferences)
   let disposed = false
   const questionSettlements = new QuestionSettlements()
@@ -213,12 +216,34 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   const persistWebviewState = (overrides: { readonly activeSessionId?: string } = {}): void => {
     if (disposed) return
     const activeSessionId = state.surface?.sessionId ?? overrides.activeSessionId ?? state.activeSessionId
-    persistedWebviewState =
-      activeSessionId === undefined
-        ? { version: 1, composerPreferences }
-        : { version: 1, composerPreferences, activeSessionId }
+    // Until the composer has taken the saved drafts, keep them in the state.
+    const drafts = persistableDrafts(
+      savedDraftsTaken ? draftSnapshot() : { ...savedDrafts, ...draftSnapshot() },
+    )
+    persistedWebviewState = {
+      version: 1,
+      composerPreferences,
+      ...(activeSessionId === undefined ? {} : { activeSessionId }),
+      ...(Object.keys(drafts).length === 0 ? {} : { drafts }),
+    }
     vscodeApi.setState(persistedWebviewState)
   }
+  // Unsent composer text survives a rebuilt Webview (window reload, moving the
+  // view). Writes are batched while typing and flushed when the page goes away.
+  let draftPersistTimer: ReturnType<typeof setTimeout> | undefined
+  const flushDrafts = (): void => {
+    if (draftPersistTimer !== undefined) clearTimeout(draftPersistTimer)
+    draftPersistTimer = undefined
+    persistWebviewState()
+  }
+  const unsubscribeDrafts = subscribeDrafts(() => {
+    if (disposed || draftPersistTimer !== undefined) return
+    draftPersistTimer = setTimeout(flushDrafts, 300)
+  })
+  const flushOnHide = (): void => {
+    if (draftPersistTimer !== undefined) flushDrafts()
+  }
+  if (typeof window !== 'undefined') window.addEventListener('pagehide', flushOnHide)
   const rememberComposerConfiguration = (configuration: AgentConfiguration): void => {
     if (disposed) return
     const model = normalizedModelSelection(configuration.model)
@@ -943,11 +968,22 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     loadTranscriptContent: async (nodeId) => {
       const window = state.transcript
       if (window === undefined) throw new Error('Transcript content is unavailable.')
+      const version = openVersion
+      const epoch = state.connectionEpoch
       const result = await client.request<{ readonly content?: unknown }>({
         type: 'session.transcript.content',
         requestId: requestId(),
         payload: { sessionId: window.sessionId, revision: window.revision, nodeId },
       })
+      if (
+        disposed ||
+        openVersion !== version ||
+        state.connectionEpoch !== epoch ||
+        state.transcript?.sessionId !== window.sessionId ||
+        state.transcript.historical !== window.historical ||
+        (window.historical && state.transcript.revision !== window.revision)
+      )
+        throw new DOMException('Transcript view has changed.', 'AbortError')
       if (typeof result?.content !== 'string') throw new Error('Transcript content is unavailable.')
       return result.content
     },
@@ -1069,9 +1105,24 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       persistWebviewState()
       if (openingSessionsDrawer) void refresh()
     },
+    takeSavedDrafts: () => {
+      // A later remount reads the freshest saved text, including a pending write.
+      if (draftPersistTimer !== undefined) flushDrafts()
+      const pending = state.pendingSession
+      const pendingOwner = pending === undefined ? undefined : `pending:${pending.revision}`
+      const pendingText = pendingOwner === undefined ? undefined : draftSnapshot()[pendingOwner]
+      savedDraftsTaken = true
+      return {
+        ...persistedWebviewState.drafts,
+        ...(pendingOwner === undefined || pendingText === undefined ? {} : { [pendingOwner]: pendingText }),
+      }
+    },
     dispose: () => {
       if (disposed) return
+      if (draftPersistTimer !== undefined) flushDrafts()
       disposed = true
+      unsubscribeDrafts()
+      if (typeof window !== 'undefined') window.removeEventListener('pagehide', flushOnHide)
       retryDelays.dispose()
       // Retire in-flight opens and release their bounded snapshots immediately.
       pendingOpenBuffer.clear()

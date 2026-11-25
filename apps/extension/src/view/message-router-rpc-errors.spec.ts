@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { AppError } from '@dsh-vscode/domain'
 import type { DshTransport } from '@dsh-vscode/dsh-adapter/contracts'
 import { Rc6SessionRepository } from '@dsh-vscode/dsh-adapter/repositories/session-repository'
 import { WebviewMessageRouter } from './message-router.js'
@@ -48,4 +49,47 @@ describe('RPC diagnostic to Webview boundary', () => {
       expect(serialized).not.toContain('fixture-private-credential')
     },
   )
+
+  it('maps connection.configure AUTH_REQUIRED and INVALID_ENDPOINT to connection guidance', async () => {
+    const posted: unknown[] = []
+    let code: 'AUTH_REQUIRED' | 'INVALID_ENDPOINT' = 'AUTH_REQUIRED'
+    const router = new WebviewMessageRouter({
+      postMessage: (message) => {
+        posted.push(message)
+        return Promise.resolve(true)
+      },
+      handleRequest: () =>
+        Promise.reject(
+          new AppError({ code, message: 'private detail https://secret.example', retryable: true }),
+        ),
+    })
+
+    await router.handle({
+      protocolVersion: 1,
+      message: { type: 'connection.configure', requestId: 'conn-auth', payload: { mode: 'custom' } },
+    })
+    code = 'INVALID_ENDPOINT'
+    await router.handle({
+      protocolVersion: 1,
+      message: { type: 'connection.configure', requestId: 'conn-url', payload: { mode: 'custom' } },
+    })
+
+    expect(posted[0]).toMatchObject({
+      type: 'response',
+      ok: false,
+      error: {
+        code: 'AUTH_REQUIRED',
+        message: 'DSH authentication failed. Run JaboDSH: Authorize External Connection and try again.',
+      },
+    })
+    expect(posted[1]).toMatchObject({
+      type: 'response',
+      ok: false,
+      error: {
+        code: 'INVALID_ENDPOINT',
+        message: 'Enter a valid HTTP(S) DSH origin without path, query, or embedded credentials.',
+      },
+    })
+    expect(JSON.stringify(posted)).not.toContain('secret.example')
+  })
 })

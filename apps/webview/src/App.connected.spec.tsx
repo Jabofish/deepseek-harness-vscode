@@ -19,6 +19,9 @@ vi.mock('./features/chat/Timeline.js', () => ({
     readonly transcriptView?: string
     readonly performanceUsage?: string
     readonly codingToolsEnabled?: boolean
+    readonly onRetryTurn?: (reason: 'failed') => void
+    readonly onEditPrompt?: (text: string) => void
+    readonly loadFullContent?: (nodeId: string) => Promise<string>
   }) => (
     <div
       data-testid="timeline"
@@ -27,6 +30,19 @@ vi.mock('./features/chat/Timeline.js', () => ({
       data-coding-tools-enabled={props.codingToolsEnabled}
     >
       Timeline
+      {props.onEditPrompt === undefined ? null : (
+        <button
+          type="button"
+          onClick={() => void props.loadFullContent?.('user-1').then((text) => props.onEditPrompt?.(text))}
+        >
+          Mock edit prompt
+        </button>
+      )}
+      {props.onRetryTurn === undefined ? null : (
+        <button type="button" onClick={() => props.onRetryTurn?.('failed')}>
+          Mock retry turn
+        </button>
+      )}
     </div>
   ),
 }))
@@ -131,6 +147,7 @@ function connectedState(activeSession: boolean): AppState {
     tasks: [],
     tasksLoading: false,
     taskScope: 'current-session',
+    taskIncludeCompleted: false,
     tasksComplete: true,
     tasksOmittedSessions: 0,
     checkpoints: [],
@@ -340,6 +357,7 @@ function storeFor(state: AppState): AppStore {
     getChangeDetail: vi.fn().mockResolvedValue(undefined),
     markChangeReviewed: vi.fn().mockResolvedValue(undefined),
     openChange: vi.fn().mockResolvedValue(undefined),
+    openChangeDiff: vi.fn().mockResolvedValue(undefined),
     refreshTasks: vi.fn().mockResolvedValue(undefined),
     getTask: vi.fn().mockResolvedValue(undefined),
     stopTask: vi.fn().mockResolvedValue(undefined),
@@ -356,7 +374,7 @@ function storeFor(state: AppState): AppStore {
     updatePromptTemplate: vi.fn().mockResolvedValue(undefined),
     deletePromptTemplate: vi.fn().mockResolvedValue(undefined),
     setPromptMode: vi.fn().mockResolvedValue(true),
-    pickAttachment: vi.fn().mockResolvedValue(undefined),
+    pickAttachments: vi.fn().mockResolvedValue([]),
     ingestAttachment: vi.fn().mockResolvedValue(undefined),
     previewAttachment: vi.fn().mockResolvedValue(undefined),
     readSessionAttachment: vi.fn().mockResolvedValue(undefined),
@@ -1258,5 +1276,128 @@ describe('App connected rendering', () => {
     // The request itself names the tool, not the command: what the user is
     // authorizing only exists on the paired call.
     expect(screen.getByText(command)).toBeDefined()
+  })
+
+  it('resends a failed text prompt but hands an attachment prompt back to the composer', async () => {
+    const sendPrompt = vi.fn().mockResolvedValue(undefined)
+    const state = connectedState(true)
+    const withPrompt = (attachments: boolean): AppState => ({
+      ...state,
+      timeline: {
+        ...state.timeline,
+        nodes: [
+          {
+            kind: 'user-message',
+            id: 'user-1',
+            markdown: 'summarise the report',
+            ...(attachments ? { attachments: [{ name: 'report.pdf', mimeType: 'application/pdf' }] } : {}),
+          },
+        ],
+      },
+    })
+    currentStore = { ...storeFor(withPrompt(false)), sendPrompt }
+    const plain = render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Mock retry turn' }))
+    await waitFor(() => expect(sendPrompt).toHaveBeenCalledWith('s1', 'summarise the report', [], 'queue'))
+    plain.unmount()
+
+    sendPrompt.mockClear()
+    currentStore = { ...storeFor(withPrompt(true)), sendPrompt }
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Mock retry turn' }))
+    expect(await screen.findByText(/cannot be resent automatically/u)).toBeDefined()
+    expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' }).value).toBe(
+      'summarise the report',
+    )
+    expect(sendPrompt).not.toHaveBeenCalled()
+  })
+
+  it('leaves the destination draft alone when an edit finishes after a session switch', async () => {
+    const state = connectedState(true)
+    const { updateState } = renderWithMutableState({
+      ...state,
+      sessions: [...state.sessions, { ...state.sessions[0]!, id: 's2', title: 'Another' }],
+    })
+    let resolve!: (text: string) => void
+    const fullText = new Promise<string>((done) => {
+      resolve = done
+    })
+    vi.spyOn(currentStore, 'loadTranscriptContent').mockReturnValue(fullText)
+    fireEvent.click(screen.getByRole('button', { name: 'Mock edit prompt' }))
+    updateState({
+      ...state,
+      sessions: [{ ...state.sessions[0]!, id: 's2', title: 'Another' }],
+      activeSessionId: 's2',
+    })
+    const prompt = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+    fireEvent.change(prompt, { target: { value: 'draft for the second session' } })
+    await act(async () => {
+      resolve('full prompt from the first session')
+      await fullText
+    })
+    expect(prompt.value).toBe('draft for the second session')
+  })
+
+  it('keeps the current draft and asks for the files again when retrying an attachment-only prompt', async () => {
+    const state = connectedState(true)
+    const sendPrompt = vi.fn().mockResolvedValue(undefined)
+    currentStore = {
+      ...storeFor({
+        ...state,
+        timeline: {
+          ...state.timeline,
+          nodes: [
+            { kind: 'user-message', id: 'previous', markdown: 'earlier instruction' },
+            { kind: 'user-message', id: 'latest', markdown: '', attachments: [{ name: 'note.txt' }] },
+          ],
+        },
+      }),
+      sendPrompt,
+    }
+    render(<App />)
+    const prompt = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+    fireEvent.change(prompt, { target: { value: 'unsent text' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Mock retry turn' }))
+    expect(
+      await screen.findByText('Add the attachments from the last prompt again, then send.'),
+    ).toBeDefined()
+    expect(prompt.value).toBe('unsent text')
+    expect(sendPrompt).not.toHaveBeenCalled()
+  })
+
+  it('keeps the attachment retry warning with the conversation that raised it', async () => {
+    const state = connectedState(true)
+    const withPrompt: AppState = {
+      ...state,
+      sessions: [
+        ...state.sessions,
+        {
+          id: 's2',
+          title: 'Another',
+          workspaceId: 'w1',
+          blank: false,
+          status: 'idle' as const,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      workspaces: [{ ...state.workspaces[0]!, sessionIds: ['s1', 's2'], sessionCount: 2 }],
+      timeline: {
+        ...state.timeline,
+        nodes: [
+          {
+            kind: 'user-message',
+            id: 'user-1',
+            markdown: 'summarise the report',
+            attachments: [{ name: 'report.pdf', mimeType: 'application/pdf' }],
+          },
+        ],
+      },
+    }
+    const { updateState } = renderWithMutableState(withPrompt)
+    fireEvent.click(screen.getByRole('button', { name: 'Mock retry turn' }))
+    expect(await screen.findByText(/cannot be resent automatically/u)).toBeDefined()
+    updateState({ ...withPrompt, activeSessionId: 's2' })
+    await waitFor(() => expect(screen.queryByText(/cannot be resent automatically/u)).toBeNull())
   })
 })

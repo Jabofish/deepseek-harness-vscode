@@ -55,6 +55,8 @@ export interface SettingsDrawerProps {
   readonly onLoadDshSettings: () => Promise<DshSettingsSnapshot | undefined>
   readonly onOpenDshSettingsDocument: () => Promise<void>
   readonly onOpenKeyboardShortcuts: () => Promise<void>
+  readonly onOpenExtensionSettings?: () => Promise<void>
+  readonly onClearExternalCredentials?: () => Promise<void>
   readonly onUpdateDshSetting: (path: string, value: unknown, expectedRevision: number) => Promise<void>
   readonly onUnsetDshSetting: (path: string, expectedRevision: number) => Promise<void>
   readonly onMutateDshSettings: (

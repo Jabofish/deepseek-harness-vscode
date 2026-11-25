@@ -48,6 +48,7 @@ function renderDrawer(
       ...change,
       redactedDiff: '--- old\nold\n+++ new\nnew',
       diffTruncated: false,
+      comparisonAvailable: true,
     } satisfies ChangeDetail),
     onMarkReviewed: vi.fn().mockResolvedValue({ ...change, reviewState: 'viewed' }),
     ...overrides,
@@ -74,6 +75,7 @@ describe('ChangesDrawer', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '1 changes' }))
     expect(screen.getByText('src/main.ts')).toBeDefined()
+    expect(screen.getByText('+2 -1')).toBeDefined()
     expect(screen.getByText('Proposed change')).toBeDefined()
     fireEvent.click(screen.getByRole('button', { name: 'Review src/main.ts' }))
     await waitFor(() => expect(document.querySelector('pre')?.textContent).toBe('--- old\nold\n+++ new\nnew'))
@@ -91,7 +93,9 @@ describe('ChangesDrawer', () => {
     fireEvent.click(screen.getByRole('button', { name: '1 changes' }))
     fireEvent.click(screen.getByRole('button', { name: 'Review src/main.ts' }))
     await waitFor(() => expect(screen.getByRole('region', { name: 'Change detail' })).toBeDefined())
-    fireEvent.click(screen.getByRole('button', { name: 'Reject' }))
+    const flagButton = screen.getByRole('button', { name: 'Flag issue' })
+    expect(flagButton.className).not.toContain('dsh-button--danger')
+    fireEvent.click(flagButton)
 
     await waitFor(() =>
       expect(screen.getByRole('alert').textContent).toBe('The review decision could not be saved.'),
@@ -112,5 +116,55 @@ describe('ChangesDrawer', () => {
     expect(copyBtn).toBeDefined()
     fireEvent.click(copyBtn)
     expect(writeText).toHaveBeenCalledWith(diffText)
+  })
+
+  it('opens the change in the editor diff and explains a diff that can no longer be rebuilt', async () => {
+    const onOpenDiff = vi
+      .fn()
+      .mockRejectedValue(Object.assign(new Error('stale'), { code: 'CHANGE_INCOMPLETE' }))
+    renderDrawer({ onOpenDiff })
+
+    fireEvent.click(screen.getByRole('button', { name: '1 changes' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Review src/main.ts' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Compare in editor' }))
+    expect(onOpenDiff).toHaveBeenCalledWith('change-1')
+    expect((await screen.findByRole('alert')).textContent).toContain('cannot be rebuilt')
+  })
+
+  it('shows a recorded diff preview when editor comparison is unavailable', async () => {
+    renderDrawer({
+      onOpenDiff: vi.fn(),
+      onDetail: vi.fn().mockResolvedValue({
+        ...change,
+        redactedDiff: '@@ -1 +1 @@\n-old\n+new',
+        diffTruncated: false,
+        comparisonAvailable: false,
+      } satisfies ChangeDetail),
+    })
+    fireEvent.click(screen.getByRole('button', { name: '1 changes' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Review src/main.ts' }))
+    expect(await screen.findByRole('button', { name: 'Copy' })).toBeDefined()
+    expect(screen.queryByRole('button', { name: 'Compare in editor' })).toBeNull()
+  })
+
+  it('shows the earlier and latest records for a file with their own review states', async () => {
+    const latest: ChangeSetFile = {
+      ...change,
+      changeId: 'latest',
+      lastSeenAt: 1_200,
+      reviewState: 'accepted',
+    }
+    const earlier: ChangeSetFile = { ...change, changeId: 'earlier', reviewState: 'needs-attention' }
+    const onDetail = vi
+      .fn()
+      .mockResolvedValue({ ...earlier, redactedDiff: 'Earlier diff', diffTruncated: false })
+    renderDrawer({ changes: [earlier, latest], onDetail })
+
+    fireEvent.click(screen.getByRole('button', { name: '2 changes' }))
+    expect(screen.getByText('Reviewed')).toBeDefined()
+    expect(screen.getByText('Needs follow-up')).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Review src/main.ts, edit 1 of 2' }))
+    expect(await screen.findByText('Earlier diff')).toBeDefined()
+    expect(onDetail).toHaveBeenCalledWith('earlier')
   })
 })

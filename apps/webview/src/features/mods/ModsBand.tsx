@@ -19,7 +19,9 @@ function SessionModsBand(props: {
   const { t } = useI18n()
   const request = useStableCallback(props.featureRequest)
   const [snapshot, setSnapshot] = useState<ModsBandSnapshot | null>(null)
-  const [failed, setFailed] = useState(false)
+  // A failed poll stops updates until Retry restarts it; a failed press leaves
+  // the band usable so the user can press again.
+  const [failure, setFailure] = useState<'poll' | 'press' | undefined>(undefined)
   const [pending, setPending] = useState(false)
   const [retry, setRetry] = useState(0)
   const active = useRef<symbol | undefined>(undefined)
@@ -59,7 +61,7 @@ function SessionModsBand(props: {
         }
       } catch {
         requestId = undefined
-        if (active.current === epoch) setFailed(true)
+        if (active.current === epoch) setFailure('poll')
       }
     })()
     return () => {
@@ -75,11 +77,11 @@ function SessionModsBand(props: {
     }
   }, [props.sessionId, request, retry])
   const press = (actionId: string): void => {
-    if (snapshot === null || pressLock.current || active.current === undefined) return
+    if (snapshot === null || pressLock.current || active.current === undefined || failure === 'poll') return
     const epoch = active.current
     pressLock.current = true
     setPending(true)
-    setFailed(false)
+    setFailure(undefined)
     inFlight.current = `mods-press-${crypto.randomUUID()}`
     void request<ModsBandReadResult>({
       type: 'mods.band.press',
@@ -94,7 +96,7 @@ function SessionModsBand(props: {
         )
       })
       .catch(() => {
-        if (active.current === epoch) setFailed(true)
+        if (active.current === epoch) setFailure((current) => current ?? 'press')
       })
       .finally(() => {
         if (active.current !== epoch) return
@@ -103,13 +105,33 @@ function SessionModsBand(props: {
         setPending(false)
       })
   }
-  if (!failed && (snapshot === null || snapshot.tree === null)) return null
+  const pressHotkey = useStableCallback(press)
+  useEffect(() => {
+    const tree = snapshot?.tree
+    if (tree === null || tree === undefined || pending || failure === 'poll') return
+    const hotkeys = collectHotkeys(tree)
+    if (hotkeys.size === 0) return
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.defaultPrevented || event.isComposing || event.ctrlKey || event.metaKey || event.altKey)
+        return
+      // Shift+K is not the K hotkey; a symbol key typed with Shift (`?`) still is.
+      if (event.shiftKey && event.key.toLowerCase() !== event.key.toUpperCase()) return
+      if (!hotkeyTargetIsFree(event.target)) return
+      const actionId = hotkeys.get(event.key.toLowerCase())
+      if (actionId === undefined) return
+      event.preventDefault()
+      pressHotkey(actionId)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [failure, pending, pressHotkey, snapshot])
+  if (failure === undefined && (snapshot === null || snapshot.tree === null)) return null
   return (
     <div className="dsh-mods-band" role="group" aria-label={t('mods.band')}>
       {snapshot?.tree?.map((node, index) => (
-        <BandNode key={index} node={node} pending={pending || failed} press={press} />
+        <BandNode key={index} node={node} pending={pending || failure === 'poll'} press={press} />
       ))}
-      {failed ? (
+      {failure !== undefined ? (
         <div role="status">
           {t('mods.failed')}{' '}
           <button
@@ -117,8 +139,7 @@ function SessionModsBand(props: {
             className="dsh-button dsh-button--secondary dsh-button--compact"
             disabled={pending}
             onClick={() => {
-              setSnapshot(null)
-              setFailed(false)
+              setFailure(undefined)
               setPending(false)
               setRetry((value) => value + 1)
             }}
@@ -181,4 +202,56 @@ function BandNode({
       {children}
     </div>
   )
+}
+
+/** Keys typed into a field, list, menu or dialog belong to it, not to the band. */
+const KEY_OWNER_SELECTOR = [
+  'input',
+  'textarea',
+  'select',
+  '[contenteditable]:not([contenteditable="false"])',
+  '[role="textbox"]',
+  '[role="combobox"]',
+  '[role="listbox"]',
+  '[role="option"]',
+  '[role="menu"]',
+  '[role="menuitem"]',
+  '[role="menuitemcheckbox"]',
+  '[role="menuitemradio"]',
+  '[role="dialog"]',
+  '[role="alertdialog"]',
+  '[role="tree"]',
+  '[role="grid"]',
+  '[role="slider"]',
+  '[role="spinbutton"]',
+].join(',')
+
+function hotkeyTargetIsFree(target: EventTarget | null): boolean {
+  if (document.querySelector('[aria-modal="true"], dialog[open]') !== null) return false
+  if (!(target instanceof Element)) return true
+  if (target instanceof HTMLElement && target.isContentEditable) return false
+  return target.closest(KEY_OWNER_SELECTOR) === null
+}
+
+function collectHotkeys(
+  nodes: readonly ModsBandNode[],
+  out = new Map<string, string>(),
+): Map<string, string> {
+  for (const node of nodes) {
+    if (typeof node === 'string') continue
+    if (node.kind === 'button') {
+      if (
+        !node.disabled &&
+        node.actionId !== undefined &&
+        node.hotkey !== undefined &&
+        node.hotkey.trim() !== ''
+      ) {
+        const key = node.hotkey.trim().toLowerCase()
+        if (!out.has(key)) out.set(key, node.actionId)
+      }
+      continue
+    }
+    collectHotkeys(node.children, out)
+  }
+  return out
 }

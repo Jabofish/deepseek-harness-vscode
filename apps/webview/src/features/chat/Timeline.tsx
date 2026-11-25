@@ -11,6 +11,7 @@ import {
   type ReactElement,
 } from 'react'
 import type { TimelineNode } from '@dsh-vscode/timeline'
+import type { TurnTerminalReason } from './timeline-shared.js'
 import type { MessageFeedbackItem, MessageFeedbackRating, MessageImageReference } from '@dsh-vscode/domain'
 import {
   DEFAULT_ESTIMATED_ITEM_SIZE,
@@ -93,6 +94,10 @@ export interface TimelineProps {
   readonly contentVersions?: Readonly<Record<string, string>>
   readonly loadFullNode?: (nodeId: string, signal?: AbortSignal) => Promise<TimelineNode>
   readonly loadFullContent?: (nodeId: string) => Promise<string>
+  /** Put an earlier user prompt back into the composer for editing. */
+  readonly onEditPrompt?: (text: string) => void
+  /** Retry or continue the latest failed/interrupted turn. */
+  readonly onRetryTurn?: (reason: TurnTerminalReason) => void
   /** Receipt after the settled turn's current full bodies have committed. */
   readonly onResponseRendered?: (sessionId: string, turn: number, focused?: boolean) => Promise<boolean>
   /** Whether an older DSH history window is available. */
@@ -320,6 +325,20 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
   const stableOnFeedbackSubmit = useStableOptionalCallback(props.onFeedbackSubmit)
   const stableOnFeedbackPrepare = useStableOptionalCallback(props.onFeedbackPrepare)
   const stableLoadFullContent = useStableOptionalCallback(props.loadFullContent)
+  const hasEditPrompt = props.onEditPrompt !== undefined
+  const hasRetryTurn = props.onRetryTurn !== undefined
+  const stableOnEditPrompt = useStableOptionalCallback(props.onEditPrompt)
+  const stableOnRetryTurn = useStableOptionalCallback(props.onRetryTurn)
+  // Only the latest turn ending, with no prompt after it, offers retry/continue.
+  let retryTurnNodeId: string | undefined
+  for (let index = props.nodes.length - 1; index >= 0; index--) {
+    const node = props.nodes[index]!
+    if (node.kind === 'user-message') break
+    if (node.kind === 'turn-terminal') {
+      retryTurnNodeId = node.id
+      break
+    }
+  }
   const truncatedNodeIds = useMemo(() => new Set(props.omittedNodeIds), [props.omittedNodeIds])
   const [openLinkError, setOpenLinkError] = useState<{ readonly href: string; readonly message: string }>()
   const [openLinkBusy, setOpenLinkBusy] = useState(false)
@@ -906,6 +925,9 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
       onFeedbackPrepare: props.onFeedbackPrepare === undefined ? undefined : stableOnFeedbackPrepare,
       truncatedNodeIds,
       loadFullContent: props.loadFullContent === undefined ? undefined : stableLoadFullContent,
+      onEditPrompt: hasEditPrompt ? stableOnEditPrompt : undefined,
+      onRetryTurn: !hasRetryTurn || running ? undefined : stableOnRetryTurn,
+      retryTurnNodeId,
       requestOpenLink,
       t,
     }),
@@ -926,6 +948,12 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
       props.feedbackUnavailable,
       performanceUsage,
       props.loadFullContent,
+      hasEditPrompt,
+      hasRetryTurn,
+      running,
+      retryTurnNodeId,
+      stableOnEditPrompt,
+      stableOnRetryTurn,
       props.onFeedbackSubmit,
       props.onFeedbackPrepare,
       requestOpenLink,

@@ -208,14 +208,15 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
     if (busy || dialog?.kind !== 'editor') return
     setBusy(true)
     setError(undefined)
+    const mergedVariables = mergeReferencedVariables(form.templateText, form.variables)
     const operation =
       dialog.templateId === undefined
-        ? props.onCreate({ ...form, variables: [...form.variables] })
+        ? props.onCreate({ ...form, variables: mergedVariables })
         : props.onUpdate(dialog.templateId, {
             title: form.title,
             description: form.description,
             templateText: form.templateText,
-            variables: [...form.variables],
+            variables: mergedVariables,
           })
     void operation
       .then((summary) => {
@@ -248,6 +249,7 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
         }
         props.onApply(insertion.text)
         setNotice(t('promptTemplates.inserted'))
+        setOpen(false)
       })
       .catch((reason: unknown) => {
         setError(reason instanceof Error ? reason.message : t('promptTemplates.error'))
@@ -269,6 +271,7 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
     props.onApply(pendingInsertion.text)
     setPendingInsertion(undefined)
     setNotice(t('promptTemplates.inserted'))
+    setOpen(false)
   }
 
   const deleteTemplate = (): void => {
@@ -718,4 +721,23 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
       ) : null}
     </div>
   )
+}
+
+// Same placeholder grammar as the Host expander: `{{name}}`, no inner spaces.
+const TEMPLATE_VARIABLE_RE = /\{\{([A-Za-z][A-Za-z0-9_-]{0,127})\}\}/gu
+const ALLOWED_TEMPLATE_VARIABLE_SET = new Set<string>(PROMPT_TEMPLATE_VARIABLES)
+
+function mergeReferencedVariables(
+  templateText: string,
+  explicit: readonly PromptTemplateVariable[],
+): readonly PromptTemplateVariable[] {
+  const merged = new Set<PromptTemplateVariable>(explicit)
+  TEMPLATE_VARIABLE_RE.lastIndex = 0
+  let match: RegExpExecArray | null
+  while ((match = TEMPLATE_VARIABLE_RE.exec(templateText)) !== null) {
+    const name = match[1]
+    if (name !== undefined && ALLOWED_TEMPLATE_VARIABLE_SET.has(name))
+      merged.add(name as PromptTemplateVariable)
+  }
+  return [...merged]
 }

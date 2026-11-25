@@ -254,6 +254,7 @@ export function parseFeatureChangeDetail(value: unknown): ChangeDetail | undefin
     ...summary,
     ...(payload.redactedDiff === undefined ? {} : { redactedDiff: payload.redactedDiff }),
     diffTruncated: payload.truncated === true,
+    comparisonAvailable: payload.comparisonAvailable === true,
   }
 }
 

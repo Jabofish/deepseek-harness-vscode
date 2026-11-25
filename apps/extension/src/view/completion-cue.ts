@@ -13,7 +13,7 @@ export type CompletionCueInputKind = 'question' | 'permission'
 /** Focus and a chime target for a question or approval that needs the user. */
 export interface CompletionCueInputContext {
   readonly focused: boolean
-  readonly bell: () => void
+  readonly bell: () => boolean | void
 }
 
 /** Redaction-safe decisions recorded in the Host diagnostics channel. */
@@ -126,7 +126,12 @@ export class CompletionCue {
     this.options.log?.({ decision: 'needs-input', kind, mode, focused, delivered })
     if (!delivered) return
     if (mode === 'notification') this.options.notify(kind)
-    else context?.bell()
+    else {
+      const chimed = context?.bell()
+      // If no ready Webview surface can play the bell for a background session,
+      // fall back to the notification path instead of silently dropping the cue.
+      if (context === undefined || chimed === false) this.options.notify(kind)
+    }
   }
 
   /**

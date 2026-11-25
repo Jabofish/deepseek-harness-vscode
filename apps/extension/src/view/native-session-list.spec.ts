@@ -81,6 +81,7 @@ function fixture(count = 1, connected = false): Fixture {
     readTitle: vi.fn(),
     activeSessionId: 's0',
     select: vi.fn(),
+    surfacesChanged: vi.fn(),
     invalidate: vi.fn(),
     acceptEvent: vi.fn(),
     onDidChange: vi.fn<SessionNavigation['onDidChange']>().mockReturnValue({ dispose: vi.fn() }),

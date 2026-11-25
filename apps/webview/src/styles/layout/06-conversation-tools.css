@@ -388,6 +388,7 @@
 .dsh-tasks-popover__kind,
 .dsh-tasks-popover__session,
 .dsh-tasks-popover__main > .dsh-tasks-popover__status,
+.dsh-tasks-popover__meta,
 .dsh-prompt-templates-popover__row-main em {
   flex: 0 0 auto;
   max-width: 10rem;
@@ -465,6 +466,13 @@
 .dsh-tasks-popover__session {
   grid-column: 1 / -1;
   grid-row: 3;
+  max-width: 100%;
+}
+
+/* Progress, model and time details take a full row of their own (below the
+ * session line when there is one) instead of widening the status-dot column. */
+.dsh-tasks-popover__meta {
+  grid-column: 1 / -1;
   max-width: 100%;
 }
 
@@ -585,8 +593,51 @@
   white-space: nowrap;
 }
 
-.dsh-changes-popover__status-label {
+.dsh-changes-popover__meta {
   grid-area: 2 / 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  min-width: 0;
+  gap: 2px var(--dsh-space-2);
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-2xs);
+}
+
+.dsh-changes-popover__meta > .dsh-changes-popover__status-label {
+  max-width: none;
+  font-size: inherit;
+}
+
+.dsh-changes-popover__diff-stats {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.dsh-changes-popover__review-state {
+  white-space: nowrap;
+}
+
+.dsh-changes-popover__batch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--dsh-space-1);
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+}
+
+.dsh-changes-popover__diff-line--add {
+  color: var(--dsh-success);
+  background: color-mix(in srgb, var(--dsh-success) 14%, transparent);
+}
+
+.dsh-changes-popover__diff-line--del {
+  color: var(--dsh-danger);
+  background: color-mix(in srgb, var(--dsh-danger) 14%, transparent);
+}
+
+.dsh-changes-popover__diff-line--hunk {
+  color: var(--dsh-info);
 }
 
 .dsh-changes-popover__evidence {
@@ -685,4 +736,15 @@
   border-radius: var(--dsh-radius-sm);
   color: var(--dsh-text);
   background: var(--dsh-input-bg);
+}
+
+.dsh-checkpoints-popover__hint,
+.dsh-changes-popover__review-note {
+  margin: 0;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-2xs);
+}
+
+.dsh-changes-popover__review-note {
+  padding: var(--dsh-space-1) 0;
 }

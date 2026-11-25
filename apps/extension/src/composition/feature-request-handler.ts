@@ -4,6 +4,7 @@ import type { EditorBridgeHost } from '../editor/editor-bridge-host.js'
 import {
   AppError,
   SCHEDULE_INPUT_ERROR_CODES,
+  fitPromptTemplateVariableValue,
   type CheckpointSummary,
   type EditorContextOwner,
   type SessionDetail,
@@ -57,6 +58,7 @@ import type { SessionScope } from './session-scope.js'
 import type { PostFeatureEvent } from './host-event-pipeline.js'
 import type { TaskFocusState } from './change-checkpoint-task-assembly.js'
 import { inspectorClientUrl } from './inspector-client-url.js'
+import { workspaceSafeDiagnosticText } from './diagnostic-text.js'
 
 export interface FeatureRequestHandlerDependencies {
   readonly billing?: BillingFeatureHost
@@ -115,6 +117,10 @@ export function createFeatureRequestHandler(deps: FeatureRequestHandlerDependenc
     promptTemplateUseCases,
     currentWorkspaceFolders,
   } = deps
+  const requireTrustedWorkspace = (message: string): void => {
+    if (!vscode.workspace.isTrusted)
+      throw new AppError({ code: 'PERMISSION_DENIED', message, retryable: false })
+  }
   const handleFeatureRequest = async (request: FeatureRequest, signal: AbortSignal): Promise<unknown> => {
     if (
       request.type === 'billing.settings.read' ||
@@ -274,6 +280,7 @@ export function createFeatureRequestHandler(deps: FeatureRequestHandlerDependenc
         await userQuestions.releaseWait(request.payload.sessionId, request.payload.callId)
         return { kind: 'empty' }
       }
+      requireTrustedWorkspace('Trust the workspace before responding to DSH questions.')
       const answer: TimedUserQuestionAnswer = {
         answers: request.payload.answer.answers.map((item): TimedUserQuestionAnswerItem => {
           const projected = { id: item.id, selected: item.selected }
@@ -313,6 +320,13 @@ export function createFeatureRequestHandler(deps: FeatureRequestHandlerDependenc
       request.type === 'plugin.bundle.remove' ||
       request.type === 'plugin.entry.setEnabled'
     ) {
+      if (
+        request.type === 'plugin.bundle.install' ||
+        request.type === 'plugin.bundle.setEnabled' ||
+        request.type === 'plugin.bundle.remove' ||
+        request.type === 'plugin.entry.setEnabled'
+      )
+        requireTrustedWorkspace('Trust the workspace before modifying DSH plugins.')
       const backend = backendService.requireBackend()
       const bundles = new PluginBundleUseCases(backend)
       const present = (
@@ -572,6 +586,13 @@ export function createFeatureRequestHandler(deps: FeatureRequestHandlerDependenc
       return handleCheckpointFeatureRequest(request, signal, {
         changeUseCases,
         checkpointUseCases,
+        refreshAuthoritativeChanges: (sessionId, workspaceId, abortSignal) =>
+          changeTracker.refreshAuthoritative(
+            backendService.requireBackend(),
+            sessionId,
+            workspaceId,
+            abortSignal,
+          ),
         requireCurrentWorkspaceSession,
         featureWorkspaceFolderId,
         postCheckpointFeatureEvent,
@@ -581,7 +602,9 @@ export function createFeatureRequestHandler(deps: FeatureRequestHandlerDependenc
       request.type === 'tasks.open' ||
       request.type === 'tasks.stop' ||
       request.type === 'tasks.answer'
-    )
+    ) {
+      if (request.type === 'tasks.answer')
+        requireTrustedWorkspace('Trust the workspace before responding to DSH interactions.')
       return handleTaskFeatureRequest(request, signal, {
         taskUseCases,
         requireCurrentWorkspaceSession,
@@ -598,6 +621,7 @@ export function createFeatureRequestHandler(deps: FeatureRequestHandlerDependenc
           taskFocus.setScope(scope)
         },
       })
+    }
     if (
       request.type === 'prompt.template.list' ||
       request.type === 'prompt.template.read' ||
@@ -610,11 +634,13 @@ export function createFeatureRequestHandler(deps: FeatureRequestHandlerDependenc
         promptTemplateUseCases,
         requireCurrentWorkspaceSession,
         featureWorkspaceFolderId,
+        resolveVariables: (session) => resolvePromptTemplateVariables(session, currentWorkspaceFolders()),
       })
     if (
       request.type === 'changes.list' ||
       request.type === 'changes.detail' ||
-      request.type === 'changes.markReviewed'
+      request.type === 'changes.markReviewed' ||
+      request.type === 'changes.openDiff'
     )
       return handleChangeFeatureRequest(request, signal, {
         changeUseCases,
@@ -624,6 +650,14 @@ export function createFeatureRequestHandler(deps: FeatureRequestHandlerDependenc
         featureWorkspaceFolderId,
         isOpenWorkspaceFolderId: (id) =>
           currentWorkspaceFolders().some((folder) => workspaceFolderId(folder) === id),
+        openChangeDiff: (change, abortSignal) =>
+          navigationUseCases.openChangeDiff(
+            change.workspaceFolderId,
+            change.relativePath,
+            change.status,
+            change.diffs ?? [],
+            abortSignal,
+          ),
       })
     throw new AppError({
       code: 'FEATURE_DISABLED',
@@ -632,4 +666,80 @@ export function createFeatureRequestHandler(deps: FeatureRequestHandlerDependenc
     })
   }
   return { handleFeatureRequest }
+}
+
+async function resolvePromptTemplateVariables(
+  session: SessionDetail,
+  folders: readonly vscode.WorkspaceFolder[],
+): Promise<Readonly<Record<string, string>>> {
+  // Every value must fit the per-variable budget the template expander
+  // enforces; one oversized value would otherwise fail the whole insert.
+  const values = await collectPromptTemplateVariables(session, folders)
+  return Object.fromEntries(
+    Object.entries(values).map(([key, value]) => [key, fitPromptTemplateVariableValue(value)]),
+  )
+}
+
+async function collectPromptTemplateVariables(
+  session: SessionDetail,
+  folders: readonly vscode.WorkspaceFolder[],
+): Promise<Readonly<Record<string, string>>> {
+  const values: Record<string, string> = {}
+  const sessionTitle = session.title.trim()
+  if (sessionTitle !== '') values.sessionTitle = sessionTitle
+  const activeEditor = vscode.window.activeTextEditor
+  const activeFolder =
+    activeEditor === undefined
+      ? folders[0]
+      : (vscode.workspace.getWorkspaceFolder(activeEditor.document.uri) ?? folders[0])
+  if (activeFolder !== undefined) values.workspaceName = activeFolder.name
+  if (activeEditor === undefined) return values
+  const ownedFolder = vscode.workspace.getWorkspaceFolder(activeEditor.document.uri)
+  if (ownedFolder === undefined) return values
+  const relativePath = vscode.workspace.asRelativePath(activeEditor.document.uri, false)
+  if (relativePath !== '') values.currentFile = relativePath
+  if (!activeEditor.selection.isEmpty) {
+    const selectedText = activeEditor.document.getText(activeEditor.selection)
+    if (selectedText.trim() !== '') values.selection = selectedText
+  }
+  const diagnostics = vscode.languages.getDiagnostics(activeEditor.document.uri)
+  const roots = folders.map((folder) => folder.uri.fsPath)
+  if (diagnostics.length > 0) {
+    const formatted = diagnostics
+      .slice(0, 20)
+      .map(
+        (diag) =>
+          `${relativePath}:${diag.range.start.line + 1}:${diag.range.start.character + 1} ${workspaceSafeDiagnosticText(diag.message, roots)}`,
+      )
+      .join('\n')
+    if (formatted !== '') values.currentDiagnostics = formatted
+  }
+  try {
+    const symbols = await vscode.commands.executeCommand<
+      readonly (vscode.DocumentSymbol | vscode.SymbolInformation)[]
+    >('vscode.executeDocumentSymbolProvider', activeEditor.document.uri)
+    const symbolName = enclosingSymbolName(symbols, activeEditor.selection.active)
+    if (symbolName !== undefined) values.currentSymbol = symbolName
+  } catch {
+    // Language services are optional; leave currentSymbol unset when unavailable.
+  }
+  return values
+}
+
+function enclosingSymbolName(
+  symbols: readonly (vscode.DocumentSymbol | vscode.SymbolInformation)[] | undefined,
+  position: vscode.Position,
+): string | undefined {
+  if (symbols === undefined) return undefined
+  for (const symbol of symbols) {
+    if ('range' in symbol) {
+      if (symbol.range.contains(position)) {
+        const nested = enclosingSymbolName(symbol.children, position)
+        return nested ?? symbol.name
+      }
+    } else if (symbol.location.range.contains(position)) {
+      return symbol.name
+    }
+  }
+  return undefined
 }

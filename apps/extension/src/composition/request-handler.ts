@@ -61,6 +61,8 @@ export interface RequestGateway {
   readonly moveChatToSidebar: (surfaceId?: string, signal?: AbortSignal) => Promise<void>
   /** Focus and a chime target for a needs-input cue in this session. */
   readonly cueContext: (sessionId: string) => { focused: boolean; surfaceId?: string }
+  /** Distinct session ids currently open across all ready sidebar and editor surfaces. */
+  readonly openSessionIds: () => readonly string[]
 }
 
 function workspaceTrustRequired(): AppError {
@@ -170,12 +172,49 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     }
 
     try {
-      if (revealInFolder) {
-        await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(resolved.path))
-        return { opened: true }
+      const candidatePaths = [resolved.path]
+      if (fileUri === undefined) {
+        for (const root of roots) {
+          const fallback = resolveLinkTarget({ href: target, roots: [root], basePath: root })
+          if (fallback.kind === 'file' && !candidatePaths.includes(fallback.path))
+            candidatePaths.push(fallback.path)
+        }
       }
-      const document = await vscode.workspace.openTextDocument(vscode.Uri.file(resolved.path))
-      await vscode.window.showTextDocument(document, { preview: true })
+      if (revealInFolder) {
+        let lastError: unknown
+        for (const candidate of candidatePaths) {
+          try {
+            await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(candidate))
+            return { opened: true }
+          } catch (error) {
+            lastError = error
+          }
+        }
+        throw lastError
+      }
+      let document: vscode.TextDocument | undefined
+      let lastError: unknown
+      for (const candidate of candidatePaths) {
+        try {
+          document = await vscode.workspace.openTextDocument(vscode.Uri.file(candidate))
+          break
+        } catch (error) {
+          lastError = error
+        }
+      }
+      if (document === undefined) throw lastError
+      const showOptions: vscode.TextDocumentShowOptions = { preview: true }
+      if (resolved.line !== undefined) {
+        const maxLine = Math.max(0, document.lineCount - 1)
+        const startLine = Math.max(0, Math.min(resolved.line - 1, maxLine))
+        const startChar = Math.max(0, (resolved.column ?? 1) - 1)
+        const endLine =
+          resolved.endLine === undefined
+            ? startLine
+            : Math.max(startLine, Math.min(resolved.endLine - 1, maxLine))
+        showOptions.selection = new vscode.Range(startLine, startChar, endLine, startChar)
+      }
+      await vscode.window.showTextDocument(document, showOptions)
       return { opened: true }
     } catch {
       return { opened: false, message: 'The linked workspace file could not be opened.' }
@@ -241,10 +280,11 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
   const moveChatToSidebar = async (surfaceId?: string, signal?: AbortSignal): Promise<void> => {
     const manager = editorChatSurfaces.current
     if (manager === undefined) throw surfaceRoutesUnavailable()
-    const moveAll = surfaceId === undefined || surfaceId === SIDEBAR_SURFACE_ID
-    const source = moveAll
-      ? (manager.surfacesById.find((surface) => surface.panel.active) ?? manager.mostRecent)
-      : manager.surfacesById.find((surface) => surface.surfaceId === surfaceId)
+    const moveAll = surfaceId === SIDEBAR_SURFACE_ID
+    const source =
+      surfaceId === undefined || moveAll
+        ? (manager.surfacesById.find((surface) => surface.panel.active) ?? manager.mostRecent)
+        : manager.surfacesById.find((surface) => surface.surfaceId === surfaceId)
     const moving = (moveAll ? manager.surfacesById : source === undefined ? [] : [source]).map((surface) => ({
       surface,
       sessionId: surface.sessionId,
@@ -307,6 +347,15 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     if (!reported) focused = vscode.window.state.focused
     const surfaceId = visible ?? any
     return surfaceId === undefined ? { focused } : { focused, surfaceId }
+  }
+  const openSessionIds = (): readonly string[] => {
+    const ids = new Set<string>()
+    for (const surface of surfaces.list()) {
+      if (!surface.isReady || !deps.transcript.hasSurface(surface.surfaceId)) continue
+      const active = deps.transcript.forSurface(surface.surfaceId).activeSessionId()
+      if (active !== undefined) ids.add(active)
+    }
+    return [...ids]
   }
   const anotherFocusedSurface = (senderId: string, sessionId: string): boolean => {
     for (const [id, focused] of surfaceFocus) {
@@ -788,6 +837,29 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
       await vscode.commands.executeCommand('workbench.action.openGlobalKeybindings')
       return undefined
     }
+    if (request.type === 'settings.openExtensionSettings') {
+      const section = request.payload?.section
+      const query =
+        section === 'checkpoints'
+          ? 'dsh.checkpoints'
+          : section === 'connection'
+            ? 'dsh.connection'
+            : section === 'completionCue'
+              ? 'dsh.completionCue'
+              : section === 'runtime'
+                ? 'dsh.runtime'
+                : section === 'webUi'
+                  ? 'dsh.webUi'
+                  : section === 'editor'
+                    ? 'dsh.editor'
+                    : '@ext:jabofish.jabodsh'
+      await vscode.commands.executeCommand('workbench.action.openSettings', query)
+      return undefined
+    }
+    if (request.type === 'connection.clearCredentials') {
+      await vscode.commands.executeCommand('dsh.clearExternalCredentials')
+      return undefined
+    }
     if (request.type === 'extensionSettings.read')
       return publicValue(publicExtensionSettings(configuration.read(), extensionVersion))
     if (request.type === 'settings.update')
@@ -1011,6 +1083,7 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     deps.transcript.remove(disposedSurfaceId)
     router.cancelSurface(disposedSurfaceId)
     runSharedSurfaceTeardownIfIdle()
+    sessionNavigation.surfacesChanged()
   }
   // A surface that becomes ready after a handoff broadcast never saw it, so the
   // current editor-tab count is re-announced together with the surface identity.
@@ -1132,5 +1205,6 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     openDroppedSession,
     sessionNavigation,
     cueContext,
+    openSessionIds,
   }
 }

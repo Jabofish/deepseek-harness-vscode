@@ -67,3 +67,124 @@ it('stops on an unavailable optional service and retries a safe failure', async 
   expect(screen.queryByRole('group')).toBeNull()
   expect(screen.queryByText('PRIVATE diagnostic')).toBeNull()
 })
+
+it('keeps the band disabled after its update poll fails until Retry restarts the poll', async () => {
+  const calls: FeatureRequest[] = []
+  let failNextPoll = true
+  const request: AppStore['featureRequest'] = <T,>(message: FeatureRequest) => {
+    calls.push(message)
+    if (message.type === 'mods.band.read') {
+      if (message.payload.afterGeneration === undefined) return Promise.resolve(drawing(1) as T)
+      if (failNextPoll) {
+        failNextPoll = false
+        return Promise.reject(new Error('poll lost'))
+      }
+      return new Promise<T>(() => undefined)
+    }
+    return Promise.resolve(drawing(2) as T)
+  }
+  render(<ModsBand sessionId="s1" featureRequest={request} />)
+  const retry = await screen.findByRole('button', { name: 'Retry' })
+  const button = screen.getByRole<HTMLButtonElement>('button', { name: 'Generation 1' })
+  expect(button.disabled).toBe(true)
+  fireEvent.click(button)
+  expect(calls.filter((call) => call.type === 'mods.band.press')).toHaveLength(0)
+  expect(screen.getByRole('button', { name: 'Retry' })).toBe(retry)
+  const reads = calls.filter((call) => call.type === 'mods.band.read').length
+  fireEvent.click(retry)
+  await waitFor(() =>
+    expect(calls.filter((call) => call.type === 'mods.band.read').length).toBeGreaterThan(reads),
+  )
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull())
+  expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Generation 1' }).disabled).toBe(false)
+})
+
+it('reports a failed press and lets the user press again', async () => {
+  const calls: FeatureRequest[] = []
+  let rejectPress = true
+  const request: AppStore['featureRequest'] = <T,>(message: FeatureRequest) => {
+    calls.push(message)
+    if (message.type === 'mods.band.read') {
+      if (message.payload.afterGeneration === undefined) return Promise.resolve(drawing(1) as T)
+      return new Promise<T>(() => undefined)
+    }
+    if (message.type === 'mods.band.press') {
+      if (rejectPress) {
+        rejectPress = false
+        return Promise.reject(new Error('press failed'))
+      }
+      return Promise.resolve(drawing(2) as T)
+    }
+    return Promise.resolve({ kind: 'empty' } as T)
+  }
+  render(<ModsBand sessionId="s1" featureRequest={request} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Generation 1' }))
+  await screen.findByRole('button', { name: 'Retry' })
+  const button = screen.getByRole<HTMLButtonElement>('button', { name: 'Generation 1' })
+  expect(button.disabled).toBe(false)
+  fireEvent.click(button)
+  await screen.findByRole('button', { name: 'Generation 2' })
+  expect(calls.filter((call) => call.type === 'mods.band.press')).toHaveLength(2)
+  expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+})
+
+it('fires a hotkey only while no field, list, menu or dialog owns the key', async () => {
+  const presses: string[] = []
+  let finishRead!: () => void
+  const request: AppStore['featureRequest'] = <T,>(message: FeatureRequest) => {
+    if (message.type === 'mods.band.press') {
+      presses.push(message.payload.actionId)
+      return Promise.resolve({
+        kind: 'mods.band',
+        available: true,
+        snapshot: {
+          generation: 1 + presses.length,
+          tree: [{ kind: 'button', label: 'Kick', disabled: false, actionId: 'kick', hotkey: 'k' }],
+        },
+      } as T)
+    }
+    if (message.type === 'mods.band.read' && message.payload.afterGeneration === undefined)
+      return new Promise<T>((resolve) => {
+        finishRead = () =>
+          resolve({
+            kind: 'mods.band',
+            available: true,
+            snapshot: {
+              generation: 1,
+              tree: [{ kind: 'button', label: 'Kick', disabled: false, actionId: 'kick', hotkey: 'k' }],
+            },
+          } as T)
+      })
+    return new Promise<T>(() => undefined)
+  }
+  render(
+    <div>
+      <ModsBand sessionId="s1" featureRequest={request} />
+      <ul role="listbox" tabIndex={0} aria-label="Choices">
+        <li role="option" aria-selected="false">
+          Kiwi
+        </li>
+      </ul>
+    </div>,
+  )
+  // Flush the effect that installs the window key listener before dispatching keys.
+  await act(async () => {
+    finishRead()
+    await Promise.resolve()
+  })
+  expect(screen.getByRole('button', { name: /Kick/u })).toBeDefined()
+  fireEvent.keyDown(screen.getByRole('listbox', { name: 'Choices' }), { key: 'k' })
+  fireEvent.keyDown(document.body, { key: 'K', shiftKey: true })
+  expect(presses).toEqual([])
+
+  const modal = document.createElement('div')
+  modal.setAttribute('role', 'dialog')
+  modal.setAttribute('aria-modal', 'true')
+  document.body.append(modal)
+  fireEvent.keyDown(document.body, { key: 'k' })
+  expect(presses).toEqual([])
+  modal.remove()
+
+  fireEvent.keyDown(document.body, { key: 'k' })
+  await waitFor(() => expect(presses).toEqual(['kick']))
+})

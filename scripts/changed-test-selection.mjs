@@ -75,6 +75,7 @@ export function listGitChangedFiles(root, changedSince) {
  */
 export const VITEST_SETUP_FILES = [
   'apps/webview/src/test/reset-environment.ts',
+  'apps/webview/src/test/locale-reset.ts',
   'tests/setup/reset-worker.ts',
 ]
 

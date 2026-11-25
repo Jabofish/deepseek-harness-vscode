@@ -13,6 +13,7 @@ export interface RuntimeInstallerDependencies {
   readonly runInstall?: () => Promise<void>
   readonly verifyInstall?: () => Promise<boolean>
   readonly verifyExecutable?: (path: string) => Promise<boolean>
+  readonly onApprovedExecutable?: (path: string) => Promise<void> | void
 }
 
 export class RuntimeInstaller {
@@ -75,6 +76,7 @@ export class RuntimeInstaller {
         retryable: false,
         context: { operation: 'runtime.select', reason: 'invalid-executable' },
       })
+    await this.dependencies.onApprovedExecutable?.(path)
     await this.dependencies.workspace.getConfiguration('dsh').update('runtime.executablePath', path, true)
   }
 

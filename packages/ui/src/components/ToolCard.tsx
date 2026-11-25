@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react'
+import { useEffect, useRef, useState, type ReactElement } from 'react'
 import type { ToolCallView, ToolLocationView } from '@dsh-vscode/domain'
 import { formatToolText, toolPresentation, type PresentationTranslate } from '../tool-presentation.js'
 import { toolStatusLabel } from '../tool-status.js'
@@ -96,7 +96,10 @@ export function ToolCard(props: ToolCardProps): ReactElement {
               key={`request:${block.label}:${index}`}
               aria-label={block.label}
             >
-              <h4>{block.label}</h4>
+              <div className="dsh-tool-card__section-header">
+                <h4>{block.label}</h4>
+                <SectionCopyButton text={block.content} translate={props.translate} />
+              </div>
               <p tabIndex={0}>{block.content}</p>
             </section>
           ))}
@@ -106,7 +109,10 @@ export function ToolCard(props: ToolCardProps): ReactElement {
               key={`response:${block.label}:${index}`}
               aria-label={block.label}
             >
-              <h4>{block.label}</h4>
+              <div className="dsh-tool-card__section-header">
+                <h4>{block.label}</h4>
+                <SectionCopyButton text={block.content} translate={props.translate} />
+              </div>
               <p tabIndex={0}>{block.content}</p>
             </section>
           ))}
@@ -130,7 +136,10 @@ export function ToolCard(props: ToolCardProps): ReactElement {
           )}
           {props.tool.error === undefined ? null : (
             <section className="dsh-tool-card__section dsh-tool-card__section--error" role="alert">
-              <h4>{errorLabel}</h4>
+              <div className="dsh-tool-card__section-header">
+                <h4>{errorLabel}</h4>
+                <SectionCopyButton text={errorText ?? ''} translate={props.translate} />
+              </div>
               <p tabIndex={0}>{errorText}</p>
             </section>
           )}
@@ -150,10 +159,60 @@ function toolLocationTargets(locations: readonly ToolLocationView[] | undefined)
   const seen = new Set<string>()
   const targets: ToolCardTarget[] = []
   for (const location of locations) {
-    const href = location.path.trim()
-    if (href === '' || seen.has(href)) continue
+    const path = location.path.trim()
+    if (path === '') continue
+    const href = location.line === undefined ? path : `${path}#L${location.line + 1}`
+    if (seen.has(href)) continue
     seen.add(href)
-    targets.push({ href, label: location.line === undefined ? href : `${href}:${location.line + 1}` })
+    targets.push({ href, label: location.line === undefined ? path : `${path}:${location.line + 1}` })
   }
   return targets
+}
+
+/** Copy one detail section; reports success/failure instead of copying silently. */
+function SectionCopyButton(props: {
+  readonly text: string
+  readonly translate: PresentationTranslate | undefined
+}): ReactElement {
+  const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle')
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  useEffect(
+    () => () => {
+      if (timer.current !== undefined) clearTimeout(timer.current)
+    },
+    [],
+  )
+  const label = (key: 'copy' | 'copied' | 'copyFailed', fallback: string): string =>
+    props.translate === undefined ? fallback : props.translate(`message.${key}`)
+  const text =
+    state === 'copied'
+      ? label('copied', 'Copied')
+      : state === 'failed'
+        ? label('copyFailed', 'Copy failed')
+        : label('copy', 'Copy')
+  return (
+    <button
+      type="button"
+      className="dsh-tool-card__copy"
+      aria-live="polite"
+      onClick={() => {
+        const finish = (next: 'copied' | 'failed'): void => {
+          setState(next)
+          if (timer.current !== undefined) clearTimeout(timer.current)
+          timer.current = setTimeout(() => setState('idle'), 1500)
+        }
+        const clipboard = globalThis.navigator?.clipboard
+        if (clipboard?.writeText === undefined) {
+          finish('failed')
+          return
+        }
+        clipboard.writeText(props.text).then(
+          () => finish('copied'),
+          () => finish('failed'),
+        )
+      }}
+    >
+      {text}
+    </button>
+  )
 }

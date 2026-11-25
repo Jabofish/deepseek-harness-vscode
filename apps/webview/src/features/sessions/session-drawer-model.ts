@@ -220,7 +220,7 @@ export function projectSessionLists(input: SessionListProjectionInput): SessionL
         : []
   const selectedMemberIds = new Set(input.selectedWorkspace?.sessionIds)
   const archivedToShow =
-    input.archiveFilter === 'archived' &&
+    (input.archiveFilter === 'archived' || input.archiveFilter === 'all') &&
     input.workspaceDisplay === 'current' &&
     input.selectedWorkspace !== undefined
       ? input.archivedSessions.filter(

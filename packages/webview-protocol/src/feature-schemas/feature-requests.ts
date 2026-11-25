@@ -186,12 +186,19 @@ export const featureRequestSchema = z.discriminatedUnion('type', [
     .strict(),
   z
     .object({
+      type: z.literal('changes.openDiff'),
+      ...featureRequestBase,
+      payload: z.object({ changeId: id }).strict(),
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal('changes.markReviewed'),
       ...featureRequestBase,
       payload: z
         .object({
           changeId: id,
-          reviewState: z.enum(['viewed', 'accepted', 'rejected', 'needs-attention']),
+          reviewState: z.enum(['unreviewed', 'viewed', 'accepted', 'rejected', 'needs-attention']),
         })
         .strict(),
     })

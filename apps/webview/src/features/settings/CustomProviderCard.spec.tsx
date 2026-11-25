@@ -64,4 +64,16 @@ describe('CustomProviderCard model validation', () => {
 
     expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Save provider' }).disabled).toBe(false)
   })
+
+  it('names what is still missing while Save is unavailable', () => {
+    renderCard()
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Save provider' }).disabled).toBe(true)
+    expect(screen.getByText(/^To save, add: .*Provider ID.*at least one model\.$/u)).toBeDefined()
+    fireEvent.change(screen.getByLabelText('Provider ID'), { target: { value: 'my-router' } })
+    fireEvent.change(screen.getByLabelText('Provider base URL'), {
+      target: { value: 'https://api.example.com' },
+    })
+    addModel('model-a')
+    expect(screen.queryByText(/^To save, add:/u)).toBeNull()
+  })
 })

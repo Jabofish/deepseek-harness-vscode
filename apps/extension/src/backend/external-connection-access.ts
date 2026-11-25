@@ -185,7 +185,7 @@ export class ExternalConnectionAccess {
       throw new AppError({
         code: 'AUTH_REQUIRED',
         message:
-          'DSH authentication failed. Use DSH: Authorize External Connection to update the launch token.',
+          'DSH authentication failed. Use JaboDSH: Authorize External Connection to update the launch token.',
         retryable: true,
       })
     await this.write(
@@ -341,7 +341,7 @@ function denied(): AppError {
   return new AppError({
     code: 'PERMISSION_DENIED',
     message:
-      'Authorize this endpoint in a trusted workspace using DSH: Authorize External Connection before connecting.',
+      'Authorize this endpoint in a trusted workspace using JaboDSH: Authorize External Connection before connecting.',
     retryable: false,
   })
 }

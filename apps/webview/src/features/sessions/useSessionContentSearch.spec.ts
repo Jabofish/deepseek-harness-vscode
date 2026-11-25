@@ -6,7 +6,7 @@ import { useSessionContentSearch } from './useSessionContentSearch.js'
 afterEach(() => vi.useRealTimers())
 
 describe('Session content search dispatch', () => {
-  it('starts immediately and ignores old results, failures and closed searches', async () => {
+  it('starts the first search immediately, debounces rapid follow-ups and ignores stale results', async () => {
     vi.useFakeTimers()
     const reads = new Map<
       string,
@@ -30,6 +30,11 @@ describe('Session content search dispatch', () => {
     )
     expect(onSearch).toHaveBeenCalledWith('old')
     rerender({ query: 'new', open: true })
+    // A keystroke right after a dispatch waits for typing to pause.
+    expect(onSearch).not.toHaveBeenCalledWith('new')
+    act(() => {
+      vi.advanceTimersByTime(120)
+    })
     expect(onSearch).toHaveBeenCalledWith('new')
     await act(async () => {
       reads.get('new')!.resolve({ items: [] })
@@ -43,6 +48,9 @@ describe('Session content search dispatch', () => {
     expect(result.current.unavailable).toBe(false)
     expect(result.current.contentSearch.query).toBe('new')
     rerender({ query: 'closed', open: true })
+    act(() => {
+      vi.advanceTimersByTime(120)
+    })
     expect(onSearch).toHaveBeenCalledWith('closed')
     rerender({ query: 'closed', open: false })
     await act(async () => {

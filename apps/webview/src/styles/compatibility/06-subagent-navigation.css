@@ -557,3 +557,13 @@
   overflow: visible !important;
   pointer-events: none;
 }
+
+.dsh-subagent-tree__error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--dsh-space-1) var(--dsh-space-2);
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  color: var(--dsh-danger);
+  font-size: var(--dsh-font-size-xs);
+}

@@ -477,13 +477,21 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const { router, provider, editorSurfaces, moveChatToSidebar, openDroppedSession, sessionNavigation } =
     gateway
   nativeNavigation.current = sessionNavigation
+  const stopAttentionBadge = taskRegistry.onPendingInteractionsChanged((count) =>
+    provider.setAttentionBadge(count),
+  )
   needsInputContext.current = (sessionId) => {
     const context = gateway.cueContext(sessionId)
     return {
       focused: context.focused,
       bell: () => {
-        if (context.surfaceId !== undefined)
-          void postEventTo(context.surfaceId, PLAY_COMPLETION_CUE_EVENT, {})
+        const targetSurfaceId =
+          context.surfaceId ??
+          surfaces.active?.surfaceId ??
+          surfaces.list().find((surface) => surface.isReady)?.surfaceId
+        if (targetSurfaceId === undefined) return false
+        void postEventTo(targetSurfaceId, PLAY_COMPLETION_CUE_EVENT, {})
+        return true
       },
     }
   }
@@ -541,6 +549,9 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     moveChatToSidebar,
     openDroppedSession,
     sessionNavigation,
+    openSessionIds: gateway.openSessionIds,
+    surfaceSessionId: (surfaceId) =>
+      transcript.hasSurface(surfaceId) ? transcript.forSurface(surfaceId).activeSessionId() : undefined,
     surfaces,
     runtimeLocator,
     runtimeInstaller,
@@ -549,6 +560,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     reconnectOnTransportChange,
     publishState,
     postEvent,
+    postEventTo,
     postFeatureEvent,
     postEditorContextAvailabilityEvent,
     editorContextUseCases,
@@ -582,6 +594,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const root: CompositionRoot = {
     start: commands.start,
     dispose: () => {
+      stopAttentionBadge()
       eventLoopLag.dispose()
       transcript.dispose()
       sessionWatch.dispose()
@@ -594,11 +607,14 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
 
 function selectedCustomEndpoint(configuration: VsCodeConfigurationSource): BackendEndpoint {
   const connection = configuration.read().connection
-  const endpoint = connection.mode === 'custom' ? endpointFromServerUrl(connection.serverUrl) : undefined
+  const endpoint =
+    connection.mode === 'custom' || connection.mode === 'auto' || connection.mode === 'attach-only'
+      ? endpointFromServerUrl(connection.serverUrl)
+      : undefined
   if (endpoint === undefined)
     throw new AppError({
       code: 'INVALID_CONFIGURATION',
-      message: 'Select a custom DSH endpoint before configuring connection credentials.',
+      message: 'Configure dsh.connection.serverUrl before managing external connection credentials.',
       retryable: false,
     })
   return endpoint

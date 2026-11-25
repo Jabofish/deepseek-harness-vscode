@@ -171,6 +171,10 @@ const browser = spawn(
     '--no-default-browser-check',
     '--disable-background-networking',
     '--disable-extensions',
+    // A fresh Windows profile otherwise lets Chrome's wallet/ambient autofill
+    // attempt an OS sign-in on launch; repeated test runs then count toward
+    // the account lockout policy.
+    '--disable-features=AutofillAiWalletPrivatePasses,AutofillAmbientAutofill',
     '--window-size=1100,850',
     `--user-data-dir=${profile}`,
     'about:blank',

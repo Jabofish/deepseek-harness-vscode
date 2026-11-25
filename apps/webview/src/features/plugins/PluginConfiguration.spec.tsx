@@ -84,8 +84,10 @@ function renderConfiguration(
       {...overrides}
     />,
   )
-  // The card list collapses by default, so a test that inspects it opens the section first.
-  fireEvent.click(screen.getByRole('button', { name: /Plugin configuration/u }))
+  // The section opens with the Plugins tab, so the card list is already visible.
+  expect(screen.getByRole('button', { name: /Plugin configuration/u }).getAttribute('aria-expanded')).toBe(
+    'true',
+  )
   return result
 }
 
@@ -111,6 +113,54 @@ describe('PluginConfiguration', () => {
     expect(screen.getByRole('button', { name: 'Save' }).getAttribute('disabled')).toBeNull()
   })
 
+  it('hides built-in namespaces by default and edits truth values with a switch', async () => {
+    const base = snapshot()
+    const onMutateSettings = vi.fn().mockResolvedValue(undefined)
+    const withBuiltIn: DshSettingsSnapshot = {
+      schema: {
+        ...base.schema,
+        fields: [
+          ...base.schema.fields,
+          {
+            path: 'ui-chat.compact',
+            label: 'compact',
+            type: 'boolean',
+            required: false,
+            restartRequired: false,
+          },
+          {
+            path: 'shell.enabled',
+            label: 'enabled',
+            type: 'boolean',
+            required: false,
+            restartRequired: false,
+          },
+        ],
+        namespaces: [
+          ...base.schema.namespaces,
+          { ns: 'ui-chat', applies: 'live', revision: 4, userFields: [], secrets: [] },
+        ],
+      },
+      values: { ...base.values, shell: { ...(base.values.shell as object), enabled: true } },
+    }
+    renderConfiguration({ snapshot: withBuiltIn, onMutateSettings })
+    expect(screen.queryByRole('button', { name: /ui-chat/u })).toBeNull()
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Show built-in settings namespaces (1)' }))
+    expect(screen.getByRole('button', { name: /ui-chat/u })).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: /shell/u }))
+    const toggle = screen.getByRole('switch', { name: /enabled/u })
+    expect((toggle as HTMLInputElement).checked).toBe(true)
+    fireEvent.click(toggle)
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(onMutateSettings).toHaveBeenCalledWith(
+        'shell',
+        [{ op: 'set', path: ['enabled'], value: false }],
+        1,
+      ),
+    )
+  })
+
   it('keeps the secret in the host flow under the reference the namespace states', async () => {
     window.localStorage.setItem('dsh-webview-locale', 'zh')
     const onConfigureCredential = vi.fn().mockResolvedValue(true)
@@ -126,7 +176,6 @@ describe('PluginConfiguration', () => {
       </I18nProvider>,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: /插件配置/u }))
     fireEvent.click(screen.getByRole('button', { name: /web-search-deepseek/u }))
     expect(screen.getByText(/DEEPSEEK_API_KEY/u)).toBeDefined()
     fireEvent.click(screen.getByRole('button', { name: '配置 API Key' }))

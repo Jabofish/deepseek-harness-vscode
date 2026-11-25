@@ -7,6 +7,19 @@ import {
 } from './schemas.js'
 import { featureRequestSchema, featureResponseSchema } from './feature-schemas.js'
 
+describe('change review requests', () => {
+  it('accepts every review state, including resetting a mark to unreviewed', () => {
+    for (const reviewState of ['unreviewed', 'viewed', 'accepted', 'rejected', 'needs-attention'])
+      expect(
+        featureRequestSchema.safeParse({
+          type: 'changes.markReviewed',
+          requestId: `review-${reviewState}`,
+          payload: { changeId: 'change-1', reviewState },
+        }).success,
+      ).toBe(true)
+  })
+})
+
 describe('subagent activity Webview protocol', () => {
   it('allows only a bounded structured activity heading', () => {
     const message = {

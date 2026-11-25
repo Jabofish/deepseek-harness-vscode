@@ -1,6 +1,7 @@
 import type { Dispatch, FormEvent, ReactElement, RefObject, SetStateAction } from 'react'
 import { SelectMenu } from '../../components/common/SelectMenu.js'
 import type { Translate } from '../../i18n.js'
+import { rrulePreset } from './rrule-presets.js'
 import {
   CREATE_TIMINGS,
   timingChoices,
@@ -185,15 +186,58 @@ export function ScheduleCreateForm({
         />
       </label>
       {createDraft.timing === 'rrule' ? (
-        <label>
-          <span>{t('schedules.kind.rrule')}</span>
-          <textarea
-            value={createDraft.rrule ?? ''}
-            rows={4}
-            maxLength={64_000}
-            onChange={(event) => setCreateDraft({ ...createDraft, rrule: event.target.value })}
-          />
-        </label>
+        <div className="dsh-schedule-panel__create-fields">
+          <label>
+            <span>{t('schedules.kind.rrule')}</span>
+            <textarea
+              value={createDraft.rrule ?? ''}
+              rows={4}
+              maxLength={64_000}
+              placeholder="DTSTART:20261124T090000Z&#10;RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR"
+              onChange={(event) => {
+                setCreateDraft({ ...createDraft, rrule: event.target.value })
+                setCreateError(undefined)
+              }}
+            />
+          </label>
+          <div className="dsh-schedule-panel__actions">
+            <button
+              type="button"
+              className="dsh-button dsh-button--secondary dsh-button--compact"
+              onClick={() => {
+                setCreateDraft({
+                  ...createDraft,
+                  rrule: rrulePreset('weekdays'),
+                })
+                setCreateError(undefined)
+              }}
+            >
+              {t('schedules.rrule.presetWeekdays')}
+            </button>
+            <button
+              type="button"
+              className="dsh-button dsh-button--secondary dsh-button--compact"
+              onClick={() => {
+                setCreateDraft({
+                  ...createDraft,
+                  rrule: rrulePreset('monthly'),
+                })
+                setCreateError(undefined)
+              }}
+            >
+              {t('schedules.rrule.presetMonthly')}
+            </button>
+          </div>
+          <p className="dsh-schedule-panel__muted">
+            {(createDraft.rrule ?? '').trim() === ''
+              ? t('schedules.create.rruleHelp')
+              : /(?:^|\n)RRULE:.*FREQ=(?:SECONDLY|MINUTELY|HOURLY|DAILY|WEEKLY|MONTHLY|YEARLY)/iu.test(
+                    createDraft.rrule ?? '',
+                  )
+                ? t('schedules.rrule.valid')
+                : t('schedules.rrule.invalid')}
+          </p>
+        </div>
       ) : null}
       {createDraft.timing === 'after' || createDraft.timing === 'every' ? (
         <div className="dsh-schedule-panel__create-fields">

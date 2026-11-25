@@ -43,6 +43,7 @@ export type FeatureActionMethods = Pick<
   | 'getChangeDetail'
   | 'markChangeReviewed'
   | 'openChange'
+  | 'openChangeDiff'
   | 'refreshTasks'
   | 'getTask'
   | 'stopTask'
@@ -214,6 +215,7 @@ export function createFeatureActions(host: FeatureActionHost): FeatureActions {
                 ...current,
                 tasks: snapshot.items,
                 taskScope: snapshot.scope,
+                taskIncludeCompleted: includeCompleted,
                 tasksComplete: snapshot.complete,
                 tasksOmittedSessions: snapshot.omittedSessions,
               }
@@ -225,7 +227,8 @@ export function createFeatureActions(host: FeatureActionHost): FeatureActions {
   }
   const refreshTasksState = (
     sessionId: string | undefined = readState().activeSessionId,
-    includeCompleted = false,
+    // Background and session-switch refreshes keep the filter the user chose.
+    includeCompleted = readState().taskIncludeCompleted,
     scope: TaskListScope = 'current-session',
   ): Promise<void> => {
     const activeSessionId = readState().activeSessionId
@@ -529,7 +532,7 @@ export function createFeatureActions(host: FeatureActionHost): FeatureActions {
       const result = await client.featureRequest<unknown>({
         type: 'changes.markReviewed',
         requestId: requestId(),
-        payload: { changeId, reviewState: reviewState === 'unreviewed' ? 'viewed' : reviewState },
+        payload: { changeId, reviewState },
       })
       const changes = parseFeatureChangesResult(result)
       const change = changes?.[0]
@@ -539,6 +542,14 @@ export function createFeatureActions(host: FeatureActionHost): FeatureActions {
           changes: current.changes.map((entry) => (entry.changeId === change.changeId ? change : entry)),
         }))
       return change
+    },
+    openChangeDiff: async (changeId) => {
+      if (typeof client.featureRequest !== 'function') return
+      await client.featureRequest<unknown>({
+        type: 'changes.openDiff',
+        requestId: requestId(),
+        payload: { changeId },
+      })
     },
     openChange: async (changeId) => {
       if (typeof client.featureRequest !== 'function') return
@@ -829,7 +840,9 @@ export function createFeatureActions(host: FeatureActionHost): FeatureActions {
           readState().activeSessionId)
     ) {
       const taskScope = readState().taskScope
-      void refreshTasksState(readState().activeSessionId, false, taskScope).catch(() => undefined)
+      void refreshTasksState(readState().activeSessionId, readState().taskIncludeCompleted, taskScope).catch(
+        () => undefined,
+      )
       return true
     }
     if (

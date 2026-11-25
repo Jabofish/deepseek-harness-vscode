@@ -26,13 +26,13 @@ import { ApprovalCard } from './features/interactions/ApprovalCard.js'
 import { UserQuestionCard } from './features/interactions/UserQuestionCard.js'
 import { Icon } from './ui/Icon.js'
 import { rememberWelcomeDismissal, rememberRuntimeUpdateDismissal } from './app/dismissed-notices.js'
-import type { OpenFileCandidate } from './app/store.js'
 import type { useAppController } from './AppController.js'
 import { CONVERSATION_VIEW_IDS } from './app/conversation-view-ids.js'
 import { useConversationLayout } from './app/ConversationLayoutProvider.js'
 import { useSurfaceFocusReport } from './app/useSurfaceFocusReport.js'
+import { latestAuthoredPrompt, promptHasAttachments } from './features/chat/retry-prompt.js'
+import { setDraftFor } from './app/draft-store.js'
 
-const EMPTY_OPEN_FILE_CANDIDATES: readonly OpenFileCandidate[] = []
 export function AppView(props: ReturnType<typeof useAppController>): ReactElement {
   const layoutPreference = useConversationLayout()
   const {
@@ -60,6 +60,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
     composerOnCancel,
     composerOnCaptureEditorContext,
     composerFocusRequest,
+    focusComposer,
     composerOnFocusHandled,
     composerOnCommand,
     composerOnCommandQueryChange,
@@ -72,6 +73,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
     composerOnPromptModeChange,
     composerOnReferenceQueryChange,
     composerOnRemoveAttachment,
+    composerOnOpenAttachmentText,
     composerOnRemoveEditorContext,
     composerOnSelectOpenFile,
     composerOnSteerQueue,
@@ -172,6 +174,12 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
   useSurfaceFocusReport(store.reportSurfaceFocus)
   const readDiagnostics = useCallback(() => store.readDiagnostics(), [store])
   const [inspectorOpenRequestId, setInspectorOpenRequestId] = useState<string>()
+  // Belongs to the conversation whose retry raised it; another chat never shows it.
+  const [retryNotice, setRetryNotice] = useState<{ readonly sessionId: string; readonly message: string }>()
+  const isCurrentConversation = (sessionId: string): boolean => {
+    const current = store.getState()
+    return current.activeSessionId === sessionId && current.connectionEpoch === state.connectionEpoch
+  }
   // Recalling a prompt reads the conversation's own durable messages; a new
   // draft has no transcript yet, so its history stays empty.
   const promptHistoryOwner = `${state.connectionEpoch}:${state.timeline.sessionId ?? ''}`
@@ -185,6 +193,16 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
     readonly nodeId: string
     readonly requestId: string
   }>()
+  // The task and job drawers live inside the overflow menu, so their
+  // needs-input/running state is surfaced on the menu trigger itself.
+  let actionsAttentionCount = 0
+  let actionsRunningCount = 0
+  for (const task of state.tasks) {
+    if (task.needsUserAction) actionsAttentionCount += 1
+    else if (task.status === 'running') actionsRunningCount += 1
+  }
+  for (const job of state.jobs)
+    if (job.status === 'running' || job.status === 'stopping') actionsRunningCount += 1
   const compactActions = (closeMenu: () => void): ReactElement => (
     <div className="dsh-conversation__compact-actions">
       <button
@@ -249,6 +267,15 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
       title: error,
       dismissLabel: t('app.dismissError'),
       onDismiss: () => setError(undefined),
+    })
+  }
+  if (retryNotice !== undefined && retryNotice.sessionId === state.activeSessionId) {
+    notices.push({
+      id: 'retry-attachments',
+      tone: 'warning',
+      title: retryNotice.message,
+      dismissLabel: t('app.dismissError'),
+      onDismiss: () => setRetryNotice(undefined),
     })
   }
   if (showConnectionAlert) {
@@ -404,6 +431,12 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                       onFocusRequestHandled={composerOnFocusHandled}
                       running={false}
                       attachments={attachments}
+                      editorContext={state.editorContext}
+                      editorContextAvailableKinds={state.editorContextAvailableKinds}
+                      editorContextLoading={state.editorContextLoading}
+                      onCaptureEditorContext={composerOnCaptureEditorContext}
+                      onRemoveEditorContext={composerOnRemoveEditorContext}
+                      onPreviewEditorContext={composerOnPreviewEditorContext}
                       configuration={state.pendingSession.configuration}
                       configurationDraft
                       permissionPresets={state.newSessionPermissionPresets ?? []}
@@ -415,16 +448,35 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                       {...(newSessionPresetSelectionEnabled === undefined
                         ? {}
                         : { presetSelectionEnabled: newSessionPresetSelectionEnabled })}
+                      commands={state.commands}
+                      popupSelects={popupSelects}
+                      references={visibleReferenceCandidates}
+                      referenceLoading={visibleReferenceLoading}
+                      {...(imageLimits === undefined ? {} : { imageLimits })}
+                      promptMode={state.promptMode}
                       onConfigurationChange={(configuration) => store.configurePendingSession(configuration)}
+                      onPromptModeChange={composerOnPromptModeChange}
+                      onCommand={composerOnCommand}
+                      onPopupSelect={composerOnPopupSelect}
+                      onCommandQueryChange={composerOnCommandQueryChange}
+                      onReferenceQueryChange={composerOnReferenceQueryChange}
                       onPickAttachment={composerOnPickAttachment}
                       onIngestFiles={composerOnIngestFiles}
-                      openFileCandidates={EMPTY_OPEN_FILE_CANDIDATES}
-                      openFilePickerOpen={false}
-                      openFilePickerLoading={false}
-                      attachedOpenFileIds={[]}
-                      onToggleOpenFilePicker={() => undefined}
-                      onSelectOpenFile={() => undefined}
+                      attachmentPreviews={attachmentPreviews}
+                      attachmentPreviewFailures={attachmentPreviewFailures}
+                      openFileCandidates={visibleOpenFileCandidates}
+                      openFilePickerOpen={visibleOpenFilePickerOpen}
+                      openFilePickerLoading={visibleOpenFilePickerLoading}
+                      {...(state.preferredOpenFileId === undefined
+                        ? {}
+                        : { preferredOpenFileId: state.preferredOpenFileId })}
+                      attachedOpenFileIds={attachedOpenFileIds}
+                      {...(attachingOpenFileId === undefined ? {} : { attachingOpenFileId })}
+                      onToggleOpenFilePicker={composerOnToggleOpenFilePicker}
+                      onExtrasOpenChange={composerOnExtrasOpenChange}
+                      onSelectOpenFile={composerOnSelectOpenFile}
                       onRemoveAttachment={composerOnRemoveAttachment}
+                      onOpenAttachmentText={composerOnOpenAttachmentText}
                       onSubmit={composerOnSubmit}
                       onCancel={() => undefined}
                       onSteerQueue={() => undefined}
@@ -449,6 +501,8 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                             setError(reason instanceof Error ? reason.message : t('app.error.createSession')),
                           )
                         }}
+                        onOpenSessions={() => store.setDrawer('sessions')}
+                        onOpenSettings={() => store.setDrawer('settings')}
                       />
                     ) : (
                       <RuntimeConnectionView
@@ -458,6 +512,9 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                         onRetry={retryConnection}
                         onOpenSettings={() => store.setDrawer('settings')}
                         onShowDiagnosticsOutput={() => store.showDiagnostics()}
+                        onReadDiagnostics={readDiagnostics}
+                        onReconnectDiagnostics={() => store.reconnect()}
+                        connectionEpoch={state.connectionEpoch ?? 0}
                       />
                     )}
                   </div>
@@ -514,7 +571,12 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                         </button>
                       ) : null}
                     </div>
-                    <SessionTitlePicker active={active} sessions={state.sessions} onOpen={sessionOnOpen} />
+                    <SessionTitlePicker
+                      active={active}
+                      sessions={state.sessions}
+                      workspaces={state.workspaces}
+                      onOpen={sessionOnOpen}
+                    />
                     <GoalsTasksStrip
                       key={active.id}
                       goals={state.goals}
@@ -539,10 +601,25 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                           ? {}
                           : { activeSubagent: lineageActiveSubagent })}
                         sessions={state.sessions}
+                        subagents={state.subagents.entries.flatMap((entry) =>
+                          entry.kind === 'child'
+                            ? [
+                                {
+                                  id: entry.id,
+                                  ...(entry.label === undefined ? {} : { label: entry.label }),
+                                  parentSessionId: entry.parentSessionId,
+                                },
+                              ]
+                            : [],
+                        )}
                         onOpenSession={lineageOnOpenSession}
                       />
                     ) : null}
-                    <ConversationActionsMenu triggerRef={conversationActionsTriggerRef}>
+                    <ConversationActionsMenu
+                      triggerRef={conversationActionsTriggerRef}
+                      attentionCount={actionsAttentionCount}
+                      runningCount={actionsRunningCount}
+                    >
                       {(closeMenu) => (
                         <>
                           {compactActions(closeMenu)}
@@ -563,10 +640,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                     </ConversationActionsMenu>
                   </div>
                   {state.transcript?.historical !== true ? null : (
-                    <div
-                      className="dsh-timeline__history-more"
-                      style={{ position: 'absolute', right: '1rem', bottom: '6rem', zIndex: 2 }}
-                    >
+                    <div className="dsh-timeline__history-more dsh-timeline__history-more--inline">
                       <button
                         type="button"
                         className="dsh-button dsh-button--secondary dsh-button--compact"
@@ -599,6 +673,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                     transcriptView={transcriptView}
                     openRequestId={inspectorOpenRequestId}
                     showTrigger={false}
+                    onBeforePick={() => setConversationView('chat')}
                     onRevealNode={(nodeId) => {
                       setConversationView('chat')
                       setInspectorReveal({
@@ -611,15 +686,18 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                   {visibleExportSessionId === undefined ? null : (
                     <ExportDialog
                       sessionId={visibleExportSessionId}
+                      zipAvailable={state.sessionZipExport !== false}
                       onClose={() => setExportOpen(false)}
-                      onExport={(options) => {
-                        setExportOpen(false)
-                        void store
+                      onExport={(options) =>
+                        // The dialog stays open with an "Exporting…" state until the
+                        // Host finished; the Host reports success with an open action.
+                        store
                           .exportSession(options)
                           .catch((reason: unknown) =>
                             setError(reason instanceof Error ? reason.message : t('export.failed')),
                           )
-                      }}
+                          .finally(() => setExportOpen(false))
+                      }
                     />
                   )}
                   {conversationView === 'chat' ? (
@@ -670,6 +748,59 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                           })}
                       loadFullNode={(nodeId, signal) => store.loadTranscriptNode(nodeId, signal)}
                       loadFullContent={(nodeId) => store.loadTranscriptContent(nodeId)}
+                      onEditPrompt={(text) => {
+                        if (!isCurrentConversation(active.id)) return
+                        setDraftFor(active.id, text)
+                        focusComposer(active.id)
+                      }}
+                      onRetryTurn={(reason) => {
+                        if (activeRunning || backend.kind !== 'connected') return
+                        // DSH exposes no structured "resume turn" request, so continuing an
+                        // interrupted/token-limited turn is an explicit follow-up prompt and a
+                        // retry resends the latest prompt text. Attachments are recorded by name
+                        // only and cannot be replayed, so such a prompt returns to the composer.
+                        const lastUser = latestAuthoredPrompt(state.timeline.nodes)
+                        const continuing = reason === 'interrupted' || reason === 'max-tokens'
+                        if (!continuing && lastUser === undefined) return
+                        void (async () => {
+                          // A long prompt outside the transcript window is shown shortened;
+                          // resend the whole text, never the shortened preview.
+                          const text = continuing
+                            ? t('timeline.continuePrompt')
+                            : lastUser === undefined
+                              ? undefined
+                              : state.transcript?.omittedNodeIds.includes(lastUser.id) === true
+                                ? await store.loadTranscriptContent(lastUser.id)
+                                : lastUser.markdown
+                          if (text === undefined || !isCurrentConversation(active.id)) return
+                          const hadAttachments =
+                            !continuing && lastUser !== undefined && promptHasAttachments(lastUser)
+                          if (hadAttachments) {
+                            // A resend without its files would silently answer a different
+                            // question; hand the text back so the user can re-attach.
+                            const hasText = text.trim() !== ''
+                            if (hasText) setDraftFor(active.id, text)
+                            focusComposer(active.id)
+                            setRetryNotice({
+                              sessionId: active.id,
+                              message: t(
+                                hasText
+                                  ? 'timeline.retryNeedsAttachments'
+                                  : 'timeline.retryNeedsAttachmentsOnly',
+                              ),
+                            })
+                            return
+                          }
+                          await store.sendPrompt(active.id, text, [], state.busyEnter)
+                        })().catch((err: unknown) => {
+                          if (
+                            !isCurrentConversation(active.id) ||
+                            (err instanceof DOMException && err.name === 'AbortError')
+                          )
+                            return
+                          setError(err instanceof Error ? err.message : t('app.error.sendPrompt'))
+                        })
+                      }}
                     />
                   ) : (
                     <TrajectoryView
@@ -693,6 +824,9 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                         : { nodeChangeBase: state.timeline.nodeChangeBase })}
                       streaming={streaming}
                       running={activeRunning}
+                      hasMoreHistory={state.historyHasMore}
+                      loadingOlderHistory={state.historyLoading}
+                      onLoadOlderHistory={timelineOnLoadOlderHistory}
                     />
                   )}
                   <SubagentActivityStrip
@@ -743,6 +877,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                     onEdit={queueOnEdit}
                     onRemove={queueOnRemove}
                     onModeChange={queueOnModeChange}
+                    onSteerAll={composerOnSteerQueue}
                     onDismissPending={(id) => store.dismissPendingPrompt(id)}
                     onLoadImage={timelineOnLoadImage}
                   />
@@ -768,17 +903,21 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                           {t('composer.stop')}
                         </button>
                       )}
-                      {pendingPermissions.map(({ request, command, contentPending, contentFailed }) => (
-                        <ApprovalCard
-                          key={request.id}
-                          request={request}
-                          disabled={respondingInteractionId !== undefined}
-                          contentPending={contentPending}
-                          contentFailed={contentFailed}
-                          {...(command === undefined ? {} : { command })}
-                          onRespond={approvalRespondFor(request)}
-                        />
-                      ))}
+                      {pendingPermissions.map(
+                        ({ request, command, paths, summary, contentPending, contentFailed }) => (
+                          <ApprovalCard
+                            key={request.id}
+                            request={request}
+                            disabled={respondingInteractionId !== undefined}
+                            contentPending={contentPending}
+                            contentFailed={contentFailed}
+                            {...(command === undefined ? {} : { command })}
+                            {...(paths === undefined ? {} : { paths })}
+                            {...(summary === undefined ? {} : { summary })}
+                            onRespond={approvalRespondFor(request)}
+                          />
+                        ),
+                      )}
                       {pendingQuestions.map((question) => (
                         <UserQuestionCard
                           key={JSON.stringify([
@@ -896,6 +1035,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                           onExtrasOpenChange={composerOnExtrasOpenChange}
                           onSelectOpenFile={composerOnSelectOpenFile}
                           onRemoveAttachment={composerOnRemoveAttachment}
+                          onOpenAttachmentText={composerOnOpenAttachmentText}
                           onSubmit={composerOnSubmit}
                           onCancel={composerOnCancel}
                           onSteerQueue={composerOnSteerQueue}

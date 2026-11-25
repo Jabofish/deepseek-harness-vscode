@@ -19,6 +19,7 @@ export const GoalBar = memo(function GoalBar(props: GoalBarProps): ReactElement 
   const goal = props.goals.find((entry) => entry.status !== 'completed')
   const [editingGoalId, setEditingGoalId] = useState<string | undefined>()
   const [draft, setDraft] = useState('')
+  const [roundsDraft, setRoundsDraft] = useState('')
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | undefined>()
   const [confirmingClearGoalId, setConfirmingClearGoalId] = useState<string | undefined>()
@@ -66,11 +67,23 @@ export const GoalBar = memo(function GoalBar(props: GoalBarProps): ReactElement 
     }
   }
 
+  const roundsValue = roundsDraft.trim() === '' ? undefined : Number(roundsDraft)
+  const roundsInvalid = roundsValue !== undefined && (!Number.isSafeInteger(roundsValue) || roundsValue <= 0)
   const saveEdit = (): void => {
     const title = draft.trim()
-    if (title === '' || props.onUpdate === undefined) return
+    if (title === '' || roundsInvalid || props.onUpdate === undefined) return
+    const update: Partial<Pick<GoalView, 'title' | 'maxGoalRounds'>> = {
+      ...(title === goal.title ? {} : { title }),
+      ...(roundsValue === undefined || roundsValue === goal.maxGoalRounds
+        ? {}
+        : { maxGoalRounds: roundsValue }),
+    }
+    if (Object.keys(update).length === 0) {
+      setEditingGoalId(undefined)
+      return
+    }
     void run(async () => {
-      await props.onUpdate!(goal.id, { title })
+      await props.onUpdate!(goal.id, update)
       setEditingGoalId(undefined)
     })
   }
@@ -96,12 +109,31 @@ export const GoalBar = memo(function GoalBar(props: GoalBarProps): ReactElement 
               if (event.key === 'Escape') setEditingGoalId(undefined)
             }}
           />
+          {goal.maxGoalRounds === undefined ? null : (
+            <label className="dsh-goal-bar__rounds">
+              <span>{t('goals.maxRounds')}</span>
+              <input
+                className="dsh-goal-bar__rounds-input"
+                type="number"
+                min={1}
+                step={1}
+                inputMode="numeric"
+                aria-invalid={roundsInvalid}
+                value={roundsDraft}
+                onChange={(event) => setRoundsDraft(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') saveEdit()
+                  if (event.key === 'Escape') setEditingGoalId(undefined)
+                }}
+              />
+            </label>
+          )}
           <button
             className="dsh-icon-button"
             type="button"
             aria-label={t('goals.save')}
             title={t('goals.save')}
-            disabled={pending || draft.trim() === ''}
+            disabled={pending || draft.trim() === '' || roundsInvalid}
             onClick={saveEdit}
           >
             <Icon name="check" />
@@ -131,6 +163,10 @@ export const GoalBar = memo(function GoalBar(props: GoalBarProps): ReactElement 
   const canResume =
     (goal.status === 'pending' || (goal.status === 'in-progress' && goal.activation === 'disarmed')) &&
     props.onUpdate !== undefined
+  // A blocked goal can be resumed once its blocker is handled; the host
+  // decides and a refusal is shown as the bar's error.
+  const canRetryBlocked = goal.status === 'blocked' && props.onUpdate !== undefined
+  const canComplete = goal.status !== 'completed' && props.onUpdate !== undefined
   // The host publishes a block reason as the only actionable detail of a
   // blocked goal; the bar carries it so the state is explained on hover.
   const blockedReason = goal.status === 'blocked' ? goal.blockedReason?.message : undefined
@@ -180,6 +216,30 @@ export const GoalBar = memo(function GoalBar(props: GoalBarProps): ReactElement 
               <Icon name="play" />
             </button>
           ) : null}
+          {canRetryBlocked ? (
+            <button
+              className="dsh-icon-button"
+              type="button"
+              aria-label={t('goals.retryBlocked')}
+              title={t('goals.retryBlocked')}
+              disabled={pending}
+              onClick={() => void run(() => props.onUpdate!(goal.id, { status: 'in-progress' }))}
+            >
+              <Icon name="refresh" />
+            </button>
+          ) : null}
+          {canComplete ? (
+            <button
+              className="dsh-icon-button"
+              type="button"
+              aria-label={t('goals.markComplete')}
+              title={t('goals.markComplete')}
+              disabled={pending}
+              onClick={() => void run(() => props.onUpdate!(goal.id, { status: 'completed' }))}
+            >
+              <Icon name="check" />
+            </button>
+          ) : null}
           {props.onUpdate === undefined ? null : (
             <button
               className="dsh-icon-button"
@@ -189,6 +249,7 @@ export const GoalBar = memo(function GoalBar(props: GoalBarProps): ReactElement 
               disabled={pending}
               onClick={() => {
                 setDraft(goal.title)
+                setRoundsDraft(goal.maxGoalRounds === undefined ? '' : String(goal.maxGoalRounds))
                 seedRef.current = goal.title
                 setError(undefined)
                 setEditingGoalId(goal.id)

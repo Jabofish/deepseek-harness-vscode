@@ -1,4 +1,5 @@
 import { useCallback, type ReactElement } from 'react'
+import type { SubagentView } from '@dsh-vscode/domain'
 import type { AppStore } from '../../app/store.js'
 import { setDraft } from '../../app/draft-store.js'
 import type { useI18n } from '../../i18n.js'
@@ -28,6 +29,7 @@ interface ConversationActionItemsProps {
     | 'tasks'
     | 'tasksLoading'
     | 'taskScope'
+    | 'taskIncludeCompleted'
     | 'tasksComplete'
     | 'tasksOmittedSessions'
     | 'checkpoints'
@@ -117,6 +119,7 @@ export function ConversationActionItems({
           refreshFailed={state.changesRefreshFailed}
           onRefresh={() => store.refreshChanges(activeId)}
           onOpen={(changeId) => store.openChange(changeId)}
+          onOpenDiff={(changeId) => store.openChangeDiff(changeId)}
           onDetail={(changeId) => store.getChangeDetail(changeId)}
           onMarkReviewed={(changeId, reviewState) => store.markChangeReviewed(changeId, reviewState)}
         />
@@ -126,11 +129,13 @@ export function ConversationActionItems({
         tasks={state.tasks}
         loading={state.tasksLoading}
         scope={state.taskScope}
+        includeCompleted={state.taskIncludeCompleted}
         complete={state.tasksComplete}
         omittedSessions={state.tasksOmittedSessions}
         alwaysVisible
-        onRefresh={() => store.refreshTasks(activeId, false, state.taskScope)}
-        onScopeChange={(scope) => store.refreshTasks(activeId, false, scope)}
+        onRefresh={() => store.refreshTasks(activeId, state.taskIncludeCompleted, state.taskScope)}
+        onScopeChange={(scope) => store.refreshTasks(activeId, state.taskIncludeCompleted, scope)}
+        onIncludeCompletedChange={(include) => store.refreshTasks(activeId, include, state.taskScope)}
         onOpen={async (task) => {
           if (task.sessionId === undefined) return
           // A subagent row names the child in `sourceId`; `sessionId` is its
@@ -141,12 +146,7 @@ export function ConversationActionItems({
         }}
         onStop={async (task) => {
           await store.stopTask(task.taskId, task.taskRevision)
-          await store.refreshTasks(activeId, false, state.taskScope)
-        }}
-        onAnswer={async (task, answer) => {
-          if (task.interactionId === undefined) return
-          await store.answerTask(task.taskId, task.interactionId, answer)
-          await store.refreshTasks(activeId, false, state.taskScope)
+          await store.refreshTasks(activeId, state.taskIncludeCompleted, state.taskScope)
         }}
       />
       <CheckpointDrawer
@@ -160,6 +160,9 @@ export function ConversationActionItems({
         onRestore={(checkpointId, previewId, conflictPolicy) =>
           store.restoreCheckpoint(checkpointId, previewId, conflictPolicy)
         }
+        {...(store.openExtensionSettings === undefined
+          ? {}
+          : { onOpenSettings: () => void store.openExtensionSettings?.('checkpoints') })}
       />
       <PromptTemplatesDrawer
         onOpenLink={timelineOnOpenLink}
@@ -198,6 +201,9 @@ export function ConversationActionItems({
               setError(reason instanceof Error ? reason.message : t('app.error.openSubagent')),
             )
         }}
+        {...(store.interruptSubagent === undefined
+          ? {}
+          : { onInterruptChild: async (entry: SubagentView) => await store.interruptSubagent?.(entry.id) })}
         onOpenInEditor={(entry) => {
           closeMenu()
           void store

@@ -11,6 +11,7 @@ export interface PluginInstallRecoveryState {
   readonly phase: 'installing' | 'cancelling' | 'applying' | 'unknown' | 'settled'
   readonly cancelRequested: boolean
   readonly waiting: boolean
+  readonly target?: Omit<PluginInstallInput, 'approvedBuilds'>
   readonly cancellation?: PluginInstallCancellation['status']
   readonly result?: PluginBundleChangeResult
 }
@@ -43,7 +44,14 @@ export class PluginInstallRecoveryController {
   public start(input: PluginInstallInput): Promise<void> {
     if (this.current !== undefined && this.current.phase !== 'settled') return Promise.resolve()
     const requestId = this.dependencies.requestId()
-    if (!this.begin({ requestId, phase: 'installing', cancelRequested: false, waiting: false }, false))
+    const target: Omit<PluginInstallInput, 'approvedBuilds'> = {
+      spec: input.spec,
+      ...(input.officialBundle === true ? { officialBundle: true } : {}),
+      ...(input.registry === undefined ? {} : { registry: input.registry }),
+    }
+    if (
+      !this.begin({ requestId, phase: 'installing', cancelRequested: false, waiting: false, target }, false)
+    )
       return Promise.resolve()
     return this.runInstall(requestId, input)
   }

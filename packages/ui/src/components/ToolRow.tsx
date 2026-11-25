@@ -6,7 +6,7 @@ import {
   type ToolPresentationView,
 } from '@dsh-vscode/domain'
 
-import { formatToolText, type PresentationTranslate } from '../tool-presentation.js'
+import { decodeToolValue, formatToolText, type PresentationTranslate } from '../tool-presentation.js'
 import { toolStatusLabel } from '../tool-status.js'
 import {
   renderStructuredDetails,
@@ -201,6 +201,8 @@ export function ToolRow(props: ToolRowProps): ReactElement {
                   props.renderSearch,
                   props.renderWeb,
                   searchRecovery(props.tool),
+                  terminalCommand(props.tool),
+                  webFetchContent(props.tool, props.translate),
                 )}
                 {props.onOpenLink === undefined || detailTargets.length === 0 ? null : (
                   <div
@@ -258,20 +260,23 @@ function presentationTargets(
     if (value === undefined || value === '' || targets.some((target) => target.href === value)) return
     targets.push({ href: value, label: labelText })
   }
-  for (const location of locations ?? []) add(location.path, location.path)
+  const addLocation = (location: ToolLocationView): void => {
+    const href = location.line === undefined ? location.path : `${location.path}#L${location.line + 1}`
+    const text = location.line === undefined ? location.path : `${location.path}:${location.line + 1}`
+    add(href, text)
+  }
+  for (const location of locations ?? []) addLocation(location)
   if (view === undefined) return targets
   switch (view.card) {
     case 'generic':
-      if (view.phase === 'call')
-        for (const location of view.locations ?? []) add(location.path, location.path)
+      if (view.phase === 'call') for (const location of view.locations ?? []) addLocation(location)
       break
     case 'diff':
-      for (const location of view.phase === 'call' ? (view.locations ?? []) : [])
-        add(location.path, location.path)
+      for (const location of view.phase === 'call' ? (view.locations ?? []) : []) addLocation(location)
       for (const diff of view.diffs) add(diff.path, diff.path)
       break
     case 'read':
-      add(view.path, `${view.path}:${view.offset}`)
+      add(`${view.path}#L${view.offset}`, `${view.path}:${view.offset}`)
       break
     case 'web':
       if (view.kind === 'fetch' && !hasWebRenderer) add(view.url, view.url)
@@ -296,4 +301,22 @@ function searchRecovery(tool: ToolCallView): string | undefined {
     return undefined
   const text = tool.outputSummary
   return text === undefined || text.trim() === '' ? undefined : text
+}
+
+function terminalCommand(tool: ToolCallView): string | undefined {
+  const view = tool.presentation
+  if (view === undefined || view.card !== 'terminal' || view.phase !== 'result') return undefined
+  const decoded = decodeToolValue(tool.inputSummary)
+  if (decoded !== null && typeof decoded === 'object' && !Array.isArray(decoded)) {
+    const command = (decoded as Readonly<Record<string, unknown>>).command
+    if (typeof command === 'string' && command.trim() !== '') return command.trim()
+  }
+  return undefined
+}
+
+function webFetchContent(tool: ToolCallView, t?: PresentationTranslate): string | undefined {
+  const view = tool.presentation
+  if (view === undefined || view.card !== 'web' || view.kind !== 'fetch') return undefined
+  const formatted = formatToolText(tool.outputSummary, t)
+  return formatted === undefined || formatted.trim() === '' ? undefined : formatted
 }

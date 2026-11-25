@@ -23,6 +23,10 @@ interface PromptTemplateFeatureDependencies {
     requestedWorkspaceFolderId: string | undefined,
     session: SessionDetail | undefined,
   ) => string
+  readonly resolveVariables?: (
+    session: SessionDetail,
+    signal: AbortSignal,
+  ) => Promise<Readonly<Record<string, string>>>
 }
 
 export async function handlePromptTemplateFeatureRequest(
@@ -70,14 +74,19 @@ export async function handlePromptTemplateFeatureRequest(
     }
   }
   if (request.type === 'prompt.template.insert') {
-    const owner = await promptTemplateOwner(
-      request.payload.sessionId,
-      request.payload.workspaceFolderId,
-      signal,
-    )
+    const session = await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+    const owner = {
+      sessionId: session.id,
+      workspaceFolderId: featureWorkspaceFolderId(request.payload.workspaceFolderId, session),
+    }
+    const autoVariables = (await dependencies.resolveVariables?.(session, signal).catch(() => ({}))) ?? {}
+    const mergedVariables =
+      Object.keys(autoVariables).length === 0
+        ? request.payload.variables
+        : { ...autoVariables, ...(request.payload.variables ?? {}) }
     const inserted = await promptTemplateUseCases.insert(
       request.payload.templateId,
-      request.payload.variables,
+      mergedVariables,
       owner,
       signal,
     )

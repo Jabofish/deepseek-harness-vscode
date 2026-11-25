@@ -76,6 +76,6 @@ describe('ToolCard', () => {
     const target = screen.getByText(`${filePath}:4`)
     expect(target.textContent).toBe(`${filePath}:4`)
     fireEvent.click(target)
-    expect(onOpenLink).toHaveBeenCalledWith(filePath)
+    expect(onOpenLink).toHaveBeenCalledWith(`${filePath}#L4`)
   })
 })

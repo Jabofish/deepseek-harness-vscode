@@ -52,6 +52,11 @@ export function translate(key: string, params?: Readonly<Record<string, string |
   )
 }
 
+/** The English source text of a key, or undefined when the key is unknown. */
+export function englishText(key: string): string | undefined {
+  return DICTIONARIES.en[key]
+}
+
 const I18nContext = createContext<I18nContextValue | undefined>(undefined)
 
 function storedLocale(): Locale | undefined {

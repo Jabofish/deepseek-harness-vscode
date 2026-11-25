@@ -504,6 +504,40 @@
   border-top: 1px solid var(--dsh-border-color, var(--dsh-border-color));
 }
 
+.dsh-jobs-popover__output-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+  padding: 4px 8px;
+}
+
+.dsh-jobs-popover__output-header > strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--dsh-font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-jobs-popover__output-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 2px;
+}
+
+.dsh-jobs-popover__output > section > p {
+  margin: 0;
+  padding: 0 8px 4px;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-2xs);
+}
+
+.dsh-jobs-popover__chunk--stderr {
+  color: var(--dsh-danger);
+}
+
 .dsh-jobs-popover__output pre {
   max-height: 16rem;
   overflow: auto;

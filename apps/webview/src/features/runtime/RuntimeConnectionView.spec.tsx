@@ -44,6 +44,27 @@ describe('RuntimeConnectionView', () => {
     expect(retry).toHaveBeenCalledOnce()
   })
 
+  it('offers labelled settings and the diagnostics report only when the connection failed', () => {
+    const props = {
+      onOpenSettings: vi.fn(),
+      onShowDiagnosticsOutput: () => Promise.resolve(),
+      onReadDiagnostics: () => Promise.resolve(undefined),
+      onReconnectDiagnostics: () => Promise.resolve(),
+    }
+    const view = render(
+      <RuntimeConnectionView
+        state={{ kind: 'port-conflict', port: 4096, message: 'Port in use.', retryable: false }}
+        {...props}
+      />,
+    )
+    expect(screen.getByRole('button', { name: /Connection settings/u }).textContent).toContain(
+      'Connection settings',
+    )
+    expect(screen.getByRole('button', { name: 'Diagnostics' })).toBeDefined()
+    view.rerender(<RuntimeConnectionView state={{ kind: 'connecting' }} {...props} />)
+    expect(screen.queryByRole('button', { name: 'Diagnostics' })).toBeNull()
+  })
+
   it('distinguishes session catalog loading from readiness and reports an Output action failure', async () => {
     const { rerender } = render(
       <RuntimeConnectionView

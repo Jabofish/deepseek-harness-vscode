@@ -152,6 +152,14 @@ export function AppSettingsDrawer({
       onLoadDshSettings={readDshSettingsForUi}
       onOpenDshSettingsDocument={() => store.openDshSettingsDocument()}
       onOpenKeyboardShortcuts={() => store.openKeyboardShortcuts()}
+      {...(store.openExtensionSettings === undefined
+        ? {}
+        : { onOpenExtensionSettings: () => store.openExtensionSettings?.('all') ?? Promise.resolve() })}
+      {...(store.clearExternalCredentials === undefined
+        ? {}
+        : {
+            onClearExternalCredentials: () => store.clearExternalCredentials?.() ?? Promise.resolve(),
+          })}
       onUpdateDshSetting={updateDshSettingFromDrawer}
       onUnsetDshSetting={unsetDshSettingFromDrawer}
       onMutateDshSettings={mutateDshSettingsFromDrawer}

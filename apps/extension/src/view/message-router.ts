@@ -478,6 +478,59 @@ function unexpectedErrorEntry(requestType: string, error: unknown): UnexpectedEr
   return entry
 }
 
+/**
+ * The standard sentence for each public error code. The Webview translates
+ * these exact sentences (keys `hostError.<CODE>`), so keep both in sync.
+ */
+/**
+ * Connection-specific wording for codes a connection attempt commonly returns.
+ * Each sentence has a `hostError.connection.<CODE>` Webview key so the UI can
+ * show it in its own language.
+ */
+export const CONNECTION_ERROR_MESSAGES: Readonly<Record<string, string>> = {
+  AUTH_REQUIRED: 'DSH authentication failed. Run JaboDSH: Authorize External Connection and try again.',
+  INVALID_ENDPOINT: 'Enter a valid HTTP(S) DSH origin without path, query, or embedded credentials.',
+  PERMISSION_DENIED: 'Authorize this external DSH endpoint in a trusted workspace before connecting.',
+}
+
+export const PUBLIC_ERROR_FALLBACKS: Readonly<Record<string, string>> = {
+  DSH_NOT_FOUND: 'DeepSeek Harness was not found.',
+  DSH_INCOMPATIBLE: 'The installed DeepSeek Harness version is not supported.',
+  BACKEND_UNREACHABLE: 'The local DSH instance is unreachable.',
+  BACKEND_BUSY: 'The DSH instance is busy.',
+  NO_RUNNING_INSTANCE: 'No compatible local DSH instance is running.',
+  PORT_CONFLICT: 'The configured DSH port is already in use.',
+  INVALID_ENDPOINT: 'Only a validated local DSH endpoint is allowed.',
+  CAPABILITY_UNAVAILABLE: 'This DSH capability is unavailable.',
+  AUTH_REQUIRED: 'The selected DSH model or provider is unavailable.',
+  PERMISSION_DENIED: 'The operation is not permitted.',
+  STALE_INTERACTION: 'The DSH interaction is no longer pending.',
+  PROCESS_FAILED: 'The managed DSH process failed.',
+  EXPORT_FAILED: 'The session export failed.',
+  PROTOCOL_ERROR: 'The DSH returned an invalid response.',
+  REQUEST_CANCELLED: 'The DSH request was cancelled.',
+  INVALID_CONFIGURATION: 'The DSH configuration is invalid.',
+  FEATURE_DISABLED: 'This feature is not enabled for the connected DSH instance.',
+  CONTEXT_LIMIT: 'The editor context is too large.',
+  CONTEXT_EXPIRED: 'The editor context has expired. Capture it again.',
+  CONTEXT_STALE: 'The editor context is stale. Refresh it before continuing.',
+  PATH_NOT_ALLOWED: 'Only a validated workspace-relative path is allowed.',
+  CHANGE_INCOMPLETE: 'The change record is incomplete and cannot be applied safely.',
+  CHANGE_PROPOSAL_ONLY: 'This change is only a proposal; no filesystem mutation was confirmed.',
+  CHECKPOINT_CONFLICT: 'The workspace changed after this checkpoint was created.',
+  CHECKPOINT_PARTIAL: 'The checkpoint restore completed only partially.',
+  CHECKPOINT_QUOTA: 'The checkpoint storage quota has been reached.',
+  TASK_NOT_OWNED: 'This task is not owned by the current extension session.',
+  TASK_STATE_STALE: 'The task changed before this action was applied. Refresh it and try again.',
+  STORAGE_CORRUPT: 'The local feature storage is corrupt and needs recovery.',
+  RESOURCE_NOT_OWNED: 'This resource is not owned by the current view or session.',
+  GENERATION_MISMATCH: 'This request belongs to an older connection generation.',
+  EVENT_GAP: 'Some DSH events were missed; the session is being synchronized.',
+  PLUGIN_INSTALL_NOT_STARTED:
+    'The DSH plugin installation did not start. Review the package source and try again.',
+  INTERNAL_ERROR: 'DSH returned an internal error.',
+}
+
 function publicErrorMessage(
   code: string,
   message: string,
@@ -527,44 +580,12 @@ function publicErrorMessage(
         )
     }
   }
-  const fallback: Record<string, string> = {
-    DSH_NOT_FOUND: 'DeepSeek Harness was not found.',
-    DSH_INCOMPATIBLE: 'The installed DeepSeek Harness version is not supported.',
-    BACKEND_UNREACHABLE: 'The local DSH instance is unreachable.',
-    BACKEND_BUSY: 'The DSH instance is busy.',
-    NO_RUNNING_INSTANCE: 'No compatible local DSH instance is running.',
-    PORT_CONFLICT: 'The configured DSH port is already in use.',
-    INVALID_ENDPOINT: 'Only a validated local DSH endpoint is allowed.',
-    CAPABILITY_UNAVAILABLE: 'This DSH capability is unavailable.',
-    AUTH_REQUIRED: 'The selected DSH model or provider is unavailable.',
-    PERMISSION_DENIED: 'The operation is not permitted.',
-    STALE_INTERACTION: 'The DSH interaction is no longer pending.',
-    PROCESS_FAILED: 'The managed DSH process failed.',
-    EXPORT_FAILED: 'The session export failed.',
-    PROTOCOL_ERROR: 'The DSH returned an invalid response.',
-    REQUEST_CANCELLED: 'The DSH request was cancelled.',
-    INVALID_CONFIGURATION: 'The DSH configuration is invalid.',
-    FEATURE_DISABLED: 'This feature is not enabled for the connected DSH instance.',
-    CONTEXT_LIMIT: 'The editor context is too large.',
-    CONTEXT_EXPIRED: 'The editor context has expired. Capture it again.',
-    CONTEXT_STALE: 'The editor context is stale. Refresh it before continuing.',
-    PATH_NOT_ALLOWED: 'Only a validated workspace-relative path is allowed.',
-    CHANGE_INCOMPLETE: 'The change record is incomplete and cannot be applied safely.',
-    CHANGE_PROPOSAL_ONLY: 'This change is only a proposal; no filesystem mutation was confirmed.',
-    CHECKPOINT_CONFLICT: 'The workspace changed after this checkpoint was created.',
-    CHECKPOINT_PARTIAL: 'The checkpoint restore completed only partially.',
-    CHECKPOINT_QUOTA: 'The checkpoint storage quota has been reached.',
-    TASK_NOT_OWNED: 'This task is not owned by the current extension session.',
-    TASK_STATE_STALE: 'The task changed before this action was applied. Refresh it and try again.',
-    STORAGE_CORRUPT: 'The local feature storage is corrupt and needs recovery.',
-    RESOURCE_NOT_OWNED: 'This resource is not owned by the current view or session.',
-    GENERATION_MISMATCH: 'This request belongs to an older connection generation.',
-    EVENT_GAP: 'Some DSH events were missed; the session is being synchronized.',
-    PLUGIN_INSTALL_NOT_STARTED:
-      'The DSH plugin installation did not start. Review the package source and try again.',
-    INTERNAL_ERROR: 'DSH returned an internal error.',
-  }
+  const fallback = PUBLIC_ERROR_FALLBACKS
   const base = fallback[code] ?? `DSH operation failed (${code}).`
+  if (requestType === 'connection.configure' || requestType === 'connection.retry') {
+    const connectionMessage = CONNECTION_ERROR_MESSAGES[code]
+    if (connectionMessage !== undefined) return connectionMessage
+  }
   if (requestType === 'command.execute') return withFailureDetail(base, context, message)
   // Settings and model configuration failures are actionable in the drawer.
   // Keep the same bounded/redacted diagnostic used for commands; otherwise a

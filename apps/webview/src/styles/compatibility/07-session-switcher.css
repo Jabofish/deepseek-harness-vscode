@@ -261,7 +261,14 @@
 
 .dsh-settings__model-picker-actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  gap: var(--dsh-space-2);
+}
+
+.dsh-settings__model-picker-search {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .dsh-presets__modal-backdrop {

@@ -6,6 +6,7 @@ import {
   type dshUiPreferences as readDshUiPreferences,
 } from '../../app/ui-preferences.js'
 import { SettingCard, SettingRow } from '../../components/common/SettingCard.js'
+import { ExtensionSettingsCard } from './ExtensionSettingsCard.js'
 import { SelectMenu } from '../../components/common/SelectMenu.js'
 import { Icon } from '../../ui/Icon.js'
 import { AccountLifecycle } from '../account/AccountLifecycle.js'
@@ -228,14 +229,6 @@ export function GeneralSettingsTab(input: GeneralSettingsTabProps): ReactElement
                   <dd>
                     {props.connectedDshVersion ??
                       t(props.connected ? 'settings.versionUnavailable' : 'settings.notConnected')}
-                  </dd>
-                  <dt>{t('settings.permissionPreset')}</dt>
-                  <dd>{settings.security.defaultPermissionPreset}</dd>
-                  <dt>{t('settings.defaultAgent')}</dt>
-                  <dd>
-                    {[settings.defaultAgent.model.providerId, settings.defaultAgent.model.modelId]
-                      .filter(Boolean)
-                      .join('/') || t('settings.automatic')}
                   </dd>
                 </dl>
               </details>
@@ -705,6 +698,14 @@ export function GeneralSettingsTab(input: GeneralSettingsTabProps): ReactElement
           )}
         </div>
       </SettingCard>
+      {props.onOpenExtensionSettings === undefined ? null : (
+        <ExtensionSettingsCard
+          onOpen={props.onOpenExtensionSettings}
+          {...(props.onClearExternalCredentials === undefined
+            ? {}
+            : { onClearCredentials: props.onClearExternalCredentials })}
+        />
+      )}
     </div>
   )
 }

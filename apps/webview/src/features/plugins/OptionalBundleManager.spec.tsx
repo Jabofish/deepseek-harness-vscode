@@ -248,4 +248,70 @@ describe('OptionalBundleManager', () => {
     fireEvent.keyDown(searchInput, { key: 'Escape' })
     expect(searchInput.value).toBe('')
   })
+
+  it('retries official bundle installs with approvedBuilds instead of reading the manual spec input', async () => {
+    const officialBundle = {
+      name: '@deepseek-ai/official-tool',
+      title: { en: 'Official tool' },
+      enabled: false,
+      installed: false,
+      optional: true,
+      removable: false,
+      official: true,
+      availability: 'missing' as const,
+      installable: true,
+      targetVersion: '1.2.3',
+      rows: [],
+      overrides: [],
+    }
+    const { requests } = mountManager((request) => {
+      if (request.type === 'plugin.bundles.list')
+        return { kind: 'plugin.bundles', available: true, bundles: [officialBundle], plugins: [] }
+      if (request.type === 'plugin.bundle.install') {
+        if (request.payload.approvedBuilds === undefined) {
+          return {
+            kind: 'plugin.bundle.changed',
+            result: {
+              name: '@deepseek-ai/official-tool',
+              changed: false,
+              application: 'failed',
+              stage: 'install',
+              failureKind: 'build-blocked',
+              pendingBuilds: ['native-helper'],
+            },
+          }
+        }
+        return {
+          kind: 'plugin.bundle.changed',
+          result: {
+            name: '@deepseek-ai/official-tool',
+            changed: true,
+            application: 'applied',
+            stage: 'install',
+          },
+        }
+      }
+      return defaultResponse(request)
+    })
+
+    await screen.findByText('Official tool')
+    // Type an unrelated package in the manual spec box to confirm retry does not hijack it.
+    fireEvent.change(screen.getByLabelText('Package name or supported package source'), {
+      target: { value: '@unrelated/other-package' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /1\.2\.3/u }))
+    const retryButton = await screen.findByRole('button', { name: 'Review script permission and retry' })
+    fireEvent.click(retryButton)
+
+    await screen.findByText('The plugin bundle was installed.')
+    const installs = requests.filter((request) => request.type === 'plugin.bundle.install')
+    expect(installs).toHaveLength(2)
+    expect(installs[1]?.payload).toEqual(
+      expect.objectContaining({
+        spec: '@deepseek-ai/official-tool',
+        officialBundle: true,
+        approvedBuilds: ['native-helper'],
+      }),
+    )
+  })
 })

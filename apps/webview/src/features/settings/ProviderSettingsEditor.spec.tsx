@@ -149,4 +149,48 @@ describe('ProviderSettingsEditor write-time validation', () => {
     )
     await waitFor(() => expect(onClose).toHaveBeenCalledWith(true))
   })
+
+  it('renames a custom pi-ai provider through its display name', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    const custom: ModelProvider = {
+      id: 'my-router',
+      name: 'Old name',
+      kind: 'remote',
+      configurable: true,
+      settingsNs: 'llm-pi-ai',
+      settingsPath: ['providers', 'my-router'],
+      fields: [],
+    }
+    const settings: DshSettingsSnapshot = {
+      schema: {
+        version: 'rc6-settings-v2',
+        writable: true,
+        hasDocument: false,
+        fields: [],
+        namespaces: [{ ns: 'llm-pi-ai', applies: 'live', revision: 5, userFields: [], secrets: [] }],
+      },
+      values: { 'llm-pi-ai': { providers: { 'my-router': { displayName: 'Old name' } } } },
+    }
+    render(
+      <I18nProvider>
+        <ProviderSettingsEditor
+          provider={custom}
+          settings={settings}
+          writable
+          saving={false}
+          onSave={onSave as (changes: readonly ProviderSettingChange[]) => Promise<void>}
+          onDiscover={vi.fn().mockResolvedValue([])}
+          onClose={vi.fn()}
+        />
+      </I18nProvider>,
+    )
+    fireEvent.change(screen.getByLabelText('Provider display name'), { target: { value: 'Team router' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    await waitFor(() =>
+      expect(onSave).toHaveBeenCalledWith(
+        [{ kind: 'set', path: 'llm-pi-ai.providers.my-router.displayName', value: 'Team router' }],
+        5,
+      ),
+    )
+  })
 })

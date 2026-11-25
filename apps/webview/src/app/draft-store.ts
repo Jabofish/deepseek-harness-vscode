@@ -31,6 +31,8 @@ export interface DraftStore {
   readonly setFor: (owner: string | undefined, action: SetStateAction<string>) => void
   readonly clearIf: (owner: string | undefined, text: string) => void
   readonly reset: () => void
+  readonly snapshot: () => Readonly<Record<string, string>>
+  readonly restore: (entries: Readonly<Record<string, string>>) => void
 }
 
 const UNSCOPED_OWNER = ''
@@ -54,6 +56,12 @@ function createDraftStore(): DraftStore {
     }
     return key
   }
+  // Re-inserting moves an edited draft to the end, so the saved set keeps the
+  // most recently edited conversations when it has to drop some.
+  const write = (key: string, text: string): void => {
+    drafts.delete(key)
+    if (text !== '') drafts.set(key, text)
+  }
   const announce = (): void => {
     for (const listener of listeners) listener()
   }
@@ -63,9 +71,7 @@ function createDraftStore(): DraftStore {
       const next = typeof action === 'function' ? action(current) : action
       if (next === current) return
       current = next
-      const key = keyFor(activeOwner)
-      if (next === '') drafts.delete(key)
-      else drafts.set(key, next)
+      write(keyFor(activeOwner), next)
       announce()
     },
     subscribe: (listener) => {
@@ -84,8 +90,7 @@ function createDraftStore(): DraftStore {
       const base = target === activeOwner ? current : (drafts.get(key) ?? '')
       const next = typeof action === 'function' ? action(base) : action
       if (next === base) return
-      if (next === '') drafts.delete(key)
-      else drafts.set(key, next)
+      write(key, next)
       if (target === activeOwner) current = next
       announce()
     },
@@ -112,17 +117,22 @@ function createDraftStore(): DraftStore {
       const key = resolve(owner)
       const stored = key === keyFor(activeOwner) ? current : (drafts.get(key) ?? '')
       if (stored !== text) return
-      if (key === keyFor(activeOwner)) {
-        current = ''
-        drafts.delete(key)
-        announce()
-      } else drafts.delete(key)
+      if (key === keyFor(activeOwner)) current = ''
+      if (drafts.delete(key)) announce()
     },
     reset: () => {
       drafts.clear()
       carried.clear()
       if (current === '') return
       current = ''
+      announce()
+    },
+    snapshot: () => Object.fromEntries(drafts),
+    restore: (entries) => {
+      for (const [owner, text] of Object.entries(entries)) if (text !== '') drafts.set(owner, text)
+      const next = drafts.get(keyFor(activeOwner)) ?? ''
+      if (next === current) return
+      current = next
       announce()
     },
   }
@@ -167,4 +177,29 @@ export function clearDraftIf(owner: string | undefined, text: string): void {
 
 export function resetDraft(): void {
   store.reset()
+}
+
+/** Every unsent draft, keyed by owner; the pending composer uses the empty key. */
+export function draftSnapshot(): Readonly<Record<string, string>> {
+  return store.snapshot()
+}
+
+/** Seed drafts saved by an earlier Webview instance; current text wins. */
+export function restoreDrafts(entries: Readonly<Record<string, string>>): void {
+  store.restore(entries)
+}
+
+/**
+ * Start a mounted composer from the drafts the Webview state holds. The saved
+ * set is read before the in-memory drafts are cleared: clearing announces a
+ * change, and saving that empty set first would overwrite every draft.
+ */
+export function adoptSavedDrafts(takeSaved: () => Readonly<Record<string, string>>): void {
+  const saved = takeSaved()
+  store.reset()
+  store.restore(saved)
+}
+
+export function subscribeDrafts(listener: () => void): () => void {
+  return store.subscribe(listener)
 }

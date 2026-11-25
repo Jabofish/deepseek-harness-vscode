@@ -242,3 +242,19 @@
     background: Highlight;
   }
 }
+
+.dsh-session-inspector__summary {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsh-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-session-inspector__detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--dsh-space-2);
+  min-width: 0;
+}

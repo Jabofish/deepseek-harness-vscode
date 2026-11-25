@@ -78,11 +78,11 @@ function memberCount(workflow: WorkflowSummary): number {
 export function WorkflowRunCard(props: WorkflowRunCardProps): ReactElement {
   const { workflow } = props
   const { t } = useI18n()
-  const forceRunOpen =
+  const defaultRunOpen =
     workflow.status !== 'completed' || workflow.stages.some((stage) => requiresExpansion(stage.members))
-  const [runOpen, setRunOpen] = useState(false)
-  const [manualPhases, setManualPhases] = useState<ReadonlySet<string>>(() => new Set())
-  const open = forceRunOpen || runOpen
+  const [runOpenOverride, setRunOpenOverride] = useState<boolean | undefined>(undefined)
+  const [phaseOverrides, setPhaseOverrides] = useState<ReadonlyMap<string, boolean>>(() => new Map())
+  const open = runOpenOverride ?? defaultRunOpen
   const count = memberCount(workflow)
 
   return (
@@ -91,9 +91,7 @@ export function WorkflowRunCard(props: WorkflowRunCardProps): ReactElement {
         type="button"
         className="dsh-workflow-runs__run-header"
         aria-expanded={open}
-        onClick={() => {
-          if (!forceRunOpen) setRunOpen((current) => !current)
-        }}
+        onClick={() => setRunOpenOverride(!open)}
       >
         <Icon name={open ? 'chevron-down' : 'chevron-right'} />
         <strong className="dsh-workflow-runs__run-name" title={workflow.name}>
@@ -111,8 +109,8 @@ export function WorkflowRunCard(props: WorkflowRunCardProps): ReactElement {
             <span className="dsh-workflow-runs__empty">{t('workflow.noMembers')}</span>
           ) : (
             workflow.stages.map((stage) => {
-              const forced = requiresExpansion(stage.members)
-              const expanded = forced || manualPhases.has(stage.id)
+              const defaultExpanded = requiresExpansion(stage.members)
+              const expanded = phaseOverrides.get(stage.id) ?? defaultExpanded
               return (
                 <div key={stage.id} className="dsh-workflow-runs__phase">
                   <button
@@ -120,11 +118,9 @@ export function WorkflowRunCard(props: WorkflowRunCardProps): ReactElement {
                     className="dsh-workflow-runs__phase-header"
                     aria-expanded={expanded}
                     onClick={() => {
-                      if (forced) return
-                      setManualPhases((current) => {
-                        const next = new Set(current)
-                        if (next.has(stage.id)) next.delete(stage.id)
-                        else next.add(stage.id)
+                      setPhaseOverrides((current) => {
+                        const next = new Map(current)
+                        next.set(stage.id, !expanded)
                         return next
                       })
                     }}

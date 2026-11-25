@@ -83,5 +83,25 @@ describe('ApprovalCard', () => {
     )
 
     expect(screen.getByText('允许此命令修改工作区文件吗？')).toBeDefined()
+    expect(screen.getByRole('button', { name: '允许一次' })).toBeDefined()
+    expect(screen.getByRole('button', { name: '拒绝' })).toBeDefined()
+  })
+
+  it('hides unknown risk pill and shows target paths, and non-terminal details', () => {
+    render(
+      <I18nProvider>
+        <ApprovalCard
+          request={{ ...approvalRequest(), risk: 'unknown' }}
+          disabled={false}
+          paths={['src/index.ts', 'src/app.ts']}
+          summary='{"path":"src/index.ts"}'
+          onRespond={vi.fn()}
+        />
+      </I18nProvider>,
+    )
+
+    expect(screen.queryByText(/not specified by DSH/i)).toBeNull()
+    expect(screen.getByText('src/index.ts, src/app.ts')).toBeDefined()
+    expect(screen.getByText('{"path":"src/index.ts"}')).toBeDefined()
   })
 })

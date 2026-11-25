@@ -142,4 +142,38 @@ describe('PromptTemplatesDrawer', () => {
     expect(screen.queryByRole('dialog', { name: 'Create prompt template' })).toBeNull()
     expect(document.activeElement).toBe(create)
   })
+
+  it('auto-declares allowlisted variables used in template text and closes after insert', async () => {
+    const onCreate = vi.fn().mockResolvedValue(summary)
+    const onApply = vi.fn()
+    renderDrawer({
+      onCreate,
+      onApply,
+      onInsert: vi.fn().mockResolvedValue({
+        templateId: summary.templateId,
+        text: '# Review\n\nselected code',
+        unresolvedVariables: [],
+      }),
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }))
+    const editor = screen.getByRole('dialog', { name: 'Create prompt template' })
+    fireEvent.change(within(editor).getByLabelText('Title'), { target: { value: 'Auto vars' } })
+    fireEvent.change(within(editor).getByLabelText('Template text'), {
+      // A spaced placeholder is not one the Host expands, so it is not declared.
+      target: { value: 'Check {{currentFile}}: {{selection}} for {{ sessionTitle }}' },
+    })
+    fireEvent.submit(editor)
+    await waitFor(() =>
+      expect(onCreate).toHaveBeenCalledWith(
+        expect.objectContaining({ variables: ['currentFile', 'selection'] }),
+      ),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /^Review current change/u }))
+    await waitFor(() => expect(screen.getByRole('region', { name: 'Template preview' })).toBeDefined())
+    fireEvent.click(screen.getByRole('button', { name: 'Insert' }))
+    await waitFor(() => expect(onApply).toHaveBeenCalledWith('# Review\n\nselected code'))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
 })

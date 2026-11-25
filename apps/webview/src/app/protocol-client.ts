@@ -13,6 +13,7 @@ import {
 } from '@dsh-vscode/webview-protocol'
 
 import { translate } from '../i18n.js'
+import { localizeHostErrorMessage } from './host-error-text.js'
 import type { VsCodeApi } from '../vscode-api.js'
 
 interface Pending {
@@ -230,7 +231,10 @@ export class ProtocolClient {
       if (message.ok) pending.resolve(message.payload)
       else {
         const error = new Error(message.error?.message ?? translate('app.error.hostUnspecified'))
-        if (message.error !== undefined) Object.assign(error, message.error)
+        if (message.error !== undefined) {
+          Object.assign(error, message.error)
+          error.message = localizeHostErrorMessage(message.error.code, message.error.message)
+        }
         publicRequestErrors.add(error)
         pending.reject(error)
       }
@@ -274,6 +278,7 @@ export class ProtocolClient {
       else {
         const error = new Error(message.error.message)
         Object.assign(error, message.error)
+        error.message = localizeHostErrorMessage(message.error.code, message.error.message)
         publicRequestErrors.add(error)
         pending.reject(error)
       }

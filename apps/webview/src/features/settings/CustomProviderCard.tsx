@@ -1,4 +1,4 @@
-import { useState, type ReactElement } from 'react'
+import { useId, useState, type ReactElement } from 'react'
 import type {
   CustomProviderCreateResult,
   CustomProviderDraft,
@@ -49,6 +49,7 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactElement
   const [error, setError] = useState<string | undefined>(undefined)
   const [busy, setBusy] = useState(false)
   const [committed, setCommitted] = useState(false)
+  const missingId = useId()
 
   const routeValue = route.trim()
   const displayNameValue = displayName.trim()
@@ -67,6 +68,16 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactElement
     apiValue !== '' &&
     normalizedModels.length > 0 &&
     modelFailure === undefined
+  // Say why Save is unavailable instead of leaving a silently disabled button.
+  const missing = committed
+    ? []
+    : [
+        ...(props.template.protocols.length === 0 ? [t('settings.providerMissing.protocols')] : []),
+        ...(routeValue === '' ? [t('settings.providerId')] : []),
+        ...(baseUrlValue === '' ? [t('settings.providerBaseUrl')] : []),
+        ...(apiValue === '' && props.template.protocols.length > 0 ? [t('settings.providerApi')] : []),
+        ...(normalizedModels.length === 0 ? [t('settings.providerMissing.model')] : []),
+      ]
   const disabled = !props.writable || props.saving || busy
   const profileDisabled = disabled || committed
   const canSubmit = !disabled && (committed || ready)
@@ -225,7 +236,13 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactElement
           {error}
         </p>
       )}
+      {missing.length === 0 ? null : (
+        <p className="dsh-settings__description" id={missingId}>
+          {t('settings.providerMissing', { items: missing.join(t('settings.listSeparator')) })}
+        </p>
+      )}
       <button
+        aria-describedby={missing.length === 0 ? undefined : missingId}
         className="dsh-button dsh-button--primary dsh-button--compact"
         type="button"
         disabled={!canSubmit}

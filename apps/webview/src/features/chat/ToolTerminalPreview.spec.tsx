@@ -36,4 +36,11 @@ describe('ToolTerminalPreview', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Copy' }))
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(output))
   })
+
+  it('displays the executed command in completed terminal results', () => {
+    const { container } = render(
+      <ToolTerminalPreview {...terminalProps({ output: 'ok\n', exitCode: 0 })} command="pnpm test" />,
+    )
+    expect(container.textContent).toContain('$ pnpm test')
+  })
 })

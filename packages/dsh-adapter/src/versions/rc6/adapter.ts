@@ -58,6 +58,8 @@ export class Rc6VersionAdapter extends DshVersionAdapterBase {
 
   protected readonly requiresHome: boolean = false
   protected readonly supportsJobs: boolean = true
+  /** The first Host API contract has no session-log download, so it cannot export ZIP. */
+  protected readonly supportsZipExport: boolean = true
   /** The pinned rc/legacy contracts expose archive only, not unarchive. */
   protected readonly supportsSessionRestore: boolean = false
 
@@ -134,6 +136,7 @@ export class Rc6VersionAdapter extends DshVersionAdapterBase {
           'subagents',
           'events',
         ]),
+        ...(this.supportsZipExport ? {} : { sessionZipExport: false }),
         ...(unknownRuntime
           ? {
               compatibilityWarning:

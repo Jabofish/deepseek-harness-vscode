@@ -58,7 +58,10 @@
     "onCommand:dsh.installEditorCompanion",
     "onCommand:dsh.undoEditorEdit",
     "onView:dsh.sessionList",
-    "onCommand:dsh.openSessionList"
+    "onCommand:dsh.openSessionList",
+    "onCommand:dsh.openInSecondarySidebar",
+    "onCommand:dsh.authorizeExternalConnection",
+    "onCommand:dsh.clearExternalCredentials"
   ],
   "scripts": {
     "build": "node esbuild.mjs",
@@ -243,13 +246,11 @@
       },
       {
         "command": "dsh.authorizeExternalConnection",
-        "title": "Authorize External Connection",
-        "category": "DSH"
+        "title": "JaboDSH: Authorize External Connection"
       },
       {
         "command": "dsh.clearExternalCredentials",
-        "title": "Clear External Connection Credentials",
-        "category": "DSH"
+        "title": "JaboDSH: Clear External Connection Credentials"
       },
       {
         "command": "dsh.sessions.open",
@@ -469,8 +470,7 @@
           "when": "false"
         },
         {
-          "command": "dsh.openInSecondarySidebar",
-          "when": "false"
+          "command": "dsh.openInSecondarySidebar"
         },
         {
           "command": "dsh.openChatInEditor"
@@ -524,12 +524,10 @@
           "command": "dsh.undoEditorEdit"
         },
         {
-          "command": "dsh.authorizeExternalConnection",
-          "when": "false"
+          "command": "dsh.authorizeExternalConnection"
         },
         {
-          "command": "dsh.clearExternalCredentials",
-          "when": "false"
+          "command": "dsh.clearExternalCredentials"
         },
         {
           "command": "dsh.sessions.open",
@@ -556,8 +554,7 @@
           "when": "false"
         },
         {
-          "command": "dsh.openSessionList",
-          "when": "false"
+          "command": "dsh.openSessionList"
         }
       ]
     },
@@ -662,13 +659,6 @@
           "scope": "machine",
           "description": "Explicit local attachment targets for auto and attach-only modes when no server URL is set. Never overridable by workspace settings. Setting this list disables fallback to other ports and automatic startup; reset the setting to restore automatic discovery."
         },
-        "dsh.connection.discoveryTimeoutMs": {
-          "type": "integer",
-          "minimum": 100,
-          "maximum": 30000,
-          "default": 1500,
-          "description": "Maximum time for one local DSH discovery pass."
-        },
         "dsh.connection.requestTimeoutMs": {
           "type": "integer",
           "minimum": 1000,
@@ -687,47 +677,6 @@
           "default": true,
           "scope": "machine",
           "description": "Start a local DSH only after no compatible running instance can be attached. Never overridable by workspace settings."
-        },
-        "dsh.agent.defaultPreset": {
-          "type": "string",
-          "default": "standard",
-          "description": "Default DSH agent preset for new sessions; deployments may provide additional ids."
-        },
-        "dsh.agent.toolMode": {
-          "type": "string",
-          "enum": [
-            "native",
-            "ptc",
-            "code",
-            "both"
-          ],
-          "default": "native",
-          "description": "Default DSH tool mode for new sessions. Alpha runtimes use ptc; code is retained for published rc runtimes."
-        },
-        "dsh.agent.permissionPreset": {
-          "type": "string",
-          "default": "workspace-write",
-          "description": "Default permission preset supplied by the connected DSH permission plugin."
-        },
-        "dsh.agent.planMode": {
-          "type": "boolean",
-          "default": false,
-          "description": "Enable DSH plan mode by default for new sessions."
-        },
-        "dsh.model.provider": {
-          "type": "string",
-          "default": "",
-          "description": "Optional default provider id. Leave empty to use DSH configuration."
-        },
-        "dsh.model.id": {
-          "type": "string",
-          "default": "",
-          "description": "Optional default model id. Leave empty to use DSH configuration."
-        },
-        "dsh.model.reasoningLevel": {
-          "type": "string",
-          "default": "",
-          "description": "Optional default reasoning level when supported by the selected model."
         },
         "dsh.checkpoints.enabled": {
           "type": "boolean",

@@ -19,7 +19,7 @@ import type { RuntimeInstaller } from '../vscode/install-runtime.js'
 import type { VsCodeConfigurationSource } from '../config/configuration-source.js'
 import { moveOrExplainSecondarySidebar } from '../vscode/secondary-sidebar.js'
 import { openDshWebUi } from '../vscode/open-web-ui.js'
-import { DSH_DOCUMENTATION_URL, EXTENSION_ID } from '../constants.js'
+import { DSH_DOCUMENTATION_URL, EXTENSION_ID, SIDEBAR_SURFACE_ID } from '../constants.js'
 import { deliverOrRevealView } from '../view/deliver-or-reveal.js'
 import type { WebviewMessageRouter } from '../view/message-router.js'
 import { DshWebviewViewProvider } from '../view/dsh-webview-view-provider.js'
@@ -38,19 +38,14 @@ import {
   SESSION_LIST_VIEW_ID,
 } from '../view/native-session-list.js'
 import { EditorBridgeHost } from '../editor/editor-bridge-host.js'
-
-const TRANSPORT_CONFIGURATION_KEYS = [
-  'dsh.connection.mode',
-  'dsh.connection.serverUrl',
-  'dsh.connection.runtimeVersion',
-  'dsh.connection.managedPort',
-  'dsh.connection.attachPorts',
-  'dsh.connection.discoveryTimeoutMs',
-  'dsh.connection.requestTimeoutMs',
-] as const
+import { reconnectsAfterConfigurationChange, retriesWithNewRuntime } from './configuration-reconnect.js'
+import { openChatInEditorAction } from './open-chat-in-editor.js'
 
 export interface CommandsAssemblyDependencies {
   readonly sessionNavigation: RequestGateway['sessionNavigation']
+  readonly openSessionIds?: () => readonly string[]
+  /** The conversation a chat surface currently shows, if any. */
+  readonly surfaceSessionId?: (surfaceId: string) => string | undefined
   readonly authorizeExternalConnection?: () => Promise<void>
   readonly clearExternalCredentials?: () => Promise<void>
   readonly disposeEndpointAccess?: () => Promise<void>
@@ -73,6 +68,7 @@ export interface CommandsAssemblyDependencies {
   readonly reconnectOnTransportChange: (signal?: AbortSignal) => Promise<unknown>
   readonly publishState: (state: BackendState) => void
   readonly postEvent: (name: string, payload: unknown) => Promise<boolean>
+  readonly postEventTo?: (surfaceId: string, name: string, payload: unknown) => Promise<boolean>
   readonly postFeatureEvent: PostFeatureEvent
   readonly postEditorContextAvailabilityEvent: () => Promise<void>
   readonly editorContextUseCases: EditorContextUseCases
@@ -123,6 +119,7 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
     reconnectOnTransportChange,
     publishState,
     postEvent,
+    postEventTo,
     postFeatureEvent,
     postEditorContextAvailabilityEvent,
     editorContextUseCases,
@@ -146,7 +143,7 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
         action: 'added',
       }).catch(() => false)
       await postEditorContextAvailabilityEvent()
-      await provider.reveal(true)
+      if (!surfaces.list().some((surface) => surface.visible)) await provider.reveal(true)
     } catch (error) {
       const detail =
         error instanceof AppError
@@ -167,6 +164,7 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
       deps.sessionNavigation.invalidate()
       invalidateCurrentWorkspaceSessionDetails()
+      taskRegistry.workspaceFoldersChanged()
       // This drops every captured context ref, so the availability keys have
       // to be recomputed in the same turn. They are what gates the "Add …
       // Context" menu entries, and none of the editor listeners below fires
@@ -186,10 +184,12 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
       void postEditorContextAvailabilityEvent()
     }),
   ]
-  const revealThenPost = (name: string, payload: unknown): Promise<boolean> =>
+  const postToSurface = (surfaceId: string, name: string, payload: unknown): Promise<boolean> =>
+    postEventTo === undefined ? postEvent(name, payload) : postEventTo(surfaceId, name, payload)
+  const revealThenPostToSidebar = (name: string, payload: unknown): Promise<boolean> =>
     deliverOrRevealView(
       {
-        post: postEvent,
+        post: (eventName, eventPayload) => postToSurface(SIDEBAR_SURFACE_ID, eventName, eventPayload),
         executeCommand: (command, ...args) => vscode.commands.executeCommand(command, ...args),
         settle: () => provider.waitUntilReady(),
       },
@@ -232,34 +232,52 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
         'dsh.connect': () => reconnect(),
         'dsh.reconnect': () => reconnect(),
         'dsh.newSession': async () => {
-          const delivered = await revealThenPost('ui.sessions.toggle', {})
+          const delivered = await revealThenPostToSidebar('ui.sessions.toggle', {})
           if (!delivered)
             await vscode.window.showWarningMessage('The DSH view could not be opened. Try opening it again.')
           return delivered
         },
         'dsh.openSessionList': () => vscode.commands.executeCommand(`${SESSION_LIST_VIEW_ID}.focus`),
         'dsh.openSettings': async () => {
-          const delivered = await postEvent('ui.settings.toggle', {})
+          const targetId = provider.visible
+            ? SIDEBAR_SURFACE_ID
+            : (surfaces.active?.surfaceId ?? SIDEBAR_SURFACE_ID)
+          const delivered = await postToSurface(targetId, 'ui.settings.toggle', {})
           if (!delivered)
             await vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${EXTENSION_ID}`)
         },
         'dsh.openWebUi': () => openDshWebUi(coordinator.getState(), endpointLaunchUrls),
-        'dsh.installRuntime': () => runtimeInstaller.install(),
+        // Same follow-up as the view's install button: a missing runtime
+        // connects as soon as it exists, a live connection keeps running.
+        'dsh.installRuntime': async () => {
+          await runtimeInstaller.install()
+          runtimeLocator.invalidate()
+          if (retriesWithNewRuntime(coordinator.getState().kind)) await reconnect()
+        },
         'dsh.selectExecutable': () => runtimeInstaller.selectExecutable(),
         'dsh.copyInstallCommand': () => runtimeInstaller.copyInstallCommand(),
         'dsh.openDocumentation': () => vscode.env.openExternal(vscode.Uri.parse(DSH_DOCUMENTATION_URL)),
         'dsh.openInSecondarySidebar': () => moveOrExplainSecondarySidebar(vscode.commands, vscode.window),
-        // The Host has no active session of its own: an already-open editor tab
-        // is revealed directly, otherwise the live chat is asked to move the
-        // session it is showing.
+        // Ask the sidebar to open its current session in an editor tab first so
+        // users can open multiple distinct sessions; fall back to revealing an
+        // existing editor tab when the sidebar is hidden.
         'dsh.openChatInEditor': async () => {
           const existing =
             editorSurfaces.surfacesById.find((surface) => surface.panel.active) ?? editorSurfaces.mostRecent
+          const action = openChatInEditorAction({
+            sidebarVisible: provider.visible,
+            sidebarSessionId: deps.surfaceSessionId?.(SIDEBAR_SURFACE_ID),
+            hasEditorTab: existing !== undefined,
+          })
+          if (action === 'move-sidebar-session') {
+            const delivered = await postToSurface(SIDEBAR_SURFACE_ID, 'ui.surface.openInEditor', {})
+            if (delivered) return true
+          }
           if (existing !== undefined) {
             await existing.reveal(false)
             return true
           }
-          const delivered = await revealThenPost('ui.surface.openInEditor', {})
+          const delivered = await revealThenPostToSidebar('ui.surface.openInEditor', {})
           if (!delivered)
             await vscode.window.showWarningMessage(
               'Open the DSH chat and select a session before moving it to the editor area.',
@@ -324,19 +342,7 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
         // A new executable path only takes effect on the next locate; the
         // memoized result would otherwise keep the previous one alive.
         if (affectsConfiguration('dsh.runtime.executablePath')) runtimeLocator.invalidate()
-        if (!TRANSPORT_CONFIGURATION_KEYS.some((key) => affectsConfiguration(key))) return
-        const stateKind = coordinator.getState().kind
-        if (
-          stateKind !== 'connected' &&
-          stateKind !== 'connecting' &&
-          stateKind !== 'discovering' &&
-          stateKind !== 'locating-runtime' &&
-          stateKind !== 'starting' &&
-          stateKind !== 'failed' &&
-          stateKind !== 'runtime-missing' &&
-          stateKind !== 'port-conflict'
-        )
-          return
+        if (!reconnectsAfterConfigurationChange(affectsConfiguration, coordinator.getState().kind)) return
         // Disconnect invalidates the coordinator generation and aborts an
         // in-flight attach. The shared reconnect operation coalesces this
         // automatic path with an explicit connection.configure reconnect.

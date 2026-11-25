@@ -50,11 +50,14 @@ export function ModelListEditor(props: ModelListEditorProps): ReactElement {
   const { t } = useI18n()
   const inputField = props.inputField ?? 'inputModalities'
   const [draft, setDraft] = useState<EditableModel[]>(() => props.models.map(copyModel))
+  const nextRowKeyRef = useRef(props.models.length)
+  const [rowKeys, setRowKeys] = useState<number[]>(() => props.models.map((_model, index) => index))
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set())
   const [editingCapacity, setEditingCapacity] = useState<ReadonlyMap<string, string>>(new Map())
   const [discovering, setDiscovering] = useState(false)
   const [candidates, setCandidates] = useState<readonly DiscoveredModel[] | undefined>(undefined)
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set())
+  const [candidateQuery, setCandidateQuery] = useState('')
   const [error, setError] = useState<string | undefined>(undefined)
   const [saved, setSaved] = useState(false)
 
@@ -74,6 +77,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactElement {
     setSaved(false)
     const next = draft.filter((_model, at) => at !== index)
     setDraft(next)
+    setRowKeys((current) => current.filter((_key, at) => at !== index))
     props.onChange?.(next.map(copyModel))
     setExpanded((current) => shiftIndexes(current, index))
     setEditingCapacity((current) => shiftCapacityBuffers(current, index))
@@ -81,6 +85,8 @@ export function ModelListEditor(props: ModelListEditorProps): ReactElement {
 
   const add = (): void => {
     setSaved(false)
+    const nextKey = nextRowKeyRef.current++
+    setRowKeys((current) => [...current, nextKey])
     replaceDraft([...draft, { id: '' }])
   }
 
@@ -94,9 +100,11 @@ export function ModelListEditor(props: ModelListEditorProps): ReactElement {
         setError(t('settings.noDiscoveredModels'))
         return
       }
-      const known = new Set(draft.map((model) => model.id.trim()).filter((id) => id !== ''))
+      // Aggregators can return hundreds of models; nothing is preselected so
+      // the user adds what they want instead of pruning a full list.
       setCandidates(found)
-      setPicked(new Set(found.filter((model) => !known.has(model.id)).map((model) => model.id)))
+      setCandidateQuery('')
+      setPicked(new Set())
     } catch (reason: unknown) {
       setError(reason instanceof Error ? reason.message : t('settings.discoveryFailed'))
     } finally {
@@ -107,6 +115,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactElement {
   const closeCandidates = (): void => {
     setCandidates(undefined)
     setPicked(new Set())
+    setCandidateQuery('')
     // The dialog is `aria-modal`, so hand the keyboard back to the button that
     // opened it instead of dropping focus on the body.
     discoverTriggerRef.current?.focus()
@@ -119,6 +128,20 @@ export function ModelListEditor(props: ModelListEditorProps): ReactElement {
     refs: [pickerRef],
     onDismiss: closeCandidates,
   })
+
+  const knownIds = new Set(draft.map((model) => model.id.trim()).filter((id) => id !== ''))
+  const needle = candidateQuery.trim().toLowerCase()
+  const visibleCandidates =
+    candidates === undefined
+      ? []
+      : needle === ''
+        ? candidates
+        : candidates.filter(
+            (model) => model.id.toLowerCase().includes(needle) || model.label.toLowerCase().includes(needle),
+          )
+  const selectableCandidates = visibleCandidates.filter((model) => !knownIds.has(model.id))
+  const allVisiblePicked =
+    selectableCandidates.length > 0 && selectableCandidates.every((model) => picked.has(model.id))
 
   const adopt = (): void => {
     if (candidates === undefined) return
@@ -133,6 +156,8 @@ export function ModelListEditor(props: ModelListEditorProps): ReactElement {
         ...(model.inputModalities === undefined ? {} : { [inputField]: [...model.inputModalities] }),
       }))
     setSaved(false)
+    const addedKeys = additions.map(() => nextRowKeyRef.current++)
+    setRowKeys((current) => [...current, ...addedKeys])
     replaceDraft([...draft, ...additions])
     closeCandidates()
   }
@@ -194,7 +219,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactElement {
           const inheritedInput = inheritedInputTypes(model, props)
           const selectedInput = explicitInput ?? inheritedInput
           return (
-            <li key={`${index}:${model.id}`} className="dsh-settings__editable-model">
+            <li key={rowKeys[index] ?? index} className="dsh-settings__editable-model">
               <div className="dsh-settings__editable-model-row">
                 <label className="dsh-settings__editable-model-id">
                   <span className="dsh-settings__visually-hidden">{t('settings.modelId')}</span>
@@ -364,26 +389,42 @@ export function ModelListEditor(props: ModelListEditorProps): ReactElement {
               </button>
             </header>
             <div className="dsh-settings__model-picker-actions">
+              <input
+                className="dsh-settings__model-picker-search"
+                type="search"
+                value={candidateQuery}
+                placeholder={t('settings.searchDiscoveredModels')}
+                aria-label={t('settings.searchDiscoveredModels')}
+                onChange={(event) => setCandidateQuery(event.currentTarget.value)}
+              />
               <button
                 className="dsh-button dsh-button--secondary dsh-button--compact"
                 type="button"
+                disabled={selectableCandidates.length === 0}
                 onClick={() => {
-                  const all = candidates.every((model) => picked.has(model.id))
-                  setPicked(all ? new Set() : new Set(candidates.map((model) => model.id)))
+                  setPicked((current) => {
+                    const next = new Set(current)
+                    for (const model of selectableCandidates)
+                      if (allVisiblePicked) next.delete(model.id)
+                      else next.add(model.id)
+                    return next
+                  })
                 }}
               >
-                {candidates.length > 0 && candidates.every((model) => picked.has(model.id))
-                  ? t('settings.deselectAllModels')
-                  : t('settings.selectAllModels')}
+                {allVisiblePicked ? t('settings.deselectAllModels') : t('settings.selectAllModels')}
               </button>
             </div>
+            {visibleCandidates.length === 0 ? (
+              <p className="dsh-settings__empty">{t('settings.noMatchingModels')}</p>
+            ) : null}
             <ul>
-              {candidates.map((model) => (
+              {visibleCandidates.map((model) => (
                 <li key={model.id}>
                   <label>
                     <input
                       type="checkbox"
-                      checked={picked.has(model.id)}
+                      disabled={knownIds.has(model.id)}
+                      checked={knownIds.has(model.id) || picked.has(model.id)}
                       onChange={() =>
                         setPicked((current) => {
                           const next = new Set(current)
@@ -395,6 +436,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactElement {
                     />
                     <span>{model.label}</span>
                     <code>{model.id}</code>
+                    {knownIds.has(model.id) ? <small>{t('settings.modelAlreadyAdded')}</small> : null}
                   </label>
                 </li>
               ))}
@@ -410,9 +452,10 @@ export function ModelListEditor(props: ModelListEditorProps): ReactElement {
               <button
                 className="dsh-button dsh-button--primary dsh-button--compact"
                 type="button"
+                disabled={picked.size === 0}
                 onClick={adopt}
               >
-                {t('settings.addSelectedModels')}
+                {t('settings.addSelectedModelsCount', { count: picked.size })}
               </button>
             </footer>
           </section>

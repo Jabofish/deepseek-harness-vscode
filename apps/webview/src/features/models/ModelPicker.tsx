@@ -90,7 +90,7 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
   const selected = props.models.find(
     (model) => model.providerId === props.value.providerId && model.id === props.value.modelId,
   )
-  const showSearch = focused && props.models.length > 4
+  const showSearch = props.models.length > 4
   const groups = useMemo(
     () =>
       groupModels(props.models)
@@ -98,7 +98,10 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
           ...group,
           models: showSearch
             ? rankByName(
-                group.models.map((model) => ({ ...model, name: model.id })),
+                group.models.map((model) => ({
+                  ...model,
+                  name: `${model.label} ${model.id} ${model.providerId}`,
+                })),
                 search.query.trim(),
               )
             : group.models,
@@ -246,7 +249,10 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
   }
 
   const onMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
-    if (event.nativeEvent.isComposing) return
+    // An IME owns Enter while composing: it commits the typed letters into the
+    // search box and must not also pick the first match. 229 is the legacy
+    // composition signal some engines send without isComposing.
+    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return
     if (event.key === 'Escape' || (focused && event.key === 'Tab' && event.shiftKey)) {
       event.preventDefault()
       if (pane === 'root' || (focused && selected === undefined)) {
@@ -547,10 +553,25 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
                                   }
                                   aria-checked={isSelected}
                                   aria-disabled={applying}
-                                  title={model.label}
+                                  aria-label={model.label}
+                                  title={`${model.label} (${model.id})`}
                                   onClick={() => selectModel(model)}
                                 >
-                                  <span>{model.label}</span>
+                                  <span className="dsh-model-picker__option-copy">
+                                    <span>{model.label}</span>
+                                    <span className="dsh-model-picker__option-meta">
+                                      {model.id !== model.label ? <code>{model.id}</code> : null}
+                                      {model.contextWindow !== undefined && model.contextWindow > 0 ? (
+                                        <span>{formatContextWindow(model.contextWindow)}</span>
+                                      ) : null}
+                                      {model.supportsReasoning ? (
+                                        <span>{t('model.badge.reasoning')}</span>
+                                      ) : null}
+                                      {model.inputModalities?.includes('image') === true ? (
+                                        <span>{t('model.badge.vision')}</span>
+                                      ) : null}
+                                    </span>
+                                  </span>
                                   {isSelected ? <Icon name="check" /> : null}
                                 </button>
                               )
@@ -644,4 +665,10 @@ function groupModels(models: readonly ModelDescriptor[]): readonly ProviderGroup
     }
   }
   return groups
+}
+
+function formatContextWindow(tokens: number): string {
+  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(tokens % 1_000_000 === 0 ? 0 : 1)}M`
+  if (tokens >= 1_000) return `${Math.round(tokens / 1_000)}K`
+  return `${tokens}`
 }

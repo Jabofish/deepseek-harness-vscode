@@ -48,8 +48,9 @@ export default defineConfig({
           name: 'webview',
           pool: 'vmThreads',
           vmMemoryLimit: '512MB',
-          setupFiles: ['apps/webview/src/test/reset-environment.ts'],
-          sequence: { groupOrder: 0 },
+          setupFiles: ['apps/webview/src/test/reset-environment.ts', 'apps/webview/src/test/locale-reset.ts'],
+          // Reset the module registry before registering the locale hook.
+          sequence: { groupOrder: 0, setupFiles: 'list' },
           include: ['apps/webview/**/*.spec.ts?(x)', 'packages/ui/**/*.spec.ts?(x)'],
           exclude: [...exclude, nativeBuildTest],
         },
