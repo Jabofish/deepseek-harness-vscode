@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
-import { canConnect, LIVE_TIMEOUT_MS, startManagedRuntime } from './harness.js'
+import { canConnect, LIVE_TIMEOUT_MS, startManagedRuntime, runtimePackageRoot } from './harness.js'
 import { AlphaLoopbackApiClient } from '../../packages/dsh-adapter/src/versions/alpha/transport.js'
 import { unwrapRpcResultValue } from '../../packages/dsh-adapter/src/versions/rc6/rpc.js'
 import { scopedSchedule } from '../../apps/extension/src/schedules/schedule-scope.js'
@@ -68,9 +68,7 @@ describe.skipIf(!enabled)('native Host Schedule lifecycle', () => {
       let runtime: Awaited<ReturnType<typeof startManagedRuntime>> | undefined
       let transport: AlphaLoopbackApiClient | undefined
       try {
-        const runtimeRequire = createRequire(
-          path.join(path.dirname(path.dirname(executable)), 'package.json'),
-        )
+        const runtimeRequire = createRequire(path.join(runtimePackageRoot(executable), 'package.json'))
         const plugin = path.join(home, 'delivery-probe.mjs')
         const patchFile = path.join(home, 'delivery.patch.yml')
         await writeFile(
