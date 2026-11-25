@@ -281,9 +281,10 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     const manager = editorChatSurfaces.current
     if (manager === undefined) throw surfaceRoutesUnavailable()
     const moveAll = surfaceId === SIDEBAR_SURFACE_ID
-    const source = surfaceId === undefined || moveAll
-      ? (manager.surfacesById.find((surface) => surface.panel.active) ?? manager.mostRecent)
-      : manager.surfacesById.find((surface) => surface.surfaceId === surfaceId)
+    const source =
+      surfaceId === undefined || moveAll
+        ? (manager.surfacesById.find((surface) => surface.panel.active) ?? manager.mostRecent)
+        : manager.surfacesById.find((surface) => surface.surfaceId === surfaceId)
     const moving = (moveAll ? manager.surfacesById : source === undefined ? [] : [source]).map((surface) => ({
       surface,
       sessionId: surface.sessionId,
