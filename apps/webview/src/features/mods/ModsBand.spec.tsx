@@ -127,3 +127,55 @@ it('reports a failed press and lets the user press again', async () => {
   expect(calls.filter((call) => call.type === 'mods.band.press')).toHaveLength(2)
   expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
 })
+
+it('fires a hotkey only while no field, list, menu or dialog owns the key', async () => {
+  const presses: string[] = []
+  const request: AppStore['featureRequest'] = <T,>(message: FeatureRequest) => {
+    if (message.type === 'mods.band.press') {
+      presses.push(message.payload.actionId)
+      return Promise.resolve({
+        kind: 'mods.band',
+        available: true,
+        snapshot: {
+          generation: 1 + presses.length,
+          tree: [{ kind: 'button', label: 'Kick', disabled: false, actionId: 'kick', hotkey: 'k' }],
+        },
+      } as T)
+    }
+    if (message.type === 'mods.band.read' && message.payload.afterGeneration === undefined)
+      return Promise.resolve({
+        kind: 'mods.band',
+        available: true,
+        snapshot: {
+          generation: 1,
+          tree: [{ kind: 'button', label: 'Kick', disabled: false, actionId: 'kick', hotkey: 'k' }],
+        },
+      } as T)
+    return new Promise<T>(() => undefined)
+  }
+  render(
+    <div>
+      <ModsBand sessionId="s1" featureRequest={request} />
+      <ul role="listbox" tabIndex={0} aria-label="Choices">
+        <li role="option" aria-selected="false">
+          Kiwi
+        </li>
+      </ul>
+    </div>,
+  )
+  await screen.findByRole('button', { name: /Kick/u })
+  fireEvent.keyDown(screen.getByRole('listbox', { name: 'Choices' }), { key: 'k' })
+  fireEvent.keyDown(document.body, { key: 'K', shiftKey: true })
+  expect(presses).toEqual([])
+
+  const modal = document.createElement('div')
+  modal.setAttribute('role', 'dialog')
+  modal.setAttribute('aria-modal', 'true')
+  document.body.append(modal)
+  fireEvent.keyDown(document.body, { key: 'k' })
+  expect(presses).toEqual([])
+  modal.remove()
+
+  fireEvent.keyDown(document.body, { key: 'k' })
+  await waitFor(() => expect(presses).toEqual(['kick']))
+})

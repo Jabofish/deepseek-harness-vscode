@@ -114,15 +114,9 @@ function SessionModsBand(props: {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.defaultPrevented || event.isComposing || event.ctrlKey || event.metaKey || event.altKey)
         return
-      const target = event.target
-      if (
-        target instanceof HTMLElement &&
-        (target.tagName === 'INPUT' ||
-          target.tagName === 'TEXTAREA' ||
-          target.tagName === 'SELECT' ||
-          target.isContentEditable)
-      )
-        return
+      // Shift+K is not the K hotkey; a symbol key typed with Shift (`?`) still is.
+      if (event.shiftKey && event.key.toLowerCase() !== event.key.toUpperCase()) return
+      if (!hotkeyTargetIsFree(event.target)) return
       const actionId = hotkeys.get(event.key.toLowerCase())
       if (actionId === undefined) return
       event.preventDefault()
@@ -208,6 +202,35 @@ function BandNode({
       {children}
     </div>
   )
+}
+
+/** Keys typed into a field, list, menu or dialog belong to it, not to the band. */
+const KEY_OWNER_SELECTOR = [
+  'input',
+  'textarea',
+  'select',
+  '[contenteditable]:not([contenteditable="false"])',
+  '[role="textbox"]',
+  '[role="combobox"]',
+  '[role="listbox"]',
+  '[role="option"]',
+  '[role="menu"]',
+  '[role="menuitem"]',
+  '[role="menuitemcheckbox"]',
+  '[role="menuitemradio"]',
+  '[role="dialog"]',
+  '[role="alertdialog"]',
+  '[role="tree"]',
+  '[role="grid"]',
+  '[role="slider"]',
+  '[role="spinbutton"]',
+].join(',')
+
+function hotkeyTargetIsFree(target: EventTarget | null): boolean {
+  if (document.querySelector('[aria-modal="true"], dialog[open]') !== null) return false
+  if (!(target instanceof Element)) return true
+  if (target instanceof HTMLElement && target.isContentEditable) return false
+  return target.closest(KEY_OWNER_SELECTOR) === null
 }
 
 function collectHotkeys(
