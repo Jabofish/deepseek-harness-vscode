@@ -257,28 +257,49 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
   }, [focusRequest, onFocusRequestHandled, props.draftKey])
 
   const referenceDebounceRef = useRef<number | undefined>(undefined)
+  // While a typed query waits for its debounce, the listed candidates belong
+  // to the previous query: show them as loading so Enter cannot pick one.
+  const [referenceQueryPending, setReferenceQueryPending] = useState(false)
   const onReferenceQueryChangeRef = useRef(props.onReferenceQueryChange)
   onReferenceQueryChangeRef.current = props.onReferenceQueryChange
-  const scheduleReferenceQuery = (query: string | undefined, quoted: boolean): void => {
+  const cancelReferenceQuery = (): void => {
     if (referenceDebounceRef.current !== undefined) {
       window.clearTimeout(referenceDebounceRef.current)
       referenceDebounceRef.current = undefined
     }
+    setReferenceQueryPending(false)
+  }
+  const scheduleReferenceQuery = (query: string | undefined, quoted: boolean): void => {
+    cancelReferenceQuery()
     if (query === undefined) {
       onReferenceQueryChangeRef.current?.(undefined, false)
       return
     }
+    setReferenceQueryPending(true)
     referenceDebounceRef.current = window.setTimeout(() => {
       referenceDebounceRef.current = undefined
+      setReferenceQueryPending(false)
       onReferenceQueryChangeRef.current?.(query, quoted)
     }, 150)
   }
+  /** A pick or command changes the query at once; a typed query still waiting must not follow it. */
+  const changeReferenceQueryNow = (query: string | undefined, quoted: boolean): void => {
+    cancelReferenceQuery()
+    onReferenceQueryChangeRef.current?.(query, quoted)
+  }
+  useEffect(() => {
+    if (referenceDebounceRef.current === undefined) return
+    window.clearTimeout(referenceDebounceRef.current)
+    referenceDebounceRef.current = undefined
+    setReferenceQueryPending(false)
+  }, [props.draftKey])
   useEffect(
     () => () => {
       if (referenceDebounceRef.current !== undefined) window.clearTimeout(referenceDebounceRef.current)
     },
     [],
   )
+  const referenceLoading = props.referenceLoading === true || referenceQueryPending
 
   const ingestFiles = (files: readonly File[] | FileList | undefined): void => {
     if (props.attachmentsDisabled === true) return
@@ -338,7 +359,14 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
     commandSubmitting,
     cancelCommand,
   } = useComposerMenuState(
-    { ...props, submissionBlocked: isSubmitting },
+    {
+      ...props,
+      submissionBlocked: isSubmitting,
+      referenceLoading,
+      ...(props.onReferenceQueryChange === undefined
+        ? {}
+        : { onReferenceQueryChange: changeReferenceQueryNow }),
+    },
     {
       setPendingCursor: (cursor) => {
         pendingCursorRef.current = cursor
@@ -361,7 +389,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
         ? t('composer.commandSuggestionsFreeform', { command: freeformCommand.name })
         : t('composer.commandSuggestionsEmpty')
     : referenceMenuOpen
-      ? props.referenceLoading === true
+      ? referenceLoading
         ? t('composer.referenceSuggestionsLoading')
         : (props.references?.length ?? 0) > 0
           ? t('composer.referenceSuggestionsOpen', { count: props.references?.length ?? 0 })
@@ -493,6 +521,12 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
         return
       }
       if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey && !event.repeat) {
+        // The listed rows answer an earlier query until this one resolves:
+        // neither pick one nor send the half-typed mention.
+        if (referenceLoading) {
+          event.preventDefault()
+          return
+        }
         const candidates = props.references ?? []
         const selected =
           referenceHighlightValue === undefined ? candidates[0] : candidates[referenceHighlightValue]
@@ -785,7 +819,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
         {referenceToken === undefined || props.references === undefined || !referenceMenuOpen ? null : (
           <ReferencePalette
             candidates={props.references}
-            loading={props.referenceLoading === true}
+            loading={referenceLoading}
             {...(referenceHighlightValue === undefined ? {} : { highlight: referenceHighlightValue })}
             onSelect={selectReference}
           />
