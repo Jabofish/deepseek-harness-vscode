@@ -8,6 +8,7 @@ import { SIDEBAR_SURFACE_ID, VIEW_ID, DSH_PACKAGE } from '../constants.js'
 import { DshWebviewViewProvider } from '../view/dsh-webview-view-provider.js'
 import { EditorChatSurfaceManager } from '../view/editor-chat-surface-manager.js'
 import { WebviewMessageRouter } from '../view/message-router.js'
+import type { WebviewSurface } from '../view/webview-surface.js'
 import { publicWorkspaceSummary } from '../view/public-value.js'
 import { requestOptionalProviderApiKey, requestProviderSecret } from '../vscode/credential-input.js'
 import { createAttachmentRequestHandler, isAttachmentRequest } from './attachment-request-handler.js'
@@ -215,6 +216,7 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
   // it); no request can arrive before the gateway has finished composing.
   const editorChatSurfaces: { current?: EditorChatSurfaceManager } = {}
   const selectionRequests = new Map<string, object>()
+  const editorOpenRequests = new Map<string, object>()
   const syncSessionDisplay = (surfaceId: string): void => {
     const surface = surfaces.get(surfaceId)
     sessionWatch.surfaceVisibilityChanged(surfaceId, surface?.visible === true && surface.isReady)
@@ -230,26 +232,51 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
       message: 'The editor chat surface is not available in this extension build.',
       retryable: false,
     })
+  const editorNavigationCancelled = (): AppError =>
+    new AppError({
+      code: 'REQUEST_CANCELLED',
+      message: 'The editor chat changed while the operation was in progress.',
+      retryable: false,
+    })
   const moveChatToSidebar = async (surfaceId?: string, signal?: AbortSignal): Promise<void> => {
     const manager = editorChatSurfaces.current
     if (manager === undefined) throw surfaceRoutesUnavailable()
-    const source =
-      surfaceId === undefined || surfaceId === SIDEBAR_SURFACE_ID
-        ? (manager.surfacesById.find((surface) => surface.panel.active) ?? manager.mostRecent)
-        : surfaces.get(surfaceId)
+    const moveAll = surfaceId === undefined || surfaceId === SIDEBAR_SURFACE_ID
+    const source = moveAll
+      ? (manager.surfacesById.find((surface) => surface.panel.active) ?? manager.mostRecent)
+      : manager.surfacesById.find((surface) => surface.surfaceId === surfaceId)
+    const moving = (moveAll ? manager.surfacesById : source === undefined ? [] : [source]).map((surface) => ({
+      surface,
+      sessionId: surface.sessionId,
+    }))
     const sessionId = source?.sessionId
+    const assertSourceUnchanged = (): void => {
+      if (
+        signal?.aborted === true ||
+        (source !== undefined &&
+          (surfaces.get(source.surfaceId) !== source || source.sessionId !== sessionId))
+      )
+        throw editorNavigationCancelled()
+    }
     if (sessionId !== undefined)
       await requireCurrentWorkspaceSession(sessionId, signal ?? new AbortController().signal)
+    assertSourceUnchanged()
     await vscode.commands.executeCommand(`${VIEW_ID}.focus`)
-    if (!(await provider.waitUntilReady()) || signal?.aborted === true) throw surfaceRoutesUnavailable()
+    if (!(await provider.waitUntilReady())) throw surfaceRoutesUnavailable()
+    assertSourceUnchanged()
     if (
       sessionId !== undefined &&
       !(await postEventTo(SIDEBAR_SURFACE_ID, 'ui.surface.openInSidebar', { sessionId }))
     )
       throw surfaceRoutesUnavailable()
-    // Preserve the source if the target could not be shown or delivered to.
-    if (surfaceId !== undefined && surfaceId !== SIDEBAR_SURFACE_ID) manager.close(surfaceId)
-    else manager.closeAll()
+    assertSourceUnchanged()
+    for (const entry of moving) {
+      if (
+        surfaces.get(entry.surface.surfaceId) === entry.surface &&
+        entry.surface.sessionId === entry.sessionId
+      )
+        manager.close(entry.surface.surfaceId)
+    }
   }
 
   let openingConnection: { readonly abort: AbortController; readonly promise: Promise<unknown> } | undefined
@@ -353,23 +380,7 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
       const current = coordinator.getState()
       const surface = surfaceId === undefined ? undefined : surfaces.get(surfaceId)
       if (surface !== undefined) {
-        let parentSessionId: string | undefined
-        if (surface.kind === 'editor' && surface.sessionId !== undefined) {
-          try {
-            parentSessionId = backendService.requireBackend().subagents?.parentOf?.(surface.sessionId)
-          } catch {
-            parentSessionId = undefined
-          }
-        }
-        await announceSurface(
-          surface.surfaceId,
-          {
-            kind: surface.kind,
-            ...(surface.sessionId === undefined ? {} : { sessionId: surface.sessionId }),
-            ...(parentSessionId === undefined ? {} : { parentSessionId }),
-          },
-          () => !signal.aborted && surfaces.get(surface.surfaceId) === surface,
-        )
+        await announceSurface(surface, signal)
       } else {
         await postEvent('connection.snapshot', publicState(current, diagnostics.connectionOutput?.()))
       }
@@ -455,37 +466,64 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     )
       throw workspaceTrustRequired()
     if (request.type === 'surface.openInEditor') {
-      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
-      if (signal.aborted)
-        throw new AppError({
-          code: 'REQUEST_CANCELLED',
-          message: 'The originating chat was closed or the operation was cancelled.',
-          retryable: false,
-        })
+      const { sessionId, title, replaceCurrent } = request.payload
       const manager = editorChatSurfaces.current
       if (manager === undefined) throw surfaceRoutesUnavailable()
-      if (request.payload.replaceCurrent === true) {
-        if (surfaceId === undefined || surfaces.get(surfaceId)?.kind !== 'editor')
-          throw surfaceRoutesUnavailable()
-        manager.bind(surfaceId, request.payload.sessionId, editorTabTitle(request.payload.title))
-        selectDisplayedSession(surfaceId, request.payload.sessionId)
-      } else {
-        const surface = manager.open(request.payload.sessionId, editorTabTitle(request.payload.title))
-        selectDisplayedSession(surface.surfaceId, request.payload.sessionId)
+      const source = surfaceId === undefined ? undefined : surfaces.get(surfaceId)
+      const editor = source?.kind === 'editor' ? source : undefined
+      if (replaceCurrent === true && editor === undefined) throw surfaceRoutesUnavailable()
+      const navigation = {}
+      if (editor !== undefined) editorOpenRequests.set(editor.surfaceId, navigation)
+      try {
+        await requireCurrentWorkspaceSession(sessionId, signal)
+        if (
+          signal.aborted ||
+          (editor !== undefined && editorOpenRequests.get(editor.surfaceId) !== navigation)
+        )
+          throw editorNavigationCancelled()
+        if (replaceCurrent === true && editor !== undefined) {
+          const previousSessionId = editor.sessionId
+          const surface = manager.bind(editor.surfaceId, sessionId, editorTabTitle(title))
+          const rebound = surface === editor
+          if (rebound && previousSessionId !== sessionId) selectionRequests.delete(editor.surfaceId)
+          selectDisplayedSession(surface.surfaceId, sessionId)
+          sessionNavigation.select(sessionId)
+          return { surface: 'editor' as const, rebound }
+        }
+        const surface = manager.open(sessionId, editorTabTitle(title))
+        selectDisplayedSession(surface.surfaceId, sessionId)
+        return { surface: 'editor' as const }
+      } finally {
+        if (editor !== undefined && editorOpenRequests.get(editor.surfaceId) === navigation)
+          editorOpenRequests.delete(editor.surfaceId)
       }
-      return { surface: 'editor' as const }
     }
     if (request.type === 'surface.moveToSidebar') {
       await moveChatToSidebar(surfaceId, signal)
       return { surface: 'sidebar' as const }
     }
     if (isSessionRequest(request)) {
-      const selection = ['session.open', 'session.create', 'session.fork'].includes(request.type)
-        ? {}
-        : undefined
       const targetSurface = surfaceId ?? SIDEBAR_SURFACE_ID
+      const editor = surfaces.get(targetSurface)?.kind === 'editor'
+      const selection =
+        request.type === 'session.open' ||
+        (!editor && (request.type === 'session.create' || request.type === 'session.fork'))
+          ? {}
+          : undefined
       if (selection !== undefined) selectionRequests.set(targetSurface, selection)
-      const result = await sessionRequestFor(surfaceId)(request, signal)
+      const currentSelection = (): boolean =>
+        selection !== undefined &&
+        selectionRequests.get(targetSurface) === selection &&
+        !signal.aborted &&
+        surfaces.get(targetSurface) !== undefined
+      const assertOpenCurrent = (sessionId: string): void => {
+        if (editor) {
+          const binding = surfaces.get(targetSurface)?.sessionId
+          if (!currentSelection() || (binding !== undefined && binding !== sessionId))
+            throw editorNavigationCancelled()
+        }
+      }
+      const result = await sessionRequestFor(surfaceId)(request, signal, assertOpenCurrent)
       // A rename is the one session mutation that changes a tab label while the
       // tab is open; the Host applies the accepted title so a second Webview
       // (the editor tab) does not have to observe the catalog change.
@@ -500,12 +538,7 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
       }
       // Only an accepted current selection owns display demand; an obsolete
       // open reply must not replace the session a rapid switch already chose.
-      const currentSelection =
-        selection !== undefined &&
-        selectionRequests.get(targetSurface) === selection &&
-        !signal.aborted &&
-        surfaces.get(targetSurface) !== undefined
-      if (request.type === 'session.open' && currentSelection) {
+      if (request.type === 'session.open' && currentSelection()) {
         selectDisplayedSession(targetSurface, request.payload.sessionId)
         sessionNavigation.select(request.payload.sessionId)
       }
@@ -514,12 +547,11 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
         typeof result === 'object' &&
         result !== null &&
         'id' in result &&
-        typeof result.id === 'string'
+        typeof result.id === 'string' &&
+        currentSelection()
       ) {
-        if (currentSelection) {
-          selectDisplayedSession(targetSurface, result.id)
-          sessionNavigation.select(result.id)
-        }
+        selectDisplayedSession(targetSurface, result.id)
+        sessionNavigation.select(result.id)
       }
       if (
         [
@@ -972,6 +1004,7 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
   }
   const onSurfaceWorkCancelled = (disposedSurfaceId: string): void => {
     selectionRequests.delete(disposedSurfaceId)
+    editorOpenRequests.delete(disposedSurfaceId)
     surfaceFocus.delete(disposedSurfaceId)
     sessionWatch.surfaceReleased(disposedSurfaceId)
     deps.forgetHostSurface?.(disposedSurfaceId)
@@ -981,15 +1014,9 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
   }
   // A surface that becomes ready after a handoff broadcast never saw it, so the
   // current editor-tab count is re-announced together with the surface identity.
-  const announceSurface = async (
-    surfaceId: string,
-    assigned: {
-      readonly kind: 'sidebar' | 'editor'
-      readonly sessionId?: string
-      readonly parentSessionId?: string
-    },
-    isCurrent: () => boolean,
-  ): Promise<void> => {
+  const announceSurface = async (surface: WebviewSurface, signal: AbortSignal): Promise<void> => {
+    const { surfaceId, kind } = surface
+    const isCurrent = (): boolean => !signal.aborted && surfaces.get(surfaceId) === surface
     // Send the existing connection before the assignment starts session.open.
     // A new editor should immediately show its chat instead of startup UI.
     await postEventTo(
@@ -998,7 +1025,25 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
       publicState(coordinator.getState(), diagnostics.connectionOutput?.()),
       isCurrent,
     )
-    await postEventTo(surfaceId, 'ui.surface.assigned', assigned, isCurrent)
+    const { sessionId } = surface
+    let parentSessionId: string | undefined
+    if (kind === 'editor' && sessionId !== undefined) {
+      try {
+        parentSessionId = backendService.requireBackend().subagents?.parentOf?.(sessionId)
+      } catch {
+        parentSessionId = undefined
+      }
+    }
+    await postEventTo(
+      surfaceId,
+      'ui.surface.assigned',
+      {
+        kind,
+        ...(sessionId === undefined ? {} : { sessionId }),
+        ...(parentSessionId === undefined ? {} : { parentSessionId }),
+      },
+      () => isCurrent() && surface.sessionId === sessionId,
+    )
     await postEventTo(surfaceId, 'ui.surface.handoff', { editorChats: surfaces.editorCount }, isCurrent)
   }
   const provider = new DshWebviewViewProvider({

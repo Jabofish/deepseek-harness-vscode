@@ -456,6 +456,20 @@ function presetSelectionState(enabled: boolean, defaultPresetId: string | undefi
 }
 
 describe('App connected rendering', () => {
+  it('offers the session picker while a bound editor has no loaded conversation', () => {
+    const initial = connectedState(true)
+    currentStore = storeFor({
+      ...initial,
+      activeSessionId: undefined,
+      surface: { kind: 'editor', sessionId: 's1' },
+    })
+    const setDrawer = vi.spyOn(currentStore, 'setDrawer')
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+    expect(setDrawer).toHaveBeenCalledWith('sessions')
+  })
+
   it('coalesces diagnostics opened from conversation tools while the conversation renders', async () => {
     const initial = connectedState(true)
     const view = renderWithMutableState(initial)

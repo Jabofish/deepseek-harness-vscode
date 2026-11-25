@@ -52,7 +52,7 @@ import { confirmPendingPrompts } from './store/pending-prompts.js'
 import { normalizedModelSelection } from './store/model-catalog.js'
 import { parsePluginInventory } from './store/plugin-parsers.js'
 import { isSessionSummary, readPersistedWebviewState } from './store/session-guards.js'
-import type { ProjectionSequenceIndex } from './store/session-projection.js'
+import { clearedActiveSession, type ProjectionSequenceIndex } from './store/session-projection.js'
 import { refreshSessions, selectStartupSessionId } from './store/session-registry.js'
 import { isSubagentView, parseSubagentCatalog } from './store/subagent.js'
 import { object } from './store/unknown-record.js'
@@ -212,7 +212,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   })
   const persistWebviewState = (overrides: { readonly activeSessionId?: string } = {}): void => {
     if (disposed) return
-    const activeSessionId = overrides.activeSessionId ?? state.activeSessionId
+    const activeSessionId = state.surface?.sessionId ?? overrides.activeSessionId ?? state.activeSessionId
     persistedWebviewState =
       activeSessionId === undefined
         ? { version: 1, composerPreferences }
@@ -617,14 +617,37 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     // session switcher has to reflect that backend, not the previous one.
     void refresh()
   }
+  let editorReplacementVersion = 0
+  let appliedEditorReplacement = 0
   const openCreatedSession = async (sessionId: string): Promise<void> => {
     if (state.surface?.kind === 'editor') {
-      await client.request<unknown>({
-        type: 'surface.openInEditor',
-        requestId: requestId(),
-        payload: { sessionId, replaceCurrent: true },
-      })
-      setState((current) => ({ ...current, surface: { kind: 'editor', sessionId } }))
+      const replacement = ++editorReplacementVersion
+      const intent = openIntent
+      let result: unknown
+      try {
+        result = await client.request<unknown>({
+          type: 'surface.openInEditor',
+          requestId: requestId(),
+          payload: { sessionId, replaceCurrent: true },
+        })
+      } catch (error) {
+        if (openIntent !== intent && object(error)?.code === 'REQUEST_CANCELLED') return
+        throw error
+      }
+      if (disposed || replacement < appliedEditorReplacement || object(result)?.rebound === false) return
+      appliedEditorReplacement = replacement
+      if (state.surface?.sessionId !== sessionId) {
+        // Binding is already committed. Retire the previous conversation even
+        // if the new session history needs a retry, and persist the new owner.
+        void featureActions.discardEditorContextForSessionSwitch(sessionId)
+        setState((current) => ({
+          ...current,
+          ...clearedActiveSession(current, current.activeSessionId ?? ''),
+          transcript: undefined,
+          surface: { kind: 'editor', sessionId },
+        }))
+        persistWebviewState()
+      }
       await open(sessionId)
     } else await openSession(sessionId)
   }
@@ -808,9 +831,13 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
    * opens its own tab. The sidebar always navigates locally, independently of
    * how many editor tabs exist.
    */
+  const openSessionInEditor = (sessionId: string, title?: string): Promise<void> => {
+    if (state.surface?.kind === 'editor') openIntent += 1
+    return surfaceActions.methods.openSessionInEditor(sessionId, title)
+  }
   const openSession = (sessionId: string): Promise<void> => {
     if (state.surface?.kind === 'editor') {
-      if (state.surface.sessionId !== sessionId) return surfaceActions.methods.openSessionInEditor(sessionId)
+      if (state.surface.sessionId !== sessionId) return openSessionInEditor(sessionId)
       if (state.surface.parentSessionId !== undefined)
         return open(sessionId, { parentSessionId: state.surface.parentSessionId })
     }
@@ -819,7 +846,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   const openSubagentInEditor = async (entry: SubagentView): Promise<void> => {
     if (entry.mode === 'external') throw new Error(translate('subagents.externalUnavailable'))
     const title = [entry.name, entry.label?.trim()].filter(Boolean).join(' · ')
-    await surfaceActions.methods.openSessionInEditor(entry.id, title || undefined)
+    await openSessionInEditor(entry.id, title || undefined)
   }
   const store: StoreWithoutStateView = {
     ...accountActions.methods,
@@ -827,6 +854,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     ...featureActions.methods,
     ...surfaceActions.methods,
     openSession,
+    openSessionInEditor,
     ...settingsActions,
     ...feedbackActions,
     ...interactionActions,

@@ -83,7 +83,9 @@ export function createFeatureActions(host: FeatureActionHost): FeatureActions {
   const sessionWorkspaceFolderId = host.sessionWorkspaceFolderId
 
   let editorContextRefreshGeneration = 0
+  let editorContextNavigation = 0
   let editorContextRelease: Promise<void> | undefined
+  const editorContextCaptures = new Set<Promise<void>>()
   let changesRefreshGeneration = 0
   let tasksRefreshGeneration = 0
   let taskRefresh: { key: string; dirty: boolean; promise: Promise<void> } | undefined
@@ -373,9 +375,10 @@ export function createFeatureActions(host: FeatureActionHost): FeatureActions {
   }
   const discardEditorContextForSessionSwitch = async (nextSessionId: string): Promise<void> => {
     if (readState().activeSessionId === undefined || readState().activeSessionId === nextSessionId) return
+    editorContextNavigation += 1
     editorContextRefreshGeneration += 1
     const refs = readState().editorContext.map((item) => item.ref.contextRef)
-    if (refs.length === 0) return
+    if (refs.length === 0 && editorContextCaptures.size === 0) return
     const items = [...readState().editorContext]
     // Clear the Webview immediately so a slow release cannot leave context
     // chips visually attached to the next session. The Host remains the
@@ -389,10 +392,11 @@ export function createFeatureActions(host: FeatureActionHost): FeatureActions {
     }))
     // Wait for all old cleanups before another context read/capture can reuse
     // the Host's draft handles. Expired handles do not block navigation.
-    const release = Promise.all([editorContextRelease, releaseEditorContextRefs(refs, items)]).then(
-      () => undefined,
-      () => undefined,
-    )
+    const release = Promise.allSettled([
+      editorContextRelease,
+      releaseEditorContextRefs(refs, items),
+      ...editorContextCaptures,
+    ]).then(() => undefined)
     editorContextRelease = release
     await release
     if (editorContextRelease === release) editorContextRelease = undefined
@@ -425,40 +429,59 @@ export function createFeatureActions(host: FeatureActionHost): FeatureActions {
   const methods: FeatureActionMethods = {
     captureEditorContext: async (kind, workspaceFolderId) => {
       if (typeof client.featureRequest !== 'function') throw new Error(translate('app.error.dshMode'))
-      if (editorContextRelease !== undefined) {
-        const { activeSessionId, pendingSession } = readState()
-        await editorContextRelease
-        if (
-          activeSessionId !== readState().activeSessionId ||
-          pendingSession?.revision !== readState().pendingSession?.revision
+      const { activeSessionId, pendingSession, connectionEpoch } = readState()
+      const navigation = editorContextNavigation
+      const sameConversation = (): boolean => {
+        const current = readState()
+        return (
+          editorContextNavigation === navigation &&
+          current.activeSessionId === activeSessionId &&
+          current.pendingSession?.revision === pendingSession?.revision &&
+          current.connectionEpoch === connectionEpoch
         )
+      }
+      if (editorContextRelease !== undefined) {
+        await editorContextRelease
+        if (!sameConversation())
           throw new AppError({
             code: 'REQUEST_CANCELLED',
             message: 'The conversation changed before the editor context could be captured.',
             retryable: true,
           })
       }
-      const result = object(
-        await client.featureRequest<unknown>({
+      const capture = client
+        .featureRequest<unknown>({
           type: 'editor.context.capture',
           requestId: requestId(),
           payload:
             workspaceFolderId === undefined
               ? { kind: kind === 'file' ? 'open-document' : kind }
               : { kind: kind === 'file' ? 'open-document' : kind, workspaceFolderId },
-        }),
-      )
-      const items = result?.kind === 'editor.context' ? parseEditorContextItems(result.items) : undefined
-      if (items === undefined) throw new Error(translate('app.error.dshMode'))
-      const availableKinds =
-        result?.kind === 'editor.context'
-          ? parseEditorContextAvailableKinds(result.availableKinds)
-          : undefined
-      setState((current) => ({
-        ...current,
-        editorContext: mergeEditorContext(current.editorContext, items),
-        ...(availableKinds === undefined ? {} : { editorContextAvailableKinds: availableKinds }),
-      }))
+        })
+        .then(async (value) => {
+          const result = object(value)
+          const items = result?.kind === 'editor.context' ? parseEditorContextItems(result.items) : undefined
+          if (items === undefined) throw new Error(translate('app.error.dshMode'))
+          if (!sameConversation()) {
+            await releaseEditorContextRefs(
+              items.map((item) => item.ref.contextRef),
+              items,
+            ).catch(() => undefined)
+            return
+          }
+          const availableKinds = parseEditorContextAvailableKinds(result?.availableKinds)
+          setState((current) => ({
+            ...current,
+            editorContext: mergeEditorContext(current.editorContext, items),
+            ...(availableKinds === undefined ? {} : { editorContextAvailableKinds: availableKinds }),
+          }))
+        })
+      editorContextCaptures.add(capture)
+      try {
+        await capture
+      } finally {
+        editorContextCaptures.delete(capture)
+      }
     },
     refreshEditorContext: refreshEditorContextState,
     previewEditorContext: async (contextRef) => {

@@ -898,7 +898,11 @@ const useAppControllerImpl = () => {
         workspaces={state.workspaces}
         activeSessionId={state.activeSessionId}
         open={state.drawer === 'sessions'}
-        showTrigger={state.activeSessionId !== undefined || state.pendingSession !== undefined}
+        showTrigger={
+          state.activeSessionId !== undefined ||
+          state.pendingSession !== undefined ||
+          state.surface?.sessionId !== undefined
+        }
         fallbackFocusRef={conversationActionsTriggerRef}
         preferredWorkspaceId={state.pendingSession?.workspaceId}
         onOpenChange={sessionOnOpenChange}
@@ -944,6 +948,7 @@ const useAppControllerImpl = () => {
       state.questions,
       state.drawer,
       state.sessions,
+      state.surface?.sessionId,
       state.workspaces,
     ],
   )

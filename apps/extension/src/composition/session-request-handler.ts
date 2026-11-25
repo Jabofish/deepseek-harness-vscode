@@ -41,7 +41,11 @@ export function isSessionRequest(request: WebviewRequest): request is SessionReq
 
 export function createSessionRequestHandler(
   deps: SessionDependencies,
-): (request: SessionRequest, signal: AbortSignal) => Promise<unknown> {
+): (
+  request: SessionRequest,
+  signal: AbortSignal,
+  assertOpenCurrent: (sessionId: string) => void,
+) => Promise<unknown> {
   const {
     backendService,
     workspaceUseCases,
@@ -73,7 +77,7 @@ export function createSessionRequestHandler(
     const folderId = workspaceFolderIdForSession(session)
     return folderId === undefined ? session : { ...session, workspaceFolderId: folderId }
   }
-  return async (request: SessionRequest, signal: AbortSignal): Promise<unknown> => {
+  return async (request, signal, assertOpenCurrent): Promise<unknown> => {
     if (request.type === 'session.move') {
       await requireCurrentWorkspaceId(request.payload.workspaceId, signal)
       await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
@@ -102,16 +106,16 @@ export function createSessionRequestHandler(
     }
 
     if (request.type === 'session.open') {
-      const generation = deps.transcript.begin(request.payload.sessionId)
+      const { sessionId } = request.payload
+      assertOpenCurrent(sessionId)
+      const generation = deps.transcript.begin(sessionId)
       try {
-        let detail = await requireCurrentWorkspaceSession(request.payload.sessionId, signal, {
-          refresh: 'open',
-        })
+        let detail = await requireCurrentWorkspaceSession(sessionId, signal, { refresh: 'open' })
+        assertOpenCurrent(sessionId)
         for (let retry = 0; retry < 3 && deps.transcript.needsRefresh(generation); retry++) {
           deps.transcript.restart(generation)
-          detail = await requireCurrentWorkspaceSession(request.payload.sessionId, signal, {
-            refresh: 'open',
-          })
+          detail = await requireCurrentWorkspaceSession(sessionId, signal, { refresh: 'open' })
+          assertOpenCurrent(sessionId)
         }
         const transcript = deps.transcript.install(detail, generation)
         return publicValue(
