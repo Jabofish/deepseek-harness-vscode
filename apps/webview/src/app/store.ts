@@ -1097,8 +1097,14 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     takeSavedDrafts: () => {
       // A later remount reads the freshest saved text, including a pending write.
       if (draftPersistTimer !== undefined) flushDrafts()
+      const pending = state.pendingSession
+      const pendingOwner = pending === undefined ? undefined : `pending:${pending.revision}`
+      const pendingText = pendingOwner === undefined ? undefined : draftSnapshot()[pendingOwner]
       savedDraftsTaken = true
-      return persistedWebviewState.drafts ?? {}
+      return {
+        ...persistedWebviewState.drafts,
+        ...(pendingOwner === undefined || pendingText === undefined ? {} : { [pendingOwner]: pendingText }),
+      }
     },
     dispose: () => {
       if (disposed) return

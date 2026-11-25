@@ -17,6 +17,7 @@ import { createAppStore } from './store.js'
 import {
   activateDraftOwner,
   adoptSavedDrafts,
+  clearDraftIf,
   readDraft,
   resetDraft,
   restoreDrafts,
@@ -26,7 +27,21 @@ import {
 const client = {
   subscribe: () => () => {},
   dispose: () => {},
-  request: () => new Promise(() => {}),
+  request: (request: { type: string }) =>
+    Promise.resolve(
+      request.type === 'workspace.list'
+        ? [
+            {
+              id: 'workspace-a',
+              name: 'Workspace A',
+              sessionIds: [],
+              sessionCount: 0,
+              createdAt: '2026-01-01T00:00:00.000Z',
+              updatedAt: '2026-01-01T00:00:00.000Z',
+            },
+          ]
+        : { items: [] },
+    ),
 } as unknown as ProtocolClient
 
 describe('composer draft persistence', () => {
@@ -107,5 +122,54 @@ describe('composer draft persistence', () => {
     expect(saved['session-0']).toBe('draft 0, still being written')
     expect(saved['session-1']).toBeUndefined()
     store.dispose()
+  })
+
+  it('does not restore a sent draft after its chat stops being active', () => {
+    vi.useFakeTimers()
+    const store = createAppStore(client)
+    try {
+      adoptSavedDrafts(() => store.takeSavedDrafts?.() ?? {})
+      activateDraftOwner('session-a')
+      setDraft('sent text')
+      vi.advanceTimersByTime(300)
+      expect(vscodeState.value).toMatchObject({ drafts: { 'session-a': 'sent text' } })
+
+      activateDraftOwner('session-b')
+      vi.advanceTimersByTime(300)
+      clearDraftIf('session-a', 'sent text')
+      vi.advanceTimersByTime(300)
+
+      expect(vscodeState.value).not.toHaveProperty('drafts')
+    } finally {
+      store.dispose()
+    }
+  })
+
+  it('keeps a pending draft on remount without restoring it into a different new session after reload', async () => {
+    vi.useFakeTimers()
+    const first = createAppStore(client)
+    try {
+      adoptSavedDrafts(() => first.takeSavedDrafts?.() ?? {})
+      await first.refreshSessions()
+      await first.stageSession('workspace-a')
+      activateDraftOwner('pending:1')
+      setDraft('draft for the original workspace')
+      vi.advanceTimersByTime(300)
+      expect(vscodeState.value).not.toHaveProperty('drafts')
+
+      adoptSavedDrafts(() => first.takeSavedDrafts?.() ?? {})
+      expect(readDraft()).toBe('draft for the original workspace')
+    } finally {
+      first.dispose()
+    }
+
+    const second = createAppStore(client)
+    try {
+      adoptSavedDrafts(() => second.takeSavedDrafts?.() ?? {})
+      activateDraftOwner('pending:1')
+      expect(readDraft()).toBe('')
+    } finally {
+      second.dispose()
+    }
   })
 })

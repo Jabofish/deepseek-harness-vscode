@@ -153,12 +153,13 @@ export function readPersistedWebviewState(value: unknown): PersistedWebviewState
 export const MAX_PERSISTED_DRAFTS = 20
 export const MAX_PERSISTED_DRAFT_CHARS = 100_000
 
-/** Bound what Webview state keeps: string drafts only, newest owners last. */
+/** Bound saved drafts and skip pending owners whose revisions restart on reload. */
 export function persistableDrafts(
   value: Readonly<Record<string, unknown>>,
 ): Readonly<Record<string, string>> {
   const entries = Object.entries(value).filter(
     (entry): entry is [string, string] =>
+      !entry[0].startsWith('pending:') &&
       entry[0].length <= 256 &&
       typeof entry[1] === 'string' &&
       entry[1].trim() !== '' &&

@@ -117,11 +117,8 @@ function createDraftStore(): DraftStore {
       const key = resolve(owner)
       const stored = key === keyFor(activeOwner) ? current : (drafts.get(key) ?? '')
       if (stored !== text) return
-      if (key === keyFor(activeOwner)) {
-        current = ''
-        drafts.delete(key)
-        announce()
-      } else drafts.delete(key)
+      if (key === keyFor(activeOwner)) current = ''
+      if (drafts.delete(key)) announce()
     },
     reset: () => {
       drafts.clear()
