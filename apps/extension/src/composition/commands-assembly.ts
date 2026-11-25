@@ -39,10 +39,13 @@ import {
 } from '../view/native-session-list.js'
 import { EditorBridgeHost } from '../editor/editor-bridge-host.js'
 import { reconnectsAfterConfigurationChange, retriesWithNewRuntime } from './configuration-reconnect.js'
+import { openChatInEditorAction } from './open-chat-in-editor.js'
 
 export interface CommandsAssemblyDependencies {
   readonly sessionNavigation: RequestGateway['sessionNavigation']
   readonly openSessionIds?: () => readonly string[]
+  /** The conversation a chat surface currently shows, if any. */
+  readonly surfaceSessionId?: (surfaceId: string) => string | undefined
   readonly authorizeExternalConnection?: () => Promise<void>
   readonly clearExternalCredentials?: () => Promise<void>
   readonly disposeEndpointAccess?: () => Promise<void>
@@ -259,12 +262,17 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
         // users can open multiple distinct sessions; fall back to revealing an
         // existing editor tab when the sidebar is hidden.
         'dsh.openChatInEditor': async () => {
-          if (provider.visible) {
+          const existing =
+            editorSurfaces.surfacesById.find((surface) => surface.panel.active) ?? editorSurfaces.mostRecent
+          const action = openChatInEditorAction({
+            sidebarVisible: provider.visible,
+            sidebarSessionId: deps.surfaceSessionId?.(SIDEBAR_SURFACE_ID),
+            hasEditorTab: existing !== undefined,
+          })
+          if (action === 'move-sidebar-session') {
             const delivered = await postToSurface(SIDEBAR_SURFACE_ID, 'ui.surface.openInEditor', {})
             if (delivered) return true
           }
-          const existing =
-            editorSurfaces.surfacesById.find((surface) => surface.panel.active) ?? editorSurfaces.mostRecent
           if (existing !== undefined) {
             await existing.reveal(false)
             return true

@@ -550,6 +550,8 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     openDroppedSession,
     sessionNavigation,
     openSessionIds: gateway.openSessionIds,
+    surfaceSessionId: (surfaceId) =>
+      transcript.hasSurface(surfaceId) ? transcript.forSurface(surfaceId).activeSessionId() : undefined,
     surfaces,
     runtimeLocator,
     runtimeInstaller,
