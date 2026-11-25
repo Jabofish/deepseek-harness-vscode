@@ -6,17 +6,28 @@ Release entries describe behaviour at that release. `Unreleased` lists changes a
 
 ## Unreleased
 
+## 0.4.11
+
 ### Changes
 
-- **Editor chat.** New Session focuses the existing editor tab when DSH reuses a blank session that is already open.
-- **Security: discovery, transport and settings.** Process discovery ignores DSH package manifests named through UNC or device paths, so a crafted command line no longer triggers SMB authentication to an attacker-chosen host. Mapped network drives and directory junctions remain outside this check. Bundled `undici`, `zod` and `markdown-it` now use patched releases. `dsh.connection.runtimeVersion` is machine-scoped and ignored unless it is an exact package version. Editor-context and navigation feature routes require a trusted workspace. The CI dependency audit blocks high-severity and critical advisories in the shipped graph.
-- **Chat diagnostics.** A control frame or transcript update that is posted but never acknowledged is logged to the output channel once per stall episode, together with received turn boundaries and settled replies. A reply that DSH saved but the chat did not show therefore leaves evidence instead of failing silently. This adds diagnostics only; the existing recovery behaviour is unchanged.
+- **Focused chat and subagents.** Follow delegated work inline and open child sessions in editor tabs. Focused chat groups thinking and tool steps, respects DSH's collapse timing, and keeps quiet process summaries stable while announcing tool failures.
+- **Sessions, drafts and attachments.** Session search waits for current results, and drafts stay with their conversations across reloads. Editor chat reuses and focuses an already-open blank session. You can pick multiple attachments at once. Retrying an earlier attachment prompt asks you to add the files again. Send and Stop remain separately clickable while the agent is running.
+- **Review and export.** Review successive edits to the same file individually and compare a recorded edit in VS Code when its prior content can be reconstructed. Checkpoints refresh the change list before taking a snapshot. Export shows progress while choosing and writing a file. Weekly schedules preserve the selected weekdays in local time.
+- **Settings and recovery.** General settings follow the DSH `0.2.2-rc.5` permission and presentation schema. Model edits save to the selected provider, including custom MiniMax model lists. Connection failures expose recovery and diagnostic actions, and the output channel records stalled chat delivery.
+- **Security.** Tighten local process discovery, connection and workspace trust checks, and update bundled `undici`, `zod` and `markdown-it`. Editor-context and navigation actions require a trusted workspace.
 
 ### 更新内容
 
-- **编辑器聊天。** 新建会话复用已打开的空白会话时，会聚焦该会话所在的编辑器标签页。
-- **安全：进程发现、传输与设置。** 进程发现会忽略通过 UNC 或设备路径指定的 DSH 包清单，避免构造的命令行触发对攻击者主机的 SMB 认证。映射的网络驱动器和目录联接不在该检查范围内。内置的 `undici`、`zod` 与 `markdown-it` 更新为已修复版本。`dsh.connection.runtimeVersion` 改为机器级设置，非精确包版本的值将被忽略。编辑器上下文和导航特性路由要求工作区受信任。CI 依赖审计会阻断已发布依赖图中的高危和严重漏洞。
-- **聊天诊断。** 每次停滞只会记录一次：已发送但未收到确认的控件帧或消息更新会连同收到的回合边界和已完成的回复一起记录到输出通道。DSH 已保存但聊天未显示的消息会留下证据，而不是静默失败。本次只增加诊断，不改变现有的恢复行为。
+- **专注聊天和子代理。** 可在聊天中跟进委派进度，并在编辑器标签页打开子会话。专注布局将思考与工具步骤分组，按 DSH 设置折叠过程。安静模式会稳定显示摘要并播报工具失败。
+- **会话、草稿和附件。** 会话搜索等待当前查询结果，重载后草稿仍属于原会话。新建会话复用已打开的空白会话时，会聚焦对应的编辑器标签页。支持一次选择多个附件，重试历史附件消息时会提示重新添加。会话运行中可以分别点击发送和停止。
+- **变更审查和导出。** 同一文件的多次编辑可逐条审查。能重建修改前内容时，可在 VS Code 中打开比较。创建检查点前会刷新变更列表。导出在选择及写入文件期间显示进度，每周定时任务按本地时间保留所选星期。
+- **设置与恢复。** 常规设置对齐 DSH `0.2.2-rc.5` 的权限与显示设置。模型编辑会保存到所选供应商，包括 MiniMax 自定义模型列表。连接失败时可直接重连或打开诊断，聊天投递停滞会写入输出通道。
+- **安全。** 加强本地进程发现、连接和工作区信任检查，更新内置的 `undici`、`zod` 和 `markdown-it`。编辑器上下文和导航操作要求工作区受信任。
+
+### PR acknowledgements / PR 致谢
+
+- Thanks to [@ggeorgovassilis](https://github.com/ggeorgovassilis) for the security hardening and stalled-delivery diagnostics. 感谢加强安全检查及补充聊天投递诊断。 [#67](https://github.com/Jabofish/deepseek-harness-vscode/pull/67) · [#69](https://github.com/Jabofish/deepseek-harness-vscode/pull/69)
+- Thanks to [@Jabofish](https://github.com/Jabofish) for the editor, chat, workspace, and DSH settings fixes and test improvements. 感谢修复编辑器、聊天、工作区和 DSH 设置并改进测试。 [#70](https://github.com/Jabofish/deepseek-harness-vscode/pull/70) · [#71](https://github.com/Jabofish/deepseek-harness-vscode/pull/71) · [#72](https://github.com/Jabofish/deepseek-harness-vscode/pull/72) · [#73](https://github.com/Jabofish/deepseek-harness-vscode/pull/73)
 
 ## 0.4.10
 
