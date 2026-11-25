@@ -58,7 +58,10 @@ const LINE_SUFFIX_RE = /(?::\d+(?::\d+)?)$/u
 function isFileMentionToken(label: string): boolean {
   if (label.startsWith('@"') && label.endsWith('"') && label.length > 3) return true
   const raw = label.slice(1)
-  if (raw === '' || /[()<>`"']/u.test(raw)) return false
+  if (raw === '' || /[<>`"']/u.test(raw)) return false
+  // Parentheses mark a decorator call (`@Injectable()`), except inside a file
+  // path such as a route group (`app/(marketing)/page.tsx`).
+  if (/[()]/u.test(raw) && !(/[\\/]/u.test(raw) && FILE_EXTENSION_RE.test(raw))) return false
   if (raw.endsWith('/') || raw.endsWith('\\')) return true
   if (FILE_EXTENSION_RE.test(raw)) return true
   const name = raw.replace(LINE_SUFFIX_RE, '').split(/[\\/]/u).pop() ?? ''

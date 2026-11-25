@@ -45,6 +45,8 @@ describe('UserText', () => {
     expect(containsUserTextReferences('Install @types/node and @dsh-vscode/domain')).toBe(false)
     expect(containsUserTextReferences('Check `@src/index.ts` or ```ts\n@src/app.ts\n```')).toBe(false)
     expect(containsUserTextReferences('Check @src/index.ts please')).toBe(true)
+    expect(containsUserTextReferences('Open @app/(marketing)/page.tsx')).toBe(true)
+    expect(containsUserTextReferences('Use @Component(selector) here')).toBe(false)
 
     const openSession = vi.fn()
     render(<div>{projectUserText('See @[Past session](dsh-session:s-42)', [], { openSession })}</div>)
