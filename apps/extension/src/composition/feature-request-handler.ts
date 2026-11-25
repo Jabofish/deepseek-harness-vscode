@@ -58,6 +58,7 @@ import type { SessionScope } from './session-scope.js'
 import type { PostFeatureEvent } from './host-event-pipeline.js'
 import type { TaskFocusState } from './change-checkpoint-task-assembly.js'
 import { inspectorClientUrl } from './inspector-client-url.js'
+import { workspaceSafeDiagnosticText } from './diagnostic-text.js'
 
 export interface FeatureRequestHandlerDependencies {
   readonly billing?: BillingFeatureHost
@@ -702,12 +703,13 @@ async function collectPromptTemplateVariables(
     if (selectedText.trim() !== '') values.selection = selectedText
   }
   const diagnostics = vscode.languages.getDiagnostics(activeEditor.document.uri)
+  const roots = folders.map((folder) => folder.uri.fsPath)
   if (diagnostics.length > 0) {
     const formatted = diagnostics
       .slice(0, 20)
       .map(
         (diag) =>
-          `${relativePath}:${diag.range.start.line + 1}:${diag.range.start.character + 1} ${diag.message}`,
+          `${relativePath}:${diag.range.start.line + 1}:${diag.range.start.character + 1} ${workspaceSafeDiagnosticText(diag.message, roots)}`,
       )
       .join('\n')
     if (formatted !== '') values.currentDiagnostics = formatted
