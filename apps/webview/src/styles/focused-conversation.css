@@ -211,3 +211,23 @@
     border: 1px solid CanvasText;
   }
 }
+
+/* One header per run of thinking and tool steps (Compact/Standard). An opened
+ * run scrolls inside a capped body, as DSH's process groups do. */
+.dsh-focused-process__body {
+  max-height: min(28rem, 60vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-block: var(--dsh-space-2);
+}
+
+.dsh-focused-process__body > div + div {
+  margin-top: var(--dsh-space-3);
+}
+
+/* Replies between work steps are commentary, not the turn's answer. DSH shows
+ * the copy/feedback row once, on the turn tail; a hover-only row here would
+ * still reserve its height and leave a blank band before the next step. */
+.dsh-focused-turn__process .dsh-message-actions {
+  display: none;
+}

@@ -16,6 +16,12 @@ export type PermissionPreset = string
 export interface PermissionPresetCatalog {
   readonly items: readonly string[]
   readonly defaultPreset?: string
+  /**
+   * Presets the host accepts as the new-session default (`permission.defaultPreset`).
+   * Unlike `items` it excludes session-only choices such as Auto. Absent on
+   * hosts that publish no separate default list.
+   */
+  readonly defaultOptions?: readonly string[]
 }
 
 export interface ModelProvider {

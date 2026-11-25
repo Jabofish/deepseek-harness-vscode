@@ -214,6 +214,8 @@ export interface AppState extends SessionModelDirectoryState {
   readonly permissionPresets: readonly string[]
   readonly newSessionPermissionPresets?: readonly string[]
   readonly newSessionPermissionDefault?: string | undefined
+  /** Host choices for the new-session default preset setting; see PermissionPresetCatalog.defaultOptions. */
+  readonly newSessionPermissionDefaultOptions?: readonly string[] | undefined
   readonly commands: readonly DynamicCommand[]
   readonly pluginInventoryRevision: number
   readonly pluginInstallProgress: PluginInstallProgressView | undefined

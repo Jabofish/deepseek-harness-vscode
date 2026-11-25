@@ -11,7 +11,7 @@ import { AlphaLoopbackApiClient } from '../../packages/dsh-adapter/src/versions/
 import type { AlphaEventSource } from '../../packages/dsh-adapter/src/versions/alpha/events.js'
 import { unwrapRpcResultValue } from '../../packages/dsh-adapter/src/versions/rc6/rpc.js'
 import { redactText } from '../../packages/dsh-adapter/src/redaction.js'
-import { canConnect, startManagedRuntime, spawnManagedChild } from './harness.js'
+import { canConnect, startManagedRuntime, spawnManagedChild, runtimePackageRoot } from './harness.js'
 
 const version = process.env.DSH_LIVE_RUNTIME_VERSION ?? ''
 const blockingApproval = [
@@ -143,7 +143,7 @@ describe.skipIf(!enabled)('real DSH question lifecycle in an isolated profile', 
       }
     }
     try {
-      const requireRuntime = createRequire(path.join(path.dirname(path.dirname(executable)), 'package.json'))
+      const requireRuntime = createRequire(path.join(runtimePackageRoot(executable), 'package.json'))
       const plugin = path.join(home, 'question-probe.mjs')
       const patchFile = path.join(home, 'questions.patch.yml')
       await writeFile(

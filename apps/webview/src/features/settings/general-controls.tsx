@@ -7,8 +7,10 @@ import {
   DSH_UI_SETTING_PATHS,
   MAX_CONVERSATION_FONT_SIZE_PX,
   MIN_CONVERSATION_FONT_SIZE_PX,
+  PERMISSION_DEFAULT_SETTING_PATH,
   findDshSettingsField,
   isConversationFontSizePx,
+  isLegacyTranscriptViewValue,
   isPerformanceUsageMode,
   isTranscriptViewMode,
   type ConversationFontSize,
@@ -28,6 +30,31 @@ export interface RiskPending {
   readonly value: string
 }
 
+/** Host facts a General row needs beyond the settings schema. */
+export interface GeneralRowContext {
+  readonly permissionDefaultOptions?: readonly string[] | undefined
+}
+
+/** Choices a General row offers for this schema, or undefined when it has none. */
+export function generalRowOptions(
+  field: DshSettingsSchema['fields'][number] | undefined,
+  path: string,
+  context?: GeneralRowContext,
+): readonly string[] | undefined {
+  if (field === undefined) return undefined
+  if (path === PERMISSION_DEFAULT_SETTING_PATH && field.type === 'string') {
+    const options = context?.permissionDefaultOptions
+    return options === undefined || options.length === 0 ? undefined : options
+  }
+  if (field.type !== 'enum') return undefined
+  const options = field.enumValues?.filter((option) => {
+    if (path === DSH_UI_SETTING_PATHS.transcriptView) return isTranscriptViewMode(option)
+    if (path === DSH_UI_SETTING_PATHS.performanceUsage) return isPerformanceUsageMode(option)
+    return true
+  })
+  return options === undefined || options.length === 0 ? undefined : options
+}
+
 /** Official General-section rows in upstream feature-slot order. A row renders
  * only when the DSH host schema advertises its field — the client never
  * fabricates a control for a namespace the host did not expose. */
@@ -38,7 +65,7 @@ export const GENERAL_SETTING_ROWS: readonly {
   readonly defaultValue?: string
 }[] = [
   {
-    path: 'permission.defaultPreset',
+    path: PERMISSION_DEFAULT_SETTING_PATH,
     labelKey: 'settings.permission.label',
     hintKey: 'settings.permission.hint',
   },
@@ -267,6 +294,7 @@ interface GeneralSettingRowProps {
   readonly onConfirmRisk: () => void
   readonly onRiskAcknowledgedChange: (acknowledged: boolean) => void
   readonly onCancelRisk: () => void
+  readonly context?: GeneralRowContext | undefined
 }
 
 /** One official General row: renders only when the host schema advertises the
@@ -278,23 +306,30 @@ type GeneralSettingRowDefinition = (typeof GENERAL_SETTING_ROWS)[number]
  * host schema advertises its field as a non-empty enum, minus the read-only
  * transcript rows the component suppresses. Keeping the predicate beside the
  * component lets the section state when it has nothing to show at all. */
-function isGeneralRowVisible(snapshot: DshSettingsSnapshot, row: GeneralSettingRowDefinition): boolean {
+function isGeneralRowVisible(
+  snapshot: DshSettingsSnapshot,
+  row: GeneralSettingRowDefinition,
+  context?: GeneralRowContext,
+): boolean {
   const field = snapshot.schema.fields.find((entry) => entry.path === row.path)
-  if (field?.type !== 'enum' || (field.enumValues?.length ?? 0) === 0) return false
+  if (generalRowOptions(field, row.path, context) === undefined) return false
   return !(
     !snapshot.schema.writable &&
     (row.path === DSH_UI_SETTING_PATHS.transcriptView || row.path === DSH_UI_SETTING_PATHS.performanceUsage)
   )
 }
 
-export function visibleGeneralRows(snapshot: DshSettingsSnapshot): readonly GeneralSettingRowDefinition[] {
-  return GENERAL_SETTING_ROWS.filter((row) => isGeneralRowVisible(snapshot, row))
+export function visibleGeneralRows(
+  snapshot: DshSettingsSnapshot,
+  context?: GeneralRowContext,
+): readonly GeneralSettingRowDefinition[] {
+  return GENERAL_SETTING_ROWS.filter((row) => isGeneralRowVisible(snapshot, row, context))
 }
 
 /** Whether this card has any content beyond its title for this host schema. */
-export function hasPreferencesContent(snapshot: DshSettingsSnapshot): boolean {
+export function hasPreferencesContent(snapshot: DshSettingsSnapshot, context?: GeneralRowContext): boolean {
   return (
-    GENERAL_SETTING_ROWS.some((row) => isGeneralRowVisible(snapshot, row)) ||
+    GENERAL_SETTING_ROWS.some((row) => isGeneralRowVisible(snapshot, row, context)) ||
     findDshSettingsField(snapshot, DSH_UI_SETTING_PATHS.codingTools)?.type === 'boolean'
   )
 }
@@ -308,20 +343,14 @@ export function GeneralSettingRow(props: GeneralSettingRowProps): ReactElement |
       props.row.path === DSH_UI_SETTING_PATHS.performanceUsage)
   )
     return null
-  const options = field?.enumValues?.filter((option) => {
-    if (props.row.path === DSH_UI_SETTING_PATHS.transcriptView) return isTranscriptViewMode(option)
-    if (props.row.path === DSH_UI_SETTING_PATHS.performanceUsage) return isPerformanceUsageMode(option)
-    return true
-  })
-  if (field?.type !== 'enum' || options === undefined || options.length === 0) return null
+  const options = generalRowOptions(field, props.row.path, props.context)
+  if (field === undefined || options === undefined) return null
   const savedValue = settingValueAt(props.values, props.row.path)
   const normalizedSavedValue =
     props.row.path === DSH_UI_SETTING_PATHS.transcriptView
-      ? savedValue === 'normal'
-        ? 'standard'
-        : savedValue === 'expanded'
-          ? 'detailed'
-          : savedValue
+      ? isLegacyTranscriptViewValue(savedValue)
+        ? 'detailed'
+        : savedValue
       : savedValue
   const candidate = props.selectedValue ?? normalizedSavedValue ?? props.row.defaultValue
   const currentLabel =

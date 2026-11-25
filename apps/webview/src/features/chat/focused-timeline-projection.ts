@@ -1,6 +1,7 @@
 import type { DisplayTimelineNode } from './timeline-shared.js'
 import { timelineSourceNodeIds } from './timeline-inspector-target.js'
 import { terminalPresentationFailed } from '@dsh-vscode/domain'
+import { isInjectedUserTimelineNode } from './timeline-user-text-facts.js'
 
 export type FocusedWorkNode = Extract<
   DisplayTimelineNode,
@@ -19,9 +20,39 @@ export interface FocusedTurnNode {
   readonly processId?: string
   readonly processCount?: number
   readonly continuation?: boolean
+  /** The whole turn ends in a final reply, even when this virtual segment does not carry it. */
+  readonly answered?: boolean
 }
 export type PresentedTimelineNode = DisplayTimelineNode | FocusedTurnNode
 export const FOCUSED_PROCESS_SEGMENT_SIZE = 24
+
+export function focusedTimelineTail(
+  nodes: readonly PresentedTimelineNode[],
+  running: boolean,
+): {
+  readonly latestTurn: number | undefined
+  readonly latestTurnHasNewInput: boolean
+  readonly liveFocusedRow: FocusedTurnNode | undefined
+} {
+  let latestTurnHasNewInput = false
+  let endedTurn: number | undefined
+  for (let index = nodes.length - 1; index >= 0; index--) {
+    const candidate = nodes[index]!
+    if (candidate.kind === 'user-message' && !isInjectedUserTimelineNode(candidate))
+      latestTurnHasNewInput = true
+    else if (candidate.kind === 'turn-terminal') endedTurn ??= candidate.turn
+    else if (candidate.kind === 'focused-turn')
+      return {
+        latestTurn: candidate.turn,
+        latestTurnHasNewInput,
+        liveFocusedRow:
+          running && !latestTurnHasNewInput && endedTurn !== candidate.turn && !candidate.foldable
+            ? candidate
+            : undefined,
+      }
+  }
+  return { latestTurn: undefined, latestTurnHasNewInput, liveFocusedRow: undefined }
+}
 
 function workTurn(node: DisplayTimelineNode | undefined): number | undefined {
   if (node?.kind === 'assistant-message' || node?.kind === 'assistant-turn') return node.turn
@@ -241,6 +272,7 @@ export function createFocusedTimelineProjector(): (
           processId,
           processCount,
           continuation,
+          answered: foldable && finalReply !== undefined,
         })
         segment++
       }

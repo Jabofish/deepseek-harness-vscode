@@ -25,7 +25,12 @@ import {
 import { Icon } from '../../ui/Icon.js'
 import { compactActivity } from './compact-activity.js'
 import { useI18n } from '../../i18n.js'
-import type { PerformanceUsageMode, TranscriptViewMode } from '../../app/ui-preferences.js'
+import {
+  DEFAULT_COLLAPSE_TIMING,
+  type CollapseTiming,
+  type PerformanceUsageMode,
+  type TranscriptViewMode,
+} from '../../app/ui-preferences.js'
 import {
   createDisplayNodeProjector,
   createDisplayNodeTextSizeProjector,
@@ -46,6 +51,7 @@ import { TimelineRow } from './TimelineRow.js'
 import { ToolLinkErrorDialog } from './ToolLinkErrorDialog.js'
 import {
   createFocusedTimelineProjector,
+  focusedTimelineTail,
   presentedSourceNodeIds,
   type PresentedTimelineNode,
 } from './focused-timeline-projection.js'
@@ -70,6 +76,8 @@ export interface TimelineProps {
   /** Conversation chrome owns this preference when the Timeline is embedded in App. */
   readonly showDshEvents?: boolean
   readonly transcriptView?: TranscriptViewMode
+  /** DSH `ui-chat.collapseTiming`; completion folds a finished focused turn at once. */
+  readonly collapseTiming?: CollapseTiming
   readonly performanceUsage?: PerformanceUsageMode
   readonly codingToolsEnabled?: boolean
   /** Authoritative session-level running bit from the host status stream. */
@@ -219,6 +227,7 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
   >(undefined)
   const showDshEvents = props.showDshEvents ?? false
   const transcriptView = props.transcriptView ?? 'standard'
+  const collapseTiming = props.collapseTiming ?? DEFAULT_COLLAPSE_TIMING
   const performanceUsage = props.performanceUsage ?? 'detailed'
   const codingToolsEnabled = props.codingToolsEnabled ?? true
   // The reducer keeps authoritative assistant step ids so separate visible
@@ -401,6 +410,17 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
     if (control !== null) openLinkTriggerRef.current = control
   }
   const latestNode = displayNodes[displayNodes.length - 1]
+  const { latestTurn, latestTurnHasNewInput, liveFocusedRow } =
+    conversationLayout === 'focused'
+      ? focusedTimelineTail(displayNodes, running)
+      : { latestTurn: undefined, latestTurnHasNewInput: false, liveFocusedRow: undefined }
+  const liveFocusedRowId = liveFocusedRow?.id
+  const liveFocusedProcessId = liveFocusedRow?.processId ?? liveFocusedRowId
+  // Virtual rows come and go as the reader scrolls. Remember the process here
+  // so next-input folding follows the session rather than row mount lifetime.
+  const [watchedFocusedProcessId, setWatchedFocusedProcessId] = useState<string>()
+  if (liveFocusedProcessId !== undefined && liveFocusedProcessId !== watchedFocusedProcessId)
+    setWatchedFocusedProcessId(liveFocusedProcessId)
   const latestSignature =
     latestNode?.kind === 'focused-turn'
       ? `${latestNode.id}:${latestNode.foldable}:${latestNode.nodes.map(nodeSignatureProjector).join('|')}`
@@ -920,6 +940,11 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
       feedbackUnavailable: props.feedbackUnavailable,
       transcriptView,
       performanceUsage,
+      collapseTiming,
+      latestTurn,
+      latestTurnHasNewInput,
+      liveFocusedRowId,
+      watchedFocusedProcessId,
       onFeedback: hasFeedback ? stableOnFeedback : undefined,
       onFeedbackSubmit: props.onFeedbackSubmit === undefined ? undefined : stableOnFeedbackSubmit,
       onFeedbackPrepare: props.onFeedbackPrepare === undefined ? undefined : stableOnFeedbackPrepare,
@@ -966,6 +991,11 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
       stableOnOpenSession,
       stableOnShowInFolder,
       transcriptView,
+      collapseTiming,
+      latestTurn,
+      latestTurnHasNewInput,
+      liveFocusedRowId,
+      watchedFocusedProcessId,
       t,
       truncatedNodeIds,
       userTextFacts,

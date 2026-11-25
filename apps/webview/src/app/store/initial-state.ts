@@ -56,6 +56,7 @@ export function createInitialState(composerPreferences: ComposerPreferences): Ap
     permissionPresets: [],
     newSessionPermissionPresets: [],
     newSessionPermissionDefault: undefined,
+    newSessionPermissionDefaultOptions: undefined,
     commands: [],
     pluginInventoryRevision: 0,
     pluginInstallProgress: undefined,

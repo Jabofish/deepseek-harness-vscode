@@ -115,6 +115,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
     pendingQuestions,
     questionWaitFor,
     performanceUsage,
+    collapseTiming,
     popupSelects,
     questionCancelFor,
     questionRespondFor,
@@ -720,6 +721,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                       showDshEvents={showDshEvents}
                       transcriptView={transcriptView}
                       performanceUsage={performanceUsage}
+                      collapseTiming={collapseTiming}
                       codingToolsEnabled={codingToolsEnabled}
                       running={activeRunning}
                       {...(state.timeline.activeTurn === undefined

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import type { AppState, AppStore, DshSettingsSnapshot } from './store.js'
 import {
+  DEFAULT_COLLAPSE_TIMING,
   DEFAULT_PERFORMANCE_USAGE,
   DSH_UI_SETTING_PATHS,
   dshUiPreferences,
@@ -9,6 +10,7 @@ import {
   rememberThemePreference,
   withDshSettingValue,
   type DshUiPreferences,
+  type CollapseTiming,
   type PerformanceUsageMode,
   type ThemePreference,
   type TranscriptViewMode,
@@ -36,6 +38,7 @@ interface DshSettingsUi {
   readonly newSessionPresetSelectionEnabled: boolean | undefined
   readonly transcriptView: TranscriptViewMode
   readonly performanceUsage: PerformanceUsageMode
+  readonly collapseTiming: CollapseTiming
   readonly trajectoryAvailable: boolean
   readonly hostConversationFontSizePx: number | undefined
   readonly conversationFontStyle: CSSProperties | undefined
@@ -404,6 +407,7 @@ export function useDshSettings(input: {
   const newSessionPresetSelectionEnabled = state.presetSelectionEnabled
   const transcriptView = readyDshUiPreferences?.transcriptView ?? 'standard'
   const performanceUsage = readyDshUiPreferences?.performanceUsage ?? DEFAULT_PERFORMANCE_USAGE
+  const collapseTiming = readyDshUiPreferences?.collapseTiming ?? DEFAULT_COLLAPSE_TIMING
   const trajectoryPreferences =
     settingsSnapshotMatchesConnection && dshSettingsSnapshot !== undefined
       ? (readyDshUiPreferences ?? dshUiPreferences(dshSettingsSnapshot))
@@ -458,6 +462,7 @@ export function useDshSettings(input: {
     newSessionPresetSelectionEnabled,
     transcriptView,
     performanceUsage,
+    collapseTiming,
     trajectoryAvailable,
     hostConversationFontSizePx,
     conversationFontStyle,

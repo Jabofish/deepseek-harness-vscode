@@ -1,8 +1,9 @@
-import { useEffect, useId, useMemo, useState, type ReactElement } from 'react'
+import { useId, useMemo, type ReactElement } from 'react'
 import { Icon } from '../../ui/Icon.js'
 import { renderTimelineNode } from './timeline-renderers.js'
 import { assistantBlocksFromAggregates, type TimelineNodeRenderContext } from './timeline-shared.js'
-import type { FocusedAnswerNode, FocusedTurnNode } from './focused-timeline-projection.js'
+import type { FocusedAnswerNode, FocusedTurnNode, FocusedWorkNode } from './focused-timeline-projection.js'
+import { FocusedProcessGroup } from './FocusedProcessGroup.js'
 import { focusedPresentationPolicy } from './focused-presentation-policy.js'
 import { FocusedToolActivity } from './FocusedToolActivity.js'
 import type { ToolTimelineNode } from './ToolCallCollection.js'
@@ -113,46 +114,31 @@ export function FocusedTurn(props: {
     node.sourceIds.includes(context.revealSourceNodeId) &&
     !context.expandedDetails.has(revealDismissedId)
   const collapsedId = `${processId}:collapsed`
-  const [liveWatchedProcessId, setLiveWatchedProcessId] = useState<string | undefined>(() =>
-    !node.foldable && work.length > 0 && !context.expandedDetails.has(collapsedId) ? processId : undefined,
-  )
-  if (
-    !node.foldable &&
-    work.length > 0 &&
-    liveWatchedProcessId !== processId &&
-    !context.expandedDetails.has(collapsedId)
-  ) {
-    setLiveWatchedProcessId(processId)
-  }
-  const keepLiveOpen = liveWatchedProcessId === processId && work.length > 0
-  const { expandedDetails, setExpandedDetails } = context
-  useEffect(() => {
-    if (!keepLiveOpen || !foldable || expandedDetails.has(collapsedId) || expandedDetails.has(processId)) {
-      return
-    }
-    setExpandedDetails((current) => {
-      if (current.has(collapsedId) || current.has(processId)) return current
-      const next = new Set(current)
-      next.add(processId)
-      return next
-    })
-  }, [collapsedId, expandedDetails, foldable, keepLiveOpen, processId, setExpandedDetails])
+  // DSH ui-chat `collapseTiming`: `completion` folds a watched turn as soon as
+  // it finishes; `next-input` keeps it open until the next user input appears.
+  const holdUntilNextInput =
+    context.collapseTiming === 'next-input' &&
+    !context.latestTurnHasNewInput &&
+    (context.latestTurn === undefined || context.latestTurn <= node.turn)
+  const keepLiveOpen = context.watchedFocusedProcessId === processId && work.length > 0 && holdUntilNextInput
   // producedFilePaths caches by list identity, so the tool list must be stable.
   const producedFiles = useMemo(
     () => producedFilePaths(node.nodes.flatMap((member) => (member.kind === 'tool' ? [member] : []))),
     [node.nodes],
   )
-  const toolOnlyTurn = answer === undefined && work.length > 0
+  // A finished turn with no final reply keeps its work visible. Judge the whole
+  // turn, not this row: earlier virtual segments of an answered turn carry no answer.
+  const toolOnlyTurn = node.answered !== true && answer === undefined && work.length > 0
   const open =
     revealed ||
     (!context.expandedDetails.has(collapsedId) &&
       (!foldable || toolOnlyTurn || keepLiveOpen || context.expandedDetails.has(processId)))
-  const process: ReactElement[] = []
-  if (open)
-    for (let index = 0; index < work.length; index++) {
-      const member = work[index]!
+  const renderMembers = (members: readonly FocusedWorkNode[], inline: boolean): ReactElement[] => {
+    const rendered: ReactElement[] = []
+    for (let index = 0; index < members.length; index++) {
+      const member = members[index]!
       if (member.kind !== 'tool') {
-        process.push(
+        rendered.push(
           <div key={member.id} data-source-node-id={member.id}>
             {renderTimelineNode(member, context)}
           </div>,
@@ -160,15 +146,16 @@ export function FocusedTurn(props: {
         continue
       }
       const tools: ToolTimelineNode[] = [member]
-      while (work[index + 1]?.kind === 'tool') {
-        const next = work[index + 1]!
+      while (members[index + 1]?.kind === 'tool') {
+        const next = members[index + 1]!
         if (next.kind !== 'tool') break
         tools.push(next)
         index++
       }
-      process.push(
+      rendered.push(
         <div key={member.id}>
           <FocusedToolActivity
+            inline={inline}
             tools={tools}
             expanded={context.expandedDetails}
             onExpandedChange={context.setExpandedDetails}
@@ -182,8 +169,41 @@ export function FocusedTurn(props: {
         </div>,
       )
     }
+    return rendered
+  }
+  const process: ReactElement[] = []
+  if (open && !policy.groupTools) process.push(...renderMembers(work, false))
+  else if (open) {
+    // Compact/Standard: thinking and tool steps between replies share one
+    // header, as DSH's process groups do; replies stay visible between them.
+    let run: FocusedWorkNode[] = []
+    const flush = (tail: boolean): void => {
+      const members = run
+      if (members.length === 0) return
+      run = []
+      process.push(
+        <FocusedProcessGroup
+          key={`focused-process:${members[0]!.id}`}
+          members={members}
+          live={tail && context.liveFocusedRowId === node.id}
+          context={context}
+          renderBody={() => renderMembers(members, true)}
+        />,
+      )
+    }
+    for (const member of work) {
+      if (member.kind !== 'tool' && hasAnswerBody(member)) {
+        flush(false)
+        process.push(
+          <div key={member.id} data-source-node-id={member.id}>
+            {renderTimelineNode(member, context)}
+          </div>,
+        )
+      } else run.push(member)
+    }
+    flush(true)
+  }
   const toggle = (): void => {
-    if (open) setLiveWatchedProcessId(undefined)
     context.setExpandedDetails((current) => {
       const next = new Set(current)
       if (open) {

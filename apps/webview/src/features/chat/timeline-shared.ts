@@ -7,7 +7,7 @@ import type {
   TokenUsage,
 } from '@dsh-vscode/domain'
 import type { ToolTimelineNode } from './ToolCallCollection.js'
-import type { PerformanceUsageMode, TranscriptViewMode } from '../../app/ui-preferences.js'
+import type { CollapseTiming, PerformanceUsageMode, TranscriptViewMode } from '../../app/ui-preferences.js'
 import type { Translate } from '../../i18n.js'
 
 export type FeedbackSubmit = (
@@ -113,6 +113,13 @@ export interface TimelineNodeRenderContext {
   readonly feedback: Readonly<Record<string, MessageFeedbackItem>> | undefined
   readonly feedbackUnavailable: boolean | undefined
   readonly transcriptView: TranscriptViewMode
+  /** When a finished focused turn folds; see DSH `ui-chat.collapseTiming`. */
+  readonly collapseTiming?: CollapseTiming
+  /** Highest turn number on screen; a next-input fold waits until a newer turn exists. */
+  readonly latestTurn?: number | undefined
+  readonly latestTurnHasNewInput?: boolean
+  readonly liveFocusedRowId?: string | undefined
+  readonly watchedFocusedProcessId?: string | undefined
   readonly performanceUsage: PerformanceUsageMode
   readonly onFeedback: ((messageId: string, rating: MessageFeedbackRating) => void) | undefined
   readonly onFeedbackSubmit: FeedbackSubmit | undefined

@@ -341,6 +341,7 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
         permissionPresets: [],
         newSessionPermissionPresets: [],
         newSessionPermissionDefault: undefined,
+        newSessionPermissionDefaultOptions: undefined,
       }))
       void client
         .request<unknown>({
@@ -355,6 +356,7 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
               ...current,
               newSessionPermissionPresets: catalog.items,
               newSessionPermissionDefault: catalog.defaultPreset,
+              newSessionPermissionDefaultOptions: catalog.defaultOptions,
               ...(version === lifecycle.getOpenVersion() && current.activeSessionId === sessionId
                 ? { permissionPresets: catalog.items }
                 : {}),

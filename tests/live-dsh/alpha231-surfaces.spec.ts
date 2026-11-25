@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { BackendEvent } from '@dsh-vscode/domain'
 import { AlphaLoopbackApiClient } from '../../packages/dsh-adapter/src/versions/alpha/transport.js'
 import { unwrapRpcResultValue } from '../../packages/dsh-adapter/src/versions/rc6/rpc.js'
-import { canConnect, LIVE_TIMEOUT_MS, startManagedRuntime } from './harness.js'
+import { canConnect, LIVE_TIMEOUT_MS, startManagedRuntime, runtimePackageRoot } from './harness.js'
 
 const version = process.env.DSH_LIVE_RUNTIME_VERSION ?? ''
 const enabled = process.env.DSH_LIVE_SMOKE === '1' && ['0.2.3-alpha.1', '0.2.3-alpha.2'].includes(version)
@@ -46,7 +46,7 @@ describe.skipIf(!enabled)('native Host working directory', () => {
     async () => {
       const executable = process.env.DSH_LIVE_RUNTIME
       if (executable === undefined) throw new Error('Select the exact DSH 0.2.3 Alpha CLI entry.')
-      const runtimeRequire = createRequire(path.join(path.dirname(path.dirname(executable)), 'package.json'))
+      const runtimeRequire = createRequire(path.join(runtimePackageRoot(executable), 'package.json'))
       const home = await mkdtemp(path.join(os.tmpdir(), 'dsh-live-alpha231-'))
       let runtime: Awaited<ReturnType<typeof startManagedRuntime>> | undefined
       let transport: AlphaLoopbackApiClient | undefined

@@ -44,4 +44,35 @@ describe('alpha161 permission catalog contract', () => {
       ).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
     },
   )
+
+  it('keeps the rc.5 new-session default choices separate from session choices', async () => {
+    const { transport } = fixture({
+      options: [
+        { value: 'read-only', name: 'read-only' },
+        { value: 'workspace-write', name: 'workspace-write' },
+        { value: 'auto', name: 'Auto' },
+      ],
+      defaultOptions: [
+        { value: 'read-only', name: 'read-only' },
+        { value: 'workspace-write', name: 'workspace-write' },
+      ],
+      defaultPreset: 'workspace-write',
+    })
+    expect(await readPermissionCatalogSnapshot(transport)).toEqual({
+      items: ['read-only', 'workspace-write', 'auto'],
+      defaultPreset: 'workspace-write',
+      defaultOptions: ['read-only', 'workspace-write'],
+    })
+  })
+
+  it.each([null, [null], [{ value: 'auto' }]])(
+    'rejects malformed defaultOptions %j',
+    async (defaultOptions) => {
+      await expect(
+        readPermissionCatalogSnapshot(
+          fixture({ options: [{ value: 'safe', name: 'Safe' }], defaultOptions }).transport,
+        ),
+      ).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+    },
+  )
 })

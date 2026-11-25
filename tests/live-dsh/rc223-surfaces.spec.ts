@@ -3,7 +3,7 @@ import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { canConnect, LIVE_TIMEOUT_MS, startManagedRuntime } from './harness.js'
+import { canConnect, LIVE_TIMEOUT_MS, startManagedRuntime, runtimePackageRoot } from './harness.js'
 
 const version = process.env.DSH_LIVE_RUNTIME_VERSION ?? ''
 const protocols: Readonly<Record<string, string>> = {
@@ -58,9 +58,7 @@ describe.skipIf(!enabled)('native rc223 imported history and export', () => {
       const home = await mkdtemp(path.join(os.tmpdir(), 'dsh-live-rc223-import-'))
       let runtime: Awaited<ReturnType<typeof startManagedRuntime>> | undefined
       try {
-        const runtimeRequire = createRequire(
-          path.join(path.dirname(path.dirname(executable)), 'package.json'),
-        )
+        const runtimeRequire = createRequire(path.join(runtimePackageRoot(executable), 'package.json'))
         const importerEntry = runtimeRequire.resolve('@deepseek-ai/dsh-deepseek-chat-import')
         const zip = createRequire(importerEntry)('fflate') as {
           zipSync(entries: Record<string, Uint8Array>): Uint8Array

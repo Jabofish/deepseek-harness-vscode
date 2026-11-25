@@ -1,5 +1,5 @@
 import { spawn as spawnChild, type ChildProcess } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { readFileSync, realpathSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { createServer, Socket } from 'node:net'
 import os from 'node:os'
@@ -503,4 +503,14 @@ export function canConnect(port: number): Promise<boolean> {
     })
     probe.connect(port, '127.0.0.1')
   })
+}
+
+/**
+ * Package root of the selected DSH CLI entry, for test probes that load the
+ * runtime's own libraries. Resolves symlinks first: an npm `bin/dsh` link sits
+ * outside the package, and resolving from there falls back to this
+ * repository's older hoisted `@deepseek-ai/*` copies.
+ */
+export function runtimePackageRoot(executable: string): string {
+  return path.dirname(path.dirname(realpathSync(executable)))
 }

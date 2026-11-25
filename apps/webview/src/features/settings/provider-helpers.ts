@@ -6,6 +6,7 @@ import {
   isConversationFontSizePx,
   isPerformanceUsageMode,
   isTranscriptViewMode,
+  PERMISSION_DEFAULT_SETTING_PATH,
 } from '../../app/ui-preferences.js'
 import type { CustomProviderTemplate } from './CustomProviderCard.js'
 import type { ProviderSettingChange } from './ProviderSettingsEditor.js'
@@ -155,9 +156,13 @@ export function isValidGeneralSettingChange(
   snapshot: DshSettingsSnapshot,
   path: string,
   value: unknown,
+  permissionDefaultOptions?: readonly string[],
 ): boolean {
   const field = findDshSettingsField(snapshot, path)
   if (field === undefined || !snapshot.schema.writable) return false
+  // rc.5 types the permission default as a string; the catalog names its choices.
+  if (path === PERMISSION_DEFAULT_SETTING_PATH && field.type === 'string')
+    return typeof value === 'string' && (permissionDefaultOptions ?? []).includes(value)
   if (path === DSH_UI_SETTING_PATHS.codingTools) return field.type === 'boolean' && typeof value === 'boolean'
   if (path === DSH_UI_SETTING_PATHS.fontSize)
     return field.type === 'number' && isConversationFontSizePx(value)

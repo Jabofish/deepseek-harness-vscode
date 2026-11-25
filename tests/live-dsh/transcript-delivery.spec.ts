@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
-import { startManagedRuntime, canConnect } from './harness.js'
+import { startManagedRuntime, canConnect, runtimePackageRoot } from './harness.js'
 import { AlphaLoopbackApiClient } from '../../packages/dsh-adapter/src/versions/alpha/transport.js'
 import { unwrapRpcResultValue } from '../../packages/dsh-adapter/src/versions/rc6/rpc.js'
 import { TranscriptWindowService } from '../../apps/extension/src/view/transcript-window.js'
@@ -66,7 +66,7 @@ describe.skipIf(!enabled)('native transcript delivery recovery', () => {
     let unsubscribe: (() => void) | undefined
     let host: TranscriptWindowService | undefined
     try {
-      const requireRuntime = createRequire(path.join(path.dirname(path.dirname(executable)), 'package.json'))
+      const requireRuntime = createRequire(path.join(runtimePackageRoot(executable), 'package.json'))
       const plugin = path.join(home, 'delivery-probe.mjs')
       const patchFile = path.join(home, 'delivery.patch.yml')
       await writeFile(

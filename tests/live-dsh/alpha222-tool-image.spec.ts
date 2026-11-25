@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { AlphaLoopbackApiClient } from '../../packages/dsh-adapter/src/versions/alpha/transport.js'
 import { unwrapRpcResultValue } from '../../packages/dsh-adapter/src/versions/rc6/rpc.js'
 import { imageData } from '../../packages/dsh-adapter/test/fixtures/alpha222-contract.js'
-import { canConnect, startManagedRuntime } from './harness.js'
+import { canConnect, startManagedRuntime, runtimePackageRoot } from './harness.js'
 import type { BackendEvent } from '../../packages/domain/src/index.js'
 
 const enabled =
@@ -64,7 +64,7 @@ describe.skipIf(!enabled)('native alpha222 tool-result image ownership', () => {
     let transport: AlphaLoopbackApiClient | undefined
     let unsubscribe: (() => void) | undefined
     try {
-      const runtimeRequire = createRequire(path.join(path.dirname(path.dirname(executable)), 'package.json'))
+      const runtimeRequire = createRequire(path.join(runtimePackageRoot(executable), 'package.json'))
       const plugin = path.join(home, 'tool-image-probe.mjs')
       const patchFile = path.join(home, 'tool-image.patch.yml')
       await writeFile(

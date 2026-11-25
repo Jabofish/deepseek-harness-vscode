@@ -10,5 +10,12 @@ export function parsePermissionCatalog(value: unknown): PermissionPresetCatalog 
   const defaultPreset = catalog?.defaultPreset
   if (defaultPreset !== undefined && (typeof defaultPreset !== 'string' || !items.includes(defaultPreset)))
     return undefined
-  return { items, ...(defaultPreset === undefined ? {} : { defaultPreset }) }
+  const defaultOptions =
+    catalog?.defaultOptions === undefined ? undefined : stringList(catalog.defaultOptions)
+  if (catalog?.defaultOptions !== undefined && defaultOptions === undefined) return undefined
+  return {
+    items,
+    ...(defaultPreset === undefined ? {} : { defaultPreset }),
+    ...(defaultOptions === undefined ? {} : { defaultOptions }),
+  }
 }
