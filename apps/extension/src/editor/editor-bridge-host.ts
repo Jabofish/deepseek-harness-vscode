@@ -223,6 +223,10 @@ export class EditorBridgeHost {
       return true
     const controller = new AbortController()
     this.starting = controller
+    // Sessions this attempt binds; a failure releases only these, never the
+    // tools other sessions already have.
+    const started: string[] = []
+    let startedLegacy = false
     try {
       const backend = this.deps.backendService.requireBackend()
       const sessionId = desired[0]
@@ -280,6 +284,7 @@ export class EditorBridgeHost {
             }),
           }
           this.companions.set(targetSessionId, binding)
+          started.push(targetSessionId)
           const bindingCurrent = (): boolean =>
             this.companions.get(targetSessionId) === binding && this.currentBackend(backend)
           // Bind before workspace access is available so the first tool can ask for it.
@@ -303,6 +308,7 @@ export class EditorBridgeHost {
           })
         }
       } else {
+        startedLegacy = true
         this.scope = { backend, sessionId }
         const current = (): boolean =>
           this.scope?.backend === backend &&
@@ -348,7 +354,15 @@ export class EditorBridgeHost {
       this.phase = this.companionActive ? (this.reason === undefined ? 'ready' : 'waiting') : 'limited'
       return true
     } catch (error) {
-      await this.stop()
+      await Promise.all(started.map((id) => this.stopCompanionSession(id)))
+      if (startedLegacy) {
+        this.scope = undefined
+        await this.service.stop()
+      }
+      if (!this.companionActive && !this.service.active) {
+        this.capabilities = []
+        this.status?.hide()
+      }
       if (!controller.signal.aborted && !this.disposed) {
         this.phase = 'limited'
         this.reason =

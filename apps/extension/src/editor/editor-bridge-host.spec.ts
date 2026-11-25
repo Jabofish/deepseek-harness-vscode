@@ -478,6 +478,23 @@ describe('automatic editor sharing', () => {
       broker.dispose()
     }
   })
+  it('keeps the tools of bound sessions when binding another session fails', async () => {
+    const broker = new EditorCompanionBroker()
+    const { host, openSessions } = harness('managed', true, path.resolve('some-other-project'), broker)
+    try {
+      await host.enable()
+      await vi.waitFor(() => expect(broker.hasSession('session-a')).toBe(true))
+      openSessions.push('session-b')
+      ui.proof.mockRejectedValueOnce(new Error('different filesystem'))
+      expect(await host.enable({ silent: true })).toBe(false)
+      expect(broker.hasSession('session-b')).toBe(false)
+      expect(broker.hasSession('session-a')).toBe(true)
+    } finally {
+      await host.dispose()
+      broker.dispose()
+    }
+  })
+
   it('prompts on the first actual tool request and resumes after trust, without silent not-bound errors', async () => {
     vi.useFakeTimers()
     const broker = new EditorCompanionBroker()
