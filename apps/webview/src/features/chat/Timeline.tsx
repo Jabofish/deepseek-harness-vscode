@@ -39,7 +39,6 @@ import {
   createVirtualizationProjector,
   createUserTextFactsProjector,
 } from './timeline-projection.js'
-import { isInjectedUserTimelineNode } from './timeline-user-text-facts.js'
 import {
   type FeedbackPrepare,
   type FeedbackSubmit,
@@ -52,6 +51,7 @@ import { TimelineRow } from './TimelineRow.js'
 import { ToolLinkErrorDialog } from './ToolLinkErrorDialog.js'
 import {
   createFocusedTimelineProjector,
+  focusedTimelineTail,
   presentedSourceNodeIds,
   type PresentedTimelineNode,
 } from './focused-timeline-projection.js'
@@ -410,24 +410,10 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
     if (control !== null) openLinkTriggerRef.current = control
   }
   const latestNode = displayNodes[displayNodes.length - 1]
-  let latestTurn: number | undefined
-  let latestTurnHasNewInput = false
-  let liveFocusedRowId: string | undefined
-  if (conversationLayout === 'focused') {
-    let endedTurn: number | undefined
-    for (let index = displayNodes.length - 1; index >= 0; index--) {
-      const candidate = displayNodes[index]!
-      if (candidate.kind === 'user-message' && !isInjectedUserTimelineNode(candidate)) {
-        latestTurnHasNewInput = true
-      } else if (candidate.kind === 'turn-terminal') {
-        endedTurn ??= candidate.turn
-      } else if (candidate.kind === 'focused-turn') {
-        latestTurn = candidate.turn
-        if (running && !latestTurnHasNewInput && endedTurn !== latestTurn) liveFocusedRowId = candidate.id
-        break
-      }
-    }
-  }
+  const { latestTurn, latestTurnHasNewInput, liveFocusedRowId } =
+    conversationLayout === 'focused'
+      ? focusedTimelineTail(displayNodes, running)
+      : { latestTurn: undefined, latestTurnHasNewInput: false, liveFocusedRowId: undefined }
   const latestSignature =
     latestNode?.kind === 'focused-turn'
       ? `${latestNode.id}:${latestNode.foldable}:${latestNode.nodes.map(nodeSignatureProjector).join('|')}`
