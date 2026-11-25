@@ -322,6 +322,58 @@ describe('SettingsDrawer', () => {
     expect(screen.getAllByRole('button', { name: 'Edit' })).toHaveLength(2)
   })
 
+  it('applies nested provider changes at paths relative to their DSH namespace', async () => {
+    const minimax: ModelProvider = {
+      ...baseProvider,
+      id: 'minimax-cn',
+      name: 'MiniMax',
+      settingsNs: 'llm-pi-ai',
+      settingsPath: ['providers', 'minimax-cn'],
+      fields: [
+        {
+          key: 'baseURL',
+          label: 'Base URL',
+          secret: false,
+          required: false,
+          value: 'https://example.invalid',
+        },
+      ],
+    }
+    const onMutateDshSettings = vi.fn().mockResolvedValue(undefined)
+    renderDrawer({
+      providers: [minimax],
+      onLoadDshSettings: vi.fn().mockResolvedValue({
+        ...dshSettingsFixture(),
+        values: {
+          'llm-pi-ai': {
+            providers: {
+              'minimax-cn': { baseURL: 'https://example.invalid', models: [{ id: 'MiniMax-M3' }] },
+            },
+          },
+        },
+      }),
+      onMutateDshSettings,
+    })
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Models' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Provider base URL' }), { target: { value: '' } })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Model ID' }), {
+      target: { value: 'MiniMax-M3.1-Flash' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+
+    await waitFor(() => expect(onMutateDshSettings).toHaveBeenCalledOnce())
+    expect(onMutateDshSettings).toHaveBeenCalledWith(
+      'llm-pi-ai',
+      [
+        { op: 'unset', path: ['providers', 'minimax-cn', 'baseURL'] },
+        { op: 'set', path: ['providers', 'minimax-cn', 'models'], value: [{ id: 'MiniMax-M3.1-Flash' }] },
+      ],
+      7,
+    )
+  })
+
   it('retries only the credential after a committed custom profile reports a key failure', async () => {
     const provider: ModelProvider = {
       ...baseProvider,

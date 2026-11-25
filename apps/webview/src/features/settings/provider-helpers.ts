@@ -123,7 +123,8 @@ export function providerSettingOperations(
       path.some((segment) => segment.trim() === '')
     )
       return undefined
-    const relativePath = path.slice(prefix.length)
+    // settings.mutate takes paths relative to the namespace, including the provider path.
+    const relativePath = path.slice(1)
     operations.push(
       change.kind === 'set'
         ? { op: 'set', path: relativePath, value: change.value }
