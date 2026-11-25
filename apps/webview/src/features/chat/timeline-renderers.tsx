@@ -397,7 +397,18 @@ function renderNode(
               text={node.markdown}
               truncated={truncatedNodeIds.has(node.id)}
               {...(loadFullContent === undefined ? {} : { loadFullText: () => loadFullContent(node.id) })}
-              {...(onEditPrompt === undefined ? {} : { onEditPrompt: () => onEditPrompt(node.markdown) })}
+              {...(onEditPrompt === undefined
+                ? {}
+                : {
+                    onEditPrompt: () => {
+                      // A shortened long prompt must be edited as the full text it stands for.
+                      if (!truncatedNodeIds.has(node.id) || loadFullContent === undefined) {
+                        onEditPrompt(node.markdown)
+                        return
+                      }
+                      void loadFullContent(node.id).then(onEditPrompt, () => undefined)
+                    },
+                  })}
               translate={t}
             />
           )}

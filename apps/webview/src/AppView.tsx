@@ -30,6 +30,7 @@ import type { useAppController } from './AppController.js'
 import { CONVERSATION_VIEW_IDS } from './app/conversation-view-ids.js'
 import { useConversationLayout } from './app/ConversationLayoutProvider.js'
 import { useSurfaceFocusReport } from './app/useSurfaceFocusReport.js'
+import { latestAuthoredPrompt } from './features/chat/retry-prompt.js'
 import { setDraft } from './app/draft-store.js'
 
 export function AppView(props: ReturnType<typeof useAppController>): ReactElement {
@@ -753,33 +754,37 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                         // interrupted/token-limited turn is an explicit follow-up prompt and a
                         // retry resends the latest prompt text. Attachments are recorded by name
                         // only and cannot be replayed, so such a prompt returns to the composer.
-                        const lastUser = [...state.timeline.nodes]
-                          .reverse()
-                          .find((entry) => entry.kind === 'user-message' && entry.markdown.trim() !== '')
-                        const text =
-                          reason === 'interrupted' || reason === 'max-tokens'
+                        const lastUser = latestAuthoredPrompt(state.timeline.nodes)
+                        const continuing = reason === 'interrupted' || reason === 'max-tokens'
+                        if (!continuing && lastUser === undefined) return
+                        void (async () => {
+                          // A long prompt outside the transcript window is shown shortened;
+                          // resend the whole text, never the shortened preview.
+                          const text = continuing
                             ? t('timeline.continuePrompt')
-                            : lastUser?.kind === 'user-message'
-                              ? lastUser.markdown
-                              : undefined
-                        if (text === undefined) return
-                        const hadAttachments =
-                          reason !== 'interrupted' &&
-                          reason !== 'max-tokens' &&
-                          lastUser?.kind === 'user-message' &&
-                          ((lastUser.attachments?.length ?? 0) > 0 || (lastUser.images?.length ?? 0) > 0)
-                        if (hadAttachments) {
-                          // A resend without its files would silently answer a different
-                          // question; hand the text back so the user can re-attach.
-                          setDraft(text)
-                          focusComposer(active.id)
-                          setRetryNotice({
-                            sessionId: active.id,
-                            message: t('timeline.retryNeedsAttachments'),
-                          })
-                          return
-                        }
-                        void store.sendPrompt(active.id, text, [], state.busyEnter).catch((err: unknown) => {
+                            : lastUser === undefined
+                              ? undefined
+                              : state.transcript?.omittedNodeIds.includes(lastUser.id) === true
+                                ? await store.loadTranscriptContent(lastUser.id)
+                                : lastUser.markdown
+                          if (text === undefined) return
+                          const hadAttachments =
+                            !continuing &&
+                            lastUser !== undefined &&
+                            ((lastUser.attachments?.length ?? 0) > 0 || (lastUser.images?.length ?? 0) > 0)
+                          if (hadAttachments) {
+                            // A resend without its files would silently answer a different
+                            // question; hand the text back so the user can re-attach.
+                            setDraft(text)
+                            focusComposer(active.id)
+                            setRetryNotice({
+                              sessionId: active.id,
+                              message: t('timeline.retryNeedsAttachments'),
+                            })
+                            return
+                          }
+                          await store.sendPrompt(active.id, text, [], state.busyEnter)
+                        })().catch((err: unknown) => {
                           setError(err instanceof Error ? err.message : t('app.error.sendPrompt'))
                         })
                       }}

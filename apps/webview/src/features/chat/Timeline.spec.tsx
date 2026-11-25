@@ -131,6 +131,25 @@ describe('Timeline', () => {
     expect(onRetryTurn).not.toHaveBeenCalled()
   })
 
+  it('edits a shortened long prompt as its full text', async () => {
+    const onEditPrompt = vi.fn()
+    const loadFullContent = vi.fn(() => Promise.resolve('The whole long prompt'))
+    render(
+      <Timeline
+        sessionId="session-1"
+        nodes={[{ kind: 'user-message', id: 'user-1', markdown: 'The whole…', source: 'user' }]}
+        omittedNodeIds={['user-1']}
+        loadFullContent={loadFullContent}
+        streaming={false}
+        onEditPrompt={onEditPrompt}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Edit & resend' }))
+    await waitFor(() => expect(onEditPrompt).toHaveBeenCalledWith('The whole long prompt'))
+    expect(loadFullContent).toHaveBeenCalledWith('user-1')
+    expect(onEditPrompt).toHaveBeenCalledTimes(1)
+  })
+
   it('renders the structured terminal failure beside the generic turn label', () => {
     render(
       <Timeline
