@@ -171,7 +171,10 @@ export const dailyScenarios = [
       if ((await ui.snapshot()).sessionTitles.length === 0) await ui.call('toggleSessions')
       await ui.waitFor((s) => s.focus === search, 'search ready for typing')
       await ui.type('Beta')
-      await ui.waitFor((s) => s.sessionTitles.join() === 'Beta conversation', 'unique Beta result')
+      await ui.waitFor(
+        (s) => s.sessionTitles.join() === 'Beta conversation' && !s.sessionSearchBusy,
+        'unique Beta result after content search',
+      )
       await ui.capture('keyboard-session-search')
       await ui.key('Enter')
       const beta = await ui.waitFor(
@@ -183,8 +186,8 @@ export const dailyScenarios = [
       await ui.waitFor((s) => s.focus === search, 'previous search selected on reopen')
       await ui.type('Alpha')
       await ui.waitFor(
-        (s) => s.sessionTitles.join() === 'Alpha conversation',
-        'new typing replaces the old query',
+        (s) => s.sessionTitles.join() === 'Alpha conversation' && !s.sessionSearchBusy,
+        'unique Alpha result after content search',
       )
       await ui.key('Enter')
       const alpha = await ui.waitFor(

@@ -807,7 +807,7 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
               {moveError}
             </p>
           )}
-          <div className="dsh-session-switcher__results">
+          <div className="dsh-session-switcher__results" aria-busy={contentSearchPending}>
             {query === '' ? workspaceNavigation : null}
             {archiveFilter === 'archived' ? null : selectedWorkspace === undefined && query === '' ? (
               <p className="dsh-session-switcher__empty">{t('sessions.temporary')}</p>

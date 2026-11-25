@@ -573,6 +573,7 @@ const scenario = {
       sessionTitles: [...document.querySelectorAll<HTMLElement>('.dsh-session-item__button strong')]
         .filter(visible)
         .map((node) => node.innerText),
+      sessionSearchBusy: document.querySelector('.dsh-session-switcher__results[aria-busy="true"]') !== null,
       text: document.body.innerText,
       prompt: prompt?.value,
       timeline: document.querySelector(`[aria-label="${translate('timeline.aria')}"]`)?.textContent,
