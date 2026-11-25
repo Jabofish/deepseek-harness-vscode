@@ -1,6 +1,7 @@
 import type { Dispatch, FormEvent, ReactElement, RefObject, SetStateAction } from 'react'
 import { SelectMenu } from '../../components/common/SelectMenu.js'
 import type { Translate } from '../../i18n.js'
+import { rrulePreset } from './rrule-presets.js'
 import {
   CREATE_TIMINGS,
   timingChoices,
@@ -206,7 +207,7 @@ export function ScheduleCreateForm({
               onClick={() => {
                 setCreateDraft({
                   ...createDraft,
-                  rrule: rrulePreset('FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'),
+                  rrule: rrulePreset('weekdays'),
                 })
                 setCreateError(undefined)
               }}
@@ -219,7 +220,7 @@ export function ScheduleCreateForm({
               onClick={() => {
                 setCreateDraft({
                   ...createDraft,
-                  rrule: rrulePreset('FREQ=MONTHLY;BYMONTHDAY=1'),
+                  rrule: rrulePreset('monthly'),
                 })
                 setCreateError(undefined)
               }}
@@ -403,16 +404,4 @@ export function ScheduleCreateForm({
       </div>
     </form>
   )
-}
-
-/** A preset starts at the next local 09:00, expressed as the UTC DTSTART RRULE requires. */
-function rrulePreset(rule: string, now = new Date()): string {
-  const start = new Date(now)
-  start.setHours(9, 0, 0, 0)
-  if (start.getTime() <= now.getTime()) start.setDate(start.getDate() + 1)
-  const stamp = start
-    .toISOString()
-    .replace(/[-:]/gu, '')
-    .replace(/\.\d{3}/u, '')
-  return `DTSTART:${stamp}\nRRULE:${rule}`
 }
