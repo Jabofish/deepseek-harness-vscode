@@ -113,7 +113,17 @@ export function createAttachmentRequestHandler(
       const prepared: StoredAttachmentInput[] = []
       for (const uri of selected) prepared.push(await readPickedAttachment(uri, signal))
       signal.throwIfAborted()
-      const attachments = prepared.map((input) => rememberSupportedAttachment(input))
+      const binary = supportsBinaryAttachments()
+      for (const input of prepared) assertAttachmentSupported(input, binary)
+      // Store all or none: a capacity failure partway releases the earlier
+      // files, which the Webview would otherwise never learn about or release.
+      const attachments: ReturnType<typeof attachmentTokens.remember>[] = []
+      try {
+        for (const input of prepared) attachments.push(attachmentTokens.remember(input))
+      } catch (error) {
+        attachmentTokens.release(attachments)
+        throw error
+      }
       return {
         cancelled: false,
         attachment: attachments[0],

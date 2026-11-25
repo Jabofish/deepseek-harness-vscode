@@ -174,3 +174,28 @@ describe('opening a pending text attachment', () => {
     expect(native.openDocument).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('multi-file attachment picking', () => {
+  it('releases the files it already kept when the attachment limit is reached partway', async () => {
+    native.pick.mockResolvedValue(
+      ['a.txt', 'b.txt', 'c.txt'].map((name) => ({ scheme: 'file', path: `/fixture/${name}` })),
+    )
+    native.stat.mockResolvedValue({ type: 1, size: 7 })
+    native.read.mockResolvedValue(new TextEncoder().encode('fixture'))
+    let stored = 0
+    const remember = vi.fn((input: { readonly name: string }) => {
+      if (stored >= 1) throw new Error('capacity reached')
+      stored++
+      return { uri: `attachment://${input.name}` }
+    })
+    const release = vi.fn()
+    const handler = createAttachmentRequestHandler({
+      attachmentTokens: { remember, release },
+      backendService: { requireBackend: () => ({ sessions: { supportsFileUploads: true } }) },
+    } as unknown as RequestGatewayDependencies)
+    await expect(
+      handler({ type: 'attachment.pick', requestId: 'pick' }, new AbortController().signal),
+    ).rejects.toThrow('capacity reached')
+    expect(release).toHaveBeenCalledExactlyOnceWith([{ uri: 'attachment://a.txt' }])
+  })
+})
