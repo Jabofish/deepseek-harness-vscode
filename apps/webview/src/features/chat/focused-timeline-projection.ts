@@ -32,7 +32,7 @@ export function focusedTimelineTail(
 ): {
   readonly latestTurn: number | undefined
   readonly latestTurnHasNewInput: boolean
-  readonly liveFocusedRowId: string | undefined
+  readonly liveFocusedRow: FocusedTurnNode | undefined
 } {
   let latestTurnHasNewInput = false
   let endedTurn: number | undefined
@@ -45,11 +45,13 @@ export function focusedTimelineTail(
       return {
         latestTurn: candidate.turn,
         latestTurnHasNewInput,
-        liveFocusedRowId:
-          running && !latestTurnHasNewInput && endedTurn !== candidate.turn ? candidate.id : undefined,
+        liveFocusedRow:
+          running && !latestTurnHasNewInput && endedTurn !== candidate.turn && !candidate.foldable
+            ? candidate
+            : undefined,
       }
   }
-  return { latestTurn: undefined, latestTurnHasNewInput, liveFocusedRowId: undefined }
+  return { latestTurn: undefined, latestTurnHasNewInput, liveFocusedRow: undefined }
 }
 
 function workTurn(node: DisplayTimelineNode | undefined): number | undefined {

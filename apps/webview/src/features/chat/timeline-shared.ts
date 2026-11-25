@@ -119,6 +119,7 @@ export interface TimelineNodeRenderContext {
   readonly latestTurn?: number | undefined
   readonly latestTurnHasNewInput?: boolean
   readonly liveFocusedRowId?: string | undefined
+  readonly watchedFocusedProcessId?: string | undefined
   readonly performanceUsage: PerformanceUsageMode
   readonly onFeedback: ((messageId: string, rating: MessageFeedbackRating) => void) | undefined
   readonly onFeedbackSubmit: FeedbackSubmit | undefined

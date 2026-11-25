@@ -410,10 +410,17 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
     if (control !== null) openLinkTriggerRef.current = control
   }
   const latestNode = displayNodes[displayNodes.length - 1]
-  const { latestTurn, latestTurnHasNewInput, liveFocusedRowId } =
+  const { latestTurn, latestTurnHasNewInput, liveFocusedRow } =
     conversationLayout === 'focused'
       ? focusedTimelineTail(displayNodes, running)
-      : { latestTurn: undefined, latestTurnHasNewInput: false, liveFocusedRowId: undefined }
+      : { latestTurn: undefined, latestTurnHasNewInput: false, liveFocusedRow: undefined }
+  const liveFocusedRowId = liveFocusedRow?.id
+  const liveFocusedProcessId = liveFocusedRow?.processId ?? liveFocusedRowId
+  // Virtual rows come and go as the reader scrolls. Remember the process here
+  // so next-input folding follows the session rather than row mount lifetime.
+  const [watchedFocusedProcessId, setWatchedFocusedProcessId] = useState<string>()
+  if (liveFocusedProcessId !== undefined && liveFocusedProcessId !== watchedFocusedProcessId)
+    setWatchedFocusedProcessId(liveFocusedProcessId)
   const latestSignature =
     latestNode?.kind === 'focused-turn'
       ? `${latestNode.id}:${latestNode.foldable}:${latestNode.nodes.map(nodeSignatureProjector).join('|')}`
@@ -937,6 +944,7 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
       latestTurn,
       latestTurnHasNewInput,
       liveFocusedRowId,
+      watchedFocusedProcessId,
       onFeedback: hasFeedback ? stableOnFeedback : undefined,
       onFeedbackSubmit: props.onFeedbackSubmit === undefined ? undefined : stableOnFeedbackSubmit,
       onFeedbackPrepare: props.onFeedbackPrepare === undefined ? undefined : stableOnFeedbackPrepare,
@@ -987,6 +995,7 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
       latestTurn,
       latestTurnHasNewInput,
       liveFocusedRowId,
+      watchedFocusedProcessId,
       t,
       truncatedNodeIds,
       userTextFacts,

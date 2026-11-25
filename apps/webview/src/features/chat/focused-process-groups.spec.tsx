@@ -234,6 +234,26 @@ describe('completed turn folding', () => {
     expect(turnOne.querySelector('.dsh-focused-process')).toBeNull()
   })
 
+  it('keeps the watched process open when its virtual row remounts before the next input', () => {
+    const { rerender } = render(view(longTurn(1, 3, false), 'compact', 'next-input', true))
+    const completed = longTurn(1, 3, true)
+    rerender(view(completed, 'compact', 'next-input'))
+    const before = processHeaders()[0]!
+    const notices = Array.from({ length: 40 }, (_, index): TimelineNode => ({
+      kind: 'notice',
+      id: `notice-${index}`,
+      text: `Notice ${index}`,
+      level: 'info',
+    }))
+    // Push the row outside the virtualized tail window without a new user message.
+    rerender(view([...completed, ...notices], 'compact', 'next-input'))
+    expect(before.isConnected).toBe(false)
+    rerender(view(completed, 'compact', 'next-input'))
+    expect(processHeaders()).toHaveLength(1)
+    expect(processHeaders()[0]).not.toBe(before)
+    expect(screen.getByRole('button', { name: /Work completed/u }).getAttribute('aria-expanded')).toBe('true')
+  })
+
   it('keeps a finished turn without a final reply visible', () => {
     const toolOnly = longTurn(1, 2, false).map((node) =>
       node.kind === 'assistant-message' ? { ...node, turnCompleted: node.step === 2 } : node,

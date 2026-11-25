@@ -1,4 +1,4 @@
-import { useId, useMemo, useState, type ReactElement } from 'react'
+import { useId, useMemo, type ReactElement } from 'react'
 import { Icon } from '../../ui/Icon.js'
 import { renderTimelineNode } from './timeline-renderers.js'
 import { assistantBlocksFromAggregates, type TimelineNodeRenderContext } from './timeline-shared.js'
@@ -114,25 +114,13 @@ export function FocusedTurn(props: {
     node.sourceIds.includes(context.revealSourceNodeId) &&
     !context.expandedDetails.has(revealDismissedId)
   const collapsedId = `${processId}:collapsed`
-  const [liveWatchedProcessId, setLiveWatchedProcessId] = useState<string | undefined>(() =>
-    !node.foldable && work.length > 0 && !context.expandedDetails.has(collapsedId) ? processId : undefined,
-  )
-  if (
-    !node.foldable &&
-    work.length > 0 &&
-    liveWatchedProcessId !== processId &&
-    !context.expandedDetails.has(collapsedId)
-  ) {
-    setLiveWatchedProcessId(processId)
-  }
   // DSH ui-chat `collapseTiming`: `completion` folds a watched turn as soon as
   // it finishes; `next-input` keeps it open until the next user input appears.
   const holdUntilNextInput =
     context.collapseTiming === 'next-input' &&
     !context.latestTurnHasNewInput &&
     (context.latestTurn === undefined || context.latestTurn <= node.turn)
-  const keepLiveOpen =
-    liveWatchedProcessId === processId && work.length > 0 && (!foldable || holdUntilNextInput)
+  const keepLiveOpen = context.watchedFocusedProcessId === processId && work.length > 0 && holdUntilNextInput
   // producedFilePaths caches by list identity, so the tool list must be stable.
   const producedFiles = useMemo(
     () => producedFilePaths(node.nodes.flatMap((member) => (member.kind === 'tool' ? [member] : []))),
@@ -197,7 +185,7 @@ export function FocusedTurn(props: {
         <FocusedProcessGroup
           key={`focused-process:${members[0]!.id}`}
           members={members}
-          live={tail && context.liveFocusedRowId === node.id && !node.foldable}
+          live={tail && context.liveFocusedRowId === node.id}
           context={context}
           renderBody={() => renderMembers(members, true)}
         />,
@@ -216,7 +204,6 @@ export function FocusedTurn(props: {
     flush(true)
   }
   const toggle = (): void => {
-    if (open) setLiveWatchedProcessId(undefined)
     context.setExpandedDetails((current) => {
       const next = new Set(current)
       if (open) {
