@@ -41,9 +41,11 @@ export function FocusedProcessGroup(props: {
   const bodyId = useId()
   const groupId = `focused-process:${members[0]?.id}`
   const policy = focusedPresentationPolicy(context.transcriptView)
+  const revealDismissedId = `${groupId}:reveal-dismissed:${context.revealRequestId ?? context.revealSourceNodeId}`
   const revealed =
     context.revealSourceNodeId !== undefined &&
-    members.some((member) => timelineSourceNodeIds(member).includes(context.revealSourceNodeId!))
+    members.some((member) => timelineSourceNodeIds(member).includes(context.revealSourceNodeId!)) &&
+    !context.expandedDetails.has(revealDismissedId)
   const open = revealed || context.expandedDetails.has(groupId)
   const tools = members.flatMap(memberTools)
   const executed = tools.filter((node) => node.tool.preparation === undefined)
@@ -80,8 +82,10 @@ export function FocusedProcessGroup(props: {
         onClick={() =>
           context.setExpandedDetails((current) => {
             const next = new Set(current)
-            if (open) next.delete(groupId)
-            else next.add(groupId)
+            if (open) {
+              next.delete(groupId)
+              if (revealed) next.add(revealDismissedId)
+            } else next.add(groupId)
             return next
           })
         }

@@ -8,10 +8,11 @@ import { arraysEqual } from './list-equality.js'
 import { parseCustomProviderCreateResult, parseDiscoveredModels } from './model-catalog.js'
 import { withPresetSelectionEnabled } from './host-message-reducers.js'
 import { object } from './unknown-record.js'
-import type { AppActions, StateSetter } from './types.js'
+import type { AppActions, AppState, StateSetter } from './types.js'
 
 export interface SettingsActionHost {
   readonly client: ProtocolClient
+  readonly getState: () => AppState
   readonly setState: StateSetter
   readonly refreshModelCatalog: () => Promise<void>
   readonly applyBusyEnter: (values: Readonly<Record<string, unknown>>) => void
@@ -77,6 +78,7 @@ export function createSettingsActions(host: SettingsActionHost): SettingsActionM
       await client.request<unknown>({ type: 'connection.clearCredentials', requestId: requestId() })
     },
     updateDshSetting: async (path, value, expectedRevision) => {
+      const connectionEpoch = host.getState().connectionEpoch
       await client.request<unknown>({
         type: 'settings.update',
         requestId: requestId(),
@@ -87,6 +89,7 @@ export function createSettingsActions(host: SettingsActionHost): SettingsActionM
       // new-session default from here on.
       if (path === PERMISSION_DEFAULT_SETTING_PATH && typeof value === 'string')
         setState((current) =>
+          current.connectionEpoch !== connectionEpoch ||
           current.newSessionPermissionDefault === value ||
           !(current.newSessionPermissionDefaultOptions ?? current.newSessionPermissionPresets ?? []).includes(
             value,

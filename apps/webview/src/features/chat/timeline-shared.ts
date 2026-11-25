@@ -117,6 +117,8 @@ export interface TimelineNodeRenderContext {
   readonly collapseTiming?: CollapseTiming
   /** Highest turn number on screen; a next-input fold waits until a newer turn exists. */
   readonly latestTurn?: number | undefined
+  readonly latestTurnHasNewInput?: boolean
+  readonly liveFocusedRowId?: string | undefined
   readonly performanceUsage: PerformanceUsageMode
   readonly onFeedback: ((messageId: string, rating: MessageFeedbackRating) => void) | undefined
   readonly onFeedbackSubmit: FeedbackSubmit | undefined

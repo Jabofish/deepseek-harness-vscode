@@ -56,6 +56,7 @@ function view(
   mode: TranscriptViewMode,
   collapseTiming: CollapseTiming = 'completion',
   streaming = false,
+  revealTarget?: { readonly nodeId: string; readonly requestId: string },
 ): ReactElement {
   return (
     <ConversationLayoutProvider initialLayout="focused">
@@ -66,6 +67,7 @@ function view(
         running={streaming}
         transcriptView={mode}
         collapseTiming={collapseTiming}
+        {...(revealTarget === undefined ? {} : { revealTarget })}
       />
     </ConversationLayoutProvider>
   )
@@ -121,6 +123,40 @@ describe('focused process groups (Compact / Standard)', () => {
     render(view(longTurn(1, 3, false), 'detailed', 'completion', true))
     expect(processHeaders()).toHaveLength(0)
   })
+
+  it('can close a revealed group and reopen it with a fresh reveal request', () => {
+    const nodes = longTurn(1, 3, true)
+    const { rerender } = render(
+      view(nodes, 'standard', 'completion', false, { nodeId: 'tool-1-2', requestId: 'reveal-1' }),
+    )
+    expect(processHeaders()[0]?.getAttribute('aria-expanded')).toBe('true')
+    fireEvent.click(processHeaders()[0]!)
+    expect(processHeaders()[0]?.getAttribute('aria-expanded')).toBe('false')
+    rerender(view(nodes, 'standard', 'completion', false, { nodeId: 'tool-1-2', requestId: 'reveal-2' }))
+    expect(processHeaders()[0]?.getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('only labels the latest segment as live', () => {
+    render(view(longTurn(1, 30, false), 'compact', 'completion', true))
+    const headers = processHeaders()
+    expect(headers.length).toBeGreaterThan(1)
+    expect(headers.filter((header) => header.textContent?.includes('Running a tool'))).toHaveLength(1)
+  })
+
+  it('shows a settled process summary after a failed turn', () => {
+    render(
+      view(
+        [
+          ...longTurn(1, 2, false),
+          { kind: 'turn-terminal', id: 'error-1', reason: 'error', turn: 1, sequence: 9 },
+        ],
+        'compact',
+      ),
+    )
+    expect(processHeaders()).toHaveLength(1)
+    expect(processHeaders()[0]!.textContent).not.toContain('Running a tool')
+    expect(screen.getByText('Turn ended with an error')).toBeDefined()
+  })
 })
 
 describe('completed turn folding', () => {
@@ -143,11 +179,13 @@ describe('completed turn folding', () => {
     expect(document.querySelectorAll('.dsh-focused-turn__process:not([hidden])')).toHaveLength(0)
   })
 
-  it('with next-input timing keeps the watched turn open until a newer turn starts', () => {
+  it('with next-input timing folds when the next user message arrives before any tool or reply', () => {
     const { rerender } = render(view(longTurn(1, 3, false), 'compact', 'next-input', true))
-    rerender(view(longTurn(1, 3, true), 'compact', 'next-input', false))
+    const completed = longTurn(1, 3, true)
+    rerender(view(completed, 'compact', 'next-input', false))
     expect(processHeaders()).toHaveLength(1)
-    rerender(view([...longTurn(1, 3, true), ...longTurn(2, 1, false)], 'compact', 'next-input', true))
+    const newInput = longTurn(2, 0, false)
+    rerender(view([...completed, ...newInput], 'compact', 'next-input', true))
     const turnOne = document.querySelector('[data-turn="1"]') as HTMLElement
     expect(turnOne.querySelector('.dsh-focused-process')).toBeNull()
   })

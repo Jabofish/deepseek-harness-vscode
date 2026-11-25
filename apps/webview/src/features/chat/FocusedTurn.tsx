@@ -126,9 +126,10 @@ export function FocusedTurn(props: {
     setLiveWatchedProcessId(processId)
   }
   // DSH ui-chat `collapseTiming`: `completion` folds a watched turn as soon as
-  // it finishes; `next-input` keeps it open until a newer turn appears.
+  // it finishes; `next-input` keeps it open until the next user input appears.
   const holdUntilNextInput =
     context.collapseTiming === 'next-input' &&
+    !context.latestTurnHasNewInput &&
     (context.latestTurn === undefined || context.latestTurn <= node.turn)
   const keepLiveOpen =
     liveWatchedProcessId === processId && work.length > 0 && (!foldable || holdUntilNextInput)
@@ -196,7 +197,7 @@ export function FocusedTurn(props: {
         <FocusedProcessGroup
           key={`focused-process:${members[0]!.id}`}
           members={members}
-          live={tail && !node.foldable}
+          live={tail && context.liveFocusedRowId === node.id && !node.foldable}
           context={context}
           renderBody={() => renderMembers(members, true)}
         />,

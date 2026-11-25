@@ -780,6 +780,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   })
   const settingsActions = createSettingsActions({
     client,
+    getState: () => state,
     setState,
     refreshModelCatalog: globalCatalogs.refreshModels,
     applyBusyEnter,

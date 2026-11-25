@@ -7,6 +7,7 @@ function harness(initial: Partial<AppState>): {
   readonly actions: ReturnType<typeof createSettingsActions>
   readonly request: ReturnType<typeof vi.fn>
   readonly state: () => AppState
+  readonly setState: StateSetter
 } {
   let state = initial as AppState
   const setState: StateSetter = (next) => {
@@ -15,13 +16,14 @@ function harness(initial: Partial<AppState>): {
   const request = vi.fn().mockResolvedValue({})
   const actions = createSettingsActions({
     client: { request } as unknown as ProtocolClient,
+    getState: () => state,
     setState,
     refreshModelCatalog: () => Promise.resolve(),
     applyBusyEnter: () => undefined,
     nextPresetRosterGeneration: () => 0,
     isPresetRosterCurrent: () => true,
   })
-  return { actions, request, state: () => state }
+  return { actions, request, state: () => state, setState }
 }
 
 describe('permission default write', () => {
@@ -51,5 +53,20 @@ describe('permission default write', () => {
     })
     await unoffered.actions.updateDshSetting('permission.defaultPreset', 'auto', 3)
     expect(unoffered.state().newSessionPermissionDefault).toBe('workspace-write')
+  })
+
+  it('ignores a permission write completed by a previous connection', async () => {
+    const { actions, request, state, setState } = harness({
+      connectionEpoch: 1,
+      newSessionPermissionDefault: 'workspace-write',
+      newSessionPermissionDefaultOptions: ['read-only', 'workspace-write'],
+    })
+    let finish!: () => void
+    request.mockReturnValueOnce(new Promise<void>((resolve) => (finish = resolve)))
+    const save = actions.updateDshSetting('permission.defaultPreset', 'read-only', 3)
+    setState((current) => ({ ...current, connectionEpoch: 2 }))
+    finish()
+    await save
+    expect(state().newSessionPermissionDefault).toBe('workspace-write')
   })
 })

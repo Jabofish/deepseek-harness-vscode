@@ -39,6 +39,7 @@ import {
   createVirtualizationProjector,
   createUserTextFactsProjector,
 } from './timeline-projection.js'
+import { isInjectedUserTimelineNode } from './timeline-user-text-facts.js'
 import {
   type FeedbackPrepare,
   type FeedbackSubmit,
@@ -410,11 +411,22 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
   }
   const latestNode = displayNodes[displayNodes.length - 1]
   let latestTurn: number | undefined
-  for (let index = displayNodes.length - 1; index >= 0; index--) {
-    const candidate = displayNodes[index]!
-    if (candidate.kind !== 'focused-turn') continue
-    latestTurn = candidate.turn
-    break
+  let latestTurnHasNewInput = false
+  let liveFocusedRowId: string | undefined
+  if (conversationLayout === 'focused') {
+    let endedTurn: number | undefined
+    for (let index = displayNodes.length - 1; index >= 0; index--) {
+      const candidate = displayNodes[index]!
+      if (candidate.kind === 'user-message' && !isInjectedUserTimelineNode(candidate)) {
+        latestTurnHasNewInput = true
+      } else if (candidate.kind === 'turn-terminal') {
+        endedTurn ??= candidate.turn
+      } else if (candidate.kind === 'focused-turn') {
+        latestTurn = candidate.turn
+        if (running && !latestTurnHasNewInput && endedTurn !== latestTurn) liveFocusedRowId = candidate.id
+        break
+      }
+    }
   }
   const latestSignature =
     latestNode?.kind === 'focused-turn'
@@ -937,6 +949,8 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
       performanceUsage,
       collapseTiming,
       latestTurn,
+      latestTurnHasNewInput,
+      liveFocusedRowId,
       onFeedback: hasFeedback ? stableOnFeedback : undefined,
       onFeedbackSubmit: props.onFeedbackSubmit === undefined ? undefined : stableOnFeedbackSubmit,
       onFeedbackPrepare: props.onFeedbackPrepare === undefined ? undefined : stableOnFeedbackPrepare,
@@ -985,6 +999,8 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
       transcriptView,
       collapseTiming,
       latestTurn,
+      latestTurnHasNewInput,
+      liveFocusedRowId,
       t,
       truncatedNodeIds,
       userTextFacts,
