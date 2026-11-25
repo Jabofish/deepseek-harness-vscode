@@ -44,6 +44,9 @@ import {
   turnTerminalLabel,
 } from './timeline-labels.js'
 
+/** Shared so a memoized message does not see a new empty list on every render. */
+const NO_PRODUCED_FILES: readonly string[] = []
+
 function renderNode(
   node: DisplayTimelineNode,
   userTextFacts: ReadonlyMap<string, UserTextFacts>,
@@ -67,7 +70,7 @@ function renderNode(
   focused = false,
   truncatedNodeIds: ReadonlySet<string> = new Set(),
   loadFullContent?: (nodeId: string) => Promise<string>,
-  producedFiles: readonly string[] = [],
+  producedFiles: readonly string[] = NO_PRODUCED_FILES,
   onEditPrompt?: (text: string) => void,
   onRetryTurn?: (reason: TurnTerminalReason) => void,
   retryTurnNodeId?: string,
@@ -712,7 +715,7 @@ function renderAssistantMessage(
   focused = false,
   truncatedNodeIds: ReadonlySet<string> = new Set(),
   loadFullContent?: (nodeId: string) => Promise<string>,
-  producedFiles: readonly string[] = [],
+  producedFiles: readonly string[] = NO_PRODUCED_FILES,
 ): ReactElement {
   const inProgress = assistantNodeInProgress(node)
   const turnSettled = node.turn === undefined || node.turnCompleted === true

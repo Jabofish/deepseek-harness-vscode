@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type ReactElement } from 'react'
+import { useEffect, useId, useMemo, useState, type ReactElement } from 'react'
 import { Icon } from '../../ui/Icon.js'
 import { renderTimelineNode } from './timeline-renderers.js'
 import { assistantBlocksFromAggregates, type TimelineNodeRenderContext } from './timeline-shared.js'
@@ -137,8 +137,10 @@ export function FocusedTurn(props: {
       return next
     })
   }, [collapsedId, expandedDetails, foldable, keepLiveOpen, processId, setExpandedDetails])
-  const producedFiles = producedFilePaths(
-    node.nodes.flatMap((member) => (member.kind === 'tool' ? [member] : [])),
+  // producedFilePaths caches by list identity, so the tool list must be stable.
+  const producedFiles = useMemo(
+    () => producedFilePaths(node.nodes.flatMap((member) => (member.kind === 'tool' ? [member] : []))),
+    [node.nodes],
   )
   const toolOnlyTurn = answer === undefined && work.length > 0
   const open =

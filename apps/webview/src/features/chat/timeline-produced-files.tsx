@@ -143,7 +143,6 @@ function ProducedFilesRow(props: {
           <button
             className="dsh-timeline__produced-chip dsh-timeline__produced-more"
             type="button"
-            aria-expanded="false"
             onClick={() => setExpanded(true)}
           >
             {t('timeline.producedFilesMore', { count: hiddenCount })}
