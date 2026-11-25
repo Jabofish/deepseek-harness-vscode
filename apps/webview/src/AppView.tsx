@@ -30,7 +30,7 @@ import type { useAppController } from './AppController.js'
 import { CONVERSATION_VIEW_IDS } from './app/conversation-view-ids.js'
 import { useConversationLayout } from './app/ConversationLayoutProvider.js'
 import { useSurfaceFocusReport } from './app/useSurfaceFocusReport.js'
-import { latestAuthoredPrompt } from './features/chat/retry-prompt.js'
+import { latestAuthoredPrompt, promptHasAttachments } from './features/chat/retry-prompt.js'
 import { setDraftFor } from './app/draft-store.js'
 
 export function AppView(props: ReturnType<typeof useAppController>): ReactElement {
@@ -774,17 +774,20 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                                 : lastUser.markdown
                           if (text === undefined || !isCurrentConversation(active.id)) return
                           const hadAttachments =
-                            !continuing &&
-                            lastUser !== undefined &&
-                            ((lastUser.attachments?.length ?? 0) > 0 || (lastUser.images?.length ?? 0) > 0)
+                            !continuing && lastUser !== undefined && promptHasAttachments(lastUser)
                           if (hadAttachments) {
                             // A resend without its files would silently answer a different
                             // question; hand the text back so the user can re-attach.
-                            setDraftFor(active.id, text)
+                            const hasText = text.trim() !== ''
+                            if (hasText) setDraftFor(active.id, text)
                             focusComposer(active.id)
                             setRetryNotice({
                               sessionId: active.id,
-                              message: t('timeline.retryNeedsAttachments'),
+                              message: t(
+                                hasText
+                                  ? 'timeline.retryNeedsAttachments'
+                                  : 'timeline.retryNeedsAttachmentsOnly',
+                              ),
                             })
                             return
                           }

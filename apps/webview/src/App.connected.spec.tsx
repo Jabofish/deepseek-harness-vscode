@@ -1338,6 +1338,33 @@ describe('App connected rendering', () => {
     expect(prompt.value).toBe('draft for the second session')
   })
 
+  it('keeps the current draft and asks for the files again when retrying an attachment-only prompt', async () => {
+    const state = connectedState(true)
+    const sendPrompt = vi.fn().mockResolvedValue(undefined)
+    currentStore = {
+      ...storeFor({
+        ...state,
+        timeline: {
+          ...state.timeline,
+          nodes: [
+            { kind: 'user-message', id: 'previous', markdown: 'earlier instruction' },
+            { kind: 'user-message', id: 'latest', markdown: '', attachments: [{ name: 'note.txt' }] },
+          ],
+        },
+      }),
+      sendPrompt,
+    }
+    render(<App />)
+    const prompt = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+    fireEvent.change(prompt, { target: { value: 'unsent text' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Mock retry turn' }))
+    expect(
+      await screen.findByText('Add the attachments from the last prompt again, then send.'),
+    ).toBeDefined()
+    expect(prompt.value).toBe('unsent text')
+    expect(sendPrompt).not.toHaveBeenCalled()
+  })
+
   it('keeps the attachment retry warning with the conversation that raised it', async () => {
     const state = connectedState(true)
     const withPrompt: AppState = {

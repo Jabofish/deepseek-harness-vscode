@@ -132,14 +132,15 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
     reviewState: Extract<ChangeReviewState, 'accepted' | 'rejected' | 'needs-attention'>,
   ): void => {
     if (detail === undefined || reviewing !== undefined) return
+    const { changeId } = detail
     setReviewing(reviewState)
     setReviewError(false)
     menuRef.current?.focus({ preventScroll: true })
     void props
-      .onMarkReviewed(detail.changeId, reviewState)
+      .onMarkReviewed(changeId, reviewState)
       .then((next) => {
         if (next !== undefined)
-          setDetail((current) => (current === undefined ? current : { ...current, ...next }))
+          setDetail((current) => (current?.changeId === changeId ? { ...current, ...next } : current))
         else setReviewError(true)
       })
       .catch(() => setReviewError(true))
@@ -248,66 +249,73 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
             </div>
           ) : null}
           <ul className="dsh-changes-popover__rows">
-            {deduplicateChanges(props.changes).map(({ change, count }) => (
-              <li key={change.changeId} className="dsh-changes-popover__row">
-                <button
-                  type="button"
-                  className="dsh-changes-popover__row-main"
-                  title={change.relativePath}
-                  onClick={() => {
-                    setOpenError(false)
-                    setReviewError(false)
-                    void props.onOpen(change.changeId).catch(() => setOpenError(true))
-                    if (change.reviewState === 'unreviewed')
-                      void props.onMarkReviewed(change.changeId, 'viewed').catch(() => setReviewError(true))
-                  }}
-                >
-                  <Icon name={change.applicationState === 'failed' ? 'alert' : 'file'} />
-                  <span className="dsh-changes-popover__path">
-                    <span className="dsh-sr-only">{change.relativePath}</span>
-                    <strong aria-hidden="true">{change.relativePath.split(/[\\/]/u).at(-1)}</strong>
-                    <small aria-hidden="true">
-                      {change.relativePath.replace(/(?:^|[\\/])[^\\/]*$/u, '')}
-                    </small>
-                  </span>
-                  <span className="dsh-changes-popover__meta">
-                    <span className="dsh-changes-popover__status-label">
-                      {t(`changes.status.${change.status}`)}
+            {groupChangesByPath(props.changes).map(({ change, number, count }) => {
+              const path = change.relativePath
+              const detailLabel =
+                count > 1
+                  ? t('changes.detailVersion', { path, number, count })
+                  : t('changes.detail', { path })
+              return (
+                <li key={change.changeId} className="dsh-changes-popover__row">
+                  <button
+                    type="button"
+                    className="dsh-changes-popover__row-main"
+                    title={change.relativePath}
+                    onClick={() => {
+                      setOpenError(false)
+                      setReviewError(false)
+                      void props.onOpen(change.changeId).catch(() => setOpenError(true))
+                      if (change.reviewState === 'unreviewed')
+                        void props.onMarkReviewed(change.changeId, 'viewed').catch(() => setReviewError(true))
+                    }}
+                  >
+                    <Icon name={change.applicationState === 'failed' ? 'alert' : 'file'} />
+                    <span className="dsh-changes-popover__path">
+                      <span className="dsh-sr-only">{change.relativePath}</span>
+                      <strong aria-hidden="true">{change.relativePath.split(/[\\/]/u).at(-1)}</strong>
+                      <small aria-hidden="true">
+                        {change.relativePath.replace(/(?:^|[\\/])[^\\/]*$/u, '')}
+                      </small>
                     </span>
-                    {count > 1 ? (
-                      <span className="dsh-changes-popover__edits-count">
-                        {t('changes.editsCount', { count })}
+                    <span className="dsh-changes-popover__meta">
+                      <span className="dsh-changes-popover__status-label">
+                        {t(`changes.status.${change.status}`)}
                       </span>
-                    ) : null}
-                    {change.additions !== undefined || change.deletions !== undefined ? (
-                      <span className="dsh-changes-popover__diff-stats">
-                        {`+${change.additions ?? 0} -${change.deletions ?? 0}`}
-                      </span>
-                    ) : null}
-                    {change.reviewState !== 'unreviewed' ? (
-                      <span className="dsh-changes-popover__review-state">
-                        {t(`changes.review.${change.reviewState}`)}
-                      </span>
-                    ) : null}
-                  </span>
-                  <span className="dsh-changes-popover__evidence">
-                    {t(`changes.evidence.${change.evidence}`)}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  className="dsh-icon-button"
-                  aria-label={t('changes.detail', { path: change.relativePath })}
-                  title={t('changes.detail', { path: change.relativePath })}
-                  onClick={(event) => {
-                    detailTriggerRef.current = event.currentTarget
-                    openDetail(change.changeId)
-                  }}
-                >
-                  <Icon name="search" />
-                </button>
-              </li>
-            ))}
+                      {count > 1 ? (
+                        <span className="dsh-changes-popover__edits-count">
+                          {t('changes.editVersion', { number, count })}
+                        </span>
+                      ) : null}
+                      {change.additions !== undefined || change.deletions !== undefined ? (
+                        <span className="dsh-changes-popover__diff-stats">
+                          {`+${change.additions ?? 0} -${change.deletions ?? 0}`}
+                        </span>
+                      ) : null}
+                      {change.reviewState !== 'unreviewed' ? (
+                        <span className="dsh-changes-popover__review-state">
+                          {t(`changes.review.${change.reviewState}`)}
+                        </span>
+                      ) : null}
+                    </span>
+                    <span className="dsh-changes-popover__evidence">
+                      {t(`changes.evidence.${change.evidence}`)}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="dsh-icon-button"
+                    aria-label={detailLabel}
+                    title={detailLabel}
+                    onClick={(event) => {
+                      detailTriggerRef.current = event.currentTarget
+                      openDetail(change.changeId)
+                    }}
+                  >
+                    <Icon name="search" />
+                  </button>
+                </li>
+              )
+            })}
           </ul>
           {detailLoading ? (
             <div className="dsh-changes-popover__status" role="status">
@@ -433,21 +441,25 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
   )
 }
 
-function deduplicateChanges(
+function groupChangesByPath(
   changes: readonly ChangeSetFile[],
-): readonly { readonly change: ChangeSetFile; readonly count: number }[] {
-  const byPath = new Map<string, { change: ChangeSetFile; count: number }>()
+): readonly { readonly change: ChangeSetFile; readonly number: number; readonly count: number }[] {
+  const byPath = new Map<string, ChangeSetFile[]>()
   for (const entry of changes) {
     const key = `${entry.workspaceFolderId}\u0000${entry.relativePath}`
     const existing = byPath.get(key)
-    if (existing === undefined) {
-      byPath.set(key, { change: entry, count: 1 })
-    } else {
-      existing.count += 1
-      if (entry.lastSeenAt > existing.change.lastSeenAt) existing.change = entry
-    }
+    if (existing === undefined) byPath.set(key, [entry])
+    else existing.push(entry)
   }
-  return [...byPath.values()]
+  return [...byPath.values()].flatMap((group) =>
+    group
+      .sort((a, b) => b.lastSeenAt - a.lastSeenAt)
+      .map((change, index) => ({
+        change,
+        number: group.length - index,
+        count: group.length,
+      })),
+  )
 }
 
 function renderColorizedDiffLines(diff: string): ReactNode {

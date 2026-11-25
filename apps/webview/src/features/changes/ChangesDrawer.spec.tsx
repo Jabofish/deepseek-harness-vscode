@@ -146,4 +146,25 @@ describe('ChangesDrawer', () => {
     expect(await screen.findByRole('button', { name: 'Copy' })).toBeDefined()
     expect(screen.queryByRole('button', { name: 'Compare in editor' })).toBeNull()
   })
+
+  it('shows the earlier and latest records for a file with their own review states', async () => {
+    const latest: ChangeSetFile = {
+      ...change,
+      changeId: 'latest',
+      lastSeenAt: 1_200,
+      reviewState: 'accepted',
+    }
+    const earlier: ChangeSetFile = { ...change, changeId: 'earlier', reviewState: 'needs-attention' }
+    const onDetail = vi
+      .fn()
+      .mockResolvedValue({ ...earlier, redactedDiff: 'Earlier diff', diffTruncated: false })
+    renderDrawer({ changes: [earlier, latest], onDetail })
+
+    fireEvent.click(screen.getByRole('button', { name: '2 changes' }))
+    expect(screen.getByText('Reviewed')).toBeDefined()
+    expect(screen.getByText('Needs follow-up')).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Review src/main.ts, edit 1 of 2' }))
+    expect(await screen.findByText('Earlier diff')).toBeDefined()
+    expect(onDetail).toHaveBeenCalledWith('earlier')
+  })
 })

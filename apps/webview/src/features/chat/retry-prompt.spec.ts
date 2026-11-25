@@ -17,4 +17,19 @@ describe('latestAuthoredPrompt', () => {
   it('returns nothing when no prompt was written', () => {
     expect(latestAuthoredPrompt([])).toBeUndefined()
   })
+
+  it('takes an attachment-only prompt as the latest authored turn', () => {
+    expect(
+      latestAuthoredPrompt([
+        { kind: 'user-message', id: 'earlier', markdown: 'Earlier instruction', source: 'user' },
+        {
+          kind: 'user-message',
+          id: 'latest',
+          markdown: '',
+          source: 'user',
+          attachments: [{ name: 'note.txt' }],
+        },
+      ])?.id,
+    ).toBe('latest')
+  })
 })
