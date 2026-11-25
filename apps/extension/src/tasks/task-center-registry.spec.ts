@@ -268,4 +268,43 @@ describe('TaskCenterRegistry', () => {
     registry.workspaceFoldersChanged()
     await vi.waitFor(() => expect(counts).toEqual([1, 2]))
   })
+
+  it('does not reread a session whose ownership lookup failed on every event', async () => {
+    const base = backend()
+    const getSession = vi.fn().mockRejectedValue(new Error('unreadable'))
+    const current: TestBackend = { ...base, sessions: { ...base.sessions, get: getSession } }
+    let now = 10_000
+    const registry = new TaskCenterRegistry({
+      now: () => now,
+      workspaceFolderIds: () => ['folder-1'],
+      resolveSessionWorkspaceFolderId: () => 'folder-1',
+    })
+    registry.attach(current, () => 'folder-1')
+    current.events.emit({
+      type: 'question.requested',
+      question: { id: 'q-1', sessionId: 'session-1', prompt: 'Yours?', allowFreeText: true },
+    })
+    await vi.waitFor(() => expect(getSession).toHaveBeenCalledTimes(1))
+    await Promise.resolve()
+    for (let index = 0; index < 5; index++)
+      current.events.emit({ type: 'session.status', sessionId: 'session-1', status: 'running' })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(getSession).toHaveBeenCalledTimes(1)
+
+    now += 30_000
+    getSession.mockResolvedValue({
+      id: 'session-1',
+      workspaceId: 'dsh-workspace-1',
+      title: 'Main session',
+      blank: false,
+      status: 'running',
+      createdAt: '2026-08-29T00:00:00.000Z',
+      updatedAt: '2026-08-29T00:01:00.000Z',
+    } satisfies SessionSummary)
+    const counts: number[] = []
+    registry.onPendingInteractionsChanged((count) => counts.push(count))
+    current.events.emit({ type: 'session.status', sessionId: 'session-1', status: 'running' })
+    await vi.waitFor(() => expect(counts).toEqual([1]))
+    expect(getSession).toHaveBeenCalledTimes(2)
+  })
 })

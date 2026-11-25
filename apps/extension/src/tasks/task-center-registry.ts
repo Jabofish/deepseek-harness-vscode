@@ -17,6 +17,8 @@ import {
 const MAX_TASKS = 200
 const MAX_WORKSPACE_SESSIONS = 64
 const SESSION_READ_CONCURRENCY = 4
+/** How long a session whose ownership lookup failed counts as another window's. */
+const OWNERSHIP_RETRY_MS = 30_000
 
 export interface TaskCenterRegistryOptions {
   readonly now?: () => number
@@ -71,6 +73,7 @@ export class TaskCenterRegistry implements TaskRepository {
   private pendingGeneration = 0
   /** Whether a session belongs to a folder open in this window, per attachment. */
   private readonly sessionOwnership = new Map<string, Promise<boolean>>()
+  private readonly sessionOwnershipFailedAt = new Map<string, number>()
 
   public constructor(options: TaskCenterRegistryOptions = {}) {
     this.now = options.now ?? (() => Date.now())
@@ -102,6 +105,7 @@ export class TaskCenterRegistry implements TaskRepository {
     this.interactions.clear()
     this.workspaceTaskIds.clear()
     this.sessionOwnership.clear()
+    this.sessionOwnershipFailedAt.clear()
     this.announcePending()
   }
 
@@ -125,6 +129,7 @@ export class TaskCenterRegistry implements TaskRepository {
   /** Folders opened or closed: which sessions belong to this window may have changed. */
   public workspaceFoldersChanged(): void {
     this.sessionOwnership.clear()
+    this.sessionOwnershipFailedAt.clear()
     this.announcePending()
   }
 
@@ -148,7 +153,13 @@ export class TaskCenterRegistry implements TaskRepository {
     // the backend routes here is this window's to answer.
     if (backend === undefined || resolve === undefined || folders.length === 0) return Promise.resolve(true)
     const cached = this.sessionOwnership.get(sessionId)
-    if (cached !== undefined) return cached
+    const failedAt = this.sessionOwnershipFailedAt.get(sessionId)
+    // Every backend event recounts the badge: retrying a failed lookup at
+    // once would send one session read per event while the backend cannot
+    // answer it.
+    if (cached !== undefined && (failedAt === undefined || this.now() - failedAt < OWNERSHIP_RETRY_MS))
+      return cached
+    this.sessionOwnershipFailedAt.delete(sessionId)
     const owned = backend.sessions
       .get(sessionId)
       .then((session) => {
@@ -156,7 +167,8 @@ export class TaskCenterRegistry implements TaskRepository {
         return folder !== undefined && (this.isWorkspaceFolderOpen?.(folder) ?? folders.includes(folder))
       })
       .catch(() => {
-        this.sessionOwnership.delete(sessionId)
+        if (this.sessionOwnership.get(sessionId) === owned)
+          this.sessionOwnershipFailedAt.set(sessionId, this.now())
         return false
       })
     this.sessionOwnership.set(sessionId, owned)
