@@ -15,7 +15,11 @@ export function exportFileBaseName(title: string): string {
   const bounded = Array.from(cleaned)
     .slice(0, 80)
     .join('')
-    .replace(/[. ]+$/u, '')
+    .replace(/[-. ]+$/u, '')
   if (bounded === '') return 'dsh-session'
-  return WINDOWS_RESERVED_NAME.test(bounded.split('.')[0] ?? '') ? `${bounded}-session` : bounded
+  // Windows reads `CON.txt` and `con .md` as the device too: mark the stem.
+  const stem = /^[^.]*/u.exec(bounded)?.[0] ?? ''
+  return WINDOWS_RESERVED_NAME.test(stem.trimEnd())
+    ? `${stem.trimEnd()}-session${bounded.slice(stem.length)}`
+    : bounded
 }

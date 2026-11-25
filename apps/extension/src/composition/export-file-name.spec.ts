@@ -19,5 +19,8 @@ describe('exportFileBaseName', () => {
     expect(exportFileBaseName('COM1')).toBe('COM1-session')
     expect(exportFileBaseName('Notes...')).toBe('Notes')
     expect(exportFileBaseName('console')).toBe('console')
+    expect(exportFileBaseName('con.txt')).toBe('con-session.txt')
+    expect(exportFileBaseName('Aux .notes')).toBe('Aux-session.notes')
+    expect(exportFileBaseName(`${'a'.repeat(79)} - tail`)).toBe('a'.repeat(79))
   })
 })
