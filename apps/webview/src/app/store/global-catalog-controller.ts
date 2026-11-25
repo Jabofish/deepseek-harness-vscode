@@ -77,9 +77,15 @@ export function createGlobalCatalogController({
       nextPresetRosterGeneration()
       setState((current) =>
         (current.newSessionPermissionPresets?.length ?? 0) === 0 &&
-        current.newSessionPermissionDefault === undefined
+        current.newSessionPermissionDefault === undefined &&
+        current.newSessionPermissionDefaultOptions === undefined
           ? current
-          : { ...current, newSessionPermissionPresets: [], newSessionPermissionDefault: undefined },
+          : {
+              ...current,
+              newSessionPermissionPresets: [],
+              newSessionPermissionDefault: undefined,
+              newSessionPermissionDefaultOptions: undefined,
+            },
       )
     },
     refreshModels: async (): Promise<void> => {
@@ -96,13 +102,19 @@ export function createGlobalCatalogController({
         const catalog = parsePermissionCatalog(value)
         setState((current) => {
           const next = catalog?.items ?? []
+          const defaultOptions = catalog?.defaultOptions
           return sameStringList(current.newSessionPermissionPresets ?? [], next) &&
-            current.newSessionPermissionDefault === catalog?.defaultPreset
+            current.newSessionPermissionDefault === catalog?.defaultPreset &&
+            (current.newSessionPermissionDefaultOptions === undefined
+              ? defaultOptions === undefined
+              : defaultOptions !== undefined &&
+                sameStringList(current.newSessionPermissionDefaultOptions, defaultOptions))
             ? current
             : {
                 ...current,
                 newSessionPermissionPresets: next,
                 newSessionPermissionDefault: catalog?.defaultPreset,
+                newSessionPermissionDefaultOptions: defaultOptions,
               }
         })
       }

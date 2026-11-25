@@ -3,6 +3,7 @@ import type { DshSettingsSnapshot } from './store.js'
 import {
   DSH_UI_SETTING_PATHS,
   dshUiPreferences,
+  isConversationFontSizePx,
   isDshSettingWritable,
   withDshSettingValue,
 } from './ui-preferences.js'
@@ -102,5 +103,28 @@ describe('DSH UI preferences', () => {
     expect(
       withDshSettingValue(settingsSnapshot({ writable: false }), DSH_UI_SETTING_PATHS.codingTools, false),
     ).toBeUndefined()
+  })
+
+  it('reads saved legacy transcript values as DSH does: detailed', () => {
+    for (const legacy of ['normal', 'expanded']) {
+      const snapshot = settingsSnapshot()
+      const preferences = dshUiPreferences({
+        ...snapshot,
+        values: { ...snapshot.values, 'ui-chat': { transcriptView: legacy } },
+      })
+      expect(preferences.transcriptView).toBe('detailed')
+    }
+  })
+
+  it('accepts the whole DSH ui-theme.fontSize range (integers 10-22)', () => {
+    for (const size of [10, 11, 14, 18, 22]) {
+      expect(isConversationFontSizePx(size)).toBe(true)
+      const snapshot = settingsSnapshot()
+      expect(
+        dshUiPreferences({ ...snapshot, values: { ...snapshot.values, 'ui-theme': { fontSize: size } } })
+          .fontSize,
+      ).toBe(size)
+    }
+    for (const size of [9, 23, 14.5]) expect(isConversationFontSizePx(size)).toBe(false)
   })
 })

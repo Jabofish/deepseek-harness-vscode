@@ -33,6 +33,10 @@ export interface SettingsDrawerProps {
   readonly onOpenChange: (open: boolean) => void
   readonly connected: boolean
   readonly connectedDshVersion: string | undefined
+  /** Host choices for `permission.defaultPreset`, whose rc.5 schema is a plain string. */
+  readonly permissionDefaultOptions?: readonly string[] | undefined
+  /** The host's effective new-session default, shown when no explicit value is saved. */
+  readonly permissionDefaultPreset?: string | undefined
   readonly onConfigureConnection: (mode: 'auto' | 'custom', endpoint?: string) => Promise<void>
   readonly dshUpdate?: DshUpdateSnapshot | undefined
   readonly dshUpdateProgress?: DshRuntimeUpdateProgress | undefined

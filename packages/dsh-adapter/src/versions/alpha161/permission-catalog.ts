@@ -23,26 +23,14 @@ export async function readPermissionCatalogSnapshot(
     ),
   )
   const options = value?.options
-  if (
-    !Array.isArray(options) ||
-    options.some((entry) => {
-      const option = recordOrUndefined(entry)
-      return (
-        typeof option?.value !== 'string' ||
-        option.value.trim() === '' ||
-        typeof option.name !== 'string' ||
-        (option.description !== undefined && typeof option.description !== 'string')
-      )
-    })
-  )
+  const defaultOptions = value?.defaultOptions
+  if (!validOptionList(options) || (defaultOptions !== undefined && !validOptionList(defaultOptions)))
     throw new AppError({
       code: 'PROTOCOL_ERROR',
       message: 'DSH returned a malformed permission catalog.',
       retryable: false,
     })
-  const items = [
-    ...new Set(options.map((entry: { value: string }) => entry.value).filter((id) => id !== 'custom')),
-  ]
+  const items = presetIds(options)
   // Earlier catalogs publish choices only. Never infer their default from
   // option order or a built-in preset name.
   const defaultPreset = value?.defaultPreset
@@ -52,5 +40,31 @@ export async function readPermissionCatalogSnapshot(
       message: 'DSH returned a malformed default permission preset.',
       retryable: false,
     })
-  return { items, ...(defaultPreset === undefined ? {} : { defaultPreset }) }
+  // rc.5 publishes the new-session default choices separately from the
+  // session choices (`defaultOptions` omits session-only Auto).
+  const defaults = defaultOptions === undefined ? undefined : presetIds(defaultOptions)
+  return {
+    items,
+    ...(defaultPreset === undefined ? {} : { defaultPreset }),
+    ...(defaults === undefined ? {} : { defaultOptions: defaults }),
+  }
+}
+
+function validOptionList(value: unknown): value is readonly { readonly value: string }[] {
+  return (
+    Array.isArray(value) &&
+    value.every((entry) => {
+      const option = recordOrUndefined(entry)
+      return (
+        typeof option?.value === 'string' &&
+        option.value.trim() !== '' &&
+        typeof option.name === 'string' &&
+        (option.description === undefined || typeof option.description === 'string')
+      )
+    })
+  )
+}
+
+function presetIds(options: readonly { readonly value: string }[]): readonly string[] {
+  return [...new Set(options.map((entry) => entry.value).filter((id) => id !== 'custom'))]
 }

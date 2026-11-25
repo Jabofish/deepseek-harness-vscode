@@ -3,6 +3,7 @@ import type { ExtensionSettingsSummary } from '@dsh-vscode/domain'
 import {
   DSH_UI_SETTING_PATHS,
   findDshSettingsField,
+  PERMISSION_DEFAULT_SETTING_PATH,
   type dshUiPreferences as readDshUiPreferences,
 } from '../../app/ui-preferences.js'
 import { SettingCard, SettingRow } from '../../components/common/SettingCard.js'
@@ -128,6 +129,7 @@ export function GeneralSettingsTab(input: GeneralSettingsTabProps): ReactElement
     openKeyboardShortcuts,
     keyboardShortcutsError,
   } = input
+  const generalRowContext = { permissionDefaultOptions: props.permissionDefaultOptions }
   const { onCheckDshUpdates, onInstallDshVersion, dshUpdate, dshUpdateProgress } = props
   const [now, setNow] = useState(Date.now)
   const [outputError, setOutputError] = useState<string>()
@@ -556,7 +558,7 @@ export function GeneralSettingsTab(input: GeneralSettingsTabProps): ReactElement
               {t('runtime.retry')}
             </button>
           </>
-        ) : !hasPreferencesContent(dshState.snapshot) ? (
+        ) : !hasPreferencesContent(dshState.snapshot, generalRowContext) ? (
           // A schema that advertises none of these rows must not read as
           // a broken card: state what the host offers instead of an
           // empty titled box.
@@ -581,15 +583,21 @@ export function GeneralSettingsTab(input: GeneralSettingsTabProps): ReactElement
               </div>
             ) : null}
             <ul className="dsh-settings__rows">
-              {visibleGeneralRows(dshState.snapshot).map((row) => (
+              {visibleGeneralRows(dshState.snapshot, generalRowContext).map((row) => (
                 <GeneralSettingRow
                   key={row.path}
                   row={{
                     path: row.path,
                     label: t(row.labelKey),
                     hint: t(row.hintKey),
-                    ...(row.defaultValue === undefined ? {} : { defaultValue: row.defaultValue }),
+                    ...(row.path === PERMISSION_DEFAULT_SETTING_PATH &&
+                    props.permissionDefaultPreset !== undefined
+                      ? { defaultValue: props.permissionDefaultPreset }
+                      : row.defaultValue === undefined
+                        ? {}
+                        : { defaultValue: row.defaultValue }),
                   }}
+                  context={generalRowContext}
                   fields={dshState.snapshot.schema.fields}
                   values={dshState.snapshot.values}
                   writable={dshState.snapshot.schema.writable}

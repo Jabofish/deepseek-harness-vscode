@@ -22,8 +22,17 @@ export const TRANSCRIPT_VIEW_OPTIONS: readonly TranscriptViewMode[] = [
 export const DEFAULT_PERFORMANCE_USAGE: PerformanceUsageMode = 'detailed'
 export const PERFORMANCE_USAGE_OPTIONS: readonly PerformanceUsageMode[] = ['compact', 'detailed']
 export const DEFAULT_CONVERSATION_FONT_SIZE_PX = 14
-export const MIN_CONVERSATION_FONT_SIZE_PX = 12
-export const MAX_CONVERSATION_FONT_SIZE_PX = 17
+/** Bounds of DSH `ui-theme.fontSize` (`FONT_SIZE_MIN` / `FONT_SIZE_MAX`, integer step 1). */
+export const MIN_CONVERSATION_FONT_SIZE_PX = 10
+export const MAX_CONVERSATION_FONT_SIZE_PX = 22
+/** Pixel sizes of this client's own small/medium/large preference, kept from before DSH owned the size. */
+const LEGACY_SMALL_FONT_SIZE_PX = 12
+const LEGACY_LARGE_FONT_SIZE_PX = 17
+
+/** The new-session permission default. rc.5 declares it a plain string and
+ * publishes its choices in the permission catalog (`defaultOptions`), as the
+ * upstream row does; older hosts may still describe it as an enum. */
+export const PERMISSION_DEFAULT_SETTING_PATH = 'permission.defaultPreset'
 
 export const DSH_UI_SETTING_PATHS = {
   theme: 'ui-theme.preference',
@@ -47,6 +56,15 @@ export interface DshUiPreferences {
 
 export function isTranscriptViewMode(value: unknown): value is TranscriptViewMode {
   return TRANSCRIPT_VIEW_OPTIONS.some((option) => option === value)
+}
+
+/**
+ * Saved values from earlier generations of `ui-chat.transcriptView`. DSH reads
+ * both as `detailed` and never offers or writes them back
+ * (`LEGACY_TRANSCRIPT_VIEW_MODE` / `LEGACY_EXPANDED_TRANSCRIPT_VIEW_MODE`).
+ */
+export function isLegacyTranscriptViewValue(value: unknown): boolean {
+  return value === 'normal' || value === 'expanded'
 }
 
 export function isPerformanceUsageMode(value: unknown): value is PerformanceUsageMode {
@@ -132,11 +150,9 @@ export function dshUiPreferences(snapshot: DshSettingsSnapshot): DshUiPreference
     transcriptField?.type === 'enum'
       ? isTranscriptViewMode(transcriptValue)
         ? transcriptValue
-        : transcriptValue === 'normal'
-          ? 'standard'
-          : transcriptValue === 'expanded'
-            ? 'detailed'
-            : DEFAULT_TRANSCRIPT_VIEW
+        : isLegacyTranscriptViewValue(transcriptValue)
+          ? 'detailed'
+          : DEFAULT_TRANSCRIPT_VIEW
       : undefined
   const performanceUsage =
     usageField?.type === 'enum'
@@ -174,9 +190,9 @@ export function readDshSettingValue(values: Readonly<Record<string, unknown>>, p
 export function legacyConversationFontSizePx(value: ConversationFontSize): number {
   switch (value) {
     case 'small':
-      return MIN_CONVERSATION_FONT_SIZE_PX
+      return LEGACY_SMALL_FONT_SIZE_PX
     case 'large':
-      return MAX_CONVERSATION_FONT_SIZE_PX
+      return LEGACY_LARGE_FONT_SIZE_PX
     default:
       return DEFAULT_CONVERSATION_FONT_SIZE_PX
   }

@@ -1,4 +1,5 @@
 import { translate } from '../../i18n.js'
+import { PERMISSION_DEFAULT_SETTING_PATH } from '../ui-preferences.js'
 import type { ProtocolClient } from '../protocol-client.js'
 import { requestId } from './ids.js'
 import { parsePresetRoster } from './agent-config.js'
@@ -81,6 +82,18 @@ export function createSettingsActions(host: SettingsActionHost): SettingsActionM
         requestId: requestId(),
         payload: { path, value, expectedRevision },
       })
+      // DSH resolves the catalog default as `permission.defaultPreset ?? inferred`
+      // but publishes no catalog change for it, so the accepted write is the
+      // new-session default from here on.
+      if (path === PERMISSION_DEFAULT_SETTING_PATH && typeof value === 'string')
+        setState((current) =>
+          current.newSessionPermissionDefault === value ||
+          !(current.newSessionPermissionDefaultOptions ?? current.newSessionPermissionPresets ?? []).includes(
+            value,
+          )
+            ? current
+            : { ...current, newSessionPermissionDefault: value },
+        )
     },
     unsetDshSetting: async (path, expectedRevision) => {
       await client.request<unknown>({

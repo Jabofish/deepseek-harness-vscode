@@ -49,6 +49,8 @@ interface AppSettingsDrawerProps {
     | 'accountProfileDetails'
     | 'accountProfileLoading'
     | 'accountProfileRequestFailed'
+    | 'newSessionPermissionDefault'
+    | 'newSessionPermissionDefaultOptions'
   >
   readonly store: AppStore
   readonly themePreference: ThemePreference
@@ -217,6 +219,8 @@ export function AppSettingsDrawer({
       accountProfileDetails={state.accountProfileDetails}
       accountProfileLoading={state.accountProfileLoading}
       accountProfileRequestFailed={state.accountProfileRequestFailed}
+      permissionDefaultOptions={state.newSessionPermissionDefaultOptions}
+      permissionDefaultPreset={state.newSessionPermissionDefault}
       onLoadAccountLifecycle={() => store.loadAccountLifecycle()}
       onStartAccountSignIn={() => store.startAccountSignIn()}
       onCancelAccountSignIn={(attemptId) => store.cancelAccountSignIn(attemptId)}

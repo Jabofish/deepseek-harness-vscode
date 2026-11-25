@@ -265,7 +265,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
     if (
       dshState.status !== 'ready' ||
       !dshSettingsSnapshotFresh ||
-      !isValidGeneralSettingChange(dshState.snapshot, path, value)
+      !isValidGeneralSettingChange(dshState.snapshot, path, value, props.permissionDefaultOptions)
     )
       return
     const expectedRevision = settingsNamespaceRevision(dshState.snapshot, namespaceInPath(path))
