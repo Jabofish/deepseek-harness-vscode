@@ -27,7 +27,6 @@ Release entries describe behaviour at that release. `Unreleased` lists changes a
 ### PR acknowledgements / PR 致谢
 
 - Thanks to [@ggeorgovassilis](https://github.com/ggeorgovassilis) for the security hardening and stalled-delivery diagnostics. 感谢加强安全检查及补充聊天投递诊断。 [#67](https://github.com/Jabofish/deepseek-harness-vscode/pull/67) · [#69](https://github.com/Jabofish/deepseek-harness-vscode/pull/69)
-- Thanks to [@Jabofish](https://github.com/Jabofish) for the editor, chat, workspace, and DSH settings fixes and test improvements. 感谢修复编辑器、聊天、工作区和 DSH 设置并改进测试。 [#70](https://github.com/Jabofish/deepseek-harness-vscode/pull/70) · [#71](https://github.com/Jabofish/deepseek-harness-vscode/pull/71) · [#72](https://github.com/Jabofish/deepseek-harness-vscode/pull/72) · [#73](https://github.com/Jabofish/deepseek-harness-vscode/pull/73)
 
 ## 0.4.10
 
