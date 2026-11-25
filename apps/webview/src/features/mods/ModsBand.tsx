@@ -19,7 +19,9 @@ function SessionModsBand(props: {
   const { t } = useI18n()
   const request = useStableCallback(props.featureRequest)
   const [snapshot, setSnapshot] = useState<ModsBandSnapshot | null>(null)
-  const [failed, setFailed] = useState(false)
+  // A failed poll stops updates until Retry restarts it; a failed press leaves
+  // the band usable so the user can press again.
+  const [failure, setFailure] = useState<'poll' | 'press' | undefined>(undefined)
   const [pending, setPending] = useState(false)
   const [retry, setRetry] = useState(0)
   const active = useRef<symbol | undefined>(undefined)
@@ -59,7 +61,7 @@ function SessionModsBand(props: {
         }
       } catch {
         requestId = undefined
-        if (active.current === epoch) setFailed(true)
+        if (active.current === epoch) setFailure('poll')
       }
     })()
     return () => {
@@ -75,11 +77,11 @@ function SessionModsBand(props: {
     }
   }, [props.sessionId, request, retry])
   const press = (actionId: string): void => {
-    if (snapshot === null || pressLock.current || active.current === undefined) return
+    if (snapshot === null || pressLock.current || active.current === undefined || failure === 'poll') return
     const epoch = active.current
     pressLock.current = true
     setPending(true)
-    setFailed(false)
+    setFailure(undefined)
     inFlight.current = `mods-press-${crypto.randomUUID()}`
     void request<ModsBandReadResult>({
       type: 'mods.band.press',
@@ -94,7 +96,7 @@ function SessionModsBand(props: {
         )
       })
       .catch(() => {
-        if (active.current === epoch) setFailed(true)
+        if (active.current === epoch) setFailure((current) => current ?? 'press')
       })
       .finally(() => {
         if (active.current !== epoch) return
@@ -106,7 +108,7 @@ function SessionModsBand(props: {
   const pressHotkey = useStableCallback(press)
   useEffect(() => {
     const tree = snapshot?.tree
-    if (tree === null || tree === undefined || pending || failed) return
+    if (tree === null || tree === undefined || pending || failure === 'poll') return
     const hotkeys = collectHotkeys(tree)
     if (hotkeys.size === 0) return
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -128,14 +130,14 @@ function SessionModsBand(props: {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [failed, pending, pressHotkey, snapshot])
-  if (!failed && (snapshot === null || snapshot.tree === null)) return null
+  }, [failure, pending, pressHotkey, snapshot])
+  if (failure === undefined && (snapshot === null || snapshot.tree === null)) return null
   return (
     <div className="dsh-mods-band" role="group" aria-label={t('mods.band')}>
       {snapshot?.tree?.map((node, index) => (
-        <BandNode key={index} node={node} pending={pending} press={press} />
+        <BandNode key={index} node={node} pending={pending || failure === 'poll'} press={press} />
       ))}
-      {failed ? (
+      {failure !== undefined ? (
         <div role="status">
           {t('mods.failed')}{' '}
           <button
@@ -143,7 +145,7 @@ function SessionModsBand(props: {
             className="dsh-button dsh-button--secondary dsh-button--compact"
             disabled={pending}
             onClick={() => {
-              setFailed(false)
+              setFailure(undefined)
               setPending(false)
               setRetry((value) => value + 1)
             }}

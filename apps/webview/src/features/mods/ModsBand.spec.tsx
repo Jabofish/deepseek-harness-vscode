@@ -67,3 +67,63 @@ it('stops on an unavailable optional service and retries a safe failure', async 
   expect(screen.queryByRole('group')).toBeNull()
   expect(screen.queryByText('PRIVATE diagnostic')).toBeNull()
 })
+
+it('keeps the band disabled after its update poll fails until Retry restarts the poll', async () => {
+  const calls: FeatureRequest[] = []
+  let failNextPoll = true
+  const request: AppStore['featureRequest'] = <T,>(message: FeatureRequest) => {
+    calls.push(message)
+    if (message.type === 'mods.band.read') {
+      if (message.payload.afterGeneration === undefined) return Promise.resolve(drawing(1) as T)
+      if (failNextPoll) {
+        failNextPoll = false
+        return Promise.reject(new Error('poll lost'))
+      }
+      return new Promise<T>(() => undefined)
+    }
+    return Promise.resolve(drawing(2) as T)
+  }
+  render(<ModsBand sessionId="s1" featureRequest={request} />)
+  const retry = await screen.findByRole('button', { name: 'Retry' })
+  const button = screen.getByRole<HTMLButtonElement>('button', { name: 'Generation 1' })
+  expect(button.disabled).toBe(true)
+  fireEvent.click(button)
+  expect(calls.filter((call) => call.type === 'mods.band.press')).toHaveLength(0)
+  expect(screen.getByRole('button', { name: 'Retry' })).toBe(retry)
+  const reads = calls.filter((call) => call.type === 'mods.band.read').length
+  fireEvent.click(retry)
+  await waitFor(() =>
+    expect(calls.filter((call) => call.type === 'mods.band.read').length).toBeGreaterThan(reads),
+  )
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull())
+  expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Generation 1' }).disabled).toBe(false)
+})
+
+it('reports a failed press and lets the user press again', async () => {
+  const calls: FeatureRequest[] = []
+  let rejectPress = true
+  const request: AppStore['featureRequest'] = <T,>(message: FeatureRequest) => {
+    calls.push(message)
+    if (message.type === 'mods.band.read') {
+      if (message.payload.afterGeneration === undefined) return Promise.resolve(drawing(1) as T)
+      return new Promise<T>(() => undefined)
+    }
+    if (message.type === 'mods.band.press') {
+      if (rejectPress) {
+        rejectPress = false
+        return Promise.reject(new Error('press failed'))
+      }
+      return Promise.resolve(drawing(2) as T)
+    }
+    return Promise.resolve({ kind: 'empty' } as T)
+  }
+  render(<ModsBand sessionId="s1" featureRequest={request} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Generation 1' }))
+  await screen.findByRole('button', { name: 'Retry' })
+  const button = screen.getByRole<HTMLButtonElement>('button', { name: 'Generation 1' })
+  expect(button.disabled).toBe(false)
+  fireEvent.click(button)
+  await screen.findByRole('button', { name: 'Generation 2' })
+  expect(calls.filter((call) => call.type === 'mods.band.press')).toHaveLength(2)
+  expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+})
