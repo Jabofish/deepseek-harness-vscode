@@ -5,6 +5,8 @@ import type { TimelineNode } from '@dsh-vscode/timeline'
 import type { ReactElement } from 'react'
 import { ConversationLayoutProvider } from '../../app/ConversationLayoutProvider.js'
 import type { CollapseTiming, TranscriptViewMode } from '../../app/ui-preferences.js'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { Icon } from '../../ui/Icon.js'
 import { Timeline } from './Timeline.js'
 
 /** One turn of `steps` think-then-tool steps; `answered` appends the final reply. */
@@ -83,6 +85,24 @@ describe('focused process groups (Compact / Standard)', () => {
     const headers = processHeaders()
     expect(headers).toHaveLength(1)
     expect(headers[0]!.textContent).toContain('Running a tool')
+  })
+
+  it('marks a live thinking tail with the thinking icon even after tool steps', () => {
+    const nodes = longTurn(1, 2, false)
+    nodes.push({
+      kind: 'assistant-message',
+      id: 'think-live',
+      markdown: '',
+      reasoning: { markdown: 'Still thinking', streaming: true },
+      streaming: true,
+      turn: 1,
+      step: 3,
+    })
+    render(view(nodes, 'compact', 'completion', true))
+    const header = processHeaders()[0]!
+    expect(header.textContent).toContain('Thinking…')
+    const sparkles = renderToStaticMarkup(<Icon name="sparkles" />)
+    expect(header.querySelector('svg')!.outerHTML).toBe(sparkles)
     expect(screen.queryByText('Thinking 1.3')).toBeNull()
     expect(screen.queryByText('Read file 3')).toBeNull()
   })

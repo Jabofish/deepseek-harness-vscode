@@ -86,7 +86,15 @@ export function FocusedProcessGroup(props: {
           })
         }
       >
-        <Icon name={failureLabel !== undefined ? 'alert' : tools.length === 0 ? 'sparkles' : 'tool'} />
+        <Icon
+          name={
+            failureLabel !== undefined
+              ? 'alert'
+              : (props.live ? tailTool === undefined : tools.length === 0)
+                ? 'sparkles'
+                : 'tool'
+          }
+        />
         <span>{label}</span>
         <Icon name={open ? 'chevron-down' : 'chevron-right'} />
       </button>
