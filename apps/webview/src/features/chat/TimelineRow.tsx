@@ -78,7 +78,16 @@ function timelineRowContextEqual(
     previous.feedbackUnavailable !== next.feedbackUnavailable ||
     previous.transcriptView !== next.transcriptView ||
     previous.performanceUsage !== next.performanceUsage ||
+    previous.onEditPrompt !== next.onEditPrompt ||
+    previous.producedFiles !== next.producedFiles ||
     previous.t !== next.t
+  )
+    return false
+  // Retry/Continue belongs to the latest turn ending only, and is withdrawn
+  // while a turn runs; only the rows that gain or lose it need to render.
+  if (
+    (previous.retryTurnNodeId === node.id || next.retryTurnNodeId === node.id) &&
+    (previous.retryTurnNodeId !== next.retryTurnNodeId || previous.onRetryTurn !== next.onRetryTurn)
   )
     return false
 

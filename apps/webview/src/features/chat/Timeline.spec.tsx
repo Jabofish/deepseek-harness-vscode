@@ -105,6 +105,32 @@ describe('Timeline', () => {
     expect(screen.getByText('agent/inbox/spliced')).toBeDefined()
   })
 
+  it('offers Retry only on the latest turn ending, also after the conversation moves on', () => {
+    const onRetryTurn = vi.fn()
+    const first: readonly TimelineNode[] = [
+      { kind: 'user-message', id: 'user-1', markdown: 'First prompt', source: 'user' },
+      { kind: 'turn-terminal', id: 'turn-terminal:1', turn: 1, sequence: 3, reason: 'error' },
+    ]
+    const { rerender } = render(
+      <Timeline sessionId="session-1" nodes={first} streaming={false} onRetryTurn={onRetryTurn} />,
+    )
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeDefined()
+
+    rerender(<Timeline sessionId="session-1" nodes={first} streaming onRetryTurn={onRetryTurn} />)
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+    rerender(<Timeline sessionId="session-1" nodes={first} streaming={false} onRetryTurn={onRetryTurn} />)
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeDefined()
+
+    const next: readonly TimelineNode[] = [
+      ...first,
+      { kind: 'user-message', id: 'user-2', markdown: 'Second prompt', source: 'user' },
+      { kind: 'assistant-message', id: 'assistant-2', markdown: 'Done.', streaming: false },
+    ]
+    rerender(<Timeline sessionId="session-1" nodes={next} streaming={false} onRetryTurn={onRetryTurn} />)
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+    expect(onRetryTurn).not.toHaveBeenCalled()
+  })
+
   it('renders the structured terminal failure beside the generic turn label', () => {
     render(
       <Timeline
