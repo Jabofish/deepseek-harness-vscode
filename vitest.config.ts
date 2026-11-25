@@ -26,6 +26,8 @@ const liveDshTests = live
     ? [...offlineLiveHarnessTests, 'tests/live-dsh/windows-runtime-installation.spec.ts']
     : offlineLiveHarnessTests
 
+const resetWorker = 'tests/setup/reset-worker.ts'
+
 export default defineConfig({
   test: {
     environment: 'node',
@@ -33,6 +35,12 @@ export default defineConfig({
     ...(liveRun ? { fileParallelism: false } : {}),
     exclude,
     tags: [{ name: 'stress', skip: true }],
+    // Reuse transformed modules from the previous run (a warm cache cuts a
+    // full Windows run's transform time from 168 s to 44 s). Entries follow
+    // each file's content and the Vitest config, so ordinary edits are safe;
+    // after changing something the key does not see, such as a tsconfig
+    // compiler option or a transform plugin, run `pnpm exec vitest --clearCache`.
+    experimental: { fsModuleCache: true, fsModuleCachePath: 'node_modules/.cache/vitest' },
     projects: [
       {
         extends: true,
@@ -40,8 +48,9 @@ export default defineConfig({
           name: 'webview',
           pool: 'vmThreads',
           vmMemoryLimit: '512MB',
-          setupFiles: ['apps/webview/src/test/locale-reset.ts'],
-          sequence: { groupOrder: 0 },
+          setupFiles: ['apps/webview/src/test/reset-environment.ts', 'apps/webview/src/test/locale-reset.ts'],
+          // Reset the module registry before registering the locale hook.
+          sequence: { groupOrder: 0, setupFiles: 'list' },
           include: ['apps/webview/**/*.spec.ts?(x)', 'packages/ui/**/*.spec.ts?(x)'],
           exclude: [...exclude, nativeBuildTest],
         },
@@ -52,6 +61,7 @@ export default defineConfig({
           name: 'packages',
           pool: 'threads',
           isolate: false,
+          setupFiles: [resetWorker],
           sequence: { groupOrder: 1 },
           include: ['packages/**/*.spec.ts?(x)', 'tests/*.spec.ts'],
           exclude: [...exclude, 'packages/ui/**', nodeRealmAdapterTest, vscodeMockRootTest],
@@ -61,7 +71,16 @@ export default defineConfig({
         extends: true,
         test: {
           name: 'node',
-          pool: liveRun ? 'forks' : 'threads',
+          // Host tests do real file, process and build work. Worker threads
+          // share one process-wide libuv pool with the main thread's module
+          // transforms, which on loaded Windows machines queued 10-60 ms
+          // operations past the 5 s test timeout. Child processes each get
+          // their own pool (measured: slowest affected tests 3.3 s -> 0.26 s).
+          pool: 'forks',
+          // Isolating each file would start a new child process per file;
+          // reusing them (reset by the setup file) runs the project about four
+          // times faster. Live runs keep a fresh process per file.
+          ...(liveRun ? {} : { isolate: false, setupFiles: [resetWorker] }),
           sequence: { groupOrder: 2 },
           include: [
             'apps/extension/**/*.spec.ts?(x)',

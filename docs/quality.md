@@ -38,7 +38,7 @@ For documentation-only work, the local documentation checks are sufficient. PR C
 | `pnpm test:changed --list`                                    | Preview that selection without running the tests.                                               |
 | `pnpm test:contracts`                                         | Fixed filesystem, style, user-control, schema, route and build contracts.                       |
 | `pnpm test`                                                   | Full default Vitest suite. Stress tests and opt-in live scenarios are excluded or skipped.      |
-| `pnpm check`                                                  | Format, documentation, i18n, lint, typecheck and the default automated suite.                   |
+| `pnpm check`                                                  | Format, documentation, i18n, lint and typecheck in parallel, then the default automated suite.  |
 | `pnpm build`                                                  | Build the companion resources, Webview and extension.                                           |
 | `pnpm test:stress`                                            | Separate serial stress suite, including large history/window and memory probes.                 |
 | `pnpm test:ui-stability`                                      | Selected functional UI suites, then production App/Timeline scenarios in isolated Chromium.     |
@@ -65,6 +65,7 @@ The [daily UI inventory](ui-scenarios.en.md) lists behavior coverage and gaps. T
 
 - Test each new behaviour, regression and failure branch near its implementation. Add a representative cross-layer case when the interaction between layers matters.
 - Use colocated `*.spec.ts`/`*.spec.tsx`; keep independent heavy cases in `*.stress.spec.ts(x)`, or tag heavy cases `stress` in mixed files. The default config excludes both forms; the stress config runs them separately.
+- Test files share workers. Before each file, `apps/webview/src/test/reset-environment.ts` (Webview) and `tests/setup/reset-worker.ts` (packages and Host) reload source modules and restore timers, stubbed globals and environment variables; in jsdom files the Webview reset also empties storage and the document. Restore any other shared state a test changes yourself, such as a global assigned or defined directly (not through `vi.stubGlobal`), a directly assigned `process.env` value, the working directory or a process listener.
 - Use fake time for backoff/debounce logic. Large loads use generated fixtures, never real conversation logs. Do not present virtual-clock latency as measured UI latency or CPU time.
 - Version fixtures identify their exact upstream tag/commit, source file and type. Share version-selection/harness helpers in `packages/dsh-adapter/test/support/`; add only that version's contract differences. Do not accept unknown wire changes by updating snapshots.
 - Dependency-based selection can miss CSS, fixture and path-read dependencies. Register new filesystem-read contracts in `scripts/test-changed.mjs` so affected-test runs include them.
