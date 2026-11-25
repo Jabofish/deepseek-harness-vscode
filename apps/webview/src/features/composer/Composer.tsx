@@ -902,77 +902,79 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
           <div className="dsh-composer__toolbar-controls">{renderSessionControls('model')}</div>
         )}
         <span className="dsh-composer__toolbar-balance" aria-hidden="true" />
-        {props.running && !sending && (props.draft.trim() !== '' || props.attachments.length > 0) ? (
+        <div className="dsh-composer__toolbar-actions">
+          {props.running && !sending && (props.draft.trim() !== '' || props.attachments.length > 0) ? (
+            <button
+              className="dsh-button dsh-button--primary dsh-composer__submit"
+              type="button"
+              aria-label={t('composer.sendMessage')}
+              title={t('composer.runningHint')}
+              disabled={props.disabled || inputBlocked}
+              onClick={() => {
+                submit(props.busyEnter === 'steer' ? 'steer' : 'queue')
+                textareaRef.current?.focus({ preventScroll: true })
+              }}
+            >
+              <Icon name={focused ? 'arrow-up' : 'send'} />
+              <span className="dsh-composer__send-label">{t('composer.send')}</span>
+            </button>
+          ) : null}
+          {props.running && sending && !isDirectSubmitting ? (
+            <button
+              className="dsh-button dsh-button--danger"
+              type="button"
+              aria-label={t('composer.stopResponse')}
+              title={t('composer.stopResponse')}
+              onClick={props.onCancel}
+              disabled={props.disabled}
+            >
+              <Icon name="stop" />
+              {t('composer.stopResponse')}
+            </button>
+          ) : null}
           <button
-            className="dsh-button dsh-button--primary dsh-composer__submit"
-            type="button"
-            aria-label={t('composer.sendMessage')}
-            title={t('composer.runningHint')}
-            disabled={props.disabled || inputBlocked}
-            onClick={() => {
-              submit(props.busyEnter === 'steer' ? 'steer' : 'queue')
+            className={`dsh-button dsh-composer__submit ${stoppable ? 'dsh-button--danger' : 'dsh-button--primary'}`}
+            type={stoppable ? 'button' : 'submit'}
+            onClick={stoppable ? cancel : undefined}
+            aria-label={
+              sending
+                ? t('composer.cancelSend')
+                : props.running
+                  ? t('composer.stopResponse')
+                  : t('composer.sendMessage')
+            }
+            title={
+              sending
+                ? t('composer.cancelSend')
+                : props.running
+                  ? t('composer.stopResponse')
+                  : t('composer.sendMessage')
+            }
+            aria-busy={sending}
+            onMouseDown={(event) => {
+              if (!focused || event.button !== 0 || props.disabled) return
+              event.preventDefault()
               textareaRef.current?.focus({ preventScroll: true })
             }}
+            disabled={
+              props.disabled ||
+              (!stoppable && inputBlocked) ||
+              (!stoppable && props.draft.trim() === '' && props.attachments.length === 0)
+            }
           >
-            <Icon name={focused ? 'arrow-up' : 'send'} />
-            <span className="dsh-composer__send-label">{t('composer.send')}</span>
+            {sending ? (
+              <svg className="dsh-composer__sending" viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" />
+                <path d="m9 9 6 6m0-6-6 6" />
+              </svg>
+            ) : (
+              <Icon name={props.running ? 'stop' : focused ? 'arrow-up' : 'send'} />
+            )}
+            <span className="dsh-composer__send-label">
+              {stoppable ? t('composer.stop') : t('composer.send')}
+            </span>
           </button>
-        ) : null}
-        {props.running && sending && !isDirectSubmitting ? (
-          <button
-            className="dsh-button dsh-button--danger"
-            type="button"
-            aria-label={t('composer.stopResponse')}
-            title={t('composer.stopResponse')}
-            onClick={props.onCancel}
-            disabled={props.disabled}
-          >
-            <Icon name="stop" />
-            {t('composer.stopResponse')}
-          </button>
-        ) : null}
-        <button
-          className={`dsh-button dsh-composer__submit ${stoppable ? 'dsh-button--danger' : 'dsh-button--primary'}`}
-          type={stoppable ? 'button' : 'submit'}
-          onClick={stoppable ? cancel : undefined}
-          aria-label={
-            sending
-              ? t('composer.cancelSend')
-              : props.running
-                ? t('composer.stopResponse')
-                : t('composer.sendMessage')
-          }
-          title={
-            sending
-              ? t('composer.cancelSend')
-              : props.running
-                ? t('composer.stopResponse')
-                : t('composer.sendMessage')
-          }
-          aria-busy={sending}
-          onMouseDown={(event) => {
-            if (!focused || event.button !== 0 || props.disabled) return
-            event.preventDefault()
-            textareaRef.current?.focus({ preventScroll: true })
-          }}
-          disabled={
-            props.disabled ||
-            (!stoppable && inputBlocked) ||
-            (!stoppable && props.draft.trim() === '' && props.attachments.length === 0)
-          }
-        >
-          {sending ? (
-            <svg className="dsh-composer__sending" viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="12" cy="12" r="9" />
-              <path d="m9 9 6 6m0-6-6 6" />
-            </svg>
-          ) : (
-            <Icon name={props.running ? 'stop' : focused ? 'arrow-up' : 'send'} />
-          )}
-          <span className="dsh-composer__send-label">
-            {stoppable ? t('composer.stop') : t('composer.send')}
-          </span>
-        </button>
+        </div>
       </div>
       {previewedAttachment === undefined ? null : (
         <AttachmentLightbox

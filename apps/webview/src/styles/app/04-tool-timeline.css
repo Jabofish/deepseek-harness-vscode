@@ -181,11 +181,16 @@
 }
 
 .dsh-timeline__turn-terminal-detail {
-  max-width: 100%;
-  overflow: auto;
+  display: grid;
+  grid-column: 2 / -1;
+  grid-row: 2;
+  gap: var(--dsh-space-1);
   white-space: pre-wrap;
-  overflow-wrap: break-word;
-  word-break: normal;
+  overflow-wrap: anywhere;
+}
+
+.dsh-timeline__turn-terminal-detail > code {
+  white-space: inherit;
 }
 
 .dsh-timeline__notice,
@@ -308,9 +313,16 @@
   background: var(--dsh-warning-bg);
 }
 
+.dsh-timeline__turn-terminal {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--dsh-space-1) var(--dsh-space-2);
+}
+
 .dsh-timeline__turn-terminal-action {
-  display: flex;
-  margin-top: var(--dsh-space-2);
+  grid-column: 3;
+  grid-row: 1;
 }
 
 .dsh-timeline__notice--error,

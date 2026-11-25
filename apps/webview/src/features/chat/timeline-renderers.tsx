@@ -266,15 +266,13 @@ function renderNode(
           role="status"
         >
           <Icon name="alert" />
-          <span className="dsh-timeline__turn-terminal-message">
-            <span>{turnTerminalLabel(node.reason, t)}</span>
-            {node.failure === undefined ? null : (
-              <span className="dsh-timeline__turn-terminal-detail">
-                {node.failure.code === undefined ? null : <code>{node.failure.code}</code>}
-                <span>{node.failure.message}</span>
-              </span>
-            )}
-          </span>
+          <span className="dsh-timeline__turn-terminal-message">{turnTerminalLabel(node.reason, t)}</span>
+          {node.failure === undefined ? null : (
+            <span className="dsh-timeline__turn-terminal-detail">
+              {node.failure.code === undefined ? null : <code>{node.failure.code}</code>}
+              <span>{node.failure.message}</span>
+            </span>
+          )}
           {onRetryTurn === undefined || node.id !== retryTurnNodeId || node.reason === 'blocked' ? null : (
             <button
               type="button"

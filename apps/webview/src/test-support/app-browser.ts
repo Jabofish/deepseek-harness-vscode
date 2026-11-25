@@ -669,6 +669,53 @@ const scenario = {
   disconnect(): void {
     event('connection.snapshot', { kind: 'failed', message: 'Fixture connection lost', retryable: true })
   },
+  failAttachmentTurn(withDetail: boolean): void {
+    publish(lastOpened, [
+      ...(nodes.get(lastOpened) ?? []).filter(
+        (node) => node.id !== 'attachment-prompt' && node.id !== 'attachment-turn-error',
+      ),
+      {
+        kind: 'user-message',
+        id: 'attachment-prompt',
+        markdown: '',
+        source: 'user',
+        attachments: [{ name: 'fixture-note.txt', mimeType: 'text/plain' }],
+      },
+      {
+        kind: 'turn-terminal',
+        id: 'attachment-turn-error',
+        turn: 2,
+        sequence: 20,
+        reason: 'error',
+        ...(withDetail
+          ? {
+              failure: {
+                code: 'FIXTURE_ERROR',
+                message: `Attachment rejected\n${'long-file-name-'.repeat(12)}.txt`,
+              },
+            }
+          : {}),
+      },
+    ])
+  },
+  turnRetryLayout(): { headingAligned: boolean; actionSeparated: boolean; detailFits: boolean } | undefined {
+    const row = document.querySelector('.dsh-timeline__turn-terminal')
+    const icon = row?.querySelector('.dsh-icon')?.getBoundingClientRect()
+    const message = row?.querySelector('.dsh-timeline__turn-terminal-message')?.getBoundingClientRect()
+    const retry = row?.querySelector('button')?.getBoundingClientRect()
+    if (icon === undefined || message === undefined || retry === undefined) return undefined
+    const detail = row?.querySelector<HTMLElement>('.dsh-timeline__turn-terminal-detail')
+    const center = (rect: DOMRect): number => rect.top + rect.height / 2
+    return {
+      headingAligned:
+        Math.abs(center(icon) - center(message)) < 1 && Math.abs(center(retry) - center(message)) < 1,
+      actionSeparated: retry.left > message.right && retry.right <= innerWidth,
+      detailFits:
+        detail === null ||
+        detail === undefined ||
+        (detail.getBoundingClientRect().top >= retry.bottom && detail.scrollWidth <= detail.clientWidth),
+    }
+  },
   permission(): void {
     const request: PermissionRequest = {
       id: 'daily-approval',

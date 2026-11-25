@@ -409,6 +409,40 @@ export const dailyScenarios = [
     },
   },
   {
+    name: 'daily/turn-retry-layout',
+    coverage: ['ATTACH-08'],
+    async run(ui) {
+      await ui.viewport(280, 720)
+      await input(ui, 'Keep this unsent draft')
+      const retry = await ui.call('label', 'timeline.retryTurn')
+      for (const withDetail of [false, true]) {
+        await ui.call('failAttachmentTurn', withDetail)
+        await ui.waitFor(
+          (s) =>
+            s.controls.some((control) => control.name === retry) &&
+            s.timeline.includes('FIXTURE_ERROR') === withDetail,
+          'failed turn with the requested error details',
+        )
+        await ui.afterPaint()
+        assert.deepEqual(await ui.call('turnRetryLayout'), {
+          headingAligned: true,
+          actionSeparated: true,
+          detailFits: true,
+        })
+      }
+      await ui.click(button('timeline.retryTurn'))
+      const warning = await ui.call('label', 'timeline.retryNeedsAttachmentsOnly')
+      const promptLabel = await ui.call('label', 'composer.prompt')
+      const state = await ui.waitFor(
+        (s) => s.text.includes(warning) && s.focus === promptLabel,
+        'retry warning and focus in the composer',
+      )
+      assert.equal(state.prompt, 'Keep this unsent draft')
+      assert.equal(state.requests.filter((r) => r.type === 'session.sendPrompt').length, 0)
+      await ui.capture('turn-retry-layout')
+    },
+  },
+  {
     name: 'daily/remove-attachment',
     coverage: ['ATTACH-01'],
     async run(ui) {
@@ -673,6 +707,36 @@ export const dailyScenarios = [
       )
       assert.equal(state.receipts.filter((item) => item.text === 'A queued follow-up').length, 1)
       assert(!state.timeline.includes('A queued follow-up'))
+    },
+  },
+  {
+    name: 'daily/running-send-and-stop',
+    coverage: ['QUEUE-01', 'INPUT-10'],
+    async run(ui) {
+      await ui.viewport(280, 720)
+      await ui.call('status', 'running')
+      await input(ui, 'Queue this using Send')
+      const sendName = await ui.call('label', 'composer.sendMessage')
+      const stopName = await ui.call('label', 'composer.stopResponse')
+      await ui.waitFor(
+        (s) => [sendName, stopName].every((name) => s.controls.some((c) => c.name === name && !c.disabled)),
+        'available Send and Stop controls',
+      )
+      await ui.capture('running-send-and-stop')
+      await ui.click(button('composer.sendMessage'))
+      const queued = await ui.waitFor(
+        (s) => s.receipts.some((item) => item.text === 'Queue this using Send' && item.mode === 'queue'),
+        'clicking Send queues the follow-up',
+      )
+      assert.equal(queued.requests.filter((request) => request.type === 'session.cancel').length, 0)
+      await ui.click(button('composer.stopResponse'))
+      await ui.waitFor(
+        (s) =>
+          s.requests.some(
+            (request) => request.type === 'session.cancel' && request.payload.sessionId === 'daily-a',
+          ) && !s.controls.some((control) => control.name === stopName),
+        'Stop still cancels the active response',
+      )
     },
   },
   {
