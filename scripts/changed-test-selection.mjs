@@ -69,11 +69,21 @@ export function listGitChangedFiles(root, changedSince) {
   return [...files]
 }
 
+/**
+ * Setup files that `vitest.config.ts` runs before every file of a project. No
+ * test imports them, so a change to one can only be traced by rerunning.
+ */
+export const VITEST_SETUP_FILES = [
+  'apps/webview/src/test/reset-environment.ts',
+  'tests/setup/reset-worker.ts',
+]
+
 export function isForceRerunTrigger(relativePath) {
   const normalized = toPosix(relativePath)
   const parts = normalized.split('/')
   const name = parts.at(-1) ?? ''
   if (
+    VITEST_SETUP_FILES.includes(normalized) ||
     normalized === 'pnpm-lock.yaml' ||
     normalized === 'pnpm-workspace.yaml' ||
     normalized === 'scripts/test-changed.mjs' ||

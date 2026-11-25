@@ -16,6 +16,7 @@
     }
   },
   "include": [
+    "../vitest.config.ts",
     "../apps/extension/src/view/transcript-content-version.ts",
     "**/*.ts",
     "../apps/extension/src/**/*.ts",

@@ -8,6 +8,8 @@ import {
 import { ProtocolClient, publicProtocolErrorMessage } from './protocol-client.js'
 
 const listeners = new Set<(event: MessageEvent<unknown>) => void>()
+// Files share a worker, so the fake window must not outlive this one.
+const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window')
 
 beforeEach(() => {
   Object.defineProperty(globalThis, 'window', {
@@ -25,7 +27,11 @@ beforeEach(() => {
   })
 })
 
-afterEach(() => listeners.clear())
+afterEach(() => {
+  listeners.clear()
+  if (originalWindow === undefined) Reflect.deleteProperty(globalThis, 'window')
+  else Object.defineProperty(globalThis, 'window', originalWindow)
+})
 
 describe('ProtocolClient', () => {
   it.each([
