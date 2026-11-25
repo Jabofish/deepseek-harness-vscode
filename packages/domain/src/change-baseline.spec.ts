@@ -11,11 +11,13 @@ describe('reconstructChangeBaseline', () => {
     expect(reconstructChangeBaseline(current, 'modified', diffs)).toBe('a\nb\nc\nd\ne\nf\ng\n')
   })
 
-  it('removes a pure insertion and treats a created file as empty', () => {
+  it('removes a pure insertion and refuses a whole-file write with no prior text', () => {
     expect(reconstructChangeBaseline('x\nnew\ny\n', 'modified', [{ oldText: null, newText: 'new\n' }])).toBe(
       'x\ny\n',
     )
-    expect(reconstructChangeBaseline('hello\n', 'added', [{ oldText: null, newText: 'hello\n' }])).toBe('')
+    expect(
+      reconstructChangeBaseline('hello\n', 'added', [{ oldText: null, newText: 'hello\n' }]),
+    ).toBeUndefined()
   })
 
   it('matches LF hunks against a CRLF document', () => {

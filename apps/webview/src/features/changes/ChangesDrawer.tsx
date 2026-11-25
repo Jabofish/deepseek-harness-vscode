@@ -334,9 +334,7 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
                   >
                     {t('changes.openFile')}
                   </button>
-                  {props.onOpenDiff === undefined ||
-                  !detail.diffAvailable ||
-                  detail.status === 'deleted' ? null : (
+                  {props.onOpenDiff === undefined || detail.comparisonAvailable !== true ? null : (
                     <button
                       className="dsh-button dsh-button--secondary dsh-button--compact"
                       type="button"

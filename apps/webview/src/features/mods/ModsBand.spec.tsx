@@ -130,6 +130,7 @@ it('reports a failed press and lets the user press again', async () => {
 
 it('fires a hotkey only while no field, list, menu or dialog owns the key', async () => {
   const presses: string[] = []
+  let finishRead!: () => void
   const request: AppStore['featureRequest'] = <T,>(message: FeatureRequest) => {
     if (message.type === 'mods.band.press') {
       presses.push(message.payload.actionId)
@@ -143,14 +144,17 @@ it('fires a hotkey only while no field, list, menu or dialog owns the key', asyn
       } as T)
     }
     if (message.type === 'mods.band.read' && message.payload.afterGeneration === undefined)
-      return Promise.resolve({
-        kind: 'mods.band',
-        available: true,
-        snapshot: {
-          generation: 1,
-          tree: [{ kind: 'button', label: 'Kick', disabled: false, actionId: 'kick', hotkey: 'k' }],
-        },
-      } as T)
+      return new Promise<T>((resolve) => {
+        finishRead = () =>
+          resolve({
+            kind: 'mods.band',
+            available: true,
+            snapshot: {
+              generation: 1,
+              tree: [{ kind: 'button', label: 'Kick', disabled: false, actionId: 'kick', hotkey: 'k' }],
+            },
+          } as T)
+      })
     return new Promise<T>(() => undefined)
   }
   render(
@@ -163,7 +167,12 @@ it('fires a hotkey only while no field, list, menu or dialog owns the key', asyn
       </ul>
     </div>,
   )
-  await screen.findByRole('button', { name: /Kick/u })
+  // Flush the effect that installs the window key listener before dispatching keys.
+  await act(async () => {
+    finishRead()
+    await Promise.resolve()
+  })
+  expect(screen.getByRole('button', { name: /Kick/u })).toBeDefined()
   fireEvent.keyDown(screen.getByRole('listbox', { name: 'Choices' }), { key: 'k' })
   fireEvent.keyDown(document.body, { key: 'K', shiftKey: true })
   expect(presses).toEqual([])

@@ -1,5 +1,6 @@
 import {
   AppError,
+  hasChangeBaselineHunks,
   type ChangeDetail,
   type ChangeSetFile,
   type DshBackend,
@@ -79,6 +80,8 @@ export async function handleChangeFeatureRequest(
     return {
       kind: 'change.detail',
       change: featureChangeSummary(detail),
+      comparisonAvailable:
+        dependencies.openChangeDiff !== undefined && hasChangeBaselineHunks(detail.status, detail.diffs),
       // The diff renders inside a `<pre>`; folding its whitespace would join
       // every hunk into one line.
       ...(detail.redactedDiff === undefined
@@ -97,10 +100,10 @@ export async function handleChangeFeatureRequest(
       })
     const session = await requireCurrentWorkspaceSession(detail.sessionId, signal)
     featureWorkspaceFolderId(detail.workspaceFolderId, session)
-    if (dependencies.openChangeDiff === undefined || detail.diffs === undefined || detail.diffs.length === 0)
+    if (dependencies.openChangeDiff === undefined || !hasChangeBaselineHunks(detail.status, detail.diffs))
       throw new AppError({
         code: 'CHANGE_INCOMPLETE',
-        message: 'This change has no recorded diff.',
+        message: 'This change has no reconstructable baseline.',
         retryable: false,
       })
     await dependencies.openChangeDiff(detail, signal)

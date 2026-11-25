@@ -12,6 +12,8 @@ const detail = {
   status: 'modified',
   diffs: [{ oldText: 'a', newText: 'b' }],
   diffAvailable: true,
+  locations: [],
+  sourceIds: [],
 } as unknown as ChangeDetail
 
 function dependencies(overrides: { readonly owned?: boolean; readonly diffs?: ChangeDetail['diffs'] } = {}): {
@@ -71,5 +73,26 @@ describe('changes.openDiff', () => {
     ).rejects.toMatchObject({ code: 'CHANGE_INCOMPLETE' })
     expect(foreign.openChangeDiff).not.toHaveBeenCalled()
     expect(empty.openChangeDiff).not.toHaveBeenCalled()
+  })
+})
+
+it('keeps the authoritative preview and reports whether the editor can reconstruct a baseline', async () => {
+  const detailRequest = { ...request, type: 'changes.detail' as const }
+  const signal = new AbortController().signal
+  const structured = dependencies()
+  await expect(handleChangeFeatureRequest(detailRequest, signal, structured.deps)).resolves.toMatchObject({
+    comparisonAvailable: true,
+  })
+
+  const authoritative = dependencies()
+  const { diffs: _diffs, ...summary } = detail
+  void _diffs
+  vi.spyOn(authoritative.deps.changeUseCases, 'get').mockResolvedValueOnce({
+    ...summary,
+    redactedDiff: '@@ -1 +1 @@\n-a\n+b',
+  })
+  await expect(handleChangeFeatureRequest(detailRequest, signal, authoritative.deps)).resolves.toMatchObject({
+    comparisonAvailable: false,
+    redactedDiff: '@@ -1 +1 @@\n-a\n+b',
   })
 })

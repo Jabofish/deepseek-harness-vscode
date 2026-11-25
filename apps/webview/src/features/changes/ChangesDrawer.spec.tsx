@@ -48,6 +48,7 @@ function renderDrawer(
       ...change,
       redactedDiff: '--- old\nold\n+++ new\nnew',
       diffTruncated: false,
+      comparisonAvailable: true,
     } satisfies ChangeDetail),
     onMarkReviewed: vi.fn().mockResolvedValue({ ...change, reviewState: 'viewed' }),
     ...overrides,
@@ -128,5 +129,21 @@ describe('ChangesDrawer', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Compare in editor' }))
     expect(onOpenDiff).toHaveBeenCalledWith('change-1')
     expect((await screen.findByRole('alert')).textContent).toContain('cannot be rebuilt')
+  })
+
+  it('shows a recorded diff preview when editor comparison is unavailable', async () => {
+    renderDrawer({
+      onOpenDiff: vi.fn(),
+      onDetail: vi.fn().mockResolvedValue({
+        ...change,
+        redactedDiff: '@@ -1 +1 @@\n-old\n+new',
+        diffTruncated: false,
+        comparisonAvailable: false,
+      } satisfies ChangeDetail),
+    })
+    fireEvent.click(screen.getByRole('button', { name: '1 changes' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Review src/main.ts' }))
+    expect(await screen.findByRole('button', { name: 'Copy' })).toBeDefined()
+    expect(screen.queryByRole('button', { name: 'Compare in editor' })).toBeNull()
   })
 })

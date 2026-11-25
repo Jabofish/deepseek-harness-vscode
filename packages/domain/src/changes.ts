@@ -65,6 +65,7 @@ export interface ChangeSetFile {
 export interface ChangeDetail extends ChangeSetFile {
   readonly redactedDiff?: string
   readonly diffTruncated: boolean
+  readonly comparisonAvailable?: boolean
 }
 
 export interface ChangeObservation {
@@ -203,6 +204,21 @@ export interface WorkspaceChangeSource {
   diff(sessionId: string, sequence: number, index: number, signal?: AbortSignal): Promise<string | undefined>
 }
 
+/** Whether the recorded hunks contain enough information to attempt an editor comparison. */
+export function hasChangeBaselineHunks(
+  status: ChangeFileStatus,
+  diffs: readonly ChangeDiff[] | undefined,
+): diffs is readonly ChangeDiff[] {
+  return (
+    status !== 'deleted' &&
+    diffs !== undefined &&
+    diffs.length > 0 &&
+    diffs.every((diff) => diff.newText !== '') &&
+    // A write without old text gets classified as added even when it overwrites.
+    (status !== 'added' || diffs.some((diff) => diff.oldText !== null))
+  )
+}
+
 /**
  * Rebuild the text a change started from by undoing its hunks on the file's
  * current text, last hunk first. Each hunk carries context lines, so it is
@@ -215,15 +231,13 @@ export function reconstructChangeBaseline(
   status: ChangeFileStatus,
   diffs: readonly ChangeDiff[],
 ): string | undefined {
-  if (diffs.length === 0) return undefined
-  if (status === 'added' && diffs.every((diff) => diff.oldText === null)) return ''
+  if (!hasChangeBaselineHunks(status, diffs)) return undefined
   const eol = current.includes('\r\n') ? '\r\n' : '\n'
   const normalize = (text: string): string => text.replace(/\r?\n/gu, eol)
   let text = current
   for (let index = diffs.length - 1; index >= 0; index -= 1) {
     const diff = diffs[index]!
     const newText = normalize(diff.newText)
-    if (newText === '') return undefined
     if (diff.oldText === null && newText === text) return undefined
     const at = text.indexOf(newText)
     if (at < 0 || text.indexOf(newText, at + 1) >= 0) return undefined

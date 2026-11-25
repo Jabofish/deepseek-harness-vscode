@@ -114,6 +114,7 @@ export const featureResponsePayloadSchema = z.discriminatedUnion('kind', [
     .object({
       kind: z.literal('change.detail'),
       change: changeSummarySchema,
+      comparisonAvailable: z.boolean().optional(),
       redactedDiff: boundedText.max(262_144).optional(),
       truncated: z.boolean().optional(),
     })
