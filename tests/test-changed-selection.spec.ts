@@ -122,6 +122,17 @@ describe('changed-test-selection', () => {
     )
   })
 
+  it('reruns the suite when a setup file that runs before every test changes', async () => {
+    const { default: config } = await import('../vitest.config.ts')
+    const setupFiles = (config.test?.projects ?? []).flatMap((project) => {
+      if (typeof project !== 'object' || !('test' in project)) return []
+      const files = project.test?.setupFiles ?? []
+      return typeof files === 'string' ? [files] : files
+    })
+    expect(setupFiles.length).toBeGreaterThan(0)
+    for (const file of setupFiles) expect(isForceRerunTrigger(file)).toBe(true)
+  })
+
   it('reruns the suite when a removed source can no longer be traced to its importers', () => {
     const root = createFixtureWorkspace()
     const candidateTests = discoverCandidateTestFiles(root, {})

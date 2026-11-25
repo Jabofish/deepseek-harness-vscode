@@ -1,4 +1,5 @@
 export declare const OFFLINE_LIVE_HARNESS_TESTS: readonly string[]
+export declare const VITEST_SETUP_FILES: readonly string[]
 export declare function listGitChangedFiles(root: string, changedSince?: string): string[]
 export declare function isForceRerunTrigger(relativePath: string): boolean
 export declare function discoverCandidateTestFiles(
