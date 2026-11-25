@@ -125,4 +125,35 @@ describe('JobsDrawer popover', () => {
     )
     expect(log.scrollTop).toBe(200)
   })
+
+  it('keeps following once a full buffer drops an old chunk for each new one', () => {
+    const jobs = [job({ id: 'alpha-job', label: 'server', status: 'running', startedAt: 1_000 })]
+    const window = (first: number): JobFollowState => ({
+      jobId: 'alpha-job',
+      followId: 'follow-1',
+      next: first + 3,
+      chunks: [0, 1, 2].map((offset) => ({ at: first + offset, text: `line ${first + offset}\n` })),
+      lossy: true,
+    })
+    const drawer = (following: JobFollowState): React.ReactElement => (
+      <JobsDrawer
+        jobs={jobs}
+        jobControllerAvailable
+        following={following}
+        onFollow={() => Promise.resolve()}
+        onStopFollowing={() => Promise.resolve()}
+        onKill={() => Promise.resolve('requested')}
+      />
+    )
+    const view = renderJobs(jobs, { jobControllerAvailable: true, following: window(0) })
+    fireEvent.click(screen.getByRole('button', { name: '1 running' }))
+    const log = screen.getByRole('log')
+    Object.defineProperty(log, 'scrollHeight', { configurable: true, value: 1_000 })
+    Object.defineProperty(log, 'clientHeight', { configurable: true, value: 100 })
+    view.rerender(drawer(window(1)))
+    expect(log.scrollTop).toBe(1_000)
+    Object.defineProperty(log, 'scrollHeight', { configurable: true, value: 1_200 })
+    view.rerender(drawer(window(2)))
+    expect(log.scrollTop).toBe(1_200)
+  })
 })

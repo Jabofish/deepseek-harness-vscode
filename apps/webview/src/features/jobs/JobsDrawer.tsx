@@ -83,7 +83,9 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
   // read earlier lines must not be undone by the next chunk.
   const followOutput = useRef(true)
   const followedJobId = following?.jobId
-  const followingChunkCount = following?.chunks.length ?? 0
+  // A full buffer drops an old chunk for each new one, so the count can stay
+  // the same while output arrives; every append makes a new chunk list.
+  const followingChunks = following?.chunks
   useEffect(() => {
     followOutput.current = true
   }, [followedJobId])
@@ -91,7 +93,7 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
     const element = outputRef.current
     if (element === null || !followOutput.current) return
     element.scrollTop = element.scrollHeight
-  }, [followedJobId, followingChunkCount])
+  }, [followedJobId, followingChunks])
   const menuPosition = useViewportMenuPosition({
     open,
     anchorRef: triggerRef,
