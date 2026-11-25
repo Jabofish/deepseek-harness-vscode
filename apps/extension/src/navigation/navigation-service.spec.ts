@@ -271,6 +271,17 @@ describe('NavigationService', () => {
     expect(harness.executeCommand).not.toHaveBeenCalled()
   })
 
+  it('refuses a diff of a file too large to open safely', async () => {
+    const root = temporaryRoot()
+    writeFileSync(path.join(root, 'a.ts'), 'first\n')
+    const harness = createHarness(root, ['x'.repeat(262_144)])
+    await expect(
+      harness.service.openChangeDiff(harness.folderId, 'a.ts', 'modified', [{ oldText: 'y', newText: 'x' }]),
+    ).rejects.toMatchObject({ code: 'CONTEXT_LIMIT' })
+    expect(harness.registerProvider).not.toHaveBeenCalled()
+    expect(harness.executeCommand).not.toHaveBeenCalled()
+  })
+
   it('refuses work after disposal and when the caller aborted', async () => {
     const root = temporaryRoot()
     writeFileSync(path.join(root, 'a.ts'), 'first\n')
