@@ -19,6 +19,8 @@ export interface FocusedTurnNode {
   readonly processId?: string
   readonly processCount?: number
   readonly continuation?: boolean
+  /** The whole turn ends in a final reply, even when this virtual segment does not carry it. */
+  readonly answered?: boolean
 }
 export type PresentedTimelineNode = DisplayTimelineNode | FocusedTurnNode
 export const FOCUSED_PROCESS_SEGMENT_SIZE = 24
@@ -241,6 +243,7 @@ export function createFocusedTimelineProjector(): (
           processId,
           processCount,
           continuation,
+          answered: foldable && finalReply !== undefined,
         })
         segment++
       }

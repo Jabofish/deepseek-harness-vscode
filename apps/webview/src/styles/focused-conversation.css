@@ -211,3 +211,16 @@
     border: 1px solid CanvasText;
   }
 }
+
+/* One header per run of thinking and tool steps (Compact/Standard). An opened
+ * run scrolls inside a capped body, as DSH's process groups do. */
+.dsh-focused-process__body {
+  max-height: min(28rem, 60vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-block: var(--dsh-space-2);
+}
+
+.dsh-focused-process__body > div + div {
+  margin-top: var(--dsh-space-3);
+}

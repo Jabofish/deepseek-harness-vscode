@@ -17,6 +17,8 @@ export function FocusedToolActivity(
     readonly transcriptView: TranscriptViewMode
     readonly revealSourceNodeId?: string | undefined
     readonly revealRequestId?: string | undefined
+    /** Render the cards only: the enclosing process group already owns the header. */
+    readonly inline?: boolean
   },
 ): ReactElement {
   const quiet = useQuietActivity()
@@ -79,6 +81,13 @@ export function FocusedToolActivity(
       })}
     />
   )
+  if (props.inline === true)
+    return (
+      <div className="dsh-focused-tools">
+        {plans}
+        {toolCards()}
+      </div>
+    )
   return (
     <div className="dsh-focused-tools">
       {plans}

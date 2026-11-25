@@ -5,6 +5,8 @@ export type ThemePreference = 'light' | 'dark' | 'system'
 export type TranscriptViewMode = 'compact' | 'standard' | 'detailed' | 'verbose'
 export type PerformanceUsageMode = 'compact' | 'detailed'
 export type BusyEnterBehavior = 'queue' | 'steer'
+/** DSH `ui-chat.collapseTiming`: fold a finished turn at completion or at the next input. */
+export type CollapseTiming = 'completion' | 'next-input'
 
 export const DEFAULT_CONVERSATION_FONT_SIZE: ConversationFontSize = 'medium'
 export const CONVERSATION_FONT_SIZE_STORAGE_KEY = 'dsh-webview-conversation-font-size'
@@ -20,6 +22,8 @@ export const TRANSCRIPT_VIEW_OPTIONS: readonly TranscriptViewMode[] = [
   'verbose',
 ]
 export const DEFAULT_PERFORMANCE_USAGE: PerformanceUsageMode = 'detailed'
+/** DSH `DEFAULT_COLLAPSE_TIMING`. */
+export const DEFAULT_COLLAPSE_TIMING: CollapseTiming = 'completion'
 export const PERFORMANCE_USAGE_OPTIONS: readonly PerformanceUsageMode[] = ['compact', 'detailed']
 export const DEFAULT_CONVERSATION_FONT_SIZE_PX = 14
 /** Bounds of DSH `ui-theme.fontSize` (`FONT_SIZE_MIN` / `FONT_SIZE_MAX`, integer step 1). */
@@ -39,6 +43,7 @@ export const DSH_UI_SETTING_PATHS = {
   fontSize: 'ui-theme.fontSize',
   transcriptView: 'ui-chat.transcriptView',
   performanceUsage: 'ui-chat.performanceUsage',
+  collapseTiming: 'ui-chat.collapseTiming',
   busyEnter: 'ui-conversation.busyEnter',
   codingTools: 'ui-settings.enabled',
 } as const
@@ -49,6 +54,7 @@ export interface DshUiPreferences {
   readonly fontSize: number | undefined
   readonly transcriptView: TranscriptViewMode | undefined
   readonly performanceUsage: PerformanceUsageMode | undefined
+  readonly collapseTiming: CollapseTiming | undefined
   readonly busyEnter: BusyEnterBehavior | undefined
   /** Undefined means unsupported or not yet described, not disabled. */
   readonly codingToolsEnabled: boolean | undefined
@@ -65,6 +71,10 @@ export function isTranscriptViewMode(value: unknown): value is TranscriptViewMod
  */
 export function isLegacyTranscriptViewValue(value: unknown): boolean {
   return value === 'normal' || value === 'expanded'
+}
+
+export function isCollapseTiming(value: unknown): value is CollapseTiming {
+  return value === 'completion' || value === 'next-input'
 }
 
 export function isPerformanceUsageMode(value: unknown): value is PerformanceUsageMode {
@@ -125,6 +135,7 @@ export function dshUiPreferences(snapshot: DshSettingsSnapshot): DshUiPreference
   const transcriptField = findDshSettingsField(snapshot, DSH_UI_SETTING_PATHS.transcriptView)
   const usageField = findDshSettingsField(snapshot, DSH_UI_SETTING_PATHS.performanceUsage)
   const busyEnterField = findDshSettingsField(snapshot, DSH_UI_SETTING_PATHS.busyEnter)
+  const collapseTimingField = findDshSettingsField(snapshot, DSH_UI_SETTING_PATHS.collapseTiming)
   const codingToolsField = findDshSettingsField(snapshot, DSH_UI_SETTING_PATHS.codingTools)
 
   const themeValue = readDshSettingValue(snapshot.values, DSH_UI_SETTING_PATHS.theme)
@@ -132,6 +143,7 @@ export function dshUiPreferences(snapshot: DshSettingsSnapshot): DshUiPreference
   const transcriptValue = readDshSettingValue(snapshot.values, DSH_UI_SETTING_PATHS.transcriptView)
   const usageValue = readDshSettingValue(snapshot.values, DSH_UI_SETTING_PATHS.performanceUsage)
   const busyEnterValue = readDshSettingValue(snapshot.values, DSH_UI_SETTING_PATHS.busyEnter)
+  const collapseTimingValue = readDshSettingValue(snapshot.values, DSH_UI_SETTING_PATHS.collapseTiming)
   const codingToolsValue = readDshSettingValue(snapshot.values, DSH_UI_SETTING_PATHS.codingTools)
 
   const theme =
@@ -166,6 +178,12 @@ export function dshUiPreferences(snapshot: DshSettingsSnapshot): DshUiPreference
         ? busyEnterValue
         : 'queue'
       : undefined
+  const collapseTiming =
+    collapseTimingField?.type === 'enum'
+      ? isCollapseTiming(collapseTimingValue)
+        ? collapseTimingValue
+        : DEFAULT_COLLAPSE_TIMING
+      : undefined
   const codingToolsEnabled =
     codingToolsField?.type === 'boolean'
       ? typeof codingToolsValue === 'boolean'
@@ -173,7 +191,7 @@ export function dshUiPreferences(snapshot: DshSettingsSnapshot): DshUiPreference
         : undefined
       : undefined
 
-  return { theme, fontSize, transcriptView, performanceUsage, busyEnter, codingToolsEnabled }
+  return { theme, fontSize, transcriptView, performanceUsage, collapseTiming, busyEnter, codingToolsEnabled }
 }
 
 export function readDshSettingValue(values: Readonly<Record<string, unknown>>, path: string): unknown {

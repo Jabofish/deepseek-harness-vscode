@@ -25,7 +25,12 @@ import {
 import { Icon } from '../../ui/Icon.js'
 import { compactActivity } from './compact-activity.js'
 import { useI18n } from '../../i18n.js'
-import type { PerformanceUsageMode, TranscriptViewMode } from '../../app/ui-preferences.js'
+import {
+  DEFAULT_COLLAPSE_TIMING,
+  type CollapseTiming,
+  type PerformanceUsageMode,
+  type TranscriptViewMode,
+} from '../../app/ui-preferences.js'
 import {
   createDisplayNodeProjector,
   createDisplayNodeTextSizeProjector,
@@ -70,6 +75,8 @@ export interface TimelineProps {
   /** Conversation chrome owns this preference when the Timeline is embedded in App. */
   readonly showDshEvents?: boolean
   readonly transcriptView?: TranscriptViewMode
+  /** DSH `ui-chat.collapseTiming`; completion folds a finished focused turn at once. */
+  readonly collapseTiming?: CollapseTiming
   readonly performanceUsage?: PerformanceUsageMode
   readonly codingToolsEnabled?: boolean
   /** Authoritative session-level running bit from the host status stream. */
@@ -219,6 +226,7 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
   >(undefined)
   const showDshEvents = props.showDshEvents ?? false
   const transcriptView = props.transcriptView ?? 'standard'
+  const collapseTiming = props.collapseTiming ?? DEFAULT_COLLAPSE_TIMING
   const performanceUsage = props.performanceUsage ?? 'detailed'
   const codingToolsEnabled = props.codingToolsEnabled ?? true
   // The reducer keeps authoritative assistant step ids so separate visible
@@ -401,6 +409,13 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
     if (control !== null) openLinkTriggerRef.current = control
   }
   const latestNode = displayNodes[displayNodes.length - 1]
+  let latestTurn: number | undefined
+  for (let index = displayNodes.length - 1; index >= 0; index--) {
+    const candidate = displayNodes[index]!
+    if (candidate.kind !== 'focused-turn') continue
+    latestTurn = candidate.turn
+    break
+  }
   const latestSignature =
     latestNode?.kind === 'focused-turn'
       ? `${latestNode.id}:${latestNode.foldable}:${latestNode.nodes.map(nodeSignatureProjector).join('|')}`
@@ -920,6 +935,8 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
       feedbackUnavailable: props.feedbackUnavailable,
       transcriptView,
       performanceUsage,
+      collapseTiming,
+      latestTurn,
       onFeedback: hasFeedback ? stableOnFeedback : undefined,
       onFeedbackSubmit: props.onFeedbackSubmit === undefined ? undefined : stableOnFeedbackSubmit,
       onFeedbackPrepare: props.onFeedbackPrepare === undefined ? undefined : stableOnFeedbackPrepare,
@@ -966,6 +983,8 @@ const SessionTimeline = memo(function SessionTimeline(props: TimelineProps): Rea
       stableOnOpenSession,
       stableOnShowInFolder,
       transcriptView,
+      collapseTiming,
+      latestTurn,
       t,
       truncatedNodeIds,
       userTextFacts,
