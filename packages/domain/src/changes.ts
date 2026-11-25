@@ -220,22 +220,15 @@ export function reconstructChangeBaseline(
   const eol = current.includes('\r\n') ? '\r\n' : '\n'
   const normalize = (text: string): string => text.replace(/\r?\n/gu, eol)
   let text = current
-  let searchEnd = text.length
   for (let index = diffs.length - 1; index >= 0; index -= 1) {
     const diff = diffs[index]!
     const newText = normalize(diff.newText)
     if (newText === '') return undefined
     if (diff.oldText === null && newText === text) return undefined
-    // Hunks of one diff are in file order, so each lies before the next.
-    // Edits a multi-edit tool applied in sequence need not be; once that
-    // order fails, undo the rest against the whole text, latest edit first.
-    let at = newText.length > searchEnd ? -1 : text.lastIndexOf(newText, searchEnd - newText.length)
-    const ordered = at >= 0
-    if (!ordered) at = text.lastIndexOf(newText)
-    if (at < 0) return undefined
+    const at = text.indexOf(newText)
+    if (at < 0 || text.indexOf(newText, at + 1) >= 0) return undefined
     const oldText = diff.oldText === null ? '' : normalize(diff.oldText)
     text = `${text.slice(0, at)}${oldText}${text.slice(at + newText.length)}`
-    searchEnd = ordered ? at : text.length
   }
   return text
 }

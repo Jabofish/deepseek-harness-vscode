@@ -20,6 +20,8 @@ vi.mock('./features/chat/Timeline.js', () => ({
     readonly performanceUsage?: string
     readonly codingToolsEnabled?: boolean
     readonly onRetryTurn?: (reason: 'failed') => void
+    readonly onEditPrompt?: (text: string) => void
+    readonly loadFullContent?: (nodeId: string) => Promise<string>
   }) => (
     <div
       data-testid="timeline"
@@ -28,6 +30,14 @@ vi.mock('./features/chat/Timeline.js', () => ({
       data-coding-tools-enabled={props.codingToolsEnabled}
     >
       Timeline
+      {props.onEditPrompt === undefined ? null : (
+        <button
+          type="button"
+          onClick={() => void props.loadFullContent?.('user-1').then((text) => props.onEditPrompt?.(text))}
+        >
+          Mock edit prompt
+        </button>
+      )}
       {props.onRetryTurn === undefined ? null : (
         <button type="button" onClick={() => props.onRetryTurn?.('failed')}>
           Mock retry turn
@@ -1300,6 +1310,32 @@ describe('App connected rendering', () => {
       'summarise the report',
     )
     expect(sendPrompt).not.toHaveBeenCalled()
+  })
+
+  it('leaves the destination draft alone when an edit finishes after a session switch', async () => {
+    const state = connectedState(true)
+    const { updateState } = renderWithMutableState({
+      ...state,
+      sessions: [...state.sessions, { ...state.sessions[0]!, id: 's2', title: 'Another' }],
+    })
+    let resolve!: (text: string) => void
+    const fullText = new Promise<string>((done) => {
+      resolve = done
+    })
+    vi.spyOn(currentStore, 'loadTranscriptContent').mockReturnValue(fullText)
+    fireEvent.click(screen.getByRole('button', { name: 'Mock edit prompt' }))
+    updateState({
+      ...state,
+      sessions: [{ ...state.sessions[0]!, id: 's2', title: 'Another' }],
+      activeSessionId: 's2',
+    })
+    const prompt = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+    fireEvent.change(prompt, { target: { value: 'draft for the second session' } })
+    await act(async () => {
+      resolve('full prompt from the first session')
+      await fullText
+    })
+    expect(prompt.value).toBe('draft for the second session')
   })
 
   it('keeps the attachment retry warning with the conversation that raised it', async () => {

@@ -31,7 +31,7 @@ import { CONVERSATION_VIEW_IDS } from './app/conversation-view-ids.js'
 import { useConversationLayout } from './app/ConversationLayoutProvider.js'
 import { useSurfaceFocusReport } from './app/useSurfaceFocusReport.js'
 import { latestAuthoredPrompt } from './features/chat/retry-prompt.js'
-import { setDraft } from './app/draft-store.js'
+import { setDraftFor } from './app/draft-store.js'
 
 export function AppView(props: ReturnType<typeof useAppController>): ReactElement {
   const layoutPreference = useConversationLayout()
@@ -176,6 +176,10 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
   const [inspectorOpenRequestId, setInspectorOpenRequestId] = useState<string>()
   // Belongs to the conversation whose retry raised it; another chat never shows it.
   const [retryNotice, setRetryNotice] = useState<{ readonly sessionId: string; readonly message: string }>()
+  const isCurrentConversation = (sessionId: string): boolean => {
+    const current = store.getState()
+    return current.activeSessionId === sessionId && current.connectionEpoch === state.connectionEpoch
+  }
   // Recalling a prompt reads the conversation's own durable messages; a new
   // draft has no transcript yet, so its history stays empty.
   const promptHistoryOwner = `${state.connectionEpoch}:${state.timeline.sessionId ?? ''}`
@@ -745,7 +749,8 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                       loadFullNode={(nodeId, signal) => store.loadTranscriptNode(nodeId, signal)}
                       loadFullContent={(nodeId) => store.loadTranscriptContent(nodeId)}
                       onEditPrompt={(text) => {
-                        setDraft(text)
+                        if (!isCurrentConversation(active.id)) return
+                        setDraftFor(active.id, text)
                         focusComposer(active.id)
                       }}
                       onRetryTurn={(reason) => {
@@ -767,7 +772,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                               : state.transcript?.omittedNodeIds.includes(lastUser.id) === true
                                 ? await store.loadTranscriptContent(lastUser.id)
                                 : lastUser.markdown
-                          if (text === undefined) return
+                          if (text === undefined || !isCurrentConversation(active.id)) return
                           const hadAttachments =
                             !continuing &&
                             lastUser !== undefined &&
@@ -775,7 +780,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                           if (hadAttachments) {
                             // A resend without its files would silently answer a different
                             // question; hand the text back so the user can re-attach.
-                            setDraft(text)
+                            setDraftFor(active.id, text)
                             focusComposer(active.id)
                             setRetryNotice({
                               sessionId: active.id,
@@ -785,6 +790,11 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                           }
                           await store.sendPrompt(active.id, text, [], state.busyEnter)
                         })().catch((err: unknown) => {
+                          if (
+                            !isCurrentConversation(active.id) ||
+                            (err instanceof DOMException && err.name === 'AbortError')
+                          )
+                            return
                           setError(err instanceof Error ? err.message : t('app.error.sendPrompt'))
                         })
                       }}

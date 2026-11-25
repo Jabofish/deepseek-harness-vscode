@@ -45,4 +45,12 @@ describe('reconstructChangeBaseline', () => {
     ]
     expect(reconstructChangeBaseline(current, 'modified', diffs)).toBe('1\n2\n3\n4\n5\n')
   })
+
+  it('refuses to guess which occurrence a hunk replaced', () => {
+    expect(
+      reconstructChangeBaseline('enabled = true\nenabled = true\n', 'modified', [
+        { oldText: 'enabled = false', newText: 'enabled = true' },
+      ]),
+    ).toBeUndefined()
+  })
 })

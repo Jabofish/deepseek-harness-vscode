@@ -968,11 +968,22 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     loadTranscriptContent: async (nodeId) => {
       const window = state.transcript
       if (window === undefined) throw new Error('Transcript content is unavailable.')
+      const version = openVersion
+      const epoch = state.connectionEpoch
       const result = await client.request<{ readonly content?: unknown }>({
         type: 'session.transcript.content',
         requestId: requestId(),
         payload: { sessionId: window.sessionId, revision: window.revision, nodeId },
       })
+      if (
+        disposed ||
+        openVersion !== version ||
+        state.connectionEpoch !== epoch ||
+        state.transcript?.sessionId !== window.sessionId ||
+        state.transcript.historical !== window.historical ||
+        (window.historical && state.transcript.revision !== window.revision)
+      )
+        throw new DOMException('Transcript view has changed.', 'AbortError')
       if (typeof result?.content !== 'string') throw new Error('Transcript content is unavailable.')
       return result.content
     },
