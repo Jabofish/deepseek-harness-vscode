@@ -1,6 +1,7 @@
 import { useId, type ReactElement } from 'react'
 import { toolNameLabel } from '@dsh-vscode/ui'
 import { terminalPresentationFailed } from '@dsh-vscode/domain'
+import { useQuietActivity } from '../../app/AccessibilityProvider.js'
 import { Icon } from '../../ui/Icon.js'
 import { focusedPresentationPolicy } from './focused-presentation-policy.js'
 import type { FocusedWorkNode } from './focused-timeline-projection.js'
@@ -39,6 +40,7 @@ export function FocusedProcessGroup(props: {
   const { context, members } = props
   const { t } = context
   const bodyId = useId()
+  const quiet = useQuietActivity()
   const groupId = `focused-process:${members[0]?.id}`
   const policy = focusedPresentationPolicy(context.transcriptView)
   const revealDismissedId = `${groupId}:reveal-dismissed:${context.revealRequestId ?? context.revealSourceNodeId}`
@@ -56,7 +58,8 @@ export function FocusedProcessGroup(props: {
   const tail = members.at(-1)
   const tailTool = tail === undefined ? undefined : memberTools(tail).at(-1)
   let label: string
-  if (props.live) {
+  if (quiet) label = t('timeline.focused.process')
+  else if (props.live) {
     if (tailTool === undefined) label = t('timeline.focused.thinking')
     else if (tailTool.tool.preparation !== undefined) label = t('timeline.focused.preparing')
     else
@@ -71,14 +74,14 @@ export function FocusedProcessGroup(props: {
   }
   const failureLabel = failed === 0 ? undefined : t('timeline.focused.failedTools', { count: failed })
   return (
-    <div className="dsh-focused-process" data-live={props.live || undefined}>
+    <div className="dsh-focused-process" data-live={(props.live && !quiet) || undefined}>
       <button
         type="button"
         className={`dsh-focused-tools__summary${failureLabel === undefined ? '' : ' dsh-focused-tools__summary--failed'}`}
         aria-expanded={open}
         aria-controls={bodyId}
-        aria-label={failureLabel === undefined ? undefined : `${label} · ${failureLabel}`}
-        title={failureLabel}
+        aria-label={quiet || failureLabel === undefined ? undefined : `${label} · ${failureLabel}`}
+        title={quiet ? undefined : failureLabel}
         onClick={() =>
           context.setExpandedDetails((current) => {
             const next = new Set(current)
@@ -94,14 +97,21 @@ export function FocusedProcessGroup(props: {
           name={
             failureLabel !== undefined
               ? 'alert'
-              : (props.live ? tailTool === undefined : tools.length === 0)
-                ? 'sparkles'
-                : 'tool'
+              : quiet
+                ? 'status'
+                : (props.live ? tailTool === undefined : tools.length === 0)
+                  ? 'sparkles'
+                  : 'tool'
           }
         />
         <span>{label}</span>
         <Icon name={open ? 'chevron-down' : 'chevron-right'} />
       </button>
+      {quiet && failed > 0 && !open ? (
+        <span className="dsh-focused-tools__failure" role="status">
+          {t('timeline.quietTools.failed')}
+        </span>
+      ) : null}
       <div id={bodyId} hidden={!open} className="dsh-focused-process__body">
         {open ? props.renderBody() : null}
       </div>

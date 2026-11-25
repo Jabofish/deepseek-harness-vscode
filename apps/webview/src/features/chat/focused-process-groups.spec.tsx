@@ -3,6 +3,8 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 import { afterEach, describe, expect, it } from 'vitest'
 import type { TimelineNode } from '@dsh-vscode/timeline'
 import type { ReactElement } from 'react'
+import { AccessibilityProvider } from '../../app/AccessibilityProvider.js'
+import { rememberActivityPresentation } from '../../app/activity-presentation.js'
 import { ConversationLayoutProvider } from '../../app/ConversationLayoutProvider.js'
 import type { CollapseTiming, TranscriptViewMode } from '../../app/ui-preferences.js'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -79,9 +81,51 @@ const processHeaders = (): HTMLElement[] =>
 afterEach(() => {
   cleanup()
   localStorage.clear()
+  document.body.classList.remove('vscode-using-screen-reader')
 })
 
 describe('focused process groups (Compact / Standard)', () => {
+  it.each(['quiet', 'auto'] as const)('keeps %s process summaries stable and announces failures', (mode) => {
+    rememberActivityPresentation(mode)
+    if (mode === 'auto') document.body.classList.add('vscode-using-screen-reader')
+    const nodes = longTurn(1, 1, false)
+    const running = nodes.map((node) =>
+      node.kind === 'tool' ? { ...node, tool: { ...node.tool, status: 'running' as const } } : node,
+    )
+    const wrap = (input: readonly TimelineNode[]): ReactElement => (
+      <AccessibilityProvider>{view(input, 'standard', 'completion', true)}</AccessibilityProvider>
+    )
+    const { rerender } = render(wrap(running))
+    const header = processHeaders()[0]!
+    expect(header.textContent).toBe('Work details')
+
+    const thinking: TimelineNode = {
+      kind: 'assistant-message',
+      id: 'thinking-after-tool',
+      markdown: '',
+      reasoning: { markdown: 'More thinking', streaming: true },
+      streaming: true,
+      turn: 1,
+      step: 2,
+    }
+    rerender(wrap([...running, thinking]))
+    expect(processHeaders()[0]).toBe(header)
+    expect(header.textContent).toBe('Work details')
+
+    const failed = nodes.map((node) =>
+      node.kind === 'tool' ? { ...node, tool: { ...node.tool, status: 'failed' as const } } : node,
+    )
+    rerender(wrap(failed))
+    const group = header.closest<HTMLElement>('.dsh-focused-process')!
+    expect(within(group).getByRole('status').textContent).toBe(
+      'A tool failed. Expand tool activity for details.',
+    )
+    expect(header.textContent).toBe('Work details')
+    fireEvent.click(header)
+    expect(within(group).getByText('Read file 1')).toBeDefined()
+    expect(within(group).queryByRole('status')).toBeNull()
+  })
+
   it('shows a running turn of alternating thinking and tool steps as one live line', () => {
     render(view(longTurn(1, 6, false), 'compact', 'completion', true))
     const headers = processHeaders()
