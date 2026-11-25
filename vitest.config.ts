@@ -35,9 +35,11 @@ export default defineConfig({
     ...(liveRun ? { fileParallelism: false } : {}),
     exclude,
     tags: [{ name: 'stress', skip: true }],
-    // Reuse transformed modules from the previous run. The cache is keyed by
-    // each file's content and the config, so it is safe across edits; on a
-    // warm cache a full Windows run spends 44 s instead of 168 s transforming.
+    // Reuse transformed modules from the previous run (a warm cache cuts a
+    // full Windows run's transform time from 168 s to 44 s). Entries follow
+    // each file's content and the Vitest config, so ordinary edits are safe;
+    // after changing something the key does not see, such as a tsconfig
+    // compiler option or a transform plugin, run `pnpm exec vitest --clearCache`.
     experimental: { fsModuleCache: true, fsModuleCachePath: 'node_modules/.cache/vitest' },
     projects: [
       {
